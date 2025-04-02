@@ -3,6 +3,7 @@ import { Kysely, PostgresDialect } from "kysely";
 import { Pool } from "pg";
 
 interface DB {
+  // Base Better Auth Tables
   user: {
     id: string;
     email: string;
@@ -37,6 +38,7 @@ interface DB {
     expiresAt: Date | null;
     ipAddress: string | null;
     userAgent: string | null;
+    activeOrganizationId: string | null; // Added for organization plugin
     createdAt: Date | null;
     updatedAt: Date | null;
   };
@@ -48,11 +50,50 @@ interface DB {
     createdAt: Date | null;
     updatedAt: Date | null;
   };
-  tenant: {
+
+
+  // Better auth Organization Plugin Tables
+  organization: {
     id: string;
-    ownerUserId: string | null;
-    createdAt: string | null;
-    updatedAt: string | null;
+    name: string;
+    slug: string;
+    logo: string | null; // Nullable as per Better Auth docs
+    metadata: string | null; // Nullable JSON string
+    countries: string; // Added custom field, JSON string of country codes (TEXT)
+    createdAt: Date;
+    updatedAt: Date;
+  };
+  member: {
+    id: string;
+    userId: string;
+    organizationId: string;
+    role: string; // e.g., "owner", "admin", "member"
+    createdAt: Date;
+  };
+  invitation: {
+    id: string;
+    email: string;
+    inviterId: string;
+    organizationId: string;
+    role: string; // e.g., "owner", "admin", "member"
+    status: string; // e.g., "pending", "accepted", "rejected"
+    expiresAt: Date;
+    createdAt: Date;
+  };
+  team: {
+    id: string;
+    name: string;
+    organizationId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  // Custom Tables
+  tenant: {
+    id: string; // TEXT in PostgreSQL
+    ownerUserId: string;
+    createdAt: Date;
+    updatedAt: Date;
     onboardingCompleted: number | null;
   };
   subscription: {
@@ -65,7 +106,15 @@ interface DB {
     periodStart: Date | null;
     periodEnd: Date | null;
   };
-  // ...any other tables you need typed
+  warehouse: {
+    id: string;
+    tenantId: string;
+    organizationId: string;
+    name: string;
+    countries: string; // JSON string of country codes (TEXT in PostgreSQL)
+    createdAt: Date; // Changed to Date to match TIMESTAMP
+    updatedAt: Date; // Changed to Date to match TIMESTAMP
+  };
 }
 
 export const pool = new Pool({
@@ -73,7 +122,5 @@ export const pool = new Pool({
 });
 
 export const db = new Kysely<DB>({
-  dialect: new PostgresDialect({
-    pool,
-  }),
+  dialect: new PostgresDialect({ pool }),
 });

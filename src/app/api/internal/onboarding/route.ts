@@ -7,7 +7,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || "your-secret-here";
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,25 +22,29 @@ export async function POST(req: NextRequest) {
     }
 
     const user = session.user;
+    const { onboardingCompleted } = await req.json();
 
-    // Check if tenant exists
+    // Validate input
+    if (typeof onboardingCompleted !== "number" || onboardingCompleted < 0 || onboardingCompleted > 5) {
+      return NextResponse.json({ error: "Invalid onboarding step" }, { status: 400 });
+    }
+
+    // Check tenant
     const { rows: tenants } = await pool.query(
       `SELECT id FROM tenant WHERE "ownerUserId" = $1`,
       [user.id]
     );
-
     if (tenants.length === 0) {
       return NextResponse.json({ error: "No tenant found" }, { status: 404 });
     }
 
-    // Update onboarding status (for now, just mark as complete)
+    // Update tenant
     await pool.query(
-      `UPDATE tenant SET "onboardingCompleted = 1, "updatedAt" = NOW()
-       WHERE "ownerUserId" = $1`,
-      [user.id]
+      `UPDATE tenant SET "onboardingCompleted" = $1, "updatedAt" = NOW() WHERE "ownerUserId" = $2`,
+      [onboardingCompleted, user.id]
     );
 
-    return NextResponse.json({ message: "Onboarding completed" }, { status: 200 });
+    return NextResponse.json({ message: "Onboarding step updated" }, { status: 200 });
   } catch (error) {
     console.error("Error in onboarding:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
