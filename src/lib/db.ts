@@ -109,11 +109,20 @@ interface DB {
   warehouse: {
     id: string;
     tenantId: string;
-    organizationId: string;
+    organizationId: string; // references "organization"
     name: string;
     countries: string; // JSON string of country codes (TEXT in PostgreSQL)
     createdAt: Date; // Changed to Date to match TIMESTAMP
     updatedAt: Date; // Changed to Date to match TIMESTAMP
+  };
+
+  organizationPlatformKey: {
+    id: string;
+    organizationId: string; // references "organization"
+    platform: string;       // "telegram", "whatsapp", or "signal"
+    apiKey: string;         // the actual secret key
+    createdAt: Date;
+    updatedAt: Date;
   };
 }
 

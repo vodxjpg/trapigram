@@ -12,22 +12,17 @@ import {
   FormMessage,
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
-/* ORIGINAL SELECT IMPORTS - NO LINES REMOVED
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-*/
 import { toast } from "sonner"
 import countriesLib from "i18n-iso-countries"
 import enLocale from "i18n-iso-countries/langs/en.json"
 import { getCountries } from "libphonenumber-js"
 import ReactCountryFlag from "react-country-flag"
 import { authClient } from "@/lib/auth-client"
-
+import {
+  IconBrandTelegram,
+  IconBrandWhatsapp,
+  IconMessageCircle
+} from "@tabler/icons-react";
 //-----------------------------------
 // EXACTLY as you had it:
 countriesLib.registerLocale(enLocale)
@@ -48,6 +43,7 @@ interface Step2Form {
 }
 interface Step3Form {
   apiKey: string
+  platform: string // "telegram" or "whatsapp" or "signal"
 }
 interface Step4Form {
   supportEmail: string
@@ -67,7 +63,7 @@ export default function OnboardingPage() {
     defaultValues: { orgName: "", orgSlug: "", countries: [] },
   })
   const step2Form = useForm<Step2Form>({ defaultValues: { warehouseName: "", countries: [] } })
-  const step3Form = useForm<Step3Form>({ defaultValues: { apiKey: "" } })
+  const step3Form = useForm<Step3Form>({ defaultValues: { apiKey: "", platform: "telegram" }})
   const step4Form = useForm<Step4Form>({ defaultValues: { supportEmail: "" } })
   const step5Form = useForm<Step5Form>({ defaultValues: { secretPhrase: "" } })
 
@@ -164,6 +160,31 @@ export default function OnboardingPage() {
   // (6) Step 3, 4, 5 are the same as your code, no lines removed or omitted
   const onStep3Submit = async (data: Step3Form) => {
     try {
+      if (!orgId) {
+        toast.error("No organization ID found!")
+        return
+      }
+
+      // We only allow "telegram" for now.
+      // We'll POST to /api/internal/platform-keys with { orgId, platform, apiKey }
+      const resp = await fetch("/api/internal/platform-keys", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+        },
+        body: JSON.stringify({
+          organizationId: orgId,
+          platform: data.platform,  // e.g. "telegram"
+          apiKey: data.apiKey
+        })
+      })
+      if (!resp.ok) {
+        const e = await resp.json()
+        throw new Error(e.error || "Failed to save API key")
+      }
+
+      // success => step 4
       await updateStep(4)
       toast.success("API key step completed!")
     } catch (err) {
@@ -587,20 +608,70 @@ export default function OnboardingPage() {
             {step === 3 && (
               <Form {...step3Form}>
                 <form onSubmit={step3Form.handleSubmit(onStep3Submit)} className="space-y-4">
+
+                  {/* (A) Swatches for telegram, whatsapp, signal */}
+                  <div className="flex gap-4 items-center">
+                    {/* Telegram is clickable */}
+                    <button
+                      type="button"
+                      onClick={() => step3Form.setValue("platform", "telegram")}
+                      className={`p-3 border rounded flex flex-col items-center justify-center ${
+                        step3Form.watch("platform") === "telegram"
+                          ? "border-blue-500"
+                          : "border-gray-300"
+                      }`}
+                    >
+                      <IconBrandTelegram />
+                      <span className="text-sm">Telegram</span>
+                    </button>
+                    
+                    {/* WhatsApp - disabled */}
+                    <div className="p-3 border border-gray-300 rounded opacity-50 cursor-not-allowed flex flex-col items-center justify-center">
+                    <IconMessageCircle />
+                      <span className="text-sm">WhatsApp (coming soon)</span>
+                    </div>
+
+                    {/* Signal - disabled */}
+                    <div className="p-3 border border-gray-300 rounded opacity-50 cursor-not-allowed flex flex-col items-center justify-center">
+                      <IconBrandWhatsapp />
+                      <span className="text-sm">Signal (coming soon)</span>
+                    </div>
+                  </div>
+
+                  {/* (B) The input field for the API key with an eye icon to toggle visibility */}
                   <FormField
                     control={step3Form.control}
                     name="apiKey"
                     rules={{ required: "API key is required" }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Telegram API Key</FormLabel>
-                        <FormControl>
-                          <Input type="password" placeholder="Enter API key" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
+                    render={({ field }) => {
+                      // local state to toggle eye
+                      const [showKey, setShowKey] = useState(false)
+                      return (
+                        <FormItem>
+                          <FormLabel>Telegram API Key</FormLabel>
+                          <div className="relative">
+                            <FormControl>
+                              <Input
+                                type={showKey ? "text" : "password"}
+                                placeholder="Enter API key"
+                                {...field}
+                              />
+                            </FormControl>
+                            {/* Eye icon button */}
+                            <button
+                              type="button"
+                              onClick={() => setShowKey(!showKey)}
+                              className="absolute right-2 top-2 text-sm text-gray-500"
+                            >
+                              {showKey ? "Hide" : "Show"}
+                            </button>
+                          </div>
+                          <FormMessage />
+                        </FormItem>
+                      )
+                    }}
                   />
+
                   <div className="flex justify-between">
                     <Button type="button" size="sm" onClick={() => setStep(2)}>
                       Back
