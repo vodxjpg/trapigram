@@ -24,9 +24,9 @@ import {
   IconPackageImport
 } from "@tabler/icons-react";
 
-import { NavOrganizations } from "@/components/nav-organizations";
-import { NavUnified, NavItem } from "@/components/nav-main"; // New unified nav component
-import { NavUser } from "@/components/nav-user";
+import { NavOrganizations } from "@/components/dashboard/nav-organizations";
+import { NavUnified, NavItem } from "@/components/dashboard/nav-main"; // New unified nav component
+import { NavUser } from "@/components/dashboard/nav-user";
 import {
   Sidebar,
   SidebarContent,

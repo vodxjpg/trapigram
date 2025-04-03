@@ -4,7 +4,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
 import { ProfileForm } from "@/components/settings/profile-form"
 import { AccountForm } from "@/components/settings/account-form"
-import { AppearanceForm } from "@/components/settings/appearance-form"
 import { NotificationsForm } from "@/components/settings/notifications-form"
 import { useEffect } from "react"
 
@@ -28,7 +27,6 @@ export default function SettingsClientPage() {
         <TabsList className="grid w-full md:w-auto md:inline-flex grid-cols-2 md:grid-cols-4 gap-2 h-auto">
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="account">Account</TabsTrigger>
-          <TabsTrigger value="appearance">Appearance</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
         </TabsList>
         <div className="mt-6">
@@ -37,9 +35,6 @@ export default function SettingsClientPage() {
           </TabsContent>
           <TabsContent value="account" className="space-y-6">
             <AccountForm />
-          </TabsContent>
-          <TabsContent value="appearance" className="space-y-6">
-            <AppearanceForm />
           </TabsContent>
           <TabsContent value="notifications" className="space-y-6">
             <NotificationsForm />

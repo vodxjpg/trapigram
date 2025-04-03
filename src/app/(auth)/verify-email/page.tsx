@@ -1,5 +1,5 @@
 import { GalleryVerticalEnd } from "lucide-react";
-import { VerifyEmailForm } from "@/components/verify-email-form";
+import { VerifyEmailForm } from "@/components/auth/verify-email-form";
 import Globe from "@/components/Globe";
 
 export default function VerifyEmailPage() {

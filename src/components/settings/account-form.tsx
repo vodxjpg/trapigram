@@ -126,31 +126,6 @@ export function AccountForm() {
           </Form>
         </CardContent>
       </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Two-Factor Authentication</CardTitle>
-          <CardDescription>
-            Add an extra layer of security to your account by enabling two-factor authentication.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <div className="font-medium">Two-factor authentication</div>
-              <div className="text-sm text-muted-foreground">
-                Protect your account with an additional security layer.
-              </div>
-            </div>
-            <Switch
-              checked={twoFactorEnabled}
-              onCheckedChange={handleTwoFactorToggle}
-              aria-label="Toggle two-factor authentication"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
       <Card>
         <CardHeader>
           <CardTitle>Delete Account</CardTitle>

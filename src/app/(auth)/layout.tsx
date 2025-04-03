@@ -3,7 +3,7 @@ import { GoogleAnalytics } from '@next/third-parties/google';
 import { Source_Sans_3, Manrope } from "next/font/google";
 
 import Header from "@/components/Header";
-import FooterDashboard from "@/components/FooterDashboard";
+import FooterDashboard from "@/components/dashboard/FooterDashboard";
 import { siteDetails } from '@/data/siteDetails';
 import { Toaster } from 'react-hot-toast';
 import "@/app/globals.css";

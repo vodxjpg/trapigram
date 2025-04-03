@@ -1,12 +1,16 @@
-import type { Metadata } from "next"
+"use client";
+import { useEffect } from "react";
+import { useHeaderTitle } from "@/context/HeaderTitleContext"; // Component to set the page title in the dashbaoard header
 import SettingsClientPage from "./SettingsClientPage"
 
-export const metadata: Metadata = {
-  title: "Settings",
-  description: "Manage your account settings and preferences.",
-}
 
 export default function SettingsPage() {
+  const { setHeaderTitle } = useHeaderTitle();
+
+  useEffect(() => {
+    setHeaderTitle("Settings"); // Set the header title for this page
+  }, [setHeaderTitle]);
+
   return <SettingsClientPage />
 }
 

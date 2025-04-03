@@ -1,5 +1,5 @@
 import { GalleryVerticalEnd } from "lucide-react"
-import { LoginForm } from "@/components/login-form"
+import { LoginForm } from "@/components/auth/login-form"
 import Globe from "@/components/Globe"
 
 export default function LoginPage() {
