@@ -12,7 +12,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { useState } from "react"
 import { Upload } from "lucide-react"
+import { authClient } from "@/lib/auth-client"
 
+const { data: session, error } = await authClient.getSession()
 const profileFormSchema = z.object({
   username: z
     .string()
@@ -40,11 +42,12 @@ const profileFormSchema = z.object({
 type ProfileFormValues = z.infer<typeof profileFormSchema>
 
 const defaultValues: Partial<ProfileFormValues> = {
-  username: "John doe",
-  email: "john.doe@example.com",
+  username: session?.user.name,
+  email: session?.user.email,
 }
 
 export function ProfileForm() {
+  const [placeholderEmail] = useState(session?.user.email);
   const [isLoading, setIsLoading] = useState(false)
 
   const form = useForm<ProfileFormValues>({
