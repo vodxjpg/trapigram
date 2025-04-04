@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import bcrypt from 'bcrypt';
-import { auth } from '@/lib/auth';
+import { auth } from "@/lib/auth";
+import { headers } from 'next/headers';
 
 // Define the expected JSON structure from the request
 interface ChangePasswordRequest {
@@ -25,9 +25,14 @@ interface ChangePasswordRequest {
  * 6. Returns a success or error message.
  */
 export async function POST(request: NextRequest) {
+
+  const session = await auth.api.getSession({
+    headers: await headers() // you need to pass the headers object.
+  })  
+  const email = session?.user.email
   try {
     const body: ChangePasswordRequest = await request.json();
-    body.email ="klamard0@proton.me"
+    body.email = email;
 
     // Validate required fields
     if (!body.currentPassword || !body.newPassword || !body.confirmPassword) {
@@ -40,7 +45,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Retrieve the user by email from the "user" table
-    console.log(body.email)
     const user = await db
       .selectFrom('user')
       .select(['id'])
@@ -62,7 +66,6 @@ export async function POST(request: NextRequest) {
     }
 
     const ctx = await auth.$context
-    console.log(account.password)
     //Verify the provided current password against the stored hashed password
     const isPasswordValid = await ctx.password.verify({password: body.currentPassword, hash: account.password})
     if (!isPasswordValid) {
@@ -73,7 +76,7 @@ export async function POST(request: NextRequest) {
     const hash = await ctx.password.hash(body.newPassword);
 
    await ctx.internalAdapter.updatePassword(user.id, hash)
-   
+
     return NextResponse.json({ success: true, message: 'Password updated successfully' });
   } catch (error) {
     console.error('Error in change password endpoint:', error);
