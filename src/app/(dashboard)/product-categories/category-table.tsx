@@ -20,8 +20,20 @@ import {
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CategoryDrawer } from "./category-drawer"
 import { getInitials } from "@/lib/utils"
@@ -35,10 +47,12 @@ type Category = {
   image: string | null
   order: number
   parentId: string | null
-  _count: {
-    products: number
+  // Make _count optional and provide a fallback for products:
+  _count?: {
+    products?: number
   }
-  children: Category[]
+  // Make children optional, fallback to an empty array:
+  children?: Category[]
 }
 
 export function CategoryTable() {
@@ -59,14 +73,25 @@ export function CategoryTable() {
   const fetchCategories = async () => {
     setLoading(true)
     try {
-      const response = await fetch(`/api/product-categories?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`)
+      const response = await fetch(
+        `/api/product-categories?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
+      )
 
       if (!response.ok) {
         throw new Error("Failed to fetch categories")
       }
 
       const data = await response.json()
-      setCategories(data.categories)
+      // Provide defaults if _count or children are missing:
+      const safeCategories = data.categories.map((cat: Category) => ({
+        ...cat,
+        _count: {
+          products: cat._count?.products ?? 0,
+        },
+        children: cat.children ?? [],
+      }))
+
+      setCategories(safeCategories)
       setTotalPages(data.totalPages)
       setCurrentPage(data.currentPage)
     } catch (error) {
@@ -79,6 +104,7 @@ export function CategoryTable() {
 
   useEffect(() => {
     fetchCategories()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, searchQuery])
 
   // Handle search
@@ -101,9 +127,14 @@ export function CategoryTable() {
   // Sort categories
   const sortedCategories = [...categories].sort((a, b) => {
     if (sortColumn === "name") {
-      return sortDirection === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
+      return sortDirection === "asc"
+        ? a.name.localeCompare(b.name)
+        : b.name.localeCompare(a.name)
     } else if (sortColumn === "products") {
-      return sortDirection === "asc" ? a._count.products - b._count.products : b._count.products - a._count.products
+      // Safely access the product count
+      const aProd = a._count?.products ?? 0
+      const bProd = b._count?.products ?? 0
+      return sortDirection === "asc" ? aProd - bProd : bProd - aProd
     }
     return 0
   })
@@ -224,10 +255,12 @@ export function CategoryTable() {
                   <TableCell className="font-medium">{category.name}</TableCell>
                   <TableCell>{category.slug}</TableCell>
                   <TableCell>
-                    <Badge variant="outline">{category._count.products}</Badge>
+                    {/* Fallback to 0 if _count or products is undefined */}
+                    <Badge variant="outline">{category._count?.products ?? 0}</Badge>
                   </TableCell>
                   <TableCell>
-                    {category.children.length > 0 && (
+                    {/* Fallback to empty array if children is undefined */}
+                    {category.children && category.children.length > 0 && (
                       <Badge variant="secondary" className="flex items-center gap-1">
                         <Layers className="h-3 w-3" />
                         {category.children.length} subcategories
@@ -291,7 +324,12 @@ export function CategoryTable() {
             </Select>
           </div>
           <div className="flex items-center space-x-2">
-            <Button variant="outline" size="icon" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+            >
               <ChevronsLeft className="h-4 w-4" />
               <span className="sr-only">First page</span>
             </Button>
@@ -330,4 +368,3 @@ export function CategoryTable() {
     </div>
   )
 }
-
