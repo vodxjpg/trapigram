@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react";
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
@@ -8,10 +9,10 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from "@/components/ui/input"
 import { toast } from "react-hot-toast"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Switch } from "@/components/ui/switch"
 import { useState } from "react"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import zxcvbn from "zxcvbn";
 
 const passwordFormSchema = z
   .object({
@@ -46,22 +47,67 @@ export function AccountForm() {
     mode: "onChange",
   })
 
-  function onSubmit(data: PasswordFormValues) {
+  const [passwordStrength, setPasswordStrength] = React.useState(0);
+
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newPassword = e.target.value;
+      form.setValue("newPassword", newPassword);
+      if (newPassword) {
+        const evaluation = zxcvbn(newPassword);
+        setPasswordStrength(evaluation.score);
+      } else {
+        setPasswordStrength(0);
+      }
+    };
+
+  const getStrengthLabel = (score: number) => {
+    switch (score) {
+      case 0: return "Very Weak";
+      case 1: return "Weak";
+      case 2: return "Fair";
+      case 3: return "Strong";
+      case 4: return "Very Strong";
+      default: return "";
+    }
+  };
+
+  // The onSubmit function now makes a POST request to the API endpoint.
+  async function onSubmit(data: PasswordFormValues) {
     setIsLoading(true)
 
-    // Simulate API call
-    setTimeout(() => {
-      toast.success("Password updated successfully!")
-      setIsLoading(false)
-      form.reset()
-      console.log(data)
-    }, 1000)
+    try {
+      // Make a POST request to the /api/auth/change-password/ endpoint.
+      const response = await fetch('/api/auth/change-password/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        // Send the form data as a JSON string.
+        body: JSON.stringify(data)
+      })
+
+      // Parse the response data.
+      const result = await response.json()
+
+      // Check for a successful response.
+      if (response.ok) {
+        toast.success(result.message || 'Password updated successfully!')
+        form.reset()
+      } else {
+        // Display an error message if something went wrong.
+        toast.error(result.error || 'Error updating password')
+      }
+    } catch (error) {
+      console.error('Error updating password:', error)
+      toast.error('Something went wrong. Please try again later.')
+    }
+
+    setIsLoading(false)
   }
 
   function handleTwoFactorToggle() {
     setTwoFactorEnabled(!twoFactorEnabled)
-
-    // Simulate API call
+    // Simulate API call for two-factor toggling
     toast.success(`Two-factor authentication ${!twoFactorEnabled ? "enabled" : "disabled"}`)
   }
 
@@ -96,7 +142,7 @@ export function AccountForm() {
                     <FormItem>
                       <FormLabel>New Password</FormLabel>
                       <FormControl>
-                        <Input type="password" placeholder="••••••••" {...field} />
+                        <Input type="password" placeholder="••••••••" {...field} onChange={handlePasswordChange}/>
                       </FormControl>
                       <FormDescription>Password must be at least 8 characters long.</FormDescription>
                       <FormMessage />
@@ -113,6 +159,11 @@ export function AccountForm() {
                         <Input type="password" placeholder="••••••••" {...field} />
                       </FormControl>
                       <FormMessage />
+                      {field.value && (
+                    <p className="text-sm mt-1">
+                      Strength: <strong>{getStrengthLabel(passwordStrength)}</strong>
+                    </p>
+                  )}
                     </FormItem>
                   )}
                 />
@@ -136,8 +187,7 @@ export function AccountForm() {
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Warning</AlertTitle>
             <AlertDescription>
-              This action cannot be undone. This will permanently delete your account and remove your data from our
-              servers.
+              This action cannot be undone. This will permanently delete your account and remove your data from our servers.
             </AlertDescription>
           </Alert>
           <Button variant="destructive">Delete Account</Button>
@@ -146,4 +196,3 @@ export function AccountForm() {
     </div>
   )
 }
-
