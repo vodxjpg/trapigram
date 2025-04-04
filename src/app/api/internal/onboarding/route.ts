@@ -24,12 +24,14 @@ export async function POST(req: NextRequest) {
     const user = session.user;
     const { onboardingCompleted } = await req.json();
 
-    // Validate input
-    if (typeof onboardingCompleted !== "number" || onboardingCompleted < 0 || onboardingCompleted > 5) {
+    // Allow -1 (completed), 0 (not started), or 1-5 (steps)
+    if (
+      typeof onboardingCompleted !== "number" ||
+      (onboardingCompleted !== -1 && (onboardingCompleted < 0 || onboardingCompleted > 5))
+    ) {
       return NextResponse.json({ error: "Invalid onboarding step" }, { status: 400 });
     }
 
-    // Check tenant
     const { rows: tenants } = await pool.query(
       `SELECT id FROM tenant WHERE "ownerUserId" = $1`,
       [user.id]
@@ -38,7 +40,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No tenant found" }, { status: 404 });
     }
 
-    // Update tenant
     await pool.query(
       `UPDATE tenant SET "onboardingCompleted" = $1, "updatedAt" = NOW() WHERE "ownerUserId" = $2`,
       [onboardingCompleted, user.id]

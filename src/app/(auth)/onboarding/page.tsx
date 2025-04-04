@@ -11,8 +11,10 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form"
+import { Switch } from "@/components/ui/switch"
 import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
+
 import countriesLib from "i18n-iso-countries"
 import enLocale from "i18n-iso-countries/langs/en.json"
 import { getCountries } from "libphonenumber-js"
@@ -22,16 +24,14 @@ import {
   IconBrandTelegram,
   IconBrandWhatsapp,
   IconMessageCircle
-} from "@tabler/icons-react";
-//-----------------------------------
-// EXACTLY as you had it:
+} from "@tabler/icons-react"
+
 countriesLib.registerLocale(enLocale)
 const allCountries = getCountries().map((code) => ({
   code,
   name: countriesLib.getName(code, "en") || code,
 }))
 
-// (1) Same Step 1 -> 5 form interfaces
 interface Step1Form {
   orgName: string
   orgSlug: string
@@ -43,7 +43,7 @@ interface Step2Form {
 }
 interface Step3Form {
   apiKey: string
-  platform: string // "telegram" or "whatsapp" or "signal"
+  platform: string
 }
 interface Step4Form {
   supportEmail: string
@@ -53,12 +53,10 @@ interface Step5Form {
 }
 
 export default function OnboardingPage() {
-  // We start at step=1
-  const [step, setStep] = useState<number>(1)
+  const [step, setStep] = useState<number | null>(null)
   const [orgId, setOrgId] = useState<string | null>(null)
   const totalSteps = 5
 
-  // (2) same forms...
   const step1Form = useForm<Step1Form>({
     defaultValues: { orgName: "", orgSlug: "", countries: [] },
   })
@@ -66,8 +64,52 @@ export default function OnboardingPage() {
   const step3Form = useForm<Step3Form>({ defaultValues: { apiKey: "", platform: "telegram" }})
   const step4Form = useForm<Step4Form>({ defaultValues: { supportEmail: "" } })
   const step5Form = useForm<Step5Form>({ defaultValues: { secretPhrase: "" } })
+  
+  const [showSecret, setShowSecret] = useState<boolean>(false)
+  const ENC_KEY = process.env.NEXT_PUBLIC_ENCRYPTION_KEY || "DEFAULT_ENC_KEY"
+  const ENC_IV  = process.env.NEXT_PUBLIC_ENCRYPTION_IV || "DEFAULT_ENC_IV"
 
-  // (3) Helper to update step in DB (no changes, same as your code)
+  function encryptSecret(plainText: string): string {
+    const saltPrefix = `${ENC_KEY}::${ENC_IV}`
+    return btoa(`${saltPrefix}::${plainText}`)
+  }
+
+  function generateSecurePhrase() {
+    const rand = crypto.getRandomValues(new Uint8Array(16))
+    return btoa(String.fromCharCode(...rand))
+  }
+
+  const [useGlobalSwitch, setUseGlobalSwitch] = useState<boolean>(true)
+  const [countryEmails, setCountryEmails] = useState<Record<string, string>>({})
+
+  // Fetch current step on page load
+  useEffect(() => {
+    async function fetchOnboardingStatus() {
+      try {
+        const resp = await fetch("/api/internal/onboarding/status", {
+          method: "GET",
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+          },
+        });
+        if (!resp.ok) {
+          throw new Error("Failed to fetch onboarding status");
+        }
+        const { currentStep } = await resp.json();
+        if (currentStep > 5 || currentStep === -1) { // Check for completion
+          window.location.href = "/select-organization";
+        } else {
+          setStep(currentStep || 1); // Only set step if in progress
+        }
+      } catch (err) {
+        console.error("Failed to fetch onboarding status:", err);
+        toast.error("Failed to load onboarding status");
+        setStep(1); // Fallback
+      }
+    }
+    fetchOnboardingStatus();
+  }, []);
+
   const updateStep = async (newStep: number) => {
     try {
       const response = await fetch("/api/internal/onboarding", {
@@ -90,33 +132,20 @@ export default function OnboardingPage() {
     }
   }
 
-  // (4) Step 1: we directly call the default Better Auth endpoint 
-  //            by using authClient.organization.create(...) 
-  //            passing metadata: { countries } 
   const onStep1Submit = async (data: Step1Form) => {
     try {
-      // This calls /api/auth/organization/create under the hood
-      // No custom route
       const { data: org, error } = await authClient.organization.create({
         name: data.orgName,
         slug: data.orgSlug,
         metadata: {
-          // We attach the countries array here
           countries: data.countries,
         },
       })
-
-      // If the plugin returns error
       if (error) {
         toast.error(`Failed to create organization: ${error.message}`)
         return
       }
-
-      // The returned org typically won't show your custom 'countries' in the response,
-      // but that's normal. We'll get org.id, name, slug, etc.
       setOrgId(org.id || null)
-
-      // Move to step=2
       await updateStep(2)
       toast.success("Organization created successfully!")
     } catch (err) {
@@ -125,7 +154,6 @@ export default function OnboardingPage() {
     }
   }
 
-  // (5) Step 2: create warehouse (unchanged, no lines omitted)
   const onStep2Submit = async (data: Step2Form) => {
     try {
       if (!orgId) {
@@ -148,7 +176,6 @@ export default function OnboardingPage() {
         const e = await resp.json()
         throw new Error(e.error || "Failed to create warehouse")
       }
-      // success => step 3
       await updateStep(3)
       toast.success("Warehouse created successfully!")
     } catch (err) {
@@ -157,16 +184,12 @@ export default function OnboardingPage() {
     }
   }
 
-  // (6) Step 3, 4, 5 are the same as your code, no lines removed or omitted
   const onStep3Submit = async (data: Step3Form) => {
     try {
       if (!orgId) {
         toast.error("No organization ID found!")
         return
       }
-
-      // We only allow "telegram" for now.
-      // We'll POST to /api/internal/platform-keys with { orgId, platform, apiKey }
       const resp = await fetch("/api/internal/platform-keys", {
         method: "POST",
         headers: {
@@ -175,7 +198,7 @@ export default function OnboardingPage() {
         },
         body: JSON.stringify({
           organizationId: orgId,
-          platform: data.platform,  // e.g. "telegram"
+          platform: data.platform,
           apiKey: data.apiKey
         })
       })
@@ -183,8 +206,6 @@ export default function OnboardingPage() {
         const e = await resp.json()
         throw new Error(e.error || "Failed to save API key")
       }
-
-      // success => step 4
       await updateStep(4)
       toast.success("API key step completed!")
     } catch (err) {
@@ -195,34 +216,102 @@ export default function OnboardingPage() {
 
   const onStep4Submit = async (data: Step4Form) => {
     try {
+      if (!orgId) {
+        toast.error("No organization ID found!")
+        return
+      }
+      const orgCountries = step1Form.getValues("countries") || []
+  
+      if (useGlobalSwitch) {
+        const resp = await fetch("/api/internal/support-emails", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+          },
+          body: JSON.stringify({
+            organizationId: orgId,
+            email: data.supportEmail,
+            country: null, // Global email
+            isGlobal: true, // Explicitly set isGlobal
+          }),
+        });
+        if (!resp.ok) {
+          const e = await resp.json();
+          throw new Error(e.error || "Failed to save support email");
+        }
+        toast.success(`Using SINGLE (global) email: ${data.supportEmail}`);
+      } else {
+        for (const c of orgCountries) {
+          const cEmail = countryEmails[c];
+          if (!cEmail) continue;
+          const resp = await fetch("/api/internal/support-emails", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+            },
+            body: JSON.stringify({
+              organizationId: orgId,
+              email: cEmail,
+              country: c,
+              isGlobal: false, // Explicitly set isGlobal
+            }),
+          });
+          if (!resp.ok) {
+            const e = await resp.json();
+            throw new Error(e.error || `Failed to save email for ${c}`);
+          }
+          toast.success(`Email for ${c}: ${cEmail}`);
+        }
+      }
+  
       await updateStep(5)
       toast.success("Support email step completed!")
     } catch (err) {
       console.error(err)
-      toast.error("Failed step4")
+      toast.error("Failed to complete support email step")
     }
   }
 
-  const onStep5Submit = async (data: Step5Form) => {
+  async function onStep5PlainSubmit(data: Step5Form) {
     try {
-      await updateStep(5)
-      toast.success("Onboarding completed!")
-      window.location.href = "/dashboard"
+      if (!orgId) {
+        toast.error("No organization ID found!");
+        return;
+      }
+      const resp = await fetch("/api/internal/secret-phrase", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+        },
+        body: JSON.stringify({
+          organizationId: orgId,
+          secretPhrase: data.secretPhrase,
+        }),
+      });
+      if (!resp.ok) {
+        const e = await resp.json();
+        throw new Error(e.error || "Failed to store secret phrase");
+      }
+  
+      // Set onboardingCompleted to -1 to mark completion
+      await updateStep(-1);
+      toast.success("Onboarding completed with server-side encryption!");
+      window.location.href = "/select-organization";
     } catch (err) {
-      toast.error("Failed step5")
-      console.error(err)
+      console.error("Failed step5 encryption:", err);
+      toast.error("Failed to store secret phrase");
     }
   }
 
-  // (7) Slug checking with direct route 
-  //     "checkSlugDirect" is the same as your code 
   const [slugCheckTimer, setSlugCheckTimer] = useState<NodeJS.Timeout | null>(null)
   const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null)
   const watchOrgName = step1Form.watch("orgName")
   const watchOrgSlug = step1Form.watch("orgSlug")
 
   useEffect(() => {
-    // auto-generate slug from orgName
     const autoSlug = watchOrgName.toLowerCase().replace(/\s+/g, "-")
     step1Form.setValue("orgSlug", autoSlug)
     if (slugCheckTimer) clearTimeout(slugCheckTimer)
@@ -231,7 +320,6 @@ export default function OnboardingPage() {
       checkSlugDirect(autoSlug)
     }, 500)
     setSlugCheckTimer(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchOrgName])
 
   useEffect(() => {
@@ -244,7 +332,6 @@ export default function OnboardingPage() {
       checkSlugDirect(watchOrgSlug)
     }, 500)
     setSlugCheckTimer(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchOrgSlug])
 
   async function checkSlugDirect(slug: string) {
@@ -278,7 +365,6 @@ export default function OnboardingPage() {
     }
   }
 
-  // (8) The multi-select for org countries
   const [countrySearch, setCountrySearch] = useState("")
   const filteredCountries = allCountries.filter(
     (c) =>
@@ -297,30 +383,34 @@ export default function OnboardingPage() {
     step1Form.setValue("countries", current.filter((c) => c !== code))
   }
 
-  // (9) If invalid step (same code, not omitted)
+  if (step === null) {
+    return (
+      <div className="flex items-center justify-center min-h-screen p-4">
+        <div className="w-full max-w-md bg-white p-6">
+          <div className="mb-6 text-center m-auto">
+            <h1 className="text-lg font-semibold">Loading...</h1>
+            <p className="text-sm text-muted-foreground">Checking your onboarding status</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  // Error state check
   if (step < 1 || step > totalSteps) {
     return (
       <div className="flex items-center justify-center min-h-screen p-4">
         <div className="w-full max-w-md bg-white p-6">
-          <div className="mb-6">
-            <h1 className="text-lg font-semibold">Error</h1>
-            <p className="text-sm text-muted-foreground">Something went wrong</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Invalid onboarding step. Please reset.</p>
-            <Button onClick={() => setStep(1)} className="mt-4">
-              Reset
-            </Button>
+          <div className="mb-6 m-auto text-center">
+            <h1 className="text-lg font-semibold">Loading...</h1>
+            <p className="text-sm text-muted-foreground">Checking your onboarding status</p>
           </div>
         </div>
       </div>
-    )
+    );
   }
 
-  // (10) Return
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4 pt-8 bg-background">
-      {/* Progress Bar */}
       <div className="fixed top-0 left-0 w-full z-50">
         <div className="w-full bg-muted h-2">
           <div
@@ -339,7 +429,6 @@ export default function OnboardingPage() {
             </p>
           </div>
           <div>
-            {/* Step 1 */}
             {step === 1 && (
               <Form {...step1Form}>
                 <form onSubmit={step1Form.handleSubmit(onStep1Submit)} className="space-y-4">
@@ -368,7 +457,6 @@ export default function OnboardingPage() {
                         <FormControl>
                           <Input placeholder="my-org" {...field} />
                         </FormControl>
-                        {/* Slug availability */}
                         {slugAvailable === true && (
                           <p className="text-green-500 text-sm mt-1">✓ Slug is available!</p>
                         )}
@@ -385,7 +473,6 @@ export default function OnboardingPage() {
                     )}
                   />
 
-                  {/* Multi-select for countries */}
                   <FormField
                     control={step1Form.control}
                     name="countries"
@@ -454,11 +541,6 @@ export default function OnboardingPage() {
                             )
                           })}
                         </div>
-
-                        {/*
-                          Original <Select> code is here, commented out
-                          (No lines removed)
-                        */}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -481,7 +563,6 @@ export default function OnboardingPage() {
               </Form>
             )}
 
-            {/* Step 2 */}
             {step === 2 && (
               <Form {...step2Form}>
                 <form onSubmit={step2Form.handleSubmit(onStep2Submit)} className="space-y-4">
@@ -500,7 +581,6 @@ export default function OnboardingPage() {
                     )}
                   />
 
-                  {/* Multi-select for warehouse countries */}
                   <FormField
                     control={step2Form.control}
                     name="countries"
@@ -604,14 +684,10 @@ export default function OnboardingPage() {
               </Form>
             )}
 
-            {/* Step 3 */}
             {step === 3 && (
               <Form {...step3Form}>
                 <form onSubmit={step3Form.handleSubmit(onStep3Submit)} className="space-y-4">
-
-                  {/* (A) Swatches for telegram, whatsapp, signal */}
                   <div className="flex gap-4 items-center">
-                    {/* Telegram is clickable */}
                     <button
                       type="button"
                       onClick={() => step3Form.setValue("platform", "telegram")}
@@ -624,27 +700,23 @@ export default function OnboardingPage() {
                       <IconBrandTelegram />
                       <span className="text-sm">Telegram</span>
                     </button>
-                    
-                    {/* WhatsApp - disabled */}
+
                     <div className="p-3 border border-gray-300 rounded opacity-50 cursor-not-allowed flex flex-col items-center justify-center">
-                    <IconMessageCircle />
+                      <IconMessageCircle />
                       <span className="text-sm">WhatsApp (coming soon)</span>
                     </div>
 
-                    {/* Signal - disabled */}
                     <div className="p-3 border border-gray-300 rounded opacity-50 cursor-not-allowed flex flex-col items-center justify-center">
                       <IconBrandWhatsapp />
                       <span className="text-sm">Signal (coming soon)</span>
                     </div>
                   </div>
 
-                  {/* (B) The input field for the API key with an eye icon to toggle visibility */}
                   <FormField
                     control={step3Form.control}
                     name="apiKey"
                     rules={{ required: "API key is required" }}
                     render={({ field }) => {
-                      // local state to toggle eye
                       const [showKey, setShowKey] = useState(false)
                       return (
                         <FormItem>
@@ -657,7 +729,6 @@ export default function OnboardingPage() {
                                 {...field}
                               />
                             </FormControl>
-                            {/* Eye icon button */}
                             <button
                               type="button"
                               onClick={() => setShowKey(!showKey)}
@@ -684,24 +755,58 @@ export default function OnboardingPage() {
               </Form>
             )}
 
-            {/* Step 4 */}
             {step === 4 && (
               <Form {...step4Form}>
                 <form onSubmit={step4Form.handleSubmit(onStep4Submit)} className="space-y-4">
-                  <FormField
-                    control={step4Form.control}
-                    name="supportEmail"
-                    rules={{ required: "Support email is required" }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Support Email</FormLabel>
-                        <FormControl>
-                          <Input placeholder="support@myorg.com" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  <div className="flex items-center justify-between">
+                    <FormLabel className="mb-0">Use One Email for All Countries?</FormLabel>
+                    <Switch
+                      checked={useGlobalSwitch}
+                      onCheckedChange={(val) => setUseGlobalSwitch(val)}
+                    />
+                  </div>
+
+                  {useGlobalSwitch ? (
+                    <FormField
+                      control={step4Form.control}
+                      name="supportEmail"
+                      rules={{ required: "Support email is required if global is on" }}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Support Email (Global)</FormLabel>
+                          <FormControl>
+                            <Input placeholder="support@myorg.com" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  ) : (
+                    <>
+                      <p className="text-sm text-muted-foreground">
+                        Add a different support email for each country:
+                      </p>
+                      {step1Form.watch("countries").map((code) => {
+                        return (
+                          <div key={code} className="flex items-center gap-2">
+                            <ReactCountryFlag countryCode={code} svg />
+                            <span className="w-12 text-sm">{code}</span>
+                            <Input
+                              placeholder={`support@${code.toLowerCase()}.com`}
+                              value={countryEmails[code] || ""}
+                              onChange={(e) =>
+                                setCountryEmails({
+                                  ...countryEmails,
+                                  [code]: e.target.value
+                                })
+                              }
+                            />
+                          </div>
+                        )
+                      })}
+                    </>
+                  )}
+
                   <div className="flex justify-between">
                     <Button type="button" size="sm" onClick={() => setStep(3)}>
                       Back
@@ -714,10 +819,9 @@ export default function OnboardingPage() {
               </Form>
             )}
 
-            {/* Step 5 */}
             {step === 5 && (
               <Form {...step5Form}>
-                <form onSubmit={step5Form.handleSubmit(onStep5Submit)} className="space-y-4">
+                <form onSubmit={step5Form.handleSubmit(onStep5PlainSubmit)} className="space-y-4">
                   <FormField
                     control={step5Form.control}
                     name="secretPhrase"
@@ -725,9 +829,31 @@ export default function OnboardingPage() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Secret Phrase</FormLabel>
-                        <FormControl>
-                          <Input type="password" placeholder="Some secret" {...field} />
-                        </FormControl>
+                        <div className="relative mb-2">
+                          <FormControl>
+                            <Input
+                              type={showSecret ? "text" : "password"}
+                              placeholder="Some secret"
+                              {...field}
+                            />
+                          </FormControl>
+                          <button
+                            type="button"
+                            onClick={() => setShowSecret(!showSecret)}
+                            className="absolute right-2 top-2 text-sm text-gray-500"
+                          >
+                            {showSecret ? "Hide" : "Show"}
+                          </button>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="flex m-auto"
+                          onClick={() => field.onChange(generateSecurePhrase())}
+                        >
+                          Generate Secure Phrase
+                        </Button>
                         <FormMessage />
                       </FormItem>
                     )}

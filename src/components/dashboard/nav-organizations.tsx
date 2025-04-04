@@ -1,7 +1,10 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { IconCirclePlus, IconDotsVertical } from "@tabler/icons-react";
+import { authClient } from "@/lib/auth-client";
+import { toast } from "sonner";
 
 import {
   Avatar,
@@ -26,9 +29,9 @@ import {
 
 /** A single organization with an id, name, and optional avatar URL */
 type Organization = {
-  id: number;
+  id: string;
   name: string;
-  avatar?: string;
+  avatar?: string | null;
 };
 
 /** Utility function to extract up to two initials from an organization name. */
@@ -43,18 +46,91 @@ function getOrganizationInitials(name: string) {
   return initials;
 }
 
-export function NavOrganizations({ organizations }: { organizations: Organization[] }) {
+export function NavOrganizations() {
   const { isMobile } = useSidebar();
+  const router = useRouter();
 
-  // Store the "current" or "active" organization in state
-  const [currentOrganization, setCurrentOrganization] = React.useState<Organization | null>(
-    organizations.length > 0 ? organizations[0] : null
-  );
+  const [currentOrganization, setCurrentOrganization] = React.useState<Organization | null>(null);
+  const [organizations, setOrganizations] = React.useState<Organization[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  // Fetch organizations and sync active organization on mount
+  React.useEffect(() => {
+    async function fetchAndSyncOrganizations() {
+      try {
+        const { data: orgList, error: listError } = await authClient.organization.list();
+        if (listError) throw new Error(listError.message);
+        setOrganizations(
+          orgList.map((org) => ({
+            id: org.id,
+            name: org.name,
+            avatar: org.logo,
+          }))
+        );
+
+        const { data: activeOrg, error: activeError } = await authClient.organization.getFullOrganization();
+        if (activeError) throw new Error(activeError.message);
+        if (activeOrg) {
+          setCurrentOrganization({
+            id: activeOrg.id,
+            name: activeOrg.name,
+            avatar: activeOrg.logo,
+          });
+        } else if (orgList.length > 0) {
+          setCurrentOrganization({
+            id: orgList[0].id,
+            name: orgList[0].name,
+            avatar: orgList[0].logo,
+          });
+        }
+      } catch (err) {
+        console.error("Error fetching organizations:", err);
+        toast.error("Failed to load organizations.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchAndSyncOrganizations();
+  }, []);
 
   // Handle switching organizations from the dropdown
-  function handleSelectOrganization(org: Organization) {
-    setCurrentOrganization(org);
-    // Additional logic here if needed (e.g. navigation, API call, etc.)
+  async function handleSelectOrganization(org: Organization) {
+    try {
+      await authClient.organization.setActive({ organizationId: org.id });
+      setCurrentOrganization(org);
+      toast.success(`Switched to ${org.name}`);
+      window.location.reload();
+    } catch (err) {
+      console.error("Error setting active organization:", err);
+      toast.error("Failed to switch organization.");
+    }
+  }
+
+  // Handle "Add organization" click
+  function handleAddOrganization() {
+    router.push("/organizations");
+  }
+
+  // Filter out the active organization from the dropdown list
+  const filteredOrganizations = organizations.filter(
+    (org) => org.id !== currentOrganization?.id
+  );
+
+  if (loading) {
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton size="lg" disabled>
+            <Avatar className="h-8 w-8 rounded-lg grayscale">
+              <AvatarFallback className="rounded-lg">??</AvatarFallback>
+            </Avatar>
+            <div className="grid flex-1 text-left text-sm leading-tight">
+              <span className="truncate font-medium">Loading...</span>
+            </div>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
   }
 
   return (
@@ -66,7 +142,6 @@ export function NavOrganizations({ organizations }: { organizations: Organizatio
               size="lg"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              {/* Avatar for the current organization */}
               <Avatar className="h-8 w-8 rounded-lg grayscale">
                 <AvatarImage
                   src={currentOrganization?.avatar ?? ""}
@@ -76,50 +151,44 @@ export function NavOrganizations({ organizations }: { organizations: Organizatio
                   {currentOrganization ? getOrganizationInitials(currentOrganization.name) : "??"}
                 </AvatarFallback>
               </Avatar>
-
-              {/* Current organization name */}
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">
                   {currentOrganization?.name ?? "No Organization"}
                 </span>
               </div>
-
-              {/* Dots icon on the right */}
               <IconDotsVertical className="ml-auto size-4" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
-
-          {/* The dropdown itself */}
           <DropdownMenuContent
             className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
             side={isMobile ? "bottom" : "right"}
             align="end"
             sideOffset={4}
           >
-            {/* Organizations Section */}
             <DropdownMenuGroup>
-              <DropdownMenuLabel>Organizations</DropdownMenuLabel>
-              {organizations.map((org) => (
-                <DropdownMenuItem
-                  key={org.id}
-                  onClick={() => handleSelectOrganization(org)}
-                >
-                  {/* Organization avatar in the dropdown */}
-                  <Avatar className="mr-2 h-6 w-6 rounded-lg grayscale">
-                    <AvatarImage src={org.avatar ?? ""} alt={org.name} />
-                    <AvatarFallback className="rounded-lg">
-                      {getOrganizationInitials(org.name)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span>{org.name}</span>
-                  {/* Show the ID on the right */}
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    #{org.id}
-                  </span>
+              <DropdownMenuLabel>Switch Organization</DropdownMenuLabel>
+              {filteredOrganizations.length === 0 ? (
+                <DropdownMenuItem disabled>
+                  <span className="text-muted-foreground">No other organizations</span>
                 </DropdownMenuItem>
-              ))}
+              ) : (
+                filteredOrganizations.map((org) => (
+                  <DropdownMenuItem
+                    key={org.id}
+                    onClick={() => handleSelectOrganization(org)}
+                  >
+                    <Avatar className="mr-2 h-6 w-6 rounded-lg grayscale">
+                      <AvatarImage src={org.avatar ?? ""} alt={org.name} />
+                      <AvatarFallback className="rounded-lg">
+                        {getOrganizationInitials(org.name)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span>{org.name}</span>
+                  </DropdownMenuItem>
+                ))
+              )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={handleAddOrganization}>
                 <IconCirclePlus className="mr-2 size-4" />
                 <span>Add organization</span>
               </DropdownMenuItem>

@@ -1,4 +1,5 @@
 // /home/zodx/Desktop/trapigram/src/lib/db.ts
+
 import { Kysely, PostgresDialect } from "kysely";
 import { Pool } from "pg";
 
@@ -51,15 +52,14 @@ interface DB {
     updatedAt: Date | null;
   };
 
-
   // Better auth Organization Plugin Tables
   organization: {
     id: string;
     name: string;
     slug: string;
-    logo: string | null; // Nullable as per Better Auth docs
-    metadata: string | null; // Nullable JSON string
-    countries: string; // Added custom field, JSON string of country codes (TEXT)
+    logo: string | null;
+    metadata: string | null;
+    countries: string; // JSON array of country codes
     createdAt: Date;
     updatedAt: Date;
   };
@@ -67,7 +67,7 @@ interface DB {
     id: string;
     userId: string;
     organizationId: string;
-    role: string; // e.g., "owner", "admin", "member"
+    role: string; 
     createdAt: Date;
   };
   invitation: {
@@ -75,8 +75,8 @@ interface DB {
     email: string;
     inviterId: string;
     organizationId: string;
-    role: string; // e.g., "owner", "admin", "member"
-    status: string; // e.g., "pending", "accepted", "rejected"
+    role: string; 
+    status: string; 
     expiresAt: Date;
     createdAt: Date;
   };
@@ -90,7 +90,7 @@ interface DB {
 
   // Custom Tables
   tenant: {
-    id: string; // TEXT in PostgreSQL
+    id: string; 
     ownerUserId: string;
     createdAt: Date;
     updatedAt: Date;
@@ -109,18 +109,28 @@ interface DB {
   warehouse: {
     id: string;
     tenantId: string;
-    organizationId: string; // references "organization"
+    organizationId: string; 
     name: string;
-    countries: string; // JSON string of country codes (TEXT in PostgreSQL)
-    createdAt: Date; // Changed to Date to match TIMESTAMP
-    updatedAt: Date; // Changed to Date to match TIMESTAMP
+    countries: string; // JSON array
+    createdAt: Date;
+    updatedAt: Date;
   };
 
   organizationPlatformKey: {
     id: string;
+    organizationId: string;
+    platform: string;      
+    apiKey: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  organizationSupportEmail: {
+    id: string;
     organizationId: string; // references "organization"
-    platform: string;       // "telegram", "whatsapp", or "signal"
-    apiKey: string;         // the actual secret key
+    country: string | null; // e.g. "ES", "IT", or null if global
+    isGlobal: boolean;      // if true, this row applies to all org countries
+    email: string;
     createdAt: Date;
     updatedAt: Date;
   };

@@ -1,4 +1,3 @@
-// /home/zodx/Desktop/trapigram/src/app/api/auth/check-status/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { Pool } from "pg";
@@ -10,7 +9,7 @@ const pool = new Pool({
 export async function GET(req: NextRequest) {
   try {
     const session = await auth.api.getSession({ headers: req.headers });
-    console.log("Session data:", session); // Debug log
+    console.log("Session data:", session);
 
     if (!session) {
       console.log("No session, redirecting to /login");
@@ -18,7 +17,7 @@ export async function GET(req: NextRequest) {
     }
 
     const user = session.user;
-    console.log("User:", user); // Debug log
+    console.log("User:", user);
 
     if (user.is_guest) {
       console.log("User is guest, redirecting to /dashboard");
@@ -30,7 +29,7 @@ export async function GET(req: NextRequest) {
        WHERE "userId" = $1 AND (status = 'trialing' OR status = 'active')`,
       [user.id]
     );
-    console.log("Subscriptions:", subscriptions); // Debug log
+    console.log("Subscriptions:", subscriptions);
 
     const now = new Date();
     const hasValidSubscription = subscriptions.some((sub) => {
@@ -42,7 +41,7 @@ export async function GET(req: NextRequest) {
         (periodEnd ? periodEnd > now : true)
       );
     });
-    console.log("Has valid subscription:", hasValidSubscription); // Debug log
+    console.log("Has valid subscription:", hasValidSubscription);
 
     if (!hasValidSubscription) {
       console.log("No valid subscription, redirecting to /subscribe");
@@ -54,7 +53,7 @@ export async function GET(req: NextRequest) {
        WHERE "ownerUserId" = $1`,
       [user.id]
     );
-    console.log("Tenants:", tenants); // Debug log
+    console.log("Tenants:", tenants);
 
     const hasTenant = tenants.length > 0;
     if (!hasTenant) {
@@ -62,12 +61,21 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ redirect: "/subscribe" });
     }
 
-    const onboardingCompleted = tenants[0].onboardingCompleted === 1;
-    console.log("Onboarding completed:", onboardingCompleted); // Debug log
+    const onboardingCompleted = tenants[0].onboardingCompleted === -1;
+    console.log("Onboarding completed:", onboardingCompleted);
 
     if (!onboardingCompleted) {
       console.log("Onboarding not completed, redirecting to /onboarding");
       return NextResponse.json({ redirect: "/onboarding" });
+    }
+
+    // Check if the session has an active organization
+    const hasActiveOrganization = !!session.session.activeOrganizationId;
+    console.log("Has active organization:", hasActiveOrganization);
+
+    if (!hasActiveOrganization) {
+      console.log("No active organization, redirecting to /select-organization");
+      return NextResponse.json({ redirect: "/select-organization" });
     }
 
     console.log("All checks passed, redirecting to /dashboard");
