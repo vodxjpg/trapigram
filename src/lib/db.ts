@@ -136,7 +136,7 @@ interface DB {
   };
 
 
-  productCategories: {
+  product_categories: {
     id: string; // UUID stored as a string in TypeScript
     name: string;
     slug: string;
@@ -148,7 +148,7 @@ interface DB {
     updatedAt: Date;
   };
 
-  productCategory: {
+  product_category: {
     productId: string;
     categoryId: string;
   };

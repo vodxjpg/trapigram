@@ -3,6 +3,7 @@ import { z } from "zod"
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { slugify } from "@/lib/utils"
+import { v4 as uuidv4 } from "uuid";
 
 // Schema for category validation
 const categorySchema = z.object({
@@ -11,7 +12,7 @@ const categorySchema = z.object({
   image: z.string().nullable().optional(),
   order: z.number().default(0),
   parentId: z.number().nullable().optional(),
-  organizationId: z.number(),
+  organizationId: z.string(),
 })
 
 export async function GET(req: NextRequest) {
@@ -22,49 +23,46 @@ export async function GET(req: NextRequest) {
     const pageSize = Number.parseInt(searchParams.get("pageSize") || "10")
     const skip = (page - 1) * pageSize
 
-    const session = await auth()
+    // COMMENTED OUT the old way:
+    // const session = await auth()
+    // if (!session?.user) {
+    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    // }
+
+    // We get the session from better-auth the same way you do in check-slug:
+    const session = await auth.api.getSession({ headers: req.headers })
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const organizationId = session.user.activeOrganizationId
+    // *** IMPORTANT FIX HERE:
+    // Was: const organizationId = session.user.activeOrganizationId
+    // Now: The logs show the activeOrganizationId is on session.session
+    const organizationId = session.session.activeOrganizationId
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 })
     }
 
-    // Get categories with product count
-    const categories = await db.productCategory.findMany({
-      where: {
-        organizationId,
-        name: {
-          contains: search,
-          mode: "insensitive",
-        },
-      },
-      include: {
-        _count: {
-          select: {
-            products: true,
-          },
-        },
-        children: true,
-      },
-      orderBy: {
-        order: "asc",
-      },
-      skip,
-      take: pageSize,
-    })
+    // Get categories with product count (Kysely code):
+    //   If your actual column is "organizationId" in Postgres, use that exactly.
+    const categories = await db
+      .selectFrom("product_categories")
+      .selectAll()
+      .where("organizationId", "=", organizationId)
+      .where("name", "ilike", `%${search}%`) // case-insensitive
+      .orderBy("order", "asc")
+      .offset(skip)
+      .limit(pageSize)
+      .execute()
 
-    const totalCategories = await db.productCategory.count({
-      where: {
-        organizationId,
-        name: {
-          contains: search,
-          mode: "insensitive",
-        },
-      },
-    })
+    // Get total row count
+    const totalRow = await db
+      .selectFrom("product_categories")
+      .select(db.fn.countAll().as("count"))
+      .where("organizationId", "=", organizationId)
+      .where("name", "ilike", `%${search}%`)
+      .executeTakeFirst()
+    const totalCategories = Number(totalRow?.count ?? 0)
 
     return NextResponse.json({
       categories,
@@ -79,12 +77,21 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await auth()
+    // COMMENTED OUT the old way:
+    // const session = await auth()
+    // if (!session?.user) {
+    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    // }
+
+    const session = await auth.api.getSession({ headers: req.headers })
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const organizationId = session.user.activeOrganizationId
+    // *** IMPORTANT FIX:
+    // Was: const organizationId = session.user.activeOrganizationId
+    // Now: session.session.activeOrganizationId
+    const organizationId = session.session.activeOrganizationId
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 })
     }
@@ -98,24 +105,32 @@ export async function POST(req: NextRequest) {
     // Generate slug if not provided
     const slug = validatedData.slug || slugify(validatedData.name)
 
-    // Check if slug exists for this organization
-    const existingCategory = await db.productCategory.findFirst({
-      where: {
-        organizationId,
-        slug,
-      },
-    })
+    // Check if slug exists
+    const existingCategory = await db
+      .selectFrom("product_categories")
+      .selectAll()
+      .where("organizationId", "=", organizationId)
+      .where("slug", "=", slug)
+      .executeTakeFirst()
 
     if (existingCategory) {
       return NextResponse.json({ error: "Slug already exists" }, { status: 400 })
     }
 
-    const category = await db.productCategory.create({
-      data: {
-        ...validatedData,
+    // Insert new category
+    const [category] = await db
+      .insertInto("product_categories")
+      .values({
+        id: uuidv4(),
+        name: validatedData.name,
         slug,
-      },
-    })
+        image: validatedData.image ?? null,
+        order: validatedData.order ?? 0,
+        parentId: validatedData.parentId ?? null,
+        organizationId,
+      })
+      .returningAll()
+      .execute()
 
     return NextResponse.json(category)
   } catch (error) {
@@ -126,4 +141,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Failed to create category" }, { status: 500 })
   }
 }
-

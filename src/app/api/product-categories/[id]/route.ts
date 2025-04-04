@@ -17,31 +17,25 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   try {
     const id = Number.parseInt(params.id)
 
-    const session = await auth()
+    // Was: const session = await auth()
+    // Now:
+    const session = await auth.api.getSession({ headers: req.headers })
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const organizationId = session.user.activeOrganizationId
+    // *** Key fix: session.session.activeOrganizationId
+    const organizationId = session.session.activeOrganizationId
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 })
     }
 
-    const category = await db.productCategory.findFirst({
-      where: {
-        id,
-        organizationId,
-      },
-      include: {
-        _count: {
-          select: {
-            products: true,
-          },
-        },
-        children: true,
-        parent: true,
-      },
-    })
+    const category = await db
+      .selectFrom("product_categories")
+      .selectAll()
+      .where("id", "=", id)
+      .where("organizationId", "=", organizationId)
+      .executeTakeFirst()
 
     if (!category) {
       return NextResponse.json({ error: "Category not found" }, { status: 404 })
@@ -58,23 +52,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const id = Number.parseInt(params.id)
 
-    const session = await auth()
+    const session = await auth.api.getSession({ headers: req.headers })
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const organizationId = session.user.activeOrganizationId
+    // *** Key fix:
+    const organizationId = session.session.activeOrganizationId
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 })
     }
 
-    // Check if category exists and belongs to the organization
-    const existingCategory = await db.productCategory.findFirst({
-      where: {
-        id,
-        organizationId,
-      },
-    })
+    const existingCategory = await db
+      .selectFrom("product_categories")
+      .selectAll()
+      .where("id", "=", id)
+      .where("organizationId", "=", organizationId)
+      .executeTakeFirst()
 
     if (!existingCategory) {
       return NextResponse.json({ error: "Category not found" }, { status: 404 })
@@ -89,32 +83,32 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       slug = slugify(validatedData.name)
     }
 
-    // Check if slug exists for this organization (excluding current category)
     if (slug) {
-      const slugExists = await db.productCategory.findFirst({
-        where: {
-          organizationId,
-          slug,
-          id: {
-            not: id,
-          },
-        },
-      })
+      const slugExists = await db
+        .selectFrom("product_categories")
+        .selectAll()
+        .where("organizationId", "=", organizationId)
+        .where("slug", "=", slug)
+        .where("id", "!=", id)
+        .executeTakeFirst()
 
       if (slugExists) {
         return NextResponse.json({ error: "Slug already exists" }, { status: 400 })
       }
     }
 
-    const updatedCategory = await db.productCategory.update({
-      where: {
-        id,
-      },
-      data: {
-        ...validatedData,
-        slug,
-      },
-    })
+    const [updatedCategory] = await db
+      .updateTable("product_categories")
+      .set({
+        name: validatedData.name ?? existingCategory.name,
+        slug: slug ?? existingCategory.slug,
+        image: validatedData.image ?? existingCategory.image,
+        order: validatedData.order ?? existingCategory.order,
+        parentId: validatedData.parentId ?? existingCategory.parentId,
+      })
+      .where("id", "=", id)
+      .returningAll()
+      .execute()
 
     return NextResponse.json(updatedCategory)
   } catch (error) {
@@ -130,34 +124,32 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   try {
     const id = Number.parseInt(params.id)
 
-    const session = await auth()
+    const session = await auth.api.getSession({ headers: req.headers })
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const organizationId = session.user.activeOrganizationId
+    // *** Key fix:
+    const organizationId = session.session.activeOrganizationId
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 })
     }
 
-    // Check if category exists and belongs to the organization
-    const existingCategory = await db.productCategory.findFirst({
-      where: {
-        id,
-        organizationId,
-      },
-    })
+    const existingCategory = await db
+      .selectFrom("product_categories")
+      .selectAll()
+      .where("id", "=", id)
+      .where("organizationId", "=", organizationId)
+      .executeTakeFirst()
 
     if (!existingCategory) {
       return NextResponse.json({ error: "Category not found" }, { status: 404 })
     }
 
-    // Delete category
-    await db.productCategory.delete({
-      where: {
-        id,
-      },
-    })
+    await db
+      .deleteFrom("product_categories")
+      .where("id", "=", id)
+      .execute()
 
     return NextResponse.json({ success: true })
   } catch (error) {
@@ -165,4 +157,3 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ error: "Failed to delete category" }, { status: 500 })
   }
 }
-

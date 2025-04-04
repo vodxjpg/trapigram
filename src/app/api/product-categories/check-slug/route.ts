@@ -12,37 +12,33 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Slug is required" }, { status: 400 })
     }
 
-    const session = await auth.api.getSession({ headers: req.headers });
+    const session = await auth.api.getSession({ headers: req.headers })
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Check if the session has an active organization
-    const organizationId = session.session.activeOrganizationId;
-    console.log("Has active organization:", !!organizationId);
+    // *** Keep the same approach you had, referencing session.session.activeOrganizationId
+    const organizationId = session.session.activeOrganizationId
+    console.log("Has active organization:", !!organizationId)
 
     if (!organizationId) {
-      console.log("No active organization, redirecting to /select-organization");
-      return NextResponse.json({ redirect: "/select-organization" });
+      console.log("No active organization, redirecting to /select-organization")
+      return NextResponse.json({ redirect: "/select-organization" })
     }
 
-    // Build whereClause with the active organization ID and slug
-    const whereClause: any = {
-      organizationId,
-      slug,
+    const parsedCategoryId = categoryId ? Number.parseInt(categoryId) : null
+
+    let query = db
+      .selectFrom("product_categories")
+      .selectAll()
+      .where("organizationId", "=", organizationId)
+      .where("slug", "=", slug)
+
+    if (parsedCategoryId) {
+      query = query.where("id", "!=", parsedCategoryId)
     }
 
-    // Exclude current category if editing
-    if (categoryId) {
-      whereClause.id = {
-        not: Number.parseInt(categoryId),
-      }
-    }
-
-    // Use the correct table name from your DB interface: product_categories
-    const existingCategory = await db.productCategories.findFirst({
-      where: whereClause,
-    })
+    const existingCategory = await query.executeTakeFirst()
 
     return NextResponse.json({ exists: !!existingCategory })
   } catch (error) {

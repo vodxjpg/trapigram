@@ -6,12 +6,12 @@ import { v4 as uuidv4 } from "uuid"
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await auth.getSession()
+    const session = await auth.api.getSession({ headers: req.headers })
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const organizationId = session.activeOrganizationId
+    const organizationId = session.user.activeOrganizationId
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 })
     }
