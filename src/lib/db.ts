@@ -134,6 +134,24 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
+
+  productCategories: {
+    id: string; // UUID stored as a string in TypeScript
+    name: string;
+    slug: string;
+    image: string | null;
+    order: number;
+    organizationId: string;
+    parentId: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  productCategory: {
+    productId: string;
+    categoryId: string;
+  };
 }
 
 export const pool = new Pool({
