@@ -78,8 +78,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ redirect: "/select-organization" });
     }
 
-    console.log("All checks passed, redirecting to /dashboard");
-    return NextResponse.json({ redirect: "/dashboard" });
+    // All checks passed—do not force a redirect
+    console.log("All checks passed, no redirect required");
+    return NextResponse.json({ redirect: null });
   } catch (error) {
     console.error("Error in check-status route:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

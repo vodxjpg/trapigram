@@ -1,16 +1,20 @@
-// /home/zodx/Desktop/trapigram/src/middleware.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
 
 export async function middleware(request: NextRequest) {
-  console.log("Middleware triggered for:", request.nextUrl.pathname); // Debug log
+  console.log("Middleware triggered for:", request.nextUrl.pathname);
 
   const sessionCookie = getSessionCookie(request);
-  console.log("Session cookie:", sessionCookie); // Debug log
+  console.log("Session cookie:", sessionCookie);
 
+  // Define public paths and check "/" as an exact match.
   const publicPaths = ["/", "/login", "/sign-up", "/forgot-password", "/verify-email"];
-  const isPublicPath = publicPaths.some((path) => request.nextUrl.pathname.startsWith(path));
-  console.log("Is public path:", isPublicPath); // Debug log
+  const isPublicPath = publicPaths.some((path) =>
+    path === "/" 
+      ? request.nextUrl.pathname === "/" 
+      : request.nextUrl.pathname.startsWith(path)
+  );
+  console.log("Is public path:", isPublicPath);
 
   if (!sessionCookie && !isPublicPath && request.nextUrl.pathname !== "/reset-password") {
     console.log("No session and not public, redirecting to /login");
@@ -37,7 +41,7 @@ export async function middleware(request: NextRequest) {
     { headers: request.headers }
   );
   const checkStatusData = await checkStatusResponse.json();
-  console.log("Check-status response:", checkStatusData); // Debug log
+  console.log("Check-status response:", checkStatusData);
 
   if (!checkStatusResponse.ok) {
     console.error("Check-status failed:", checkStatusData);
@@ -45,14 +49,15 @@ export async function middleware(request: NextRequest) {
   }
 
   const { redirect } = checkStatusData;
-  console.log("Redirect target:", redirect); // Debug log
+  console.log("Redirect target:", redirect);
 
-  if (request.nextUrl.pathname !== redirect) {
+  // Only redirect if redirect is non-null and different from the current path.
+  if (redirect && request.nextUrl.pathname !== redirect) {
     console.log(`Redirecting from ${request.nextUrl.pathname} to ${redirect}`);
     return NextResponse.redirect(new URL(redirect, request.url));
   }
 
-  console.log("Path matches redirect, proceeding");
+  console.log("Path matches redirect or no redirect needed, proceeding");
   return NextResponse.next();
 }
 
