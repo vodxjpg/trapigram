@@ -1,10 +1,20 @@
-import { type NextRequest, NextResponse } from "next/server"
+// /home/zodx/Desktop/trapigram/src/app/api/product-categories/[id]/route.ts
+
+import { NextRequest, NextResponse } from "next/server"
 import { z } from "zod"
+import { Pool } from "pg"
 import { auth } from "@/lib/auth"
-import { db } from "@/lib/db"
 import { slugify } from "@/lib/utils"
 
-// Schema for category validation
+// Initialize database connection (matching internal endpoint style)
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+})
+
+// API key for public endpoints (assuming public; adjust if internal)
+const PUBLIC_API_KEY = process.env.PUBLIC_API_KEY as string
+
+// Schema for category validation (unchanged)
 const categoryUpdateSchema = z.object({
   name: z.string().min(1, "Name is required").optional(),
   slug: z.string().optional(),
@@ -15,60 +25,74 @@ const categoryUpdateSchema = z.object({
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const id = Number.parseInt(params.id)
+    // Check API key for public access
+    const apiKey = req.headers.get("x-api-key")
+    if (apiKey !== PUBLIC_API_KEY) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
+    }
 
-    // Was: const session = await auth()
-    // Now:
+    // Check session
     const session = await auth.api.getSession({ headers: req.headers })
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // *** Key fix: session.session.activeOrganizationId
     const organizationId = session.session.activeOrganizationId
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 })
     }
 
-    const category = await db
-      .selectFrom("product_categories")
-      .selectAll()
-      .where("id", "=", id)
-      .where("organizationId", "=", organizationId)
-      .executeTakeFirst()
+    const id = Number.parseInt(params.id)
+
+    // Query category
+    const queryText = `
+      SELECT * FROM product_categories
+      WHERE "id" = $1 AND "organizationId" = $2
+    `
+    const queryValues = [id, organizationId]
+    const result = await pool.query(queryText, queryValues)
+    const category = result.rows[0]
 
     if (!category) {
       return NextResponse.json({ error: "Category not found" }, { status: 404 })
     }
 
-    return NextResponse.json(category)
+    return NextResponse.json({ category }, { status: 200 })
   } catch (error) {
-    console.error("Error fetching category:", error)
-    return NextResponse.json({ error: "Failed to fetch category" }, { status: 500 })
+    console.error("[GET /api/product-categories/[id]] error:", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const id = Number.parseInt(params.id)
+    // Check API key for public access
+    const apiKey = req.headers.get("x-api-key")
+    if (apiKey !== PUBLIC_API_KEY) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
+    }
 
+    // Check session
     const session = await auth.api.getSession({ headers: req.headers })
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // *** Key fix:
     const organizationId = session.session.activeOrganizationId
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 })
     }
 
-    const existingCategory = await db
-      .selectFrom("product_categories")
-      .selectAll()
-      .where("id", "=", id)
-      .where("organizationId", "=", organizationId)
-      .executeTakeFirst()
+    const id = Number.parseInt(params.id)
+
+    // Check if category exists
+    const existingQuery = `
+      SELECT * FROM product_categories
+      WHERE "id" = $1 AND "organizationId" = $2
+    `
+    const existingValues = [id, organizationId]
+    const existingResult = await pool.query(existingQuery, existingValues)
+    const existingCategory = existingResult.rows[0]
 
     if (!existingCategory) {
       return NextResponse.json({ error: "Category not found" }, { status: 404 })
@@ -83,77 +107,91 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       slug = slugify(validatedData.name)
     }
 
+    // Check if slug exists (if provided)
     if (slug) {
-      const slugExists = await db
-        .selectFrom("product_categories")
-        .selectAll()
-        .where("organizationId", "=", organizationId)
-        .where("slug", "=", slug)
-        .where("id", "!=", id)
-        .executeTakeFirst()
-
-      if (slugExists) {
+      const slugCheckQuery = `
+        SELECT id FROM product_categories
+        WHERE "organizationId" = $1 AND "slug" = $2 AND "id" != $3
+      `
+      const slugCheckValues = [organizationId, slug, id]
+      const slugCheckResult = await pool.query(slugCheckQuery, slugCheckValues)
+      if (slugCheckResult.rows.length > 0) {
         return NextResponse.json({ error: "Slug already exists" }, { status: 400 })
       }
     }
 
-    const [updatedCategory] = await db
-      .updateTable("product_categories")
-      .set({
-        name: validatedData.name ?? existingCategory.name,
-        slug: slug ?? existingCategory.slug,
-        image: validatedData.image ?? existingCategory.image,
-        order: validatedData.order ?? existingCategory.order,
-        parentId: validatedData.parentId ?? existingCategory.parentId,
-      })
-      .where("id", "=", id)
-      .returningAll()
-      .execute()
+    // Update category
+    const updateQuery = `
+      UPDATE product_categories
+      SET "name" = $1, "slug" = $2, "image" = $3, "order" = $4, "parentId" = $5
+      WHERE "id" = $6 AND "organizationId" = $7
+      RETURNING *
+    `
+    const updateValues = [
+      validatedData.name ?? existingCategory.name,
+      slug ?? existingCategory.slug,
+      validatedData.image ?? existingCategory.image,
+      validatedData.order ?? existingCategory.order,
+      validatedData.parentId ?? existingCategory.parentId,
+      id,
+      organizationId,
+    ]
+    const updateResult = await pool.query(updateQuery, updateValues)
+    const updatedCategory = updateResult.rows[0]
 
-    return NextResponse.json(updatedCategory)
+    return NextResponse.json({ category: updatedCategory }, { status: 200 })
   } catch (error) {
+    console.error("[PATCH /api/product-categories/[id]] error:", error)
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 })
     }
-    console.error("Error updating category:", error)
-    return NextResponse.json({ error: "Failed to update category" }, { status: 500 })
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const id = Number.parseInt(params.id)
+    // Check API key for public access
+    const apiKey = req.headers.get("x-api-key")
+    if (apiKey !== PUBLIC_API_KEY) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
+    }
 
+    // Check session
     const session = await auth.api.getSession({ headers: req.headers })
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // *** Key fix:
     const organizationId = session.session.activeOrganizationId
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 })
     }
 
-    const existingCategory = await db
-      .selectFrom("product_categories")
-      .selectAll()
-      .where("id", "=", id)
-      .where("organizationId", "=", organizationId)
-      .executeTakeFirst()
+    const id = Number.parseInt(params.id)
 
-    if (!existingCategory) {
+    // Check if category exists
+    const existingQuery = `
+      SELECT id FROM product_categories
+      WHERE "id" = $1 AND "organizationId" = $2
+    `
+    const existingValues = [id, organizationId]
+    const existingResult = await pool.query(existingQuery, existingValues)
+    if (existingResult.rows.length === 0) {
       return NextResponse.json({ error: "Category not found" }, { status: 404 })
     }
 
-    await db
-      .deleteFrom("product_categories")
-      .where("id", "=", id)
-      .execute()
+    // Delete category
+    const deleteQuery = `
+      DELETE FROM product_categories
+      WHERE "id" = $1 AND "organizationId" = $2
+    `
+    const deleteValues = [id, organizationId]
+    await pool.query(deleteQuery, deleteValues)
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true }, { status: 200 })
   } catch (error) {
-    console.error("Error deleting category:", error)
-    return NextResponse.json({ error: "Failed to delete category" }, { status: 500 })
+    console.error("[DELETE /api/product-categories/[id]] error:", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
