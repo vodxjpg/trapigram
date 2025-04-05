@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
     const { rows: tenants } = await pool.query(
       `SELECT "onboardingCompleted" FROM tenant WHERE "ownerUserId" = $1`,
       [user.id]
-    );
+    );    
     const tenant = tenants[0];
     if (tenant && tenant.onboardingCompleted !== -1) {
       await pool.query(

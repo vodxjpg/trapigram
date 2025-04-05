@@ -45,6 +45,30 @@ export async function POST(req: NextRequest) {
       [onboardingCompleted, user.id]
     );
 
+    console.log(onboardingCompleted === -1)
+
+    if (onboardingCompleted === -1) {
+      const apiKey = await auth.api.createApiKey({
+        body: {
+          name: "My API Key",
+          expiresIn: 60 * 60 * 24 * 365, // 1 year
+          prefix: "my_app",
+          remaining: 100,
+          refillAmount: 100,
+          refillInterval: 60 * 60 * 24 * 7, // 7 days
+          metadata: {
+            tier: "premium",
+          },
+          rateLimitTimeWindow: 1000 * 60 * 60 * 24, // everyday
+          rateLimitMax: 100, // every day, they can use up to 100 requests
+          rateLimitEnabled: true,
+          userId: user.id, // the user id to create the API key for
+        },
+      });
+
+      console.log(apiKey)
+    }
+
     return NextResponse.json({ message: "Onboarding step updated" }, { status: 200 });
   } catch (error) {
     console.error("Error in onboarding:", error);

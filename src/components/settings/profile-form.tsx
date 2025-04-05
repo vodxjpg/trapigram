@@ -1,20 +1,36 @@
-"use client"
+"use client";
 
-import { zodResolver } from "@hookform/resolvers/zod"
-import { useForm } from "react-hook-form"
-import { z } from "zod"
-import { Button } from "@/components/ui/button"
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { toast } from "react-hot-toast"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { useState } from "react"
-import { Upload } from "lucide-react"
-import { authClient } from "@/lib/auth-client"
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { Button } from "@/components/ui/button";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { ApiKeyGenerator } from "@/components/settings/api-key-input";
+import { toast } from "react-hot-toast";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useState } from "react";
+import { Upload } from "lucide-react";
+import { authClient } from "@/lib/auth-client";
 
-const { data: session, error } = await authClient.getSession()
+const { data: session, error } = await authClient.getSession();
 const profileFormSchema = z.object({
   username: z
     .string()
@@ -32,40 +48,46 @@ const profileFormSchema = z.object({
   }),
   urls: z
     .object({
-      website: z.string().url({ message: "Please enter a valid URL." }).or(z.string().length(0)).optional(),
+      website: z
+        .string()
+        .url({ message: "Please enter a valid URL." })
+        .or(z.string().length(0))
+        .optional(),
       instagram: z.string().or(z.string().length(0)).optional(),
       twitter: z.string().or(z.string().length(0)).optional(),
     })
     .optional(),
-})
+});
 
-type ProfileFormValues = z.infer<typeof profileFormSchema>
+type ProfileFormValues = z.infer<typeof profileFormSchema>;
 
 const defaultValues: Partial<ProfileFormValues> = {
   username: session?.user.name,
   email: session?.user.email,
-}
+};
 
 export function ProfileForm() {
-  const [placeholderEmail] = useState(session?.user.email);
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(false);
+  const [apiKey, setApiKey] = useState("");
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileFormSchema),
     defaultValues,
     mode: "onChange",
-  })
+  });
 
   function onSubmit(data: ProfileFormValues) {
-    setIsLoading(true)
+    setIsLoading(true);
 
     // Simulate API call
     setTimeout(() => {
-      toast.success("Profile updated successfully!")
-      setIsLoading(false)
-      console.log(data)
-    }, 1000)
+      toast.success("Profile updated successfully!");
+      setIsLoading(false);
+      console.log(data);
+    }, 1000);
   }
+
+    
 
   return (
     <div className="space-y-6">
@@ -73,7 +95,8 @@ export function ProfileForm() {
         <CardHeader>
           <CardTitle>Profile Information</CardTitle>
           <CardDescription>
-            Update your profile information. This information will be displayed publicly.
+            Update your profile information. This information will be displayed
+            publicly.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -90,7 +113,8 @@ export function ProfileForm() {
                         <Input placeholder="john doe" {...field} />
                       </FormControl>
                       <FormDescription>
-                        Please use your full real name. This is used for invocing.
+                        Please use your full real name. This is used for
+                        invocing.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -103,14 +127,20 @@ export function ProfileForm() {
                     <FormItem>
                       <FormLabel>Email</FormLabel>
                       <FormControl>
-                        <Input disabled={true} placeholder="john.doe@example.com" {...field} />
+                        <Input
+                          disabled={true}
+                          placeholder="john.doe@example.com"
+                          {...field}
+                        />
                       </FormControl>
-                      <FormDescription>You need to contact support to change this. We'll never share your email with anyone else.</FormDescription>
+                      <FormDescription>
+                        You need to contact support to change this. We'll never
+                        share your email with anyone else.
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-
               </div>
               <CardFooter className="px-0 pb-0">
                 <Button type="submit" disabled={isLoading}>
@@ -121,7 +151,23 @@ export function ProfileForm() {
           </Form>
         </CardContent>
       </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>API Configuration</CardTitle>
+          <CardDescription>
+            Enter your API key to connect to the service. Your key will be
+            securely stored.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <ApiKeyGenerator
+            value={apiKey}
+            onChange={setApiKey}
+            label="API Key"
+            placeholder="Your API key"
+          />          
+        </CardContent>
+      </Card>
     </div>
-  )
+  );
 }
-

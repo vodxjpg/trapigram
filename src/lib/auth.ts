@@ -6,6 +6,7 @@ import { organization } from "better-auth/plugins"; // Add organization plugin
 import { db } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
+import { apiKey } from "better-auth/plugins"
 
 // (NEW) We'll also need a direct query for the "afterCreate" hook:
 const pool = new Pool({
@@ -108,6 +109,9 @@ export const auth = betterAuth({
     },
   },
   plugins: [
+    apiKey({
+      enableMetadata: true
+    }),
     subscriptionPlugin(),
     organization({
       /**

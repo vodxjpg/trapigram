@@ -2,6 +2,7 @@
 import { createAuthClient } from "better-auth/react";
 import { organizationClient } from "better-auth/client/plugins"; // Add organization client
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
+import { apiKeyClient } from "better-auth/client/plugins"
 
 // Extend the AuthClient type
 declare module "better-auth/react" {
@@ -29,6 +30,7 @@ declare module "better-auth/react" {
 export const authClient = createAuthClient({
   baseURL: process.env.BETTER_AUTH_URL || "http://localhost:3000/api/auth",
   plugins: [
+    apiKeyClient(),
     organizationClient(),
     subscriptionClientPlugin,
   ],
