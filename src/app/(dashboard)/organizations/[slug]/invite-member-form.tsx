@@ -1,41 +1,44 @@
 // /home/zodx/Desktop/trapigram/src/app/(dashboard)/organizations/[slug]/invite-member-form.tsx
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useForm } from "react-hook-form"
-import { zodResolver } from "@hookform/resolvers/zod"
-import { z } from "zod"
-import { toast } from "sonner"
-import { Loader2, Send } from "lucide-react"
-import { authClient } from "@/lib/auth-client"
-
-import { Button } from "@/components/ui/button"
-import { Form, FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { toast } from "sonner";
+import { Loader2, Send } from "lucide-react";
+import { authClient } from "@/lib/auth-client";
+import { Button } from "@/components/ui/button";
+import { Form, FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
 const formSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
   role: z.string().min(1, "Please select a role"),
 });
 
-type FormValues = z.infer<typeof formSchema>
+type FormValues = z.infer<typeof formSchema>;
 
 interface InviteMemberFormProps {
-  organizationId: string
+  organizationId: string;
+  currentUserRole: string | null;
 }
 
-export function InviteMemberForm({ organizationId }: InviteMemberFormProps) {
+export function InviteMemberForm({ organizationId, currentUserRole }: InviteMemberFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      email: "",
-      role: "",
-    },
+    defaultValues: { email: "", role: "" },
   });
+
+  const getInviteRoles = () => {
+    if (currentUserRole === "owner") return ["owner", "manager", "accountant", "employee"];
+    if (currentUserRole === "manager") return ["manager", "accountant", "employee"];
+    return [];
+  };
 
   const onSubmit = async (values: FormValues) => {
     setIsSubmitting(true);
@@ -88,10 +91,11 @@ export function InviteMemberForm({ organizationId }: InviteMemberFormProps) {
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="owner">Owner</SelectItem>
-                      <SelectItem value="manager">Manager</SelectItem>
-                      <SelectItem value="accountant">Accountant</SelectItem>
-                      <SelectItem value="employee">Employee</SelectItem>
+                      {getInviteRoles().map((role) => (
+                        <SelectItem key={role} value={role}>
+                          {role.charAt(0).toUpperCase() + role.slice(1)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <FormMessage />
@@ -100,8 +104,7 @@ export function InviteMemberForm({ organizationId }: InviteMemberFormProps) {
             />
             <Button type="submit" disabled={isSubmitting} className="w-full sm:w-auto">
               {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              <Send className="mr-2 h-4 w-4" />
-              Send Invite
+              <Send className="mr-2 h-4 w-4" /> Send Invite
             </Button>
           </form>
         </Form>

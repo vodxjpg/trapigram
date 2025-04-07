@@ -7,9 +7,8 @@ const customStatements = {
   organization: ["update", "delete"],
   member: ["create", "update", "delete"],
   invitation: ["create", "cancel"],
-  // Placeholder for Accountant/Employee permissions (to be defined later)
-  financialData: ["read"],
-  projectData: ["read"],
+  financialData: ["read"],  // For Accountant
+  projectData: ["read"],   // For Employee
 } as const;
 
 const ac = createAccessControl(customStatements);
@@ -24,7 +23,7 @@ const owner = ac.newRole({
 
 const manager = ac.newRole({
   organization: ["update"],
-  member: ["create", "update", "delete"], // Can’t delete owner, handled in logic
+  member: ["create", "update", "delete"], // Restrictions handled in UI logic
   invitation: ["create", "cancel"],
   financialData: ["read"],
   projectData: ["read"],

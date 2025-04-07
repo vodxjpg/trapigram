@@ -1,49 +1,67 @@
 // /home/zodx/Desktop/trapigram/src/app/(dashboard)/organizations/[slug]/members-table.tsx
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { MoreVertical, Trash2, UserCircle } from "lucide-react"
-import { toast } from "sonner"
-import { authClient } from "@/lib/auth-client"
-
-import { Button } from "@/components/ui/button"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Badge } from "@/components/ui/badge"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useState, useEffect } from "react";
+import { MoreVertical, Trash2, UserCircle } from "lucide-react";
+import { toast } from "sonner";
+import { authClient } from "@/lib/auth-client";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type Member = {
-  id: string
-  userId: string
-  role: string
-  user: {
-    id: string
-    name: string
-    email: string
-  }
-}
+  id: string;
+  userId: string;
+  role: string;
+  user: { id: string; name: string; email: string };
+};
 
 interface MembersTableProps {
-  organizationId: string
+  organizationId: string;
+  currentUserRole: string | null;
 }
 
-export function MembersTable({ organizationId }: MembersTableProps) {
+export function MembersTable({ organizationId, currentUserRole }: MembersTableProps) {
   const [members, setMembers] = useState<Member[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
 
   const fetchMembers = async () => {
     setLoading(true);
     try {
-      const { data: membersData, error: membersError } = await authClient.organization.getMembers({
-        organizationId,
+      const response = await fetch(`/api/internal/organization/${organizationId}/members`, {
+        credentials: "include", // This sends cookies with the request
+        headers: {
+          "x-internal-secret": "XwObNL2ZSW9CCQJhSsKY90H5RHyhdj3p", // Replace with your actual INTERNAL_API_SECRET from .env
+        },
       });
-      if (membersError) throw new Error(membersError.message);
-      setMembers(membersData);
-
-      const { data: activeMember, error: activeMemberError } = await authClient.organization.getActiveMember();
-      if (activeMemberError) throw new Error(activeMemberError.message);
-      setCurrentUserRole(activeMember.role);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch members: ${response.status} ${response.statusText}`);
+      }
+      const { members } = await response.json();
+      setMembers(members);
+      const { data: session } = await authClient.session.get();
+      if (session?.user?.id) setCurrentUserId(session.user.id);
     } catch (error) {
       console.error("Error fetching members:", error);
       toast.error("Failed to load members");
@@ -56,14 +74,35 @@ export function MembersTable({ organizationId }: MembersTableProps) {
     fetchMembers();
   }, [organizationId]);
 
+  const canChangeRole = (member: Member) => {
+    if (!currentUserRole || !currentUserId) return false;
+    if (currentUserRole === "owner") return member.userId !== currentUserId; // Owner can’t demote themselves
+    if (currentUserRole === "manager") {
+      return member.role !== "owner" && member.userId !== currentUserId; // Manager can’t change Owner or self
+    }
+    return false;
+  };
+
+  const canRemoveMember = (member: Member) => {
+    if (!currentUserRole || !currentUserId) return false;
+    if (currentUserRole === "owner") return member.userId !== currentUserId; // Owner can’t remove self
+    if (currentUserRole === "manager") {
+      return member.role !== "owner" && member.userId !== currentUserId; // Manager can’t remove Owner or self
+    }
+    return false;
+  };
+
+  const getSelectableRoles = () => {
+    if (currentUserRole === "owner") return ["owner", "manager", "accountant", "employee"];
+    if (currentUserRole === "manager") return ["manager", "accountant", "employee"];
+    return [];
+  };
+
   const handleRemoveMember = async (memberId: string, email: string) => {
-    if (!confirm(`Are you sure you want to remove ${email} from this organization?`)) return;
+    if (!confirm(`Are you sure you want to remove ${email}?`)) return;
     try {
-      await authClient.organization.removeMember({
-        memberIdOrEmail: memberId,
-        organizationId,
-      });
-      toast.success(`Member ${email} removed successfully`);
+      await authClient.organization.removeMember({ memberIdOrEmail: memberId, organizationId });
+      toast.success(`Removed ${email}`);
       fetchMembers();
     } catch (error) {
       console.error("Error removing member:", error);
@@ -73,30 +112,19 @@ export function MembersTable({ organizationId }: MembersTableProps) {
 
   const handleRoleChange = async (memberId: string, newRole: string) => {
     try {
-      await authClient.organization.updateMemberRole({
-        memberId,
-        role: newRole,
-      });
-      toast.success("Member role updated successfully");
+      await authClient.organization.updateMemberRole({ memberId, role: newRole });
+      toast.success("Role updated");
       fetchMembers();
     } catch (error) {
-      console.error("Error updating member role:", error);
-      toast.error("Failed to update member role");
+      console.error("Error updating role:", error);
+      toast.error("Failed to update role");
     }
-  };
-
-  const canChangeRole = (memberRole: string) => {
-    if (currentUserRole === "owner") return true;
-    if (currentUserRole === "manager") return memberRole !== "owner" && memberRole !== "manager";
-    return false;
   };
 
   const getRoleBadgeVariant = (role: string) => {
     switch (role) {
       case "owner": return "default";
       case "manager": return "secondary";
-      case "accountant": return "outline";
-      case "employee": return "outline";
       default: return "outline";
     }
   };
@@ -115,15 +143,11 @@ export function MembersTable({ organizationId }: MembersTableProps) {
         <TableBody>
           {loading ? (
             <TableRow>
-              <TableCell colSpan={4} className="h-24 text-center">
-                Loading...
-              </TableCell>
+              <TableCell colSpan={4} className="h-24 text-center">Loading...</TableCell>
             </TableRow>
           ) : members.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={4} className="h-24 text-center">
-                No members found.
-              </TableCell>
+              <TableCell colSpan={4} className="h-24 text-center">No members found.</TableCell>
             </TableRow>
           ) : (
             members.map((member) => (
@@ -136,19 +160,17 @@ export function MembersTable({ organizationId }: MembersTableProps) {
                 </TableCell>
                 <TableCell>{member.user.email}</TableCell>
                 <TableCell>
-                  {canChangeRole(member.role) ? (
-                    <Select
-                      value={member.role}
-                      onValueChange={(value) => handleRoleChange(member.id, value)}
-                    >
+                  {canChangeRole(member) ? (
+                    <Select value={member.role} onValueChange={(value) => handleRoleChange(member.id, value)}>
                       <SelectTrigger className="w-[120px]">
-                        <SelectValue placeholder="Select role" />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="owner">Owner</SelectItem>
-                        <SelectItem value="manager">Manager</SelectItem>
-                        <SelectItem value="accountant">Accountant</SelectItem>
-                        <SelectItem value="employee">Employee</SelectItem>
+                        {getSelectableRoles().map((role) => (
+                          <SelectItem key={role} value={role}>
+                            {role.charAt(0).toUpperCase() + role.slice(1)}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   ) : (
@@ -156,21 +178,19 @@ export function MembersTable({ organizationId }: MembersTableProps) {
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  {member.role !== "owner" && currentUserRole !== "employee" && currentUserRole !== "accountant" && (
+                  {canRemoveMember(member) && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon">
                           <MoreVertical className="h-4 w-4" />
-                          <span className="sr-only">Open menu</span>
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
                           onClick={() => handleRemoveMember(member.id, member.user.email)}
-                          className="text-destructive focus:text-destructive"
+                          className="text-destructive"
                         >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Remove
+                          <Trash2 className="mr-2 h-4 w-4" /> Remove
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
