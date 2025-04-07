@@ -37,7 +37,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <HeaderTitleProvider>
               <SiteHeader />
               <main>{children}</main>
-              <Toaster />
+              <Toaster 
+                position="bottom-right"
+              />
             </HeaderTitleProvider>
             <FooterDashboard />
           </SidebarInset>
