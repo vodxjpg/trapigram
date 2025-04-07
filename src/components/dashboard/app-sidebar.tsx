@@ -48,15 +48,6 @@ const data = {
       title: "Dashboard",
       url: "/dashboard",
       icon: IconDashboard,
-    },    
-    {
-      title: "Clients",
-      url: "/clients",
-      icon: IconUsers,
-      items: [
-        { title: "Add new", url: "/clients" },
-        { title: "View all", url: "/clients/all" },
-      ],
     },
     {
       title: "Products",
