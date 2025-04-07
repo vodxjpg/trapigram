@@ -62,6 +62,22 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
+  clients: {
+    id: string;
+    userId: string | null;
+    organizationId: string;
+    username: string;
+    first_name: string;
+    last_name: string;
+    last_interaction: Date;
+    email: string;
+    phone_number: string; 
+    level_id: string;
+    referred_by: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
   member: {
     id: string;
     userId: string;
