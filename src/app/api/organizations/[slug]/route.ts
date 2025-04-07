@@ -4,9 +4,12 @@ import { pool } from "@/lib/db";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { slug: string } }
+  context: { params: Promise<{ slug: string }> } // Explicitly type params as a Promise
 ) {
   try {
+    // Await params to resolve the slug
+    const { slug } = await context.params;
+
     // Extract API key from headers
     const apiKey = req.headers.get("x-api-key");
     if (!apiKey) {
@@ -26,7 +29,6 @@ export async function GET(
     }
 
     const userId = key.userId;
-    const slug = params.slug;
 
     // Query to fetch organization details if the user is a member
     const { rows: organizations } = await pool.query(

@@ -50,14 +50,15 @@ const data = {
       icon: IconDashboard,
     },
     {
-      title: "Products",
+      title: "Inventory",
       url: "/products",
       icon: IconListDetails,
       items: [
-        { title: "View all", url: "/products" },
-        { title: "Add new", url: "/products/new" },
+        { title: "View products", url: "/products" },
+        { title: "Add new product", url: "/products/new" },
         { title: "Product categories", url: "/product-categories" },
         { title: "Product attributes", url: "/product-attributes" },
+        { title: "Warehouses", url: "/warehouses" },
       ],
     },
     {
@@ -91,8 +92,8 @@ const data = {
       icon: IconBoxMultiple,
     },
     {
-      title: "Team",
-      url: "/organization/idhere",
+      title: "Organizations",
+      url: "/organizations",
       icon: IconUsers,
     },
     {

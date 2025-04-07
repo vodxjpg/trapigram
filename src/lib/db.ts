@@ -59,6 +59,7 @@ interface DB {
     logo: string | null;
     metadata: string | null;
     countries: string; // JSON array of country codes
+    encryptedSecret: string;
     createdAt: Date;
     updatedAt: Date;
   };

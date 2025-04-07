@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
 import { apiKey } from "better-auth/plugins";
+import { ac, owner, manager, accountant, employee } from "@/lib/permissions";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -122,14 +123,20 @@ export const auth = betterAuth({
       rateLimit: {
         enabled: true,
         timeWindow: 1000 * 60 * 60 * 24, // 1 day
-        maxRequests: 100, // 100 requests per day
+        maxRequests: 100,
       },
     }),
     subscriptionPlugin(),
     organization({
+      ac,
+      roles: {
+        owner,
+        manager,
+        accountant,
+        employee,
+      },
       organizationCreation: {
         beforeCreate: async ({ organization, user }, request) => {
-          // Fetch the tenant ID for the user
           const { rows: tenants } = await pool.query(
             `SELECT id FROM tenant WHERE "ownerUserId" = $1`,
             [user.id]
@@ -138,13 +145,11 @@ export const auth = betterAuth({
             throw new Error("No tenant found for user");
           }
           const tenantId = tenants[0].id;
-
-          // Add tenantId to metadata, preserving existing metadata (e.g., countries)
           return {
             data: {
               ...organization,
               metadata: {
-                ...organization.metadata, // Keeps countries if provided
+                ...organization.metadata,
                 tenantId,
               },
             },
@@ -160,7 +165,6 @@ export const auth = betterAuth({
               );
               return;
             }
-
             const updateSql = `
               UPDATE organization
               SET countries = $1
@@ -170,7 +174,6 @@ export const auth = betterAuth({
               JSON.stringify(countriesArr),
               organization.id,
             ]);
-
             console.log(
               "[afterCreate] Stored countries for org:",
               organization.id
@@ -179,7 +182,7 @@ export const auth = betterAuth({
             console.error("[afterCreate] Error storing countries:", err);
           }
         },
-      },  
+      },
       schema: {
         organization: {
           modelName: "organization",
