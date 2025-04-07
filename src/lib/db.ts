@@ -1,5 +1,4 @@
 // /home/zodx/Desktop/trapigram/src/lib/db.ts
-
 import { Kysely, PostgresDialect } from "kysely";
 import { Pool } from "pg";
 
@@ -52,7 +51,7 @@ interface DB {
     updatedAt: Date | null;
   };
 
-  // Better auth Organization Plugin Tables
+  // Better Auth Organization Plugin Tables
   organization: {
     id: string;
     name: string;
@@ -67,7 +66,7 @@ interface DB {
     id: string;
     userId: string;
     organizationId: string;
-    role: string; 
+    role: string;
     createdAt: Date;
   };
   invitation: {
@@ -75,8 +74,8 @@ interface DB {
     email: string;
     inviterId: string;
     organizationId: string;
-    role: string; 
-    status: string; 
+    role: string;
+    status: string;
     expiresAt: Date;
     createdAt: Date;
   };
@@ -90,8 +89,10 @@ interface DB {
 
   // Custom Tables
   tenant: {
-    id: string; 
+    id: string;
     ownerUserId: string;
+    owner_name: string | null; // Added for tenant owner’s name
+    owner_email: string | null; // Added for tenant owner’s email
     createdAt: Date;
     updatedAt: Date;
     onboardingCompleted: number | null;
@@ -109,7 +110,7 @@ interface DB {
   warehouse: {
     id: string;
     tenantId: string;
-    organizationId: string; 
+    organizationId: string;
     name: string;
     countries: string; // JSON array
     createdAt: Date;
@@ -119,7 +120,7 @@ interface DB {
   organizationPlatformKey: {
     id: string;
     organizationId: string;
-    platform: string;      
+    platform: string;
     apiKey: string;
     createdAt: Date;
     updatedAt: Date;
@@ -129,12 +130,11 @@ interface DB {
     id: string;
     organizationId: string; // references "organization"
     country: string | null; // e.g. "ES", "IT", or null if global
-    isGlobal: boolean;      // if true, this row applies to all org countries
+    isGlobal: boolean; // if true, this row applies to all org countries
     email: string;
     createdAt: Date;
     updatedAt: Date;
   };
-
 
   product_categories: {
     id: string; // UUID stored as a string in TypeScript

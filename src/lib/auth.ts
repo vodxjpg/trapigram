@@ -1,14 +1,13 @@
 // /home/zodx/Desktop/trapigram/src/lib/auth.ts
-import { Pool } from "pg";  
+import { Pool } from "pg";
 import { betterAuth } from "better-auth";
 import { nextCookies } from "better-auth/next-js";
-import { organization } from "better-auth/plugins"; // Add organization plugin
+import { organization } from "better-auth/plugins";
 import { db } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
-import { apiKey } from "better-auth/plugins"
+import { apiKey } from "better-auth/plugins";
 
-// (NEW) We'll also need a direct query for the "afterCreate" hook:
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
@@ -87,10 +86,13 @@ export const auth = betterAuth({
           });
         } catch (error) {
           console.error("Error checking email:", error);
-          return new Response(JSON.stringify({ error: "Internal server error" }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ error: "Internal server error" }),
+            {
+              status: 500,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
         }
       },
     },
@@ -114,8 +116,8 @@ export const auth = betterAuth({
       permissions: {
         defaultPermissions: {
           files: ["read"],
-          users: ["read"]
-        }
+          users: ["read"],
+        },
       },
       rateLimit: {
         enabled: true,
@@ -125,29 +127,40 @@ export const auth = betterAuth({
     }),
     subscriptionPlugin(),
     organization({
-      /**
-       * (NEW) The 'afterCreate' hook runs AFTER the org row is inserted
-       * by Better Auth. We'll do a direct DB update to store the "countries"
-       * array that was passed in "metadata.countries".
-       *
-       * If your "beforeCreate" never runs or never updates the DB for some reason,
-       * 'afterCreate' definitely does. We have the final "organization" object
-       * (with ID, etc.).
-       */
       organizationCreation: {
-        async afterCreate({ organization, member, user }, request) {
+        beforeCreate: async ({ organization, user }, request) => {
+          // Fetch the tenant ID for the user
+          const { rows: tenants } = await pool.query(
+            `SELECT id FROM tenant WHERE "ownerUserId" = $1`,
+            [user.id]
+          );
+          if (tenants.length === 0) {
+            throw new Error("No tenant found for user");
+          }
+          const tenantId = tenants[0].id;
+
+          // Add tenantId to metadata, preserving existing metadata (e.g., countries)
+          return {
+            data: {
+              ...organization,
+              metadata: {
+                ...organization.metadata, // Keeps countries if provided
+                tenantId,
+              },
+            },
+          };
+        },
+        afterCreate: async ({ organization, member, user }, request) => {
           try {
-            // If the user provided "metadata.countries" at creation time, 
-            // it should appear in 'organization.metadata'
-            // If not, do nothing.
             const countriesArr = organization.metadata?.countries;
             if (!countriesArr || !Array.isArray(countriesArr)) {
-              console.log("No countries found in metadata for org:", organization.id);
+              console.log(
+                "No countries found in metadata for org:",
+                organization.id
+              );
               return;
             }
 
-            // Do a direct query to update the 'countries' column in 'organization'
-            // This relies on your DB having: organization(countries TEXT)
             const updateSql = `
               UPDATE organization
               SET countries = $1
@@ -158,17 +171,15 @@ export const auth = betterAuth({
               organization.id,
             ]);
 
-            console.log("[afterCreate] Stored countries for org:", organization.id);
+            console.log(
+              "[afterCreate] Stored countries for org:",
+              organization.id
+            );
           } catch (err) {
             console.error("[afterCreate] Error storing countries:", err);
           }
         },
-      },
-
-      /**
-       * Map the 'countries' column if you want the plugin to see it. 
-       * This is optional, but let's keep it consistent:
-       */
+      },  
       schema: {
         organization: {
           modelName: "organization",
