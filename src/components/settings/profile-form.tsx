@@ -68,7 +68,6 @@ const defaultValues: Partial<ProfileFormValues> = {
 
 export function ProfileForm() {
   const [isLoading, setIsLoading] = useState(false);
-  const [apiKey, setApiKey] = useState("");
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileFormSchema),
@@ -149,23 +148,6 @@ export function ProfileForm() {
               </CardFooter>
             </form>
           </Form>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>API Configuration</CardTitle>
-          <CardDescription>
-            Enter your API key to connect to the service. Your key will be
-            securely stored.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <ApiKeyGenerator
-            value={apiKey}
-            onChange={setApiKey}
-            label="API Key"
-            placeholder="Your API key"
-          />          
         </CardContent>
       </Card>
     </div>

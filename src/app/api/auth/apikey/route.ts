@@ -6,20 +6,26 @@ const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
 });
 
+interface ApiKeyRequest {
+    name: string,
+    apikey: string
+  }
+
 export async function POST(req: NextRequest) {
-    console.log("test")
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session?.user) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    try {
+    const body: ApiKeyRequest = await req.json();
+
+   try {
         const apiKey = await auth.api.createApiKey({
             body: {
-              name: "My API Key",
+              name: body.name,
               expiresIn: 60 * 60 * 24 * 365, // 1 year
-              prefix: "my_app",
-              remaining: 100,
+              prefix: "tp_",
+              remaining: null,
               refillAmount: 100,
               refillInterval: 60 * 60 * 24 * 7, // 7 days
               metadata: {
@@ -32,7 +38,32 @@ export async function POST(req: NextRequest) {
             },
           });
 
+          console.log(apiKey)
+
         return NextResponse.json({ apiKey: apiKey.key }, { status: 201 });
+    } catch (err) {
+        return NextResponse.json(
+            { error: "Failed to create API key" },
+            { status: 500 }
+        );
+    }
+}
+
+export async function GET(req: NextRequest) {
+
+    const session = await auth.api.getSession({ headers: req.headers });
+    if (!session?.user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    try {
+        const key = await auth.api.getApiKey({
+            body: {
+                keyId: "bFfX4a7I3iO0YfDb8kDZMbvTnPu2JYxG"
+            }
+        });
+
+        return NextResponse.json({ key }, { status: 201 });
     } catch (err) {
         return NextResponse.json(
             { error: "Failed to create API key" },

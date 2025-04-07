@@ -110,7 +110,18 @@ export const auth = betterAuth({
   },
   plugins: [
     apiKey({
-      enableMetadata: true
+      enableMetadata: true,
+      permissions: {
+        defaultPermissions: {
+          files: ["read"],
+          users: ["read"]
+        }
+      },
+      rateLimit: {
+        enabled: true,
+        timeWindow: 1000 * 60 * 60 * 24, // 1 day
+        maxRequests: 100, // 100 requests per day
+      },
     }),
     subscriptionPlugin(),
     organization({
