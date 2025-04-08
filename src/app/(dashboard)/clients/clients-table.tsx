@@ -52,7 +52,7 @@ type Client = {
   referredBy: string | null;
 };
 
-export function ClientTable() {
+export function ClientTable({ refreshClientTable }: ClientTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [clients, setClients] = useState<Client[]>([]);
@@ -105,7 +105,7 @@ export function ClientTable() {
   useEffect(() => {
     fetchClients();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, searchQuery]);
+  }, [currentPage, pageSize, searchQuery, refreshClientTable]);
 
   // Sorting logic for table columns.
   const handleSort = (column: string) => {
@@ -216,19 +216,19 @@ export function ClientTable() {
         },
         body: JSON.stringify(data),
       });
-
+  
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || "Failed to update client");
       }
-
+  
       toast.success("Client updated successfully");
+  
       // Close the modal
       setDrawerOpen(false);
-      // Reload the current page to show the updated client list.
-      //router.refresh();
-      // Alternatively, you can use:
-      window.location.reload();
+      
+      // Optionally, re-fetch the client list to update the table
+      fetchClients();
     } catch (error: any) {
       toast.error(error.message);
     }

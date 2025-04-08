@@ -47,6 +47,7 @@ const formSchema = z.object({
 
 export default function ClientForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [refreshClientTable, setRefreshClientTable] = useState(0);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -89,6 +90,7 @@ export default function ClientForm() {
 
       // Reset the form upon successful creation
       form.reset();
+      setRefreshClientTable((prev) => prev + 1);
     } catch (error: any) {
       toast({
         title: "Error creating client",
@@ -215,7 +217,7 @@ export default function ClientForm() {
 
       {/* Added spacing above the ClientTable component */}
       <div className="mt-8">
-        <ClientTable />
+        <ClientTable refreshClientTable={refreshClientTable}/>
       </div>
     </div>
   );
