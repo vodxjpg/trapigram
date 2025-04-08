@@ -157,8 +157,8 @@ export default function OnboardingPage() {
   const onStep2Submit = async (data: Step2Form) => {
     try {
       if (!orgId) {
-        toast.error("No organization ID found!")
-        return
+        toast.error("No organization ID found!");
+        return;
       }
       const resp = await fetch("/api/internal/warehouses", {
         method: "POST",
@@ -167,20 +167,20 @@ export default function OnboardingPage() {
           "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
         },
         body: JSON.stringify({
-          organizationId: orgId,
+          organizationIds: [orgId], // Send as array, can expand later
           warehouseName: data.warehouseName,
           countries: data.countries,
         }),
-      })
+      });
       if (!resp.ok) {
-        const e = await resp.json()
-        throw new Error(e.error || "Failed to create warehouse")
+        const e = await resp.json();
+        throw new Error(e.error || "Failed to create warehouse");
       }
-      await updateStep(3)
-      toast.success("Warehouse created successfully!")
+      await updateStep(3);
+      toast.success("Warehouse created successfully!");
     } catch (err) {
-      console.error("Create warehouse error:", err)
-      toast.error("Failed to create warehouse")
+      console.error("Create warehouse error:", err);
+      toast.error("Failed to create warehouse");
     }
   }
 
@@ -423,7 +423,7 @@ export default function OnboardingPage() {
       <div className="w-full max-w-md space-y-6">
         <div className="w-full bg-white">
           <div className="mb-6">
-            <h1 className="text-lg font-semibold">Set Up Your Trapigram Account</h1>
+            <h1 className="text-lg font-semibold">It's time to set your account</h1>
             <p className="text-sm text-muted-foreground">
               Step {step} of {totalSteps}
             </p>
@@ -438,9 +438,10 @@ export default function OnboardingPage() {
                     rules={{ required: "Organization name is required" }}
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Organization Name</FormLabel>
+                        <FormLabel>Shop name</FormLabel>
                         <FormControl>
                           <Input placeholder="e.g., My Org" {...field} />
+                          
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -465,7 +466,7 @@ export default function OnboardingPage() {
                         )}
                         {slugAvailable === null && (
                           <p className="text-gray-400 text-sm mt-1">
-                            Checking slug or no slug entered...
+                            Please enter a slug for your shop.
                           </p>
                         )}
                         <FormMessage />
@@ -505,7 +506,9 @@ export default function OnboardingPage() {
                                 </div>
                               ))}
                             </div>
+                      
                           )}
+                          <p className="text-gray-400 text-sm mt-1 text-center">Select the countries that you are planning to sell to. This can be change later on</p>
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {step1Form.watch("countries").map((code: string) => {
@@ -580,6 +583,9 @@ export default function OnboardingPage() {
                       </FormItem>
                     )}
                   />
+                  <p className="text-gray-400 text-sm mt-1">
+                    Warehouses are to control your product stock, you can add more later on.
+                  </p>
 
                   <FormField
                     control={step2Form.control}
@@ -665,6 +671,9 @@ export default function OnboardingPage() {
                                 </div>
                               )
                             })}
+                            <p className="text-gray-400 text-sm mt-1">
+                              Select to which countries your warehouse is going to serve the stock to.
+                            </p>
                           </div>
                           <FormMessage />
                         </FormItem>
@@ -737,8 +746,12 @@ export default function OnboardingPage() {
                               {showKey ? "Hide" : "Show"}
                             </button>
                           </div>
+                          <p className="text-gray-400 text-sm mt-1">
+                              Please enter your bot API key, you can get this from telegram Bot Father or the relevant part to the other platforms.
+                          </p>
                           <FormMessage />
                         </FormItem>
+                        
                       )
                     }}
                   />
@@ -806,6 +819,9 @@ export default function OnboardingPage() {
                       })}
                     </>
                   )}
+                  <p className="text-gray-400 text-sm mt-1">
+                    Enter an email where users can get back to you with tracking information questions and more.
+                  </p>
 
                   <div className="flex justify-between">
                     <Button type="button" size="sm" onClick={() => setStep(3)}>
@@ -855,7 +871,11 @@ export default function OnboardingPage() {
                           Generate Secure Phrase
                         </Button>
                         <FormMessage />
+                        <p className="text-gray-400 text-sm mt-3 text-center">
+                          Please enter or generate a secured secret phrase, do not forget it since this will be asked for certain actions
+                        </p>
                       </FormItem>
+                      
                     )}
                   />
                   <div className="flex justify-between">

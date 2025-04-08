@@ -50,7 +50,7 @@ const data = {
       icon: IconDashboard,
     },
     {
-      title: "Products",
+      title: "Inventory",
       url: "/products",
       icon: IconListDetails,
       items: [
@@ -58,6 +58,7 @@ const data = {
         { title: "Add new", url: "/products/new" },
         { title: "Product categories", url: "/product-categories" },
         { title: "Product attributes", url: "/product-attributes" },
+        { title: "Warehouses", url: "/warehouses" },
       ],
     },
     {
@@ -99,8 +100,8 @@ const data = {
       icon: IconBoxMultiple,
     },
     {
-      title: "Team",
-      url: "/organization/idhere",
+      title: "Shops",
+      url: "/organizations/",
       icon: IconUsers,
     },
     {

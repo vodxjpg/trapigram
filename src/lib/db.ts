@@ -127,7 +127,7 @@ interface DB {
   warehouse: {
     id: string;
     tenantId: string;
-    organizationId: string;
+    organizationId: string; // JSON array
     name: string;
     countries: string; // JSON array
     createdAt: Date;
