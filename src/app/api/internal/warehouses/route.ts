@@ -1,13 +1,12 @@
-import { NextRequest, NextResponse } from "next/server"
-import { Pool } from "pg"
-import { nanoid } from "nanoid" // or anything for generating IDs
-import { auth } from "@/lib/auth"
+import { NextRequest, NextResponse } from "next/server";
+import { Pool } from "pg";
+import { auth } from "@/lib/auth";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-})
+});
 
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,14 +20,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { organizationIds, warehouseName, countries } = await req.json() as {
-      organizationIds: string[]; // Changed to array
+    const { organizationIds, warehouseName, countries, tenantId } = (await req.json()) as {
+      organizationIds: string[];
       warehouseName: string;
       countries: string[];
+      tenantId: string;
     };
 
     if (!organizationIds || organizationIds.length === 0) {
-      return NextResponse.json({ error: "At least one organizationId is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "At least one organizationId is required" },
+        { status: 400 }
+      );
     }
     if (!warehouseName) {
       return NextResponse.json({ error: "No warehouseName provided" }, { status: 400 });
@@ -36,15 +39,18 @@ export async function POST(req: NextRequest) {
     if (!countries || countries.length === 0) {
       return NextResponse.json({ error: "At least one country is required" }, { status: 400 });
     }
+    if (!tenantId) {
+      return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
+    }
 
-    const warehouseId = nanoid();
-    const organizationIdString = organizationIds.join(","); // Join array into comma-separated string
+    // Note: We no longer generate the ID here with nanoid(); it's handled in the query
+    const organizationIdString = organizationIds.join(","); // Keeping as comma-separated string for now
     const text = `
-      INSERT INTO warehouse("id", "organizationId", "name", "countries", "createdAt", "updatedAt")
-      VALUES($1, $2, $3, $4, NOW(), NOW())
-      RETURNING id, "organizationId", name, countries
+      INSERT INTO warehouse("id", "tenantId", "organizationId", "name", "countries", "createdAt", "updatedAt")
+      VALUES (gen_random_uuid()::text, $1, $2, $3, $4::jsonb, NOW(), NOW())
+      RETURNING id, "tenantId", "organizationId", "name", "countries"
     `;
-    const values = [warehouseId, organizationIdString, warehouseName, JSON.stringify(countries)];
+    const values = [tenantId, organizationIdString, warehouseName, JSON.stringify(countries)];
     const result = await pool.query(text, values);
 
     const createdWarehouse = result.rows[0];

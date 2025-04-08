@@ -1,4 +1,3 @@
-// src/app/(dashboard)/clients/clients-table.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -6,11 +5,34 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Edit, MoreVertical, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
+import ReactCountryFlag from "react-country-flag";
+import countriesLib from "i18n-iso-countries";
+import enLocale from "i18n-iso-countries/langs/en.json";
+
+countriesLib.registerLocale(enLocale);
 
 type Client = {
   id: string;
@@ -19,11 +41,12 @@ type Client = {
   username: string;
   firstName: string;
   lastName: string;
-  last_interaction: string | null;
+  lastInteraction: string | null;
   email: string;
   phoneNumber: string;
-  level_id: string | null;
+  levelId: string | null;
   referredBy: string | null;
+  country: string | null; // New field
   createdAt: string;
   updatedAt: string;
 };
@@ -137,6 +160,7 @@ export function ClientsTable() {
               <TableHead>Name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Phone</TableHead>
+              <TableHead>Country</TableHead> {/* New column */}
               <TableHead>Referred By</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -144,13 +168,13 @@ export function ClientsTable() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
+                <TableCell colSpan={7} className="h-24 text-center">
                   Loading clients...
                 </TableCell>
               </TableRow>
             ) : clients.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
+                <TableCell colSpan={7} className="h-24 text-center">
                   No clients found. Try adjusting your search.
                 </TableCell>
               </TableRow>
@@ -161,6 +185,20 @@ export function ClientsTable() {
                   <TableCell>{`${client.firstName} ${client.lastName}`}</TableCell>
                   <TableCell>{client.email}</TableCell>
                   <TableCell>{client.phoneNumber}</TableCell>
+                  <TableCell>
+                    {client.country ? (
+                      <div className="flex items-center">
+                        <ReactCountryFlag
+                          countryCode={client.country}
+                          svg
+                          style={{ width: "1em", height: "1em", marginRight: "8px" }}
+                        />
+                        {countriesLib.getName(client.country, "en") || client.country}
+                      </div>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
                   <TableCell>{client.referredBy || "-"}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>

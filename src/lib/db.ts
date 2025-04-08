@@ -74,6 +74,7 @@ interface DB {
     lastInteraction: Date;
     email: string;
     phoneNumber: string; 
+    country: string | null
     levelId: string;
     referredBy: string;
     createdAt: Date;

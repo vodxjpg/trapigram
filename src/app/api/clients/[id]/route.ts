@@ -1,4 +1,3 @@
-// src/app/api/clients/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
@@ -17,6 +16,7 @@ const clientUpdateSchema = z.object({
   phoneNumber: z.string().min(1, { message: "Phone number is required." }).optional(),
   referredBy: z.string().optional().nullable(),
   levelId: z.string().optional().nullable(),
+  country: z.string().optional().nullable(), // New field: nullable country code
 });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,24 +25,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   let organizationId: string;
 
   const { searchParams } = new URL(req.url);
-  const explicitOrgId = searchParams.get("organizationId"); // Allow passing organizationId in query
+  const explicitOrgId = searchParams.get("organizationId");
 
   if (apiKey) {
     const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
     if (!valid || !key) {
       return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
     }
-    // For API key usage, require explicit organizationId in query params
     organizationId = explicitOrgId || "";
     if (!organizationId) {
-      return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Organization ID is required in query parameters" },
+        { status: 400 }
+      );
     }
   } else if (internalSecret === INTERNAL_API_SECRET) {
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session) {
       return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
     }
-    // For internal use, fall back to session's activeOrganizationId if not provided
     organizationId = explicitOrgId || session.session.activeOrganizationId;
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params;
     const query = `
-      SELECT id, "userId", "organizationId", username, "firstName", "lastName", "lastInteraction", email, "phoneNumber", "levelId", "referredBy", "createdAt", "updatedAt"
+      SELECT id, "userId", "organizationId", username, "firstName", "lastName", "lastInteraction", email, "phoneNumber", "levelId", "referredBy", country, "createdAt", "updatedAt"
       FROM clients
       WHERE id = $1 AND "organizationId" = $2
     `;
@@ -80,24 +81,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   let organizationId: string;
 
   const { searchParams } = new URL(req.url);
-  const explicitOrgId = searchParams.get("organizationId"); // Allow passing organizationId in query
+  const explicitOrgId = searchParams.get("organizationId");
 
   if (apiKey) {
     const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
     if (!valid || !key) {
       return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
     }
-    // For API key usage, require explicit organizationId in query params
     organizationId = explicitOrgId || "";
     if (!organizationId) {
-      return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Organization ID is required in query parameters" },
+        { status: 400 }
+      );
     }
   } else if (internalSecret === INTERNAL_API_SECRET) {
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session) {
       return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
     }
-    // For internal use, fall back to session's activeOrganizationId if not provided
     organizationId = explicitOrgId || session.session.activeOrganizationId;
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
@@ -159,24 +161,25 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   let organizationId: string;
 
   const { searchParams } = new URL(req.url);
-  const explicitOrgId = searchParams.get("organizationId"); // Allow passing organizationId in query
+  const explicitOrgId = searchParams.get("organizationId");
 
   if (apiKey) {
     const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
     if (!valid || !key) {
       return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
     }
-    // For API key usage, require explicit organizationId in query params
     organizationId = explicitOrgId || "";
     if (!organizationId) {
-      return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Organization ID is required in query parameters" },
+        { status: 400 }
+      );
     }
   } else if (internalSecret === INTERNAL_API_SECRET) {
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session) {
       return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
     }
-    // For internal use, fall back to session's activeOrganizationId if not provided
     organizationId = explicitOrgId || session.session.activeOrganizationId;
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization in session" }, { status: 400 });

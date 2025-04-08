@@ -1,4 +1,3 @@
-// src/app/(dashboard)/clients/client-form.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -7,18 +6,33 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
+import Select from "react-select";
+import ReactCountryFlag from "react-country-flag";
+import countriesLib from "i18n-iso-countries";
+import enLocale from "i18n-iso-countries/langs/en.json";
+
+countriesLib.registerLocale(enLocale);
 
 const formSchema = z.object({
   username: z.string().min(3, { message: "Username must be at least 3 characters." }),
   firstName: z.string().min(1, { message: "First name is required." }),
   lastName: z.string().min(1, { message: "Last name is required." }),
   email: z.string().email({ message: "Please enter a valid email address." }),
-  phoneNumber: z.string().min(1, { message: "Phone number is required." }), // Relaxed validation
+  phoneNumber: z.string().min(1, { message: "Phone number is required." }),
   referredBy: z.string().optional(),
+  country: z.string().optional().nullable(), // New field
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -41,6 +55,7 @@ export function ClientForm({ clientData, isEditing = false }: ClientFormProps) {
       email: "",
       phoneNumber: "",
       referredBy: "",
+      country: null,
     },
   });
 
@@ -53,6 +68,7 @@ export function ClientForm({ clientData, isEditing = false }: ClientFormProps) {
         email: clientData.email,
         phoneNumber: clientData.phoneNumber,
         referredBy: clientData.referredBy || "",
+        country: clientData.country || null,
       });
     }
   }, [clientData, form, isEditing]);
@@ -77,7 +93,6 @@ export function ClientForm({ clientData, isEditing = false }: ClientFormProps) {
         throw new Error(errorData.error || `Failed to ${isEditing ? "update" : "create"} client`);
       }
 
-      const responseData = await response.json();
       toast.success(isEditing ? "Client updated successfully" : "Client created successfully");
       router.push("/clients");
       router.refresh();
@@ -88,6 +103,21 @@ export function ClientForm({ clientData, isEditing = false }: ClientFormProps) {
       setIsSubmitting(false);
     }
   }
+
+  // List of countries (you could fetch this dynamically if needed)
+  const countryOptions = Object.entries(countriesLib.getNames("en")).map(([code, name]) => ({
+    value: code,
+    label: (
+      <div className="flex items-center">
+        <ReactCountryFlag
+          countryCode={code}
+          svg
+          style={{ width: "1em", height: "1em", marginRight: "8px" }}
+        />
+        {name}
+      </div>
+    ),
+  }));
 
   return (
     <Card className="w-full mx-auto">
@@ -162,6 +192,26 @@ export function ClientForm({ clientData, isEditing = false }: ClientFormProps) {
               />
               <FormField
                 control={form.control}
+                name="country"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Country</FormLabel>
+                    <FormControl>
+                      <Select
+                        options={countryOptions}
+                        value={countryOptions.find((option) => option.value === field.value) || null}
+                        onChange={(selected) => field.onChange(selected ? selected.value : null)}
+                        placeholder="Select a country"
+                        isClearable
+                      />
+                    </FormControl>
+                    <FormDescription>Optional: Select the client’s country.</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
                 name="referredBy"
                 render={({ field }) => (
                   <FormItem>
@@ -185,8 +235,8 @@ export function ClientForm({ clientData, isEditing = false }: ClientFormProps) {
                     ? "Updating..."
                     : "Creating..."
                   : isEditing
-                    ? "Update Client"
-                    : "Create Client"}
+                  ? "Update Client"
+                  : "Create Client"}
               </Button>
             </div>
           </form>

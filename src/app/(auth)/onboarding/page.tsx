@@ -55,6 +55,7 @@ interface Step5Form {
 export default function OnboardingPage() {
   const [step, setStep] = useState<number | null>(null)
   const [orgId, setOrgId] = useState<string | null>(null)
+  const [tenantId, setTenantId] = useState<string | null>(null) // Added tenantId state
   const totalSteps = 5
 
   const step1Form = useForm<Step1Form>({
@@ -82,32 +83,46 @@ export default function OnboardingPage() {
   const [useGlobalSwitch, setUseGlobalSwitch] = useState<boolean>(true)
   const [countryEmails, setCountryEmails] = useState<Record<string, string>>({})
 
-  // Fetch current step on page load
+  // Fetch current step and tenantId on page load
   useEffect(() => {
-    async function fetchOnboardingStatus() {
+    async function fetchOnboardingStatusAndTenant() {
       try {
-        const resp = await fetch("/api/internal/onboarding/status", {
+        // Fetch onboarding status
+        const statusResp = await fetch("/api/internal/onboarding/status", {
           method: "GET",
           headers: {
             "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
           },
         });
-        if (!resp.ok) {
+        if (!statusResp.ok) {
           throw new Error("Failed to fetch onboarding status");
         }
-        const { currentStep } = await resp.json();
+        const { currentStep } = await statusResp.json();
         if (currentStep > 5 || currentStep === -1) { // Check for completion
           window.location.href = "/select-organization";
         } else {
           setStep(currentStep || 1); // Only set step if in progress
         }
+
+        // Fetch tenantId
+        const tenantResp = await fetch("/api/internal/tenant", {
+          method: "GET", // Add a GET endpoint or use existing session data
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+          },
+        });
+        if (!tenantResp.ok) {
+          throw new Error("Failed to fetch tenant");
+        }
+        const tenantData = await tenantResp.json();
+        setTenantId(tenantData.tenant.id);
       } catch (err) {
-        console.error("Failed to fetch onboarding status:", err);
-        toast.error("Failed to load onboarding status");
+        console.error("Failed to fetch onboarding status or tenant:", err);
+        toast.error("Failed to load onboarding status or tenant");
         setStep(1); // Fallback
       }
     }
-    fetchOnboardingStatus();
+    fetchOnboardingStatusAndTenant();
   }, []);
 
   const updateStep = async (newStep: number) => {
@@ -160,6 +175,10 @@ export default function OnboardingPage() {
         toast.error("No organization ID found!");
         return;
       }
+      if (!tenantId) {
+        toast.error("No tenant ID found!");
+        return;
+      }
       const resp = await fetch("/api/internal/warehouses", {
         method: "POST",
         headers: {
@@ -170,6 +189,7 @@ export default function OnboardingPage() {
           organizationIds: [orgId], // Send as array, can expand later
           warehouseName: data.warehouseName,
           countries: data.countries,
+          tenantId: tenantId, // Pass tenantId to the API
         }),
       });
       if (!resp.ok) {
