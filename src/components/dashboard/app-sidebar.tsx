@@ -61,6 +61,14 @@ const data = {
       ],
     },
     {
+      title: "Clients",
+      url: "/clients",
+      icon: IconUsers,
+      items: [
+        { title: "Manage", url: "/clients" },
+      ],
+    },
+    {
       title: "Marketing",
       url: "#",
       icon: IconBolt,

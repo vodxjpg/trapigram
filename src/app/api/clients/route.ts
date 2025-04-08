@@ -62,3 +62,70 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: error.message }, { status: 400 });
     }
 }
+
+export async function GET(req: Request) {
+    // Authenticate the request using your auth system.
+    const session = await auth.api.getSession({ headers: req.headers })
+    if (!session?.user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+    const organizationId = session.session.activeOrganizationId
+    if (!organizationId) {
+        return NextResponse.json({ error: "No active organization" }, { status: 400 })
+    }
+
+    // Extract query parameters from the URL.
+    const { searchParams } = new URL(req.url)
+    const page = Number(searchParams.get("page")) || 1
+    const pageSize = Number(searchParams.get("pageSize")) || 10
+    const search = searchParams.get("search") || ""
+
+    // Build the query for counting total clients (for pagination purposes).
+    let countQuery = `
+      SELECT COUNT(*) FROM clients
+      WHERE "organizationId" = $1
+    `
+    const countValues: any[] = [organizationId]
+    if (search) {
+        countQuery += ` AND (username ILIKE $2 OR first_name ILIKE $2 OR last_name ILIKE $2 OR email ILIKE $2)`
+        countValues.push(`%${search}%`)
+    }
+
+    // Build the query to fetch clients data with pagination.
+    let query = `
+      SELECT * FROM clients
+      WHERE "organizationId" = $1
+    `
+    const values: any[] = [organizationId]
+    if (search) {
+        query += ` AND (username ILIKE $2 OR first_name ILIKE $2 OR last_name ILIKE $2 OR email ILIKE $2)`
+        values.push(`%${search}%`)
+    }
+    // Order by creation date descending (adjust as needed).
+    query += ` ORDER BY created_at DESC`
+
+    // Add pagination (LIMIT and OFFSET).
+    const offset = (page - 1) * pageSize
+    query += ` LIMIT $${values.length + 1} OFFSET $${values.length + 2}`
+    values.push(pageSize, offset)
+
+    try {
+        // Execute the count query to determine total number of rows.
+        const countResult = await pool.query(countQuery, countValues)        
+        const totalRows = Number(countResult.rows[0].count)
+        const totalPages = Math.ceil(totalRows / pageSize)        
+
+        // Execute the query to fetch paginated clients.
+        const result = await pool.query(query, values)        
+        const clients = result.rows
+
+        // Return the data along with pagination info.
+        return NextResponse.json({
+            clients,
+            totalPages,
+            currentPage: page,
+        })
+    } catch (error: any) {
+        return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+}

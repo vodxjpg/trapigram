@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { ClientTable } from "./clients-table";
 import {
   Card,
   CardContent,
@@ -212,11 +211,6 @@ export default function ClientForm() {
           </Form>
         </CardContent>
       </Card>
-
-      {/* Added spacing above the ClientTable component */}
-      <div className="mt-8">
-        <ClientTable />
-      </div>
     </div>
   );
 }
