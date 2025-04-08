@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/(dashboard)/organizations/[slug]/members-table.tsx
+// src/app/(dashboard)/organizations/[slug]/members-table.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -37,11 +37,12 @@ type Member = {
 };
 
 interface MembersTableProps {
-  organizationId: string;
+  organizationId: string; // Still needed for authClient calls
+  organizationSlug: string; // New prop for the API call
   currentUserRole: string | null;
 }
 
-export function MembersTable({ organizationId, currentUserRole }: MembersTableProps) {
+export function MembersTable({ organizationId, organizationSlug, currentUserRole }: MembersTableProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -49,10 +50,9 @@ export function MembersTable({ organizationId, currentUserRole }: MembersTablePr
   const fetchMembers = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/internal/organization/${organizationId}/members`, {
-        credentials: "include", // This sends cookies with the request
+      const response = await fetch(`/api/organizations/${organizationSlug}/members`, {
         headers: {
-          "x-internal-secret": "XwObNL2ZSW9CCQJhSsKY90H5RHyhdj3p", // Replace with your actual INTERNAL_API_SECRET from .env
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
         },
       });
       if (!response.ok) {
@@ -72,22 +72,22 @@ export function MembersTable({ organizationId, currentUserRole }: MembersTablePr
 
   useEffect(() => {
     fetchMembers();
-  }, [organizationId]);
+  }, [organizationSlug]);
 
   const canChangeRole = (member: Member) => {
     if (!currentUserRole || !currentUserId) return false;
-    if (currentUserRole === "owner") return member.userId !== currentUserId; // Owner can’t demote themselves
+    if (currentUserRole === "owner") return member.userId !== currentUserId;
     if (currentUserRole === "manager") {
-      return member.role !== "owner" && member.userId !== currentUserId; // Manager can’t change Owner or self
+      return member.role !== "owner" && member.userId !== currentUserId;
     }
     return false;
   };
 
   const canRemoveMember = (member: Member) => {
     if (!currentUserRole || !currentUserId) return false;
-    if (currentUserRole === "owner") return member.userId !== currentUserId; // Owner can’t remove self
+    if (currentUserRole === "owner") return member.userId !== currentUserId;
     if (currentUserRole === "manager") {
-      return member.role !== "owner" && member.userId !== currentUserId; // Manager can’t remove Owner or self
+      return member.role !== "owner" && member.userId !== currentUserId;
     }
     return false;
   };

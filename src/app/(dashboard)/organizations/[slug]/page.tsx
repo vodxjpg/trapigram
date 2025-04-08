@@ -1,46 +1,51 @@
-// /home/zodx/Desktop/trapigram/src/app/(dashboard)/organizations/[slug]/page.tsx
+// src/app/(dashboard)/organizations/[slug]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { MembersTable } from "./members-table";
 import { InvitationsTable } from "./invitations-table";
 import { InviteMemberForm } from "./invite-member-form";
 import { toast } from "sonner";
-import { authClient } from "@/lib/auth-client";
 
 type Organization = {
   id: string;
   name: string;
   slug: string;
   logo?: string | null;
+  countries?: string[] | null;
+  metadata?: Record<string, any> | null;
+  encryptedSecret?: string | null;
+  memberCount: number;
+  userRole: string;
 };
 
 export default function OrganizationDetailsPage() {
   const params = useParams();
   const { setHeaderTitle } = useHeaderTitle();
   const [organization, setOrganization] = useState<Organization | null>(null);
-  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const { data: orgData, error: orgError } = await authClient.organization.getFullOrganization({
-          organizationSlug: params.slug as string,
+        const response = await fetch(`/api/organizations/${params.slug}`, {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+          },
         });
-        if (orgError) throw new Error(orgError.message);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch organization: ${response.statusText}`);
+        }
+        const { organization: orgData } = await response.json();
+        console.log("Fetched organization data:", orgData); // Debug log
         setOrganization(orgData);
         setHeaderTitle(orgData.name);
-
-        const { data: activeMember, error: memberError } = await authClient.organization.getActiveMember();
-        if (memberError) throw new Error(memberError.message);
-        setCurrentUserRole(activeMember.role);
       } catch (error) {
-        console.error("Error:", error);
+        console.error("Error fetching organization:", error);
         toast.error("Failed to load organization details.");
       } finally {
         setLoading(false);
@@ -58,13 +63,15 @@ export default function OrganizationDetailsPage() {
     return <div className="flex items-center justify-center h-full">Organization not found</div>;
   }
 
+  console.log("Rendering with organization:", organization); // Debug log
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <h1 className="text-3xl font-bold tracking-tight">{organization.name}</h1>
       <p className="text-muted-foreground">Manage organization members and invitations.</p>
 
-      {["owner", "manager"].includes(currentUserRole || "") && (
-        <InviteMemberForm organizationId={organization.id} currentUserRole={currentUserRole} />
+      {["owner", "manager"].includes(organization.userRole) && (
+        <InviteMemberForm organizationId={organization.id} currentUserRole={organization.userRole} />
       )}
 
       <Tabs defaultValue="members" className="w-full">
@@ -73,10 +80,18 @@ export default function OrganizationDetailsPage() {
           <TabsTrigger value="invitations">Pending Invitations</TabsTrigger>
         </TabsList>
         <TabsContent value="members" className="mt-4">
-          <MembersTable organizationId={organization.id} currentUserRole={currentUserRole} />
+          <MembersTable
+            organizationId={organization.id}
+            organizationSlug={organization.slug}
+            currentUserRole={organization.userRole}
+          />
         </TabsContent>
         <TabsContent value="invitations" className="mt-4">
-          <InvitationsTable organizationId={organization.id} currentUserRole={currentUserRole} />
+          <InvitationsTable
+            organizationId={organization.id}
+            organizationSlug={organization.slug} // Add this
+            currentUserRole={organization.userRole}
+          />
         </TabsContent>
       </Tabs>
     </div>

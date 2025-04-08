@@ -50,35 +50,35 @@ export function OrganizationTable() {
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 
   const fetchOrganizations = async () => {
-    setLoading(true)
+    setLoading(true);
     try {
-      const response = await fetch("/api/internal/organizations", {
+      const response = await fetch("/api/organizations", {
         headers: {
           "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
         },
-      })
+      });
       if (!response.ok) {
-        throw new Error(`Failed to fetch organizations: ${response.statusText}`)
+        throw new Error(`Failed to fetch organizations: ${response.statusText}`);
       }
-      const { organizations: fetchedOrgs } = await response.json()
-
+      const { organizations: fetchedOrgs } = await response.json();
+  
       const filtered = searchQuery
         ? fetchedOrgs.filter(
             (org: Organization) =>
               org.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
               org.slug.toLowerCase().includes(searchQuery.toLowerCase())
           )
-        : fetchedOrgs
-
-      setOrganizations(filtered)
-      setTotalPages(Math.ceil(filtered.length / pageSize))
+        : fetchedOrgs;
+  
+      setOrganizations(filtered);
+      setTotalPages(Math.ceil(filtered.length / pageSize));
     } catch (error) {
-      console.error("Error fetching organizations:", error)
-      toast.error("Failed to load organizations")
+      console.error("Error fetching organizations:", error);
+      toast.error("Failed to load organizations");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
     fetchOrganizations()

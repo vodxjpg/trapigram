@@ -1,3 +1,4 @@
+// src/app/(dashboard)/organizations/[slug]/invitations-table.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -26,32 +27,36 @@ type Invitation = {
   email: string;
   role: string;
   status: "pending" | "accepted" | "rejected" | "canceled";
-  expiresAt: string; // Changed from createdAt to expiresAt
+  expiresAt: string;
 };
 
 interface InvitationsTableProps {
-  organizationId: string;
+  organizationId: string; // Still needed for authClient calls
+  organizationSlug: string; // New prop for API call
   currentUserRole: string | null;
 }
 
-export function InvitationsTable({ organizationId, currentUserRole }: InvitationsTableProps) {
+export function InvitationsTable({ organizationId, organizationSlug, currentUserRole }: InvitationsTableProps) {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchInvitations = async () => {
+    if (!organizationSlug) {
+      console.log("Skipping fetch: organizationSlug is undefined");
+      return;
+    }
     setLoading(true);
     try {
-      const response = await fetch(`/api/internal/organization/${organizationId}/invitations`, {
-        credentials: "include", // Sends cookies with the request
+      const response = await fetch(`/api/organizations/${organizationSlug}/invitations`, {
         headers: {
-          "x-internal-secret": "XwObNL2ZSW9CCQJhSsKY90H5RHyhdj3p", // Replace with your actual INTERNAL_API_SECRET from .env
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
         },
       });
       if (!response.ok) {
         throw new Error(`Failed to fetch invitations: ${response.status} ${response.statusText}`);
       }
       const { invitations } = await response.json();
-      setInvitations(invitations); // Already filtered to pending in the API
+      setInvitations(invitations);
     } catch (error) {
       console.error("Error fetching invitations:", error);
       toast.error("Failed to load invitations");
@@ -62,13 +67,13 @@ export function InvitationsTable({ organizationId, currentUserRole }: Invitation
 
   useEffect(() => {
     fetchInvitations();
-  }, [organizationId]);
+  }, [organizationSlug]);
 
   const canCancel = (inv: Invitation) => {
     if (!currentUserRole) return false;
     if (currentUserRole === "owner") return true;
     if (currentUserRole === "manager") {
-      return inv.role !== "owner"; // Manager can’t cancel Owner invitations
+      return inv.role !== "owner";
     }
     return false;
   };
@@ -76,9 +81,7 @@ export function InvitationsTable({ organizationId, currentUserRole }: Invitation
   const handleCancelInvitation = async (invitationId: string, email: string) => {
     if (!confirm(`Are you sure you want to cancel the invitation to ${email}?`)) return;
     try {
-      await authClient.organization.cancelInvitation({
-        invitationId,
-      });
+      await authClient.organization.cancelInvitation({ invitationId });
       toast.success(`Invitation to ${email} canceled`);
       fetchInvitations();
     } catch (error) {
@@ -89,11 +92,11 @@ export function InvitationsTable({ organizationId, currentUserRole }: Invitation
 
   const formatDate = (dateString: string) => {
     if (!dateString || typeof dateString !== "string") {
-      return "Invalid Date"; // Fallback for invalid input
+      return "Invalid Date";
     }
     const date = new Date(dateString);
     if (isNaN(date.getTime())) {
-      return "Invalid Date"; // Fallback for unparsable dates
+      return "Invalid Date";
     }
     return new Intl.DateTimeFormat("en-US", {
       month: "short",
@@ -109,7 +112,7 @@ export function InvitationsTable({ organizationId, currentUserRole }: Invitation
           <TableRow>
             <TableHead>Email</TableHead>
             <TableHead>Role</TableHead>
-            <TableHead>Expires</TableHead> {/* Changed from "Sent" to "Expires" */}
+            <TableHead>Expires</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -140,7 +143,7 @@ export function InvitationsTable({ organizationId, currentUserRole }: Invitation
                     {invitation.role.charAt(0).toUpperCase() + invitation.role.slice(1)}
                   </Badge>
                 </TableCell>
-                <TableCell>{formatDate(invitation.expiresAt)}</TableCell> {/* Changed to expiresAt */}
+                <TableCell>{formatDate(invitation.expiresAt)}</TableCell>
                 <TableCell className="text-right">
                   {canCancel(invitation) && (
                     <DropdownMenu>
