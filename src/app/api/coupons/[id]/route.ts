@@ -40,7 +40,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         if (!valid || !key) {
             return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
         }
-        organizationId = explicitOrgId || "";
+        const session = await auth.api.getSession({ headers: req.headers });
+        organizationId = session?.session.activeOrganizationId || "";
         if (!organizationId) {
             return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
         }

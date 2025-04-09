@@ -40,8 +40,7 @@ const couponSchema = z.object({
 // -------------------------------------------------------------------
 export async function GET(req: NextRequest) {
     const apiKey = req.headers.get("x-api-key");
-    //const internalSecret = req.headers.get("x-internal-secret");
-    const internalSecret = "XwObNL2ZSW9CCQJhSsKY90H5RHyhdj3p"
+    const internalSecret = req.headers.get("x-internal-secret");
     let organizationId: string;
 
     // Extract query parameters from the request URL.
@@ -55,7 +54,8 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
         }
         // For API key usage, organizationId must be provided via query parameters.
-        organizationId = explicitOrgId || "";
+        const session = await auth.api.getSession({ headers: req.headers });
+        organizationId = session?.session.activeOrganizationId || "";
         if (!organizationId) {
             return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
         }
