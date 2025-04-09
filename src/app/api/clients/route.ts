@@ -1,4 +1,3 @@
-// src/app/api/clients/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
@@ -17,6 +16,7 @@ const clientSchema = z.object({
   email: z.string().email({ message: "Please enter a valid email address." }),
   phoneNumber: z.string().min(1, { message: "Phone number is required." }),
   referredBy: z.string().optional(),
+  country: z.string().optional().nullable(), // New field: nullable country code
 });
 
 export async function GET(req: NextRequest) {
@@ -25,24 +25,25 @@ export async function GET(req: NextRequest) {
   let organizationId: string;
 
   const { searchParams } = new URL(req.url);
-  const explicitOrgId = searchParams.get("organizationId"); // Allow passing organizationId in query
+  const explicitOrgId = searchParams.get("organizationId");
 
   if (apiKey) {
     const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
     if (!valid || !key) {
       return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
     }
-    // For API key usage, require explicit organizationId in query params
     organizationId = explicitOrgId || "";
     if (!organizationId) {
-      return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Organization ID is required in query parameters" },
+        { status: 400 }
+      );
     }
   } else if (internalSecret === INTERNAL_API_SECRET) {
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session) {
       return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
     }
-    // For internal use, fall back to session's activeOrganizationId if not provided
     organizationId = explicitOrgId || session.session.activeOrganizationId;
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
@@ -69,7 +70,7 @@ export async function GET(req: NextRequest) {
   }
 
   let query = `
-    SELECT id, "userId", "organizationId", username, "firstName", "lastName", "lastInteraction", email, "phoneNumber", "levelId", "referredBy", "createdAt", "updatedAt"
+    SELECT id, "userId", "organizationId", username, "firstName", "lastName", "lastInteraction", email, "phoneNumber", "levelId", "referredBy", country, "createdAt", "updatedAt"
     FROM clients
     WHERE "organizationId" = $1
   `;
@@ -134,15 +135,25 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const parsedClient = clientSchema.parse(body);
-    const { username, firstName, lastName, email, phoneNumber, referredBy } = parsedClient;
+    const { username, firstName, lastName, email, phoneNumber, referredBy, country } = parsedClient;
     const clientId = uuidv4();
 
     const insertQuery = `
-      INSERT INTO clients(id, "organizationId", username, "firstName", "lastName", email, "phoneNumber", "referredBy", "createdAt", "updatedAt")
-      VALUES($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+      INSERT INTO clients(id, "organizationId", username, "firstName", "lastName", email, "phoneNumber", "referredBy", country, "createdAt", "updatedAt")
+      VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
       RETURNING *
     `;
-    const values = [clientId, organizationId, username, firstName, lastName, email, phoneNumber, referredBy || null];
+    const values = [
+      clientId,
+      organizationId,
+      username,
+      firstName,
+      lastName,
+      email,
+      phoneNumber,
+      referredBy || null,
+      country || null, // Include country, nullable
+    ];
 
     const result = await pool.query(insertQuery, values);
     return NextResponse.json(result.rows[0], { status: 201 });
