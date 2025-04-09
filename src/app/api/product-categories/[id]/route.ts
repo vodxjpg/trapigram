@@ -47,7 +47,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
     }
   } else {
-    // Fallback for UI requests using session cookie
     const session = await auth.api.getSession({ headers: req.headers });
     console.log("Session (fallback):", session);
     if (!session) {
@@ -97,7 +96,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json(category);
   } catch (error: any) {
     console.error("[GET /api/product-categories/[id]] error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to fetch category" }, { status: 500 });
   }
 }
 
@@ -133,7 +132,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
     }
   } else {
-    // Fallback for UI requests using session cookie
     const session = await auth.api.getSession({ headers: req.headers });
     console.log("Session (fallback):", session);
     if (!session) {
@@ -150,7 +148,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const body = await req.json();
     const parsedCategory = categoryUpdateSchema.parse(body);
 
-    // Check if slug exists and belongs to another category
     if (parsedCategory.slug) {
       const slugCheck = await pool.query(
         `SELECT id FROM "productCategories" WHERE slug = $1 AND "organizationId" = $2 AND id != $3`,
@@ -196,7 +193,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 });
     }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to update category" }, { status: 500 });
   }
 }
 
@@ -232,7 +229,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
     }
   } else {
-    // Fallback for UI requests using session cookie
     const session = await auth.api.getSession({ headers: req.headers });
     console.log("Session (fallback):", session);
     if (!session) {
@@ -247,32 +243,35 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   try {
     const { id } = await params;
 
-    // Check if category has children
-    const childrenCheck = await pool.query(
-      `SELECT id FROM "productCategories" WHERE "parentId" = $1 AND "organizationId" = $2`,
-      [id, organizationId]
-    );
-    if (childrenCheck.rows.length > 0) {
-      return NextResponse.json(
-        { error: "Cannot delete category with subcategories" },
-        { status: 400 }
-      );
-    }
+    // Start a transaction to update children and delete the parent
+    await pool.query("BEGIN");
 
-    const query = `
+    // Set children's parentId to null (make them orphans)
+    const updateChildrenQuery = `
+      UPDATE "productCategories"
+      SET "parentId" = NULL, "updatedAt" = NOW()
+      WHERE "parentId" = $1 AND "organizationId" = $2
+    `;
+    await pool.query(updateChildrenQuery, [id, organizationId]);
+
+    // Delete the parent category
+    const deleteQuery = `
       DELETE FROM "productCategories"
       WHERE id = $1 AND "organizationId" = $2
       RETURNING *
     `;
-    const result = await pool.query(query, [id, organizationId]);
+    const result = await pool.query(deleteQuery, [id, organizationId]);
 
     if (result.rows.length === 0) {
+      await pool.query("ROLLBACK");
       return NextResponse.json({ error: "Category not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ message: "Category deleted successfully" });
+    await pool.query("COMMIT");
+    return NextResponse.json({ message: "Category deleted successfully, subcategories orphaned" });
   } catch (error: any) {
+    await pool.query("ROLLBACK");
     console.error("[DELETE /api/product-categories/[id]] error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to delete category" }, { status: 500 });
   }
 }
