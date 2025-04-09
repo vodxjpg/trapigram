@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          console.log(apiKey)
+          console.log(apiKey, "acaaaaaaaaaaaa")
 
         return NextResponse.json({ apiKey: apiKey.key }, { status: 201 });
     } catch (err) {

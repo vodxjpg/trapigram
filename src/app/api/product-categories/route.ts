@@ -28,16 +28,16 @@ const categorySchema = z.object({
 export async function GET(req: NextRequest) {
   try {
     // Check API key for public access
-    const apiKey = req.headers.get("x-api-key")
+    /* const apiKey = req.headers.get("x-api-key")    
     if (apiKey !== PUBLIC_API_KEY) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
-    }
+    } */
 
     // Check session (optional, depending on your public API requirements)
     const session = await auth.api.getSession({ headers: req.headers })
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    }    
 
     const organizationId = session.session.activeOrganizationId
     if (!organizationId) {

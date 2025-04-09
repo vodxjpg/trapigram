@@ -79,6 +79,20 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+  coupons: {
+    id: string;
+    name: string;
+    code: string;
+    description: string;
+    usagePerUser: number;
+    usageLimit: number;
+    expendingMinimum: number;
+    expendingLImit: number;
+    countries: string;
+    visibility: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  }
   member: {
     id: string;
     userId: string;
