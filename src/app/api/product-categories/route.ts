@@ -20,6 +20,7 @@ const categorySchema = z.object({
 
 // GET handler: Fetch product categories
 export async function GET(req: NextRequest) {
+<<<<<<< HEAD
   console.log("Headers received:", Object.fromEntries(req.headers.entries()));
   const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
@@ -27,6 +28,20 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const explicitOrgId = searchParams.get("organizationId");
+=======
+  try {
+    // Check API key for public access
+    /* const apiKey = req.headers.get("x-api-key")    
+    if (apiKey !== PUBLIC_API_KEY) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
+    } */
+
+    // Check session (optional, depending on your public API requirements)
+    const session = await auth.api.getSession({ headers: req.headers })
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }    
+>>>>>>> 50aa03e6f2e89f13a692dfe2fbd02f2cf610ade2
 
   if (apiKey) {
     const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
