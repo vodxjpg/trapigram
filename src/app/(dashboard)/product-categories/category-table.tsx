@@ -71,36 +71,34 @@ export function CategoryTable() {
 
   // Fetch categories
   const fetchCategories = async () => {
-    setLoading(true)
+    setLoading(true);
     try {
       const response = await fetch(
-        `/api/product-categories?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
-      )
-
+        `/api/product-categories?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
+        { credentials: "include" } // Ensure cookies are sent with the request
+      );
+  
       if (!response.ok) {
-        throw new Error("Failed to fetch categories")
+        throw new Error("Failed to fetch categories");
       }
-
-      const data = await response.json()
-      // Provide defaults if _count or children are missing:
+  
+      const data = await response.json();
       const safeCategories = data.categories.map((cat: Category) => ({
         ...cat,
-        _count: {
-          products: cat._count?.products ?? 0,
-        },
+        _count: { products: cat._count?.products ?? 0 },
         children: cat.children ?? [],
-      }))
-
-      setCategories(safeCategories)
-      setTotalPages(data.totalPages)
-      setCurrentPage(data.currentPage)
+      }));
+  
+      setCategories(safeCategories);
+      setTotalPages(data.totalPages);
+      setCurrentPage(data.currentPage);
     } catch (error) {
-      console.error("Error fetching categories:", error)
-      toast.error("Failed to load categories")
+      console.error("Error fetching categories:", error);
+      toast.error("Failed to load categories");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
     fetchCategories()
