@@ -16,7 +16,7 @@ export default function CategoriesPage() {
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-bold tracking-tight">Coupons</h1>
         <p className="text-muted-foreground">
-          Manage your coupons and their organization.
+          Manage your coupons.
         </p>
       </div>
       <CouponsTable />

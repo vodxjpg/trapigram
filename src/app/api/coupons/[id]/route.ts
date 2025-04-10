@@ -18,6 +18,8 @@ const couponUpdateSchema = z.object({
     name: z.string().min(1, { message: "Name is required." }).optional(),
     code: z.string().min(1, { message: "Code is required." }).optional(),
     description: z.string().min(1, { message: "Description is required." }).optional(),
+    expirationDate: z.string().optional().nullable(),
+    limitPerUser: z.coerce.number().int().min(0, { message: "Limit per user must be at least 0." }).optional(),
     usageLimit: z.coerce.number().int().min(0, { message: "Usage limit must be at least 0." }).optional(),
     expendingLimit: z.coerce.number().int().min(0, { message: "Expending limit must be at least 0." }).optional(),
     countries: z.array(z.string()).optional(),
@@ -64,11 +66,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     try {
         const { id } = params;
         const query = `
-      SELECT id, "organizationId", name, code, description, "usageLimit", "expendingLimit", countries, visibility, "createdAt", "updatedAt"
+      SELECT id, "organizationId", name, code, description, "expirationDate", "limitPerUser", "usageLimit", "expendingLimit", countries, visibility, "createdAt", "updatedAt"
       FROM coupons
       WHERE id = $1 AND "organizationId" = $2
     `;
         const result = await pool.query(query, [id, organizationId]);
+        console.log(result)
         if (result.rows.length === 0) {
             return NextResponse.json({ error: "Coupon not found" }, { status: 404 });
         }
@@ -120,6 +123,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         const { id } = params;
         const body = await req.json();
         const parsedCoupon = couponUpdateSchema.parse(body);
+        parsedCoupon.countries= JSON.stringify(parsedCoupon.countries)
 
         const updates: string[] = [];
         const values: any[] = [];
@@ -145,7 +149,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       WHERE id = $${paramIndex++} AND "organizationId" = $${paramIndex}
       RETURNING *
     `;
-
+        console.log(values)
         const result = await pool.query(query, values);
         if (result.rows.length === 0) {
             return NextResponse.json({ error: "Coupon not found" }, { status: 404 });

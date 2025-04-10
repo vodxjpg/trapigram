@@ -1,5 +1,3 @@
-// File: src/app/(dashboard)/coupons/coupons-table.tsx
-
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -41,14 +39,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { CouponDrawer } from "./coupons-drawer";
 
-// Define the Coupon type with all required fields.
+// Define the Coupon type.
 type Coupon = {
   id: string;
   name: string;
   code: string;
   description: string;
+  expirationDate: string;
+  limitPerUser: string;
   usageLimit: number;
   expendingLimit: number;
   countries: string[]; // Array of country names or codes.
@@ -59,25 +58,18 @@ export function CouponsTable() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // States for coupon data and UI behavior.
+  // State for coupon data and UI behavior.
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
   const [pageSize, setPageSize] = useState(10);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editingCoupon, setEditingCoupon] = useState<Coupon | null>(null);
-  const [sortColumn, setSortColumn] = useState<string>("name");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
-  // -----------------------------------------------
-  // Function to fetch coupons from the API endpoint
-  // -----------------------------------------------
+  // Fetch coupons from the API endpoint.
   const fetchCoupons = async () => {
     setLoading(true);
     try {
-      // API endpoint to retrieve coupons. Adjust as needed.
       const response = await fetch(
         `/api/coupons?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
       );
@@ -88,7 +80,7 @@ export function CouponsTable() {
 
       const data = await response.json();
 
-      // Ensure that the countries field is always an array.
+      // Ensure the countries field is always an array.
       const safeCoupons = data.coupons.map((coupon: Coupon) => ({
         ...coupon,
         countries: coupon.countries ?? [],
@@ -105,24 +97,22 @@ export function CouponsTable() {
     }
   };
 
-  // Fetch coupons on component mount and when dependencies change.
+  // Fetch coupons on initial load and when dependencies change.
   useEffect(() => {
     fetchCoupons();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, searchQuery]);
 
-  // ------------------------------------------------------------
-  // Function to handle the search form submission and refresh data.
-  // ------------------------------------------------------------
+  // Handle search form submission.
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setCurrentPage(1);
     fetchCoupons();
   };
 
-  // -----------------------------------------------------------
-  // Function to handle sorting when clicking on table header columns.
-  // -----------------------------------------------------------
+  // Sorting state and function.
+  const [sortColumn, setSortColumn] = useState<string>("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
   const handleSort = (column: string) => {
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -132,7 +122,7 @@ export function CouponsTable() {
     }
   };
 
-  // Sort coupons by the selected column and direction.
+  // Sort coupons based on sortColumn and sortDirection.
   const sortedCoupons = [...coupons].sort((a, b) => {
     if (sortColumn === "name") {
       return sortDirection === "asc"
@@ -143,13 +133,10 @@ export function CouponsTable() {
         ? a.usageLimit - b.usageLimit
         : b.usageLimit - a.usageLimit;
     }
-    // Additional sorting logic can be added here.
     return 0;
   });
 
-  // -------------------------------
-  // Handle deleting a coupon.
-  // -------------------------------
+  // Handle coupon deletion.
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this coupon?")) {
       return;
@@ -172,38 +159,18 @@ export function CouponsTable() {
     }
   };
 
-  // -------------------------------
-  // Handle editing a coupon.
-  // -------------------------------
+  // Navigation actions for editing and creating coupons.
   const handleEdit = (coupon: Coupon) => {
-    setEditingCoupon(coupon);
-    setDrawerOpen(true);
+    router.push(`/coupons/${coupon.id}`);
   };
 
-  // -------------------------------
-  // Handle adding a new coupon.
-  // -------------------------------
   const handleAdd = () => {
-    setEditingCoupon(null);
-    setDrawerOpen(true);
-  };
-
-  // ----------------------------------------
-  // Handle closing the coupon drawer.
-  // ----------------------------------------
-  const handleDrawerClose = (refreshData = false) => {
-    setDrawerOpen(false);
-    setEditingCoupon(null);
-    if (refreshData) {
-      fetchCoupons();
-    }
+    router.push(`/coupons/new`);
   };
 
   return (
     <div className="space-y-4">
-      {/* ---------------------------
-          Header: Search & Add Coupon
-      ----------------------------- */}
+      {/* Header: Search & Add Coupon */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
         <form onSubmit={handleSearch} className="flex w-full sm:w-auto gap-2">
           <div className="relative flex-1">
@@ -224,9 +191,7 @@ export function CouponsTable() {
         </Button>
       </div>
 
-      {/* -----------------------------------
-          Coupons Table
-      ------------------------------------- */}
+      {/* Coupons Table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -234,13 +199,13 @@ export function CouponsTable() {
               <TableHead>Name</TableHead>
               <TableHead>Code</TableHead>
               <TableHead>Description</TableHead>
+              <TableHead>Expiration Date</TableHead>
+              <TableHead>Limit Per User</TableHead>
               <TableHead
                 className="cursor-pointer"
                 onClick={() => handleSort("usageLimit")}
               >
-                Usage Limit{" "}
-                {sortColumn === "usageLimit" &&
-                  (sortDirection === "asc" ? "↑" : "↓")}
+                Usage Limit {sortColumn === "usageLimit" && (sortDirection === "asc" ? "↑" : "↓")}
               </TableHead>
               <TableHead>Expending Limit</TableHead>
               <TableHead>Countries</TableHead>
@@ -267,16 +232,15 @@ export function CouponsTable() {
                   <TableCell>{coupon.name}</TableCell>
                   <TableCell>{coupon.code}</TableCell>
                   <TableCell>{coupon.description}</TableCell>
+                  <TableCell>{coupon.expirationDate}</TableCell>
+                  <TableCell>{coupon.limitPerUser}</TableCell>
                   <TableCell>{coupon.usageLimit}</TableCell>
                   <TableCell>{coupon.expendingLimit}</TableCell>
                   <TableCell>
                     {coupon.countries.length > 0
-                      ? coupon.countries
-                      : "N/A"}
+                      ? coupon.countries : "N/A"}
                   </TableCell>
-                  <TableCell>
-                    {coupon.visibility ? "Visible" : "Hidden"}
-                  </TableCell>
+                  <TableCell>{coupon.visibility ? "Visible" : "Hidden"}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -290,8 +254,7 @@ export function CouponsTable() {
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleDelete(coupon.id)}
+                        <DropdownMenuItem onClick={() => handleDelete(coupon.id)}
                           className="text-destructive focus:text-destructive"
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
@@ -307,9 +270,7 @@ export function CouponsTable() {
         </Table>
       </div>
 
-      {/* -----------------------------------
-          Pagination Controls
-      ------------------------------------- */}
+      {/* Pagination Controls */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
           Showing page {currentPage} of {totalPages}
@@ -376,16 +337,6 @@ export function CouponsTable() {
           </div>
         </div>
       </div>
-
-      {/* ---------------------------------------------------------------------
-          CouponDrawer Component: Handles adding and editing coupons.
-          (The CouponDrawer code is provided below.)
-      ----------------------------------------------------------------------- */}
-      <CouponDrawer
-        open={drawerOpen}
-        onClose={handleDrawerClose}
-        coupon={editingCoupon}
-      /> 
     </div>
   );
 }

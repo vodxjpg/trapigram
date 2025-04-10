@@ -32,6 +32,9 @@ const couponSchema = z.object({
     expendingLimit: z.coerce.number().int().min(0, { message: "Expending limit must be at least 0." }),
     countries: z.array(z.string()).min(1, { message: "At least one country is required." }),
     visibility: z.boolean(),
+    expirationDate: z.string().nullable().optional(),
+    limitPerUser: z.coerce.number().int().min(0, "Limit per user must be 0 or greater")
+    .default(0),
 });
 
 // -------------------------------------------------------------------
@@ -49,7 +52,7 @@ export async function GET(req: NextRequest) {
 
     // Validate authentication using an API key.
     if (apiKey) {
-        const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });        
+        const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
         if (!valid || !key) {
             return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
         }
@@ -94,7 +97,7 @@ export async function GET(req: NextRequest) {
 
     // Build the select query with pagination and optional search.
     let query = `
-    SELECT id, "organizationId", name, code, description, "usageLimit", "expendingLimit", countries, visibility, "createdAt", "updatedAt"
+    SELECT id, "organizationId", "name", "code", "description", "expirationDate", "limitPerUser", "usagePerUser", "usageLimit", "expendingLimit", "countries", "visibility", "createdAt", "updatedAt"
     FROM coupons
     WHERE "organizationId" = $1
   `;
@@ -165,20 +168,21 @@ export async function POST(req: NextRequest) {
     try {
         // Parse and validate the request body using zod.
         const body = await req.json();
-        const parsedCoupon = couponSchema.parse(body);
-        const { name, code, description, usageLimit, expendingLimit, countries, visibility } = parsedCoupon;
+        console.log(body)
+        const parsedCoupon = couponSchema.parse(body);        
+        const { name, code, description, expirationDate, limitPerUser, usageLimit, expendingLimit, countries, visibility } = parsedCoupon;
         const couponId = uuidv4();
 
         // Insert the new coupon into the database.
         const insertQuery = `
-      INSERT INTO coupons(id, "organizationId", name, code, description, "usageLimit", "expendingLimit", countries, visibility, "createdAt", "updatedAt")
-      VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+      INSERT INTO coupons(id, "organizationId", name, code, description, "expirationDate", "limitPerUser", "usageLimit", "expendingLimit", countries, visibility, "createdAt", "updatedAt")
+      VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
       RETURNING *
     `;
         // Here, we stringify the countries array if your DB expects text.
-        const values = [couponId, organizationId, name, code, description, usageLimit, expendingLimit, JSON.stringify(countries), visibility];
+        const values = [couponId, organizationId, name, code, description, expirationDate, limitPerUser, usageLimit, expendingLimit, JSON.stringify(countries), visibility];
 
-        const result = await pool.query(insertQuery, values);
+        //const result = await pool.query(insertQuery, values);
         return NextResponse.json(result.rows[0], { status: 201 });
     } catch (error: any) {
         console.error("[POST /api/coupons] error:", error);
