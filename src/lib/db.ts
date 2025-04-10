@@ -169,7 +169,7 @@ interface DB {
   };
 
   productCategories: {
-    id: string; // UUID stored as a string in TypeScript
+    id: string;
     name: string;
     slug: string;
     image: string | null;
@@ -183,6 +183,31 @@ interface DB {
   productCategory: {
     productId: string;
     categoryId: string;
+  };
+
+  productAttributes: {
+    id: string;
+    name: string;
+    slug: string;
+    organizationId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  productAttributeTerms: {
+    id: string;
+    attributeId: string;
+    name: string;
+    slug: string;
+    organizationId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  productAttributeValues: {
+    productId: string;
+    attributeId: string;
+    termId: string;
   };
 }
 

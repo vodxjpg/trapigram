@@ -1,65 +1,73 @@
-// /home/zodx/Desktop/trapigram/src/app/api/product-categories/check-slug/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { Pool } from "pg";
+import { auth } from "@/lib/auth";
 
-import { NextRequest, NextResponse } from "next/server"
-import { Pool } from "pg"
-import { auth } from "@/lib/auth"
-
-// Initialize database connection (matching internal endpoint style)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-})
-
-// API key for public endpoints (assuming this is a public endpoint; adjust if internal)
-const PUBLIC_API_KEY = process.env.PUBLIC_API_KEY as string
+});
 
 export async function GET(req: NextRequest) {
-  try {
-    // Check API key for public access (remove if this should be internal-only)
-    const apiKey = req.headers.get("x-api-key")
-    if (apiKey !== PUBLIC_API_KEY) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
-    }
+  console.log("Headers received:", Object.fromEntries(req.headers.entries()));
+  const apiKey = req.headers.get("x-api-key");
+  const internalSecret = req.headers.get("x-internal-secret");
+  let organizationId: string;
 
-    // Check session
-    const session = await auth.api.getSession({ headers: req.headers })
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+  const { searchParams } = new URL(req.url);
+  const slug = searchParams.get("slug");
+  const categoryId = searchParams.get("categoryId");
+  const explicitOrgId = searchParams.get("organizationId");
 
-    const organizationId = session.session.activeOrganizationId
+  if (!slug) {
+    return NextResponse.json({ error: "Slug is required" }, { status: 400 });
+  }
+
+  if (apiKey) {
+    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
+    if (!valid || !key) {
+      return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
+    }
+    organizationId = explicitOrgId || "";
     if (!organizationId) {
-      console.log("No active organization, redirecting to /select-organization")
-      return NextResponse.json({ redirect: "/select-organization" }, { status: 400 })
+      return NextResponse.json(
+        { error: "Organization ID is required in query parameters" },
+        { status: 400 }
+      );
     }
-
-    const { searchParams } = new URL(req.url)
-    const slug = searchParams.get("slug")
-    const categoryId = searchParams.get("categoryId")
-
-    if (!slug) {
-      return NextResponse.json({ error: "Slug is required" }, { status: 400 })
+  } else if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
+    const session = await auth.api.getSession({ headers: req.headers });
+    console.log("Session:", session);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
     }
-
-    const parsedCategoryId = categoryId ? Number.parseInt(categoryId) : null
-
-    // Query to check if slug exists
-    let queryText = `
-      SELECT id FROM product_categories
-      WHERE "organizationId" = $1 AND "slug" = $2
-    `
-    const queryValues: any[] = [organizationId, slug]
-
-    if (parsedCategoryId) {
-      queryText += ` AND "id" != $3`
-      queryValues.push(parsedCategoryId)
+    organizationId = explicitOrgId || session.session.activeOrganizationId;
+    if (!organizationId) {
+      return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
     }
+  } else {
+    // Fallback for UI requests using session cookie
+    const session = await auth.api.getSession({ headers: req.headers });
+    console.log("Session (fallback):", session);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 403 });
+    }
+    organizationId = session.session.activeOrganizationId;
+    if (!organizationId) {
+      return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
+    }
+  }
 
-    const result = await pool.query(queryText, queryValues)
-    const existingCategory = result.rows.length > 0
+  try {
+    const query = categoryId
+      ? `SELECT id FROM "productCategories" WHERE slug = $1 AND "organizationId" = $2 AND id != $3`
+      : `SELECT id FROM "productCategories" WHERE slug = $1 AND "organizationId" = $2`;
+    const values = categoryId ? [slug, organizationId, categoryId] : [slug, organizationId];
 
-    return NextResponse.json({ exists: existingCategory }, { status: 200 })
-  } catch (error) {
-    console.error("[GET /api/product-categories/check-slug] error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    const result = await pool.query(query, values);
+    const exists = result.rows.length > 0;
+
+    return NextResponse.json({ exists });
+  } catch (error: any) {
+    console.error("[GET /api/product-categories/check-slug] error:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

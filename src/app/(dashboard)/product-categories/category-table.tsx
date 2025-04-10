@@ -1,10 +1,9 @@
-"use client"
+"use client";
 
-import type React from "react"
-
-import { useState, useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
-import Image from "next/image"
+import type React from "react";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import {
   ChevronLeft,
   ChevronRight,
@@ -16,10 +15,9 @@ import {
   Trash2,
   Edit,
   Layers,
-} from "lucide-react"
-
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -27,161 +25,146 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "@/components/ui/table";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { CategoryDrawer } from "./category-drawer"
-import { getInitials } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
-import { toast } from "sonner"
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { CategoryDrawer } from "./category-drawer";
+import { getInitials } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 
 type Category = {
-  id: string
-  name: string
-  slug: string
-  image: string | null
-  order: number
-  parentId: string | null
-  // Make _count optional and provide a fallback for products:
+  id: string;
+  name: string;
+  slug: string;
+  image: string | null;
+  order: number;
+  parentId: string | null;
   _count?: {
-    products?: number
-  }
-  // Make children optional, fallback to an empty array:
-  children?: Category[]
-}
+    products?: number;
+  };
+  children?: Category[];
+  parentName?: string; // Added to store parent category name
+};
 
 export function CategoryTable() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const [categories, setCategories] = useState<Category[]>([])
-  const [loading, setLoading] = useState(true)
-  const [totalPages, setTotalPages] = useState(1)
-  const [currentPage, setCurrentPage] = useState(1)
-  const [searchQuery, setSearchQuery] = useState("")
-  const [pageSize, setPageSize] = useState(10)
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [editingCategory, setEditingCategory] = useState<Category | null>(null)
-  const [sortColumn, setSortColumn] = useState<string>("name")
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(1);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [pageSize, setPageSize] = useState(10);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
 
-  // Fetch categories
   const fetchCategories = async () => {
-    setLoading(true)
+    setLoading(true);
     try {
       const response = await fetch(
-        `/api/product-categories?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
-      )
+        `/api/product-categories?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
+        { credentials: "include" }
+      );
 
       if (!response.ok) {
-        throw new Error("Failed to fetch categories")
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to fetch categories");
       }
 
-      const data = await response.json()
-      // Provide defaults if _count or children are missing:
+      const data = await response.json();
       const safeCategories = data.categories.map((cat: Category) => ({
         ...cat,
-        _count: {
-          products: cat._count?.products ?? 0,
-        },
+        _count: { products: cat._count?.products ?? 0 },
         children: cat.children ?? [],
-      }))
+        parentName: cat.parentId
+          ? data.categories.find((c: Category) => c.id === cat.parentId)?.name || "Unknown"
+          : "",
+      }));
 
-      setCategories(safeCategories)
-      setTotalPages(data.totalPages)
-      setCurrentPage(data.currentPage)
+      // Sort by hierarchy: parents first, then children
+      const sortedCategories = safeCategories.sort((a, b) => {
+        if (!a.parentId && b.parentId) return -1; // Parents before children
+        if (a.parentId && !b.parentId) return 1;
+        if (a.parentId === b.parentId) return a.order - b.order; // Same level, use order
+        return a.parentId?.localeCompare(b.parentId || "") || 0;
+      });
+
+      setCategories(sortedCategories);
+      setTotalPages(data.totalPages);
+      setCurrentPage(data.currentPage);
     } catch (error) {
-      console.error("Error fetching categories:", error)
-      toast.error("Failed to load categories")
+      console.error("Error fetching categories:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to load categories");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    fetchCategories()
+    fetchCategories();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, searchQuery])
+  }, [currentPage, pageSize, searchQuery]);
 
-  // Handle search
   const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
-    setCurrentPage(1)
-    fetchCategories()
-  }
+    e.preventDefault();
+    setCurrentPage(1);
+    fetchCategories();
+  };
 
-  // Handle sort
-  const handleSort = (column: string) => {
-    if (sortColumn === column) {
-      setSortDirection(sortDirection === "asc" ? "desc" : "asc")
-    } else {
-      setSortColumn(column)
-      setSortDirection("asc")
-    }
-  }
-
-  // Sort categories
-  const sortedCategories = [...categories].sort((a, b) => {
-    if (sortColumn === "name") {
-      return sortDirection === "asc"
-        ? a.name.localeCompare(b.name)
-        : b.name.localeCompare(a.name)
-    } else if (sortColumn === "products") {
-      // Safely access the product count
-      const aProd = a._count?.products ?? 0
-      const bProd = b._count?.products ?? 0
-      return sortDirection === "asc" ? aProd - bProd : bProd - aProd
-    }
-    return 0
-  })
-
-  // Handle delete
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this category?")) {
-      return
+    if (!confirm("Are you sure you want to delete this category? Subcategories will become orphans.")) {
+      return;
     }
 
     try {
       const response = await fetch(`/api/product-categories/${id}`, {
         method: "DELETE",
-      })
+        credentials: "include",
+      });
 
       if (!response.ok) {
-        throw new Error("Failed to delete category")
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to delete category");
       }
 
-      toast.success("Category deleted successfully")
-      fetchCategories()
+      const data = await response.json();
+      toast.success(data.message || "Category deleted successfully");
+      fetchCategories();
     } catch (error) {
-      console.error("Error deleting category:", error)
-      toast.error("Failed to delete category")
+      console.error("Error deleting category:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to delete category");
     }
-  }
+  };
 
-  // Handle edit
   const handleEdit = async (category: Category) => {
-    setEditingCategory(category)
-    setDrawerOpen(true)
-  }
+    setEditingCategory(category);
+    setDrawerOpen(true);
+  };
 
-  // Handle add
   const handleAdd = () => {
-    setEditingCategory(null)
-    setDrawerOpen(true)
-  }
+    setEditingCategory(null);
+    setDrawerOpen(true);
+  };
 
-  // Handle drawer close
   const handleDrawerClose = (refreshData = false) => {
-    setDrawerOpen(false)
-    setEditingCategory(null)
+    setDrawerOpen(false);
+    setEditingCategory(null);
     if (refreshData) {
-      fetchCategories()
+      fetchCategories();
     }
-  }
+  };
 
   return (
     <div className="space-y-4">
@@ -210,13 +193,9 @@ export function CategoryTable() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-[80px]">Image</TableHead>
-              <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
-                Name {sortColumn === "name" && (sortDirection === "asc" ? "↑" : "↓")}
-              </TableHead>
+              <TableHead>Name</TableHead>
               <TableHead>Slug</TableHead>
-              <TableHead className="cursor-pointer" onClick={() => handleSort("products")}>
-                Products {sortColumn === "products" && (sortDirection === "asc" ? "↑" : "↓")}
-              </TableHead>
+              <TableHead>Products</TableHead>
               <TableHead>Parent</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -228,14 +207,14 @@ export function CategoryTable() {
                   Loading...
                 </TableCell>
               </TableRow>
-            ) : sortedCategories.length === 0 ? (
+            ) : categories.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="h-24 text-center">
                   No categories found.
                 </TableCell>
               </TableRow>
             ) : (
-              sortedCategories.map((category) => (
+              categories.map((category) => (
                 <TableRow key={category.id}>
                   <TableCell>
                     {category.image ? (
@@ -255,18 +234,9 @@ export function CategoryTable() {
                   <TableCell className="font-medium">{category.name}</TableCell>
                   <TableCell>{category.slug}</TableCell>
                   <TableCell>
-                    {/* Fallback to 0 if _count or products is undefined */}
                     <Badge variant="outline">{category._count?.products ?? 0}</Badge>
                   </TableCell>
-                  <TableCell>
-                    {/* Fallback to empty array if children is undefined */}
-                    {category.children && category.children.length > 0 && (
-                      <Badge variant="secondary" className="flex items-center gap-1">
-                        <Layers className="h-3 w-3" />
-                        {category.children.length} subcategories
-                      </Badge>
-                    )}
-                  </TableCell>
+                  <TableCell>{category.parentName || "None"}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -307,8 +277,8 @@ export function CategoryTable() {
             <Select
               value={pageSize.toString()}
               onValueChange={(value) => {
-                setPageSize(Number(value))
-                setCurrentPage(1)
+                setPageSize(Number(value));
+                setCurrentPage(1);
               }}
             >
               <SelectTrigger className="h-8 w-[70px]">
@@ -366,5 +336,5 @@ export function CategoryTable() {
 
       <CategoryDrawer open={drawerOpen} onClose={handleDrawerClose} category={editingCategory} />
     </div>
-  )
+  );
 }

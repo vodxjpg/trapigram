@@ -1,16 +1,14 @@
-"use client"
+"use client";
 
-import type React from "react"
-
-import { useState, useEffect, useRef } from "react"
-import { useForm } from "react-hook-form"
-import { zodResolver } from "@hookform/resolvers/zod"
-import { z } from "zod"
-import { toast } from "sonner"
-import { Loader2, Upload, X, ImageIcon } from "lucide-react"
-import Image from "next/image"
-
-import { Button } from "@/components/ui/button"
+import type React from "react";
+import { useState, useEffect, useRef } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { toast } from "sonner";
+import { Loader2, Upload, X, ImageIcon } from "lucide-react";
+import Image from "next/image";
+import { Button } from "@/components/ui/button";
 import {
   Drawer,
   DrawerClose,
@@ -19,21 +17,35 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-} from "@/components/ui/drawer"
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { slugify } from "@/lib/utils"
-import { useIsMobile } from "@/hooks/use-mobile"
+} from "@/components/ui/drawer";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { slugify } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 type Category = {
-  id: string
-  name: string
-  slug: string
-  image: string | null
-  order: number
-  parentId: string | null
-}
+  id: string;
+  name: string;
+  slug: string;
+  image: string | null;
+  order: number;
+  parentId: string | null;
+};
 
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -41,27 +53,27 @@ const formSchema = z.object({
   image: z.string().nullable().optional(),
   order: z.coerce.number().int().default(0),
   parentId: z.string().nullable().optional(),
-})
+});
 
-type FormValues = z.infer<typeof formSchema>
+type FormValues = z.infer<typeof formSchema>;
 
 interface CategoryDrawerProps {
-  open: boolean
-  onClose: (refreshData?: boolean) => void
-  category: Category | null
+  open: boolean;
+  onClose: (refreshData?: boolean) => void;
+  category: Category | null;
 }
 
 export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps) {
-  const isMobile = useIsMobile()
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [categories, setCategories] = useState<Category[]>([])
-  const [slugChecking, setSlugChecking] = useState(false)
-  const [slugExists, setSlugExists] = useState(false)
-  const [slugTouched, setSlugTouched] = useState(false)
-  const [imageFile, setImageFile] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
-  const [isUploading, setIsUploading] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const isMobile = useIsMobile();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [slugChecking, setSlugChecking] = useState(false);
+  const [slugExists, setSlugExists] = useState(false);
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -72,34 +84,33 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
       order: 0,
       parentId: null,
     },
-  })
+  });
 
-  // Fetch categories for parent selection
   useEffect(() => {
     const fetchCategories = async () => {
       try {
-        const response = await fetch("/api/product-categories?pageSize=100")
+        const response = await fetch("/api/product-categories?pageSize=100", {
+          credentials: "include",
+        });
         if (!response.ok) {
-          throw new Error("Failed to fetch categories")
+          throw new Error("Failed to fetch categories");
         }
-        const data = await response.json()
-        // Filter out the current category to prevent circular references
+        const data = await response.json();
         const filteredCategories = category
           ? data.categories.filter((cat: Category) => cat.id !== category.id)
-          : data.categories
-        setCategories(filteredCategories)
+          : data.categories;
+        setCategories(filteredCategories);
       } catch (error) {
-        console.error("Error fetching categories:", error)
-        toast.error("Failed to load parent categories")
+        console.error("Error fetching categories:", error);
+        toast.error("Failed to load parent categories");
       }
-    }
+    };
 
     if (open) {
-      fetchCategories()
+      fetchCategories();
     }
-  }, [open, category])
+  }, [open, category]);
 
-  // Set form values when editing
   useEffect(() => {
     if (category) {
       form.reset({
@@ -108,9 +119,10 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
         image: category.image,
         order: category.order,
         parentId: category.parentId,
-      })
-      setSlugTouched(true)
-      setImagePreview(category.image)
+      });
+      setSlugTouched(true);
+      setImagePreview(category.image);
+      setImageFile(null); // Reset file when editing
     } else {
       form.reset({
         name: "",
@@ -118,171 +130,163 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
         image: null,
         order: 0,
         parentId: null,
-      })
-      setSlugTouched(false)
-      setImagePreview(null)
-      setImageFile(null)
+      });
+      setSlugTouched(false);
+      setImagePreview(null);
+      setImageFile(null);
     }
-  }, [category, form])
+  }, [category, form]);
 
-  // Auto-generate slug from name
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const name = e.target.value
-    form.setValue("name", name)
-
+    const name = e.target.value;
+    form.setValue("name", name);
     if (!slugTouched) {
-      const generatedSlug = slugify(name)
-      form.setValue("slug", generatedSlug)
-      checkSlugExists(generatedSlug)
+      const generatedSlug = slugify(name);
+      form.setValue("slug", generatedSlug);
+      checkSlugExists(generatedSlug);
     }
-  }
+  };
 
-  // Check if slug exists
   const checkSlugExists = async (slug: string) => {
-    if (!slug) return
+    if (!slug) return;
 
-    setSlugChecking(true)
+    setSlugChecking(true);
     try {
-      const url = new URL("/api/product-categories/check-slug", window.location.origin)
-      url.searchParams.append("slug", slug)
+      const url = new URL("/api/product-categories/check-slug", window.location.origin);
+      url.searchParams.append("slug", slug);
       if (category) {
-        url.searchParams.append("categoryId", category.id)
+        url.searchParams.append("categoryId", category.id);
       }
 
-      const response = await fetch(url.toString())
+      const response = await fetch(url.toString(), { credentials: "include" });
       if (!response.ok) {
-        throw new Error("Failed to check slug")
+        throw new Error("Failed to check slug");
       }
 
-      const data = await response.json()
-      setSlugExists(data.exists)
+      const data = await response.json();
+      setSlugExists(data.exists);
     } catch (error) {
-      console.error("Error checking slug:", error)
+      console.error("Error checking slug:", error);
+      toast.error("Failed to check slug availability");
     } finally {
-      setSlugChecking(false)
+      setSlugChecking(false);
     }
-  }
+  };
 
-  // Handle slug change
   const handleSlugChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSlugTouched(true)
-    const slug = e.target.value
-    form.setValue("slug", slugify(slug))
-    checkSlugExists(slugify(slug))
-  }
+    setSlugTouched(true);
+    const slug = e.target.value;
+    const formattedSlug = slugify(slug);
+    form.setValue("slug", formattedSlug);
+    checkSlugExists(formattedSlug);
+  };
 
-  // Handle image selection
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    // Validate file type
-    const validTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"]
+    const validTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     if (!validTypes.includes(file.type)) {
-      toast.error("Invalid file type. Please upload a JPEG, PNG, WebP, or GIF image.")
-      return
+      toast.error("Invalid file type. Please upload a JPEG, PNG, WebP, or GIF image.");
+      return;
     }
 
-    // Validate file size (5MB max)
     if (file.size > 5 * 1024 * 1024) {
-      toast.error("File too large. Maximum size is 5MB.")
-      return
+      toast.error("File too large. Maximum size is 5MB.");
+      return;
     }
 
-    setImageFile(file)
-
-    // Create preview
-    const reader = new FileReader()
+    setImageFile(file);
+    const reader = new FileReader();
     reader.onloadend = () => {
-      setImagePreview(reader.result as string)
-    }
-    reader.readAsDataURL(file)
-  }
+      setImagePreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
 
-  // Handle image removal
   const handleRemoveImage = () => {
-    setImageFile(null)
-    setImagePreview(null)
-    form.setValue("image", null)
+    setImageFile(null);
+    setImagePreview(null);
+    form.setValue("image", null);
     if (fileInputRef.current) {
-      fileInputRef.current.value = ""
+      fileInputRef.current.value = "";
     }
-  }
+  };
 
-  // Upload image
   const uploadImage = async (): Promise<string | null> => {
-    if (!imageFile) return form.getValues("image")
+    if (!imageFile) return form.getValues("image"); // Return existing image path if no new file
 
-    setIsUploading(true)
+    setIsUploading(true);
     try {
-      const formData = new FormData()
-      formData.append("file", imageFile)
+      const formData = new FormData();
+      formData.append("file", imageFile);
 
       const response = await fetch("/api/upload", {
         method: "POST",
         body: formData,
-      })
+        credentials: "include", // Include cookies for session auth
+      });
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Failed to upload image")
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to upload image");
       }
 
-      const data = await response.json()
-      return data.filePath
-    } catch (error) {
-      console.error("Error uploading image:", error)
-      toast.error("Failed to upload image")
-      return null
-    } finally {
-      setIsUploading(false)
-    }
-  }
+      const data = await response.json();
+      if (!data.filePath) {
+        throw new Error("No file path returned from upload API");
+      }
 
-  // Handle form submission
+      return data.filePath;
+    } catch (error) {
+      console.error("Error uploading image:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to upload image");
+      return null;
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const onSubmit = async (values: FormValues) => {
     if (slugExists) {
       form.setError("slug", {
         type: "manual",
         message: "This slug already exists. Please choose another one.",
-      })
-      return
+      });
+      return;
     }
 
-    setIsSubmitting(true)
+    setIsSubmitting(true);
     try {
-      // Upload image if selected
-      const imagePath = await uploadImage()
+      const imagePath = await uploadImage();
+      if (imageFile && !imagePath) {
+        throw new Error("Image upload failed");
+      }
 
-      const url = category ? `/api/product-categories/${category.id}` : "/api/product-categories"
-
-      const method = category ? "PATCH" : "POST"
+      const url = category ? `/api/product-categories/${category.id}` : "/api/product-categories";
+      const method = category ? "PATCH" : "POST";
 
       const response = await fetch(url, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...values,
-          image: imagePath,
-        }),
-      })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...values, image: imagePath }),
+        credentials: "include",
+      });
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || "Failed to save category")
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to save category");
       }
 
-      toast.success(category ? "Category updated successfully" : "Category created successfully")
-      onClose(true)
+      toast.success(category ? "Category updated successfully" : "Category created successfully");
+      onClose(true);
     } catch (error) {
-      console.error("Error saving category:", error)
-      toast.error(error instanceof Error ? error.message : "Failed to save category")
+      console.error("Error saving category:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to save category");
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   return (
     <Drawer open={open} onOpenChange={(open) => !open && onClose()} direction={isMobile ? "bottom" : "right"}>
@@ -329,7 +333,13 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
                     </FormControl>
                     <FormDescription>
                       The URL-friendly identifier for this category.
-                      {slugExists && <span className="text-destructive ml-1">This slug already exists.</span>}
+                      {slugChecking ? (
+                        <span className="ml-1 text-muted-foreground">Checking...</span>
+                      ) : slugExists ? (
+                        <span className="ml-1 text-destructive">This slug already exists.</span>
+                      ) : field.value ? (
+                        <span className="ml-1 text-green-600">This slug is available.</span>
+                      ) : null}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -389,11 +399,10 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
                     <FormLabel>Category Image</FormLabel>
                     <FormControl>
                       <div className="space-y-4">
-                        {/* Image preview */}
                         {imagePreview ? (
                           <div className="relative w-40 h-40 rounded-md overflow-hidden border">
                             <Image
-                              src={imagePreview || "/placeholder.svg"}
+                              src={imagePreview}
                               alt="Category preview"
                               fill
                               className="object-cover"
@@ -418,8 +427,6 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
                             <p className="text-sm text-muted-foreground mt-2">Click to upload</p>
                           </div>
                         )}
-
-                        {/* Hidden file input */}
                         <input
                           type="file"
                           ref={fileInputRef}
@@ -427,15 +434,13 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
                           accept="image/jpeg,image/png,image/webp,image/gif"
                           onChange={handleImageChange}
                         />
-
-                        {/* Upload button */}
                         <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
                           <Upload className="h-4 w-4 mr-2" />
                           {imagePreview ? "Change Image" : "Upload Image"}
                         </Button>
                       </div>
                     </FormControl>
-                    <FormDescription>Upload an image for this category (optional).</FormDescription>
+                    <FormDescription>Upload an image for this category (optional, max 5MB).</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -455,6 +460,5 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
         </div>
       </DrawerContent>
     </Drawer>
-  )
+  );
 }
-

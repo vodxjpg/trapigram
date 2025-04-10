@@ -1,153 +1,190 @@
-// /home/zodx/Desktop/trapigram/src/app/api/product-categories/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { Pool } from "pg";
+import { auth } from "@/lib/auth";
+import { v4 as uuidv4 } from "uuid";
 
-import { NextRequest, NextResponse } from "next/server"
-import { z } from "zod"
-import { Pool } from "pg"
-import { auth } from "@/lib/auth"
-import { slugify } from "@/lib/utils"
-import { v4 as uuidv4 } from "uuid"
-
-// Initialize database connection (matching internal endpoint style)
+// Database connection
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-})
+});
 
-// API key for public endpoints (stored in environment variables)
-const PUBLIC_API_KEY = process.env.PUBLIC_API_KEY as string
-
-// Schema for category validation (unchanged)
+// Schema for POST requests (no organizationId in body)
 const categorySchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  slug: z.string().optional(),
+  name: z.string().min(1, { message: "Name is required." }),
+  slug: z.string().min(1, { message: "Slug is required." }),
   image: z.string().nullable().optional(),
-  order: z.number().default(0),
-  parentId: z.number().nullable().optional(),
-  organizationId: z.string(),
-})
+  order: z.number().int().default(0),
+  parentId: z.string().nullable().optional(),
+});
 
+// GET handler: Fetch product categories
 export async function GET(req: NextRequest) {
-  try {
-    // Check API key for public access
-    /* const apiKey = req.headers.get("x-api-key")    
-    if (apiKey !== PUBLIC_API_KEY) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
-    } */
+  console.log("Headers received:", Object.fromEntries(req.headers.entries()));
+  const apiKey = req.headers.get("x-api-key");
+  const internalSecret = req.headers.get("x-internal-secret");
+  let organizationId: string;
 
-    // Check session (optional, depending on your public API requirements)
-    const session = await auth.api.getSession({ headers: req.headers })
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }    
+  const { searchParams } = new URL(req.url);
+  const explicitOrgId = searchParams.get("organizationId");
 
-    const organizationId = session.session.activeOrganizationId
-    if (!organizationId) {
-      return NextResponse.json({ error: "No active organization" }, { status: 400 })
+  if (apiKey) {
+    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
+    if (!valid || !key) {
+      return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
     }
+    organizationId = explicitOrgId || "";
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "Organization ID is required in query parameters" },
+        { status: 400 }
+      );
+    }
+  } else if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
+    const session = await auth.api.getSession({ headers: req.headers });
+    console.log("Session:", session);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
+    }
+    organizationId = session.session.activeOrganizationId;
+    if (!organizationId) {
+      return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
+    }
+  } else {
+    // Fallback for UI requests using session cookie
+    const session = await auth.api.getSession({ headers: req.headers });
+    console.log("Session (fallback):", session);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 403 });
+    }
+    organizationId = session.session.activeOrganizationId;
+    if (!organizationId) {
+      return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
+    }
+  }
 
-    const { searchParams } = new URL(req.url)
-    const search = searchParams.get("search") || ""
-    const page = Number.parseInt(searchParams.get("page") || "1")
-    const pageSize = Number.parseInt(searchParams.get("pageSize") || "10")
-    const skip = (page - 1) * pageSize
+  // Pagination and search parameters
+  const page = Number(searchParams.get("page")) || 1;
+  const pageSize = Number(searchParams.get("pageSize")) || 10;
+  const search = searchParams.get("search") || "";
 
-    // Query categories (using node-postgres instead of Kysely for consistency)
-    const categoriesQuery = `
-      SELECT * FROM product_categories
-      WHERE "organizationId" = $1
-      AND "name" ILIKE $2
-      ORDER BY "order" ASC
-      OFFSET $3 LIMIT $4
-    `
-    const categoriesValues = [organizationId, `%${search}%`, skip, pageSize]
-    const categoriesResult = await pool.query(categoriesQuery, categoriesValues)
-    const categories = categoriesResult.rows
+  // Query for total count
+  let countQuery = `
+    SELECT COUNT(*) FROM "productCategories"
+    WHERE "organizationId" = $1
+  `;
+  const countValues: any[] = [organizationId];
+  if (search) {
+    countQuery += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
+    countValues.push(`%${search}%`);
+  }
 
-    // Get total count
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM product_categories
-      WHERE "organizationId" = $1
-      AND "name" ILIKE $2
-    `
-    const countValues = [organizationId, `%${search}%`]
-    const countResult = await pool.query(countQuery, countValues)
-    const totalCategories = Number(countResult.rows[0].total)
+  // Main query for categories
+  let query = `
+    SELECT id, name, slug, image, "order", "parentId", "organizationId", "createdAt", "updatedAt"
+    FROM "productCategories"
+    WHERE "organizationId" = $1
+  `;
+  const values: any[] = [organizationId];
+  if (search) {
+    query += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
+    values.push(`%${search}%`);
+  }
+  query += `
+    ORDER BY "order" ASC, "createdAt" DESC
+    LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+  `;
+  values.push(pageSize, (page - 1) * pageSize);
+
+  try {
+    const countResult = await pool.query(countQuery, countValues);
+    const totalRows = Number(countResult.rows[0].count);
+    const totalPages = Math.ceil(totalRows / pageSize);
+
+    const result = await pool.query(query, values);
+    const categories = result.rows;
 
     return NextResponse.json({
       categories,
-      totalPages: Math.ceil(totalCategories / pageSize),
+      totalPages,
       currentPage: page,
-    }, { status: 200 })
-  } catch (error) {
-    console.error("[GET /api/product-categories] error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    });
+  } catch (error: any) {
+    console.error("[GET /api/product-categories] error:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
+// POST handler: Create a new product category
 export async function POST(req: NextRequest) {
-  try {
-    // Check API key for public access
-    const apiKey = req.headers.get("x-api-key")
-    if (apiKey !== PUBLIC_API_KEY) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
-    }
+  console.log("Headers received:", Object.fromEntries(req.headers.entries()));
+  const apiKey = req.headers.get("x-api-key");
+  const internalSecret = req.headers.get("x-internal-secret");
+  let organizationId: string;
 
-    // Check session (optional, depending on your public API requirements)
-    const session = await auth.api.getSession({ headers: req.headers })
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (apiKey) {
+    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
+    if (!valid || !key) {
+      return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
     }
-
-    const organizationId = session.session.activeOrganizationId
+    const session = await auth.api.getSession({ headers: req.headers });
+    organizationId = session?.session.activeOrganizationId || "";
     if (!organizationId) {
-      return NextResponse.json({ error: "No active organization" }, { status: 400 })
+      return NextResponse.json({ error: "No active organization" }, { status: 400 });
     }
+  } else if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
+    const session = await auth.api.getSession({ headers: req.headers });
+    console.log("Session:", session);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
+    }
+    organizationId = session.session.activeOrganizationId;
+    if (!organizationId) {
+      return NextResponse.json({ error: "No active organization" }, { status: 400 });
+    }
+  } else {
+    // Fallback for UI requests using session cookie
+    const session = await auth.api.getSession({ headers: req.headers });
+    console.log("Session (fallback):", session);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 403 });
+    }
+    organizationId = session.session.activeOrganizationId;
+    if (!organizationId) {
+      return NextResponse.json({ error: "No active organization" }, { status: 400 });
+    }
+  }
 
-    const body = await req.json()
-    const validatedData = categorySchema.parse({
-      ...body,
-      organizationId,
-    })
+  try {
+    const body = await req.json();
+    const parsedCategory = categorySchema.parse(body);
+    const { name, slug, image, order, parentId } = parsedCategory;
+    const categoryId = uuidv4();
 
-    // Generate slug if not provided
-    const slug = validatedData.slug || slugify(validatedData.name)
-
-    // Check if slug exists
-    const slugCheckQuery = `
-      SELECT id FROM product_categories
-      WHERE "organizationId" = $1 AND "slug" = $2
-    `
-    const slugCheckValues = [organizationId, slug]
-    const slugCheckResult = await pool.query(slugCheckQuery, slugCheckValues)
-    if (slugCheckResult.rows.length > 0) {
-      return NextResponse.json({ error: "Slug already exists" }, { status: 400 })
+    // Check for unique slug within the organization
+    const slugCheck = await pool.query(
+      `SELECT id FROM "productCategories" WHERE slug = $1 AND "organizationId" = $2`,
+      [slug, organizationId]
+    );
+    if (slugCheck.rows.length > 0) {
+      return NextResponse.json({ error: "Slug already exists" }, { status: 400 });
     }
 
     // Insert new category
-    const categoryId = uuidv4()
     const insertQuery = `
-      INSERT INTO product_categories("id", "name", "slug", "image", "order", "parentId", "organizationId")
-      VALUES($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO "productCategories"(id, name, slug, image, "order", "parentId", "organizationId", "createdAt", "updatedAt")
+      VALUES($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
       RETURNING *
-    `
-    const insertValues = [
-      categoryId,
-      validatedData.name,
-      slug,
-      validatedData.image ?? null,
-      validatedData.order ?? 0,
-      validatedData.parentId ?? null,
-      organizationId,
-    ]
-    const insertResult = await pool.query(insertQuery, insertValues)
-    const createdCategory = insertResult.rows[0]
+    `;
+    const values = [categoryId, name, slug, image, order, parentId || null, organizationId];
 
-    return NextResponse.json({ category: createdCategory }, { status: 200 })
-  } catch (error) {
-    console.error("[POST /api/product-categories] error:", error)
+    const result = await pool.query(insertQuery, values);
+    return NextResponse.json(result.rows[0], { status: 201 });
+  } catch (error: any) {
+    console.error("[POST /api/product-categories] error:", error);
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: error.errors }, { status: 400 })
+      return NextResponse.json({ error: error.errors }, { status: 400 });
     }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
