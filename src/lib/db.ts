@@ -111,6 +111,17 @@ interface DB {
     expiresAt: Date;
     createdAt: Date;
   };
+  anouncements:{
+    id: string;
+    title: string;
+    content: string;
+    deliveryDate: Date;
+    countries: string;
+    status: string;
+    sent: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  };
   team: {
     id: string;
     name: string;
