@@ -1,11 +1,11 @@
 // /home/zodx/Desktop/trapigram/src/lib/auth-client.ts
 import { createAuthClient } from "better-auth/react";
 import { organizationClient } from "better-auth/client/plugins";
+import { magicLinkClient } from "better-auth/client/plugins"; // Add this import
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
 import { apiKeyClient } from "better-auth/client/plugins";
 import { ac, owner, manager, accountant, employee } from "@/lib/permissions";
 
-// Extend the AuthClient type
 declare module "better-auth/react" {
   interface AuthClient {
     organization: {
@@ -25,6 +25,7 @@ declare module "better-auth/react" {
       getInvitations: (data: { organizationId: string }) => Promise<{ data: any[]; error: any }>;
       cancelInvitation: (data: { invitationId: string }) => Promise<any>;
       inviteMember: (data: { email: string; role: string; organizationId: string }) => Promise<any>;
+      acceptInvitation: (data: { invitationId: string }) => Promise<any>;
     };
     subscription: {
       status: (data: { userId: string }) => Promise<{
@@ -34,6 +35,23 @@ declare module "better-auth/react" {
       createSubscription: (data: { userId: string; plan: string }) => Promise<{
         data: { subscription: any };
         error: { message: string } | null;
+      }>;
+    };
+    signIn: {
+      magicLink: (data: { email: string; callbackURL?: string }) => Promise<{
+        data: any;
+        error: { message: string; status: number } | null;
+      }>;
+      // Include existing email sign-in for completeness
+      email: (data: { email: string; password: string }) => Promise<{
+        data: any;
+        error: { message: string; status: number } | null;
+      }>;
+    };
+    magicLink: {
+      verify: (data: { query: { token: string } }) => Promise<{
+        data: any;
+        error: { message: string; status: number } | null;
       }>;
     };
   }
@@ -53,6 +71,7 @@ export const authClient = createAuthClient({
       },
     }),
     subscriptionClientPlugin,
+    magicLinkClient(), // Add the magic link client plugin
   ],
   fetchOptions: {
     credentials: "include",

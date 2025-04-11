@@ -1,85 +1,102 @@
+// /home/zodx/Desktop/trapigram/src/app/api/auth/check-status/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { Pool } from "pg";
 
+// We directly query your DB to confirm if "credential" row exists
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
 export async function GET(req: NextRequest) {
   try {
+    // 1) getSession from Better Auth (mostly to confirm user is logged in)
     const session = await auth.api.getSession({ headers: req.headers });
-    console.log("Session data:", session);
-
     if (!session) {
-      console.log("No session, redirecting to /login");
+      console.log("No session => /login");
       return NextResponse.json({ redirect: "/login" }, { status: 401 });
     }
+    console.log("Session data:", session);
 
-    const user = session.user;
-    console.log("User:", user);
+    const user = session.user as {
+      id: string;
+      email: string;
+      // you can keep is_guest or other fields if needed
+      is_guest?: boolean;
+    };
 
-    if (user.is_guest) {
-      console.log("User is guest, redirecting to /dashboard");
-      return NextResponse.json({ redirect: "/dashboard" });
-    }
+    // 2) Check if user is guest from DB perspective
+    const isGuest = user.is_guest ?? false;
 
-    const { rows: subscriptions } = await pool.query(
-      `SELECT * FROM subscription
-       WHERE "userId" = $1 AND (status = 'trialing' OR status = 'active')`,
+    // 3) DIRECT DB check: Does the user have a credential row in account table?
+    // 3) DIRECT DB check: Does the user have a credential row in `account` table?
+    const { rows: credRows } = await pool.query(
+      `SELECT 1 FROM account
+       WHERE "userId" = $1
+         AND "providerId" = 'credential'
+       LIMIT 1`,
       [user.id]
     );
-    console.log("Subscriptions:", subscriptions);
+    const hasPassword = credRows.length > 0;
+    console.log(`User ${user.id} => is_guest=${isGuest}, hasPassword=${hasPassword}`);
 
+    // 4) If the user is a guest AND has no password => /set-password
+    if (isGuest && !hasPassword) {
+      console.log("Guest user, no credential => /set-password");
+      return NextResponse.json({ redirect: "/set-password" });
+    }
+
+    // 5) Subscription checks as before
+    const { rows: subscriptions } = await pool.query(
+      `SELECT * FROM subscription
+       WHERE "userId" = $1 
+         AND (status = 'trialing' OR status = 'active')`,
+      [user.id]
+    );
     const now = new Date();
     const hasValidSubscription = subscriptions.some((sub) => {
       const trialEnd = sub.trialEnd ? new Date(sub.trialEnd) : null;
       const periodEnd = sub.periodEnd ? new Date(sub.periodEnd) : null;
       return (
         (sub.status === "trialing" || sub.status === "active") &&
-        (trialEnd ? trialEnd > now : true) &&
-        (periodEnd ? periodEnd > now : true)
+        (!trialEnd || trialEnd > now) &&
+        (!periodEnd || periodEnd > now)
       );
     });
-    console.log("Has valid subscription:", hasValidSubscription);
-
-    if (!hasValidSubscription) {
-      console.log("No valid subscription, redirecting to /subscribe");
+    if (!hasValidSubscription && !isGuest) {
+      console.log("No valid subscription => /subscribe");
       return NextResponse.json({ redirect: "/subscribe" });
     }
 
+    // 6) Tenant check
     const { rows: tenants } = await pool.query(
       `SELECT "onboardingCompleted" FROM tenant
        WHERE "ownerUserId" = $1`,
       [user.id]
     );
-    console.log("Tenants:", tenants);
-
-    const hasTenant = tenants.length > 0;
-    if (!hasTenant) {
-      console.log("No tenant, redirecting to /subscribe");
+    if (!tenants.length && !isGuest) {
+      console.log("No tenant => /subscribe");
       return NextResponse.json({ redirect: "/subscribe" });
     }
 
-    const onboardingCompleted = tenants[0].onboardingCompleted === -1;
-    console.log("Onboarding completed:", onboardingCompleted);
-
-    if (!onboardingCompleted) {
-      console.log("Onboarding not completed, redirecting to /onboarding");
-      return NextResponse.json({ redirect: "/onboarding" });
+    // 7) Onboarding
+    if (!isGuest) {
+      const onboardingCompleted = tenants[0].onboardingCompleted === -1;
+      if (!onboardingCompleted && isGuest) {
+        console.log("Onboarding not completed => /onboarding");
+        return NextResponse.json({ redirect: "/onboarding" });
+      }
     }
-
-    // Check if the session has an active organization
+      
+    // 8) Active organization
     const hasActiveOrganization = !!session.session.activeOrganizationId;
-    console.log("Has active organization:", hasActiveOrganization);
-
     if (!hasActiveOrganization) {
-      console.log("No active organization, redirecting to /select-organization");
+      console.log("No active org => /select-organization");
       return NextResponse.json({ redirect: "/select-organization" });
     }
 
-    // All checks passed—do not force a redirect
-    console.log("All checks passed, no redirect required");
+    // 9) All checks ok => no forced redirect
+    console.log("All checks passed => no redirect");
     return NextResponse.json({ redirect: null });
   } catch (error) {
     console.error("Error in check-status route:", error);

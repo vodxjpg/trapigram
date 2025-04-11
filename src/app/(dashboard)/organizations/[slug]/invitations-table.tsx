@@ -31,8 +31,8 @@ type Invitation = {
 };
 
 interface InvitationsTableProps {
-  organizationId: string; // Still needed for authClient calls
-  organizationSlug: string; // New prop for API call
+  organizationId: string;
+  organizationSlug: string;
   currentUserRole: string | null;
 }
 

@@ -41,7 +41,7 @@ export default function OrganizationDetailsPage() {
           throw new Error(`Failed to fetch organization: ${response.statusText}`);
         }
         const { organization: orgData } = await response.json();
-        console.log("Fetched organization data:", orgData); // Debug log
+        console.log("Fetched organization data:", orgData);
         setOrganization(orgData);
         setHeaderTitle(orgData.name);
       } catch (error) {
@@ -63,7 +63,7 @@ export default function OrganizationDetailsPage() {
     return <div className="flex items-center justify-center h-full">Organization not found</div>;
   }
 
-  console.log("Rendering with organization:", organization); // Debug log
+  console.log("Rendering with organization:", organization);
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -89,7 +89,7 @@ export default function OrganizationDetailsPage() {
         <TabsContent value="invitations" className="mt-4">
           <InvitationsTable
             organizationId={organization.id}
-            organizationSlug={organization.slug} // Add this
+            organizationSlug={organization.slug}
             currentUserRole={organization.userRole}
           />
         </TabsContent>

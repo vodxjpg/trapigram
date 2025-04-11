@@ -8,10 +8,20 @@ export async function middleware(request: NextRequest) {
   console.log("Session cookie:", sessionCookie);
 
   // Define public paths and check "/" as an exact match.
-  const publicPaths = ["/", "/login", "/sign-up", "/forgot-password", "/verify-email"];
+  const publicPaths = [
+    "/",
+    "/login",
+    "/sign-up",
+    "/forgot-password",
+    "/verify-email",
+    "/accept-invitation/:path*",
+    "/check-email",
+  ];
   const isPublicPath = publicPaths.some((path) =>
-    path === "/" 
-      ? request.nextUrl.pathname === "/" 
+    path === "/"
+      ? request.nextUrl.pathname === "/"
+      : path.includes(":path*")
+      ? request.nextUrl.pathname.startsWith(path.split(":")[0])
       : request.nextUrl.pathname.startsWith(path)
   );
   console.log("Is public path:", isPublicPath);

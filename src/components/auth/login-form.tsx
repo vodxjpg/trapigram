@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/components/login-form.tsx
+// /home/zodx/Desktop/trapigram/src/components/auth/login-form.tsx
 "use client";
 
 import { useForm } from "react-hook-form";
@@ -10,16 +10,24 @@ import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect } from "react";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
-  password: z.string().min(1, "Password is required"),
+  password: z.string().min(1, "Password is required").optional(),
 });
 
 export function LoginForm({ className, ...props }: React.ComponentPropsWithoutRef<"form">) {
-  const { register, handleSubmit, formState: { errors } } = useForm<z.infer<typeof loginSchema>>({
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const invitationId = searchParams.get("invitationId");
+
+  const { register, handleSubmit, formState: { errors }, setValue, watch } = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
   });
+
+  const passwordValue = watch("password"); // Watch the password field to determine button text
 
   async function onSubmit(data: z.infer<typeof loginSchema>) {
     try {
@@ -41,21 +49,37 @@ export function LoginForm({ className, ...props }: React.ComponentPropsWithoutRe
         return;
       }
 
-      const { data: response, error } = await authClient.signIn.email({
-        email: data.email,
-        password: data.password,
-      });
+      if (data.password) {
+        // Email/Password Login
+        const { data: response, error } = await authClient.signIn.email({
+          email: data.email,
+          password: data.password,
+        });
 
-      if (error) {
-        if (error.status === 403) {
-          toast.error("Please verify your email first");
+        if (error) {
+          if (error.status === 403) {
+            toast.error("Please verify your email first");
+          } else {
+            toast.error("Invalid email or password");
+          }
+          console.error("Login error:", error);
         } else {
-          toast.error("Invalid email or password");
+          console.log("Login successful:", response);
+          window.location.href = invitationId ? `/accept-invitation/${invitationId}` : "/dashboard";
         }
-        console.error("Login error:", error);
       } else {
-        console.log("Login successful:", response);
-        window.location.href = "/dashboard"; // Changed to /dashboard
+        // Magic Link Login
+        const response = await authClient.signIn.magicLink({
+          email: data.email,
+          callbackURL: invitationId ? `/accept-invitation/${invitationId}` : "/dashboard",
+        });
+
+        if (response.error) {
+          throw new Error(response.error.message);
+        }
+
+        toast.success("Magic link sent! Check your email.");
+        router.push("/check-email");
       }
     } catch (err) {
       console.error("Unexpected error:", err);
@@ -85,7 +109,7 @@ export function LoginForm({ className, ...props }: React.ComponentPropsWithoutRe
         </div>
         <div className="grid gap-2">
           <div className="flex items-center">
-            <Label htmlFor="password">Password</Label>
+            <Label htmlFor="password">Password (optional)</Label>
             <a href="/forgot-password" className="ml-auto text-sm underline-offset-4 hover:underline">
               Forgot your password?
             </a>
@@ -94,12 +118,12 @@ export function LoginForm({ className, ...props }: React.ComponentPropsWithoutRe
             id="password"
             type="password"
             {...register("password")}
-            required
+            placeholder="Leave blank for magic link"
           />
           {errors.password && <p className="text-red-500 text-sm">{errors.password.message}</p>}
         </div>
         <Button type="submit" className="w-full">
-          Login
+          {passwordValue ? "Login" : "Send Magic Link"}
         </Button>
       </div>
       <div className="text-center text-sm">

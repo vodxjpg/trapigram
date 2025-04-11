@@ -8,37 +8,50 @@ import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
 import { apiKey } from "better-auth/plugins";
 import { ac, owner, manager, accountant, employee } from "@/lib/permissions";
-
-/**
- * Our random utility for generating placeholders.
- * In production, use something more robust if you like.
- */
-function randomPassword(): string {
-  return Math.random().toString(36).substring(2, 12) + Date.now().toString();
-}
+import { createAuthMiddleware } from "better-auth/api";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-// Define the magicLink plugin separately so we can use it in organization plugin
-const magicLinkPlugin = magicLink({
-  expiresIn: 60 * 10, // 10 minutes
-  async sendMagicLink({ email, token, url }, request) {
-    await sendEmail({
-      to: email,
-      subject: "Your Magic Link to Trapigram",
-      text: `Hey! Click here to sign in: ${url}\n\nThis link will expire soon.`,
-    });
-  },
-});
-
 export const auth = betterAuth({
+  // -------------------------------------------------------------------------
+  // Database
+  // -------------------------------------------------------------------------
   database: pool,
 
-  // -------------------------------
-  // Email and Password
-  // -------------------------------
+  // -------------------------------------------------------------------------
+  // Trusted Origins
+  // -------------------------------------------------------------------------
+  trustedOrigins: [
+    "http://localhost:3000",
+    "http://localhost:3000/accept-invitation",
+  ],
+
+  // -------------------------------------------------------------------------
+  // Hooks
+  // -------------------------------------------------------------------------
+  hooks: {
+    /**
+     * Removed the forced `is_guest = true` logic here, because we’re
+     * already handling `is_guest` in the `beforeCreate` hook (below).
+     */
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/api/auth/magic-link/verify") {
+        const newSession = ctx.context.newSession;
+        if (newSession && newSession.user) {
+          console.log(
+            `hooks.after: User ${newSession.user.email} just verified magic link.`
+          );
+          // No forced is_guest logic anymore
+        }
+      }
+    }),
+  },
+
+  // -------------------------------------------------------------------------
+  // Email & Password
+  // -------------------------------------------------------------------------
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: true,
@@ -60,24 +73,86 @@ export const auth = betterAuth({
     },
   },
 
-  // -------------------------------
-  // Additional user fields
-  // -------------------------------
+  // -------------------------------------------------------------------------
+  // User Schema
+  // -------------------------------------------------------------------------
   user: {
+    fields: { is_guest: "is_guest" },
     additionalFields: {
-      phone: { type: "string", required: true },
-      country: { type: "string", required: true },
-      is_guest: { type: "boolean", required: true, default: false },
+      phone: { type: "string", required: false },
+      country: { type: "string", required: false },
+      is_guest: { type: "boolean", required: false, defaultValue: false, },
     },
   },
 
-  // -------------------------------
-  // Sessions, Rate Limit, etc.
-  // -------------------------------
+  // -------------------------------------------------------------------------
+  // Database Hooks (user beforeCreate)
+  // -------------------------------------------------------------------------
+  databaseHooks: {
+    user: {
+      beforeCreate: async (data) => {
+        console.log(`beforeCreate: Processing user ${data.email}`);
+
+        // 1) If no name is provided, default to everything before the @
+        if (!data.name) {
+          const [beforeAt] = data.email.split("@");
+          data.name = beforeAt;
+          console.log(
+            `beforeCreate: No name provided, setting name to "${data.name}" based on email.`
+          );
+        }
+
+        try {
+          // 2) Check if user already exists
+          const existingUser = await db
+            .selectFrom("user")
+            .select(["id"])
+            .where("email", "=", data.email)
+            .executeTakeFirst();
+
+          if (existingUser) {
+            console.log(
+              `beforeCreate: User ${data.email} exists, keeping is_guest unchanged`
+            );
+            return { data };
+          }
+
+          // 3) If new user, see if there's a pending invitation
+          const invitation = await db
+            .selectFrom("invitation")
+            .select(["id", "email", "status"])
+            .where("email", "=", data.email)
+            .where("status", "=", "pending")
+            .executeTakeFirst();
+
+          const isGuest = !!invitation;
+          console.log(
+            `beforeCreate: New user ${data.email}, invitation: ${JSON.stringify(
+              invitation
+            )}, setting is_guest = ${isGuest}`
+          );
+
+          return {
+            data: {
+              ...data,
+              is_guest: isGuest,
+            },
+          };
+        } catch (error) {
+          console.error(`beforeCreate: Error for ${data.email}:`, error);
+          return { data };
+        }
+      },
+    },
+  },
+
+  // -------------------------------------------------------------------------
+  // Session
+  // -------------------------------------------------------------------------
   session: {
     cookieCache: {
       enabled: true,
-      maxAge: 50 * 60, // 50 minutes
+      maxAge: 50 * 60, // 50 min
     },
     cookieOptions: {
       httpOnly: true,
@@ -85,7 +160,45 @@ export const auth = betterAuth({
       sameSite: "lax",
       path: "/",
     },
+    async getSession(session) {
+      // Check if user has a credential-based password
+      // 1) Fetch the full user row
+        const userRow = await db
+        .selectFrom("user")
+        .selectAll()
+        .where("id", "=", session.userId)
+        .executeTakeFirst();
+
+      // 2) If the userRow is missing, something’s off:
+      if (!userRow) {
+        console.log("No userRow found for userId:", session.userId);
+        return session;
+      }
+
+      // 3) Check if there's a credential-based password
+      const account = await db
+        .selectFrom("account")
+        .where("userId", "=", session.userId)
+        .where("providerId", "=", "credential")
+        .executeTakeFirst();
+
+      const hasPassword = !!account;
+      console.log(
+        `getSession: user ${session.userId} => hasPassword: ${hasPassword}, is_guest: ${userRow.is_guest}`
+      );
+      return {
+        ...session,
+        user: {
+          ...session.user,
+          hasPassword: !!account,
+        },
+      };
+    },
   },
+
+  // -------------------------------------------------------------------------
+  // Rate Limits
+  // -------------------------------------------------------------------------
   rateLimit: {
     storage: "database",
     window: 60,
@@ -97,15 +210,22 @@ export const auth = betterAuth({
       },
     },
   },
+
+  // -------------------------------------------------------------------------
+  // Custom API Routes
+  // -------------------------------------------------------------------------
   api: {
     "/check-email": {
       GET: async (req) => {
         const email = req.query.email as string;
         if (!email) {
-          return new Response(JSON.stringify({ error: "Email is required" }), {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ error: "Email is required" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
         }
         try {
           const row = await db
@@ -113,10 +233,13 @@ export const auth = betterAuth({
             .select(["id"])
             .where("email", "=", email)
             .executeTakeFirst();
-          return new Response(JSON.stringify({ exists: !!row }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ exists: !!row }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
         } catch (error) {
           console.error("Error checking email:", error);
           return new Response(
@@ -131,7 +254,9 @@ export const auth = betterAuth({
     },
   },
 
-  // Just an example custom table (tenant). If not needed, remove.
+  // -------------------------------------------------------------------------
+  // Schema / Tenant
+  // -------------------------------------------------------------------------
   schema: {
     tenant: {
       fields: {
@@ -146,11 +271,11 @@ export const auth = betterAuth({
     },
   },
 
-  // -------------------------------
-  // PLUGINS
-  // -------------------------------
+  // -------------------------------------------------------------------------
+  // Plugins
+  // -------------------------------------------------------------------------
   plugins: [
-    // (1) Let folks generate/read API keys
+    // ----------------- API Key Plugin -----------------
     apiKey({
       enableMetadata: true,
       permissions: {
@@ -161,20 +286,30 @@ export const auth = betterAuth({
       },
       rateLimit: {
         enabled: true,
-        timeWindow: 1000 * 60 * 60 * 24, // 1 day
+        timeWindow: 1000 * 60 * 60 * 24,
         maxRequests: 100,
       },
     }),
 
-    // (2) Subscription
+    // ----------------- Subscription Plugin -----------------
     subscriptionPlugin(),
 
-    // (3) MAGIC LINK PLUGIN
-    magicLinkPlugin, // Use the separately defined plugin here
+    // ----------------- Magic Link Plugin -----------------
+    magicLink({
+      expiresIn: 60 * 10, // 10 minutes
+      disableSignUp: true, // do NOT auto-create new users
+      async sendMagicLink({ email, token, url }, request) {
+        console.log(`sendMagicLink: Sending to ${email}, URL: ${url}`);
+        await sendEmail({
+          to: email,
+          subject: "Complete Your Trapigram Sign-In",
+          text: `Hey! Click here to sign in: ${url}`,
+        });
+      },
+    }),
 
-    // (4) ORGANIZATION PLUGIN
+    // ----------------- Organization Plugin -----------------
     organization({
-      // (A) Access control
       ac,
       roles: {
         owner,
@@ -182,41 +317,10 @@ export const auth = betterAuth({
         accountant,
         employee,
       },
-
-      // (B) Send invitation email with magic link
       async sendInvitationEmail(data) {
         const { id, email, role, organization, inviter } = data;
+        const inviteLink = `${process.env.NEXT_PUBLIC_APP_URL}/accept-invitation/${id}`;
 
-        // 1) Check if user already exists
-        const existing = await db
-          .selectFrom("user")
-          .selectAll()
-          .where("email", "=", email)
-          .executeTakeFirst();
-
-        // 2) If user doesn’t exist, create one with a random password
-        if (!existing) {
-          const signupRes = await this.api.signUpEmail({
-            body: {
-              email,
-              password: randomPassword(),
-              name: email.substring(0, email.indexOf("@")) || "New User",
-              phone: "000",
-              country: "ZZ",
-              is_guest: true,
-            },
-          });
-          if (signupRes.error) {
-            console.error("Error auto-creating user for invitation:", signupRes.error);
-          }
-        }
-
-        // 3) Generate a magic link token using the magicLinkPlugin we defined
-        const token = await magicLinkPlugin.createToken({ email });
-        const callbackURL = `${process.env.NEXT_PUBLIC_APP_URL}/accept-invitation/${id}`;
-        const magicLinkURL = `${process.env.BETTER_AUTH_URL}/magic-link/verify?token=${encodeURIComponent(token.token)}&callbackURL=${encodeURIComponent(callbackURL)}`;
-
-        // 4) Send the email with the magic link
         await sendEmail({
           to: email,
           subject: `You've been invited to join ${organization.name}`,
@@ -226,8 +330,8 @@ Hi there!
 You were invited by ${inviter.user.name} <${inviter.user.email}> 
 to join "${organization.name}" as a ${role}.
 
-Click this link to sign in (or create an account) and accept the invitation:
-${magicLinkURL}
+Click this link to accept the invitation:
+${inviteLink}
 
 If the link doesn’t work, copy and paste it into your browser.
 
@@ -235,9 +339,9 @@ Regards,
 The Trapigram Team
           `,
         });
-      },
 
-      // (C) Optional hooking into org creation (as you already do)
+        console.log(`Invitation email sent for ID: ${id} to ${email}`);
+      },
       organizationCreation: {
         beforeCreate: async ({ organization, user }, request) => {
           const { rows: tenants } = await pool.query(
@@ -248,7 +352,6 @@ The Trapigram Team
             throw new Error("No tenant found for user");
           }
           const tenantId = tenants[0].id;
-
           return {
             data: {
               ...organization,
@@ -263,7 +366,10 @@ The Trapigram Team
           try {
             const countriesArr = organization.metadata?.countries;
             if (!countriesArr || !Array.isArray(countriesArr)) {
-              console.log("No countries found in metadata for org:", organization.id);
+              console.log(
+                "No countries found in metadata for org:",
+                organization.id
+              );
               return;
             }
             const updateSql = `UPDATE organization SET countries = $1 WHERE id = $2`;
@@ -277,8 +383,6 @@ The Trapigram Team
           }
         },
       },
-
-      // (D) Custom table fields (as you have)
       schema: {
         organization: {
           modelName: "organization",
@@ -289,7 +393,7 @@ The Trapigram Team
       },
     }),
 
-    // Keep session cookies in sync with Next's cookies
+    // ----------------- Next.js Cookies -----------------
     nextCookies(),
   ],
 });
