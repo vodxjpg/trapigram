@@ -109,7 +109,7 @@ export function LoginForm({ className, ...props }: React.ComponentPropsWithoutRe
         </div>
         <div className="grid gap-2">
           <div className="flex items-center">
-            <Label htmlFor="password">Password (optional)</Label>
+            <Label htmlFor="password">Password </Label>
             <a href="/forgot-password" className="ml-auto text-sm underline-offset-4 hover:underline">
               Forgot your password?
             </a>
@@ -118,7 +118,7 @@ export function LoginForm({ className, ...props }: React.ComponentPropsWithoutRe
             id="password"
             type="password"
             {...register("password")}
-            placeholder="Leave blank for magic link"
+            placeholder="Please enter your password"
           />
           {errors.password && <p className="text-red-500 text-sm">{errors.password.message}</p>}
         </div>

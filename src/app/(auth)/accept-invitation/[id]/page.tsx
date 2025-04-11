@@ -12,38 +12,54 @@ export default function AcceptInvitation() {
   const [status, setStatus] = useState<"loading" | "done" | "error">("loading");
 
   useEffect(() => {
-    const handleInvitation = async () => {
+    async function handleInvitation() {
       try {
-        const response = await fetch(`/api/organizations/accept-invitation/${invitationId}`, {
+        const res = await fetch(`/api/organizations/accept-invitation/${invitationId}`, {
           method: "GET",
           credentials: "include",
         });
-        const data = await response.json();
-        console.log("API response:", data);
+        const data = await res.json();
+        console.log("Accept Invitation API response:", data);
 
-        if (!response.ok) {
+        if (!res.ok) {
           throw new Error(data.error || "Failed to process invitation");
         }
 
-        toast.success("Invitation processed");
+        // success => redirect
+        toast.success("Invitation processed successfully!");
         setStatus("done");
-        router.push(data.redirect);
-      } catch (error) {
-        console.error("Error:", error);
-        toast.error(error.message);
+        router.push(data.redirect); // e.g. /login, /set-password, /dashboard, etc.
+      } catch (error: any) {
+        console.error("Error accepting invitation:", error);
+        toast.error(error.message || "Failed to accept invitation");
         setStatus("error");
+        // Possibly push to /login if needed
         router.push("/login");
       }
-    };
+    }
 
-    if (invitationId) handleInvitation();
+    if (invitationId) {
+      handleInvitation();
+    }
   }, [invitationId, router]);
 
   if (status === "loading") {
-    return <div className="flex min-h-screen items-center justify-center">Processing invitation...</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        Processing invitation...
+      </div>
+    );
   }
   if (status === "done") {
-    return <div className="flex min-h-screen items-center justify-center">Redirecting...</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        Redirecting...
+      </div>
+    );
   }
-  return <div className="flex min-h-screen items-center justify-center">Something went wrong...</div>;
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      Something went wrong...
+    </div>
+  );
 }

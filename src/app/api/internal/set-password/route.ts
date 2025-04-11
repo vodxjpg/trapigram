@@ -14,23 +14,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Password is required" }, { status: 400 });
     }
 
-    // Set password
+    // 1) Actually set the password with Better Auth
     const setResp = await auth.api.setPassword({
       headers: req.headers, 
       body: { newPassword: password },
     });
-
     if (setResp.error) {
       console.error("Set password error:", setResp.error.message);
       return NextResponse.json({ error: setResp.error.message }, { status: 500 });
     }
 
-    // Mark user as guest
+    // 2) Mark user as NOT a guest
     const ctx = await auth.$context;
     await ctx.internalAdapter.updateUser(session.user.id, { is_guest: true });
 
-    // **** Force sign out => old session cookie is invalid
-    await auth.api.signOut({ headers: req.headers });
+    // 3) DO NOT sign out – we want to keep the user logged in
+    // await auth.api.signOut({ headers: req.headers }); // remove this line
 
     return NextResponse.json({ success: true });
   } catch (error) {

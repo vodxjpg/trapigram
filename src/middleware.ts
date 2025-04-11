@@ -1,3 +1,5 @@
+// /home/zodx/Desktop/trapigram/src/middleware.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
 
@@ -7,7 +9,10 @@ export async function middleware(request: NextRequest) {
   const sessionCookie = getSessionCookie(request);
   console.log("Session cookie:", sessionCookie);
 
-  // Define public paths and check "/" as an exact match.
+  // ---------------------------------------------------------
+  // Define your public paths. Notice we have "/accept-invitation/:path*"
+  // so that any dynamic route under "/accept-invitation/..." is allowed as public.
+  // ---------------------------------------------------------
   const publicPaths = [
     "/",
     "/login",
@@ -26,11 +31,13 @@ export async function middleware(request: NextRequest) {
   );
   console.log("Is public path:", isPublicPath);
 
+  // If there's NO session cookie and the path is NOT public, redirect to /login
   if (!sessionCookie && !isPublicPath && request.nextUrl.pathname !== "/reset-password") {
     console.log("No session and not public, redirecting to /login");
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
+  // Special handling for /reset-password
   if (request.nextUrl.pathname === "/reset-password") {
     const token = request.nextUrl.searchParams.get("token");
     if (!token) {
@@ -41,15 +48,27 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // If no session cookie but path is public => just proceed
   if (!sessionCookie && isPublicPath) {
     console.log("No session but public path, proceeding");
     return NextResponse.next();
   }
 
-  const checkStatusResponse = await fetch(
-    new URL("/api/auth/check-status", request.url).toString(),
-    { headers: request.headers }
-  );
+  // ---------------------------------------------------------
+  // We have a sessionCookie, or the path is protected, so we do the check-status:
+  // IMPORTANT: pass the *original* path as a query param so we can detect
+  // that it was "/accept-invitation/..." in check-status code.
+  // ---------------------------------------------------------
+  const originalPath = request.nextUrl.pathname;
+  const checkStatusUrl = new URL("/api/auth/check-status", request.url);
+  checkStatusUrl.searchParams.set("originalPath", originalPath);
+
+  const checkStatusResponse = await fetch(checkStatusUrl, {
+    headers: request.headers,
+    // Pass along the same method/cookies if needed:
+    method: "GET",
+    credentials: "include",
+  });
   const checkStatusData = await checkStatusResponse.json();
   console.log("Check-status response:", checkStatusData);
 
@@ -61,9 +80,9 @@ export async function middleware(request: NextRequest) {
   const { redirect } = checkStatusData;
   console.log("Redirect target:", redirect);
 
-  // Only redirect if redirect is non-null and different from the current path.
-  if (redirect && request.nextUrl.pathname !== redirect) {
-    console.log(`Redirecting from ${request.nextUrl.pathname} to ${redirect}`);
+  // If checkStatus says to redirect, do it (unless we are already on that path)
+  if (redirect && redirect !== originalPath) {
+    console.log(`Redirecting from ${originalPath} to ${redirect}`);
     return NextResponse.redirect(new URL(redirect, request.url));
   }
 

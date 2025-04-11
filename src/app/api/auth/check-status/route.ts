@@ -1,15 +1,20 @@
 // /home/zodx/Desktop/trapigram/src/app/api/auth/check-status/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { Pool } from "pg";
 
-// We directly query your DB to confirm if "credential" row exists
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
 export async function GET(req: NextRequest) {
   try {
+    // 0) Get the original path from query param, so we know what page the user is *really* requesting
+    const searchParams = new URL(req.url).searchParams;
+    const originalPath = searchParams.get("originalPath") || "";
+    console.log("Check-status => originalPath is:", originalPath);
+
     // 1) getSession from Better Auth (mostly to confirm user is logged in)
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session) {
@@ -21,15 +26,13 @@ export async function GET(req: NextRequest) {
     const user = session.user as {
       id: string;
       email: string;
-      // you can keep is_guest or other fields if needed
       is_guest?: boolean;
     };
 
     // 2) Check if user is guest from DB perspective
     const isGuest = user.is_guest ?? false;
 
-    // 3) DIRECT DB check: Does the user have a credential row in account table?
-    // 3) DIRECT DB check: Does the user have a credential row in `account` table?
+    // 3) Check if user has a credential-based password
     const { rows: credRows } = await pool.query(
       `SELECT 1 FROM account
        WHERE "userId" = $1
@@ -38,18 +41,28 @@ export async function GET(req: NextRequest) {
       [user.id]
     );
     const hasPassword = credRows.length > 0;
-    console.log(`User ${user.id} => is_guest=${isGuest}, hasPassword=${hasPassword}`);
+    console.log(
+      `User ${user.id} => is_guest=${isGuest}, hasPassword=${hasPassword}`
+    );
 
-    // 4) If the user is a guest AND has no password => /set-password
+    // 4) If user is guest AND no password => default to /set-password
+    //    BUT skip if the *original path* is /accept-invitation/...
     if (isGuest && !hasPassword) {
-      console.log("Guest user, no credential => /set-password");
-      return NextResponse.json({ redirect: "/set-password" });
+      if (originalPath.startsWith("/accept-invitation/")) {
+        console.log(
+          "User is guest with no password, but they're on accept-invitation => skipping forced /set-password"
+        );
+        // We'll let them proceed so the invitation can get accepted
+      } else {
+        console.log("Guest user, no credential => /set-password");
+        return NextResponse.json({ redirect: "/set-password" });
+      }
     }
 
     // 5) Subscription checks as before
     const { rows: subscriptions } = await pool.query(
       `SELECT * FROM subscription
-       WHERE "userId" = $1 
+       WHERE "userId" = $1
          AND (status = 'trialing' OR status = 'active')`,
       [user.id]
     );
@@ -81,13 +94,13 @@ export async function GET(req: NextRequest) {
 
     // 7) Onboarding
     if (!isGuest) {
-      const onboardingCompleted = tenants[0].onboardingCompleted === -1;
+      const onboardingCompleted = tenants[0]?.onboardingCompleted === -1;
       if (!onboardingCompleted && isGuest) {
         console.log("Onboarding not completed => /onboarding");
         return NextResponse.json({ redirect: "/onboarding" });
       }
     }
-      
+
     // 8) Active organization
     const hasActiveOrganization = !!session.session.activeOrganizationId;
     if (!hasActiveOrganization) {
