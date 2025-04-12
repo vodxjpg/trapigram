@@ -14,8 +14,8 @@ import {
   Edit,
   ZoomIn,
 } from "lucide-react";
-import ReactQuill from 'react-quill-new';
-import 'react-quill-new/dist/quill.snow.css';
+import ReactQuill from "react-quill-new";
+import "react-quill-new/dist/quill.snow.css";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,7 +82,7 @@ export function AnnouncementsTable() {
   // Modal state for viewing announcement content.
   const [contentModalOpen, setContentModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState("");
-  const [announcementValue, setAnnouncementValue] = useState('');
+  const [announcementValue, setAnnouncementValue] = useState("");
 
   // Fetch announcements from the API endpoint.
   const fetchAnnouncements = async () => {
@@ -95,10 +95,12 @@ export function AnnouncementsTable() {
         throw new Error("Failed to fetch announcements");
       }
       const data = await response.json();
-      const safeAnnouncements = data.announcements.map((announcement: Announcement) => ({
-        ...announcement,
-        countries: announcement.countries || "N/A",
-      }));
+      const safeAnnouncements = data.announcements.map(
+        (announcement: Announcement) => ({
+          ...announcement,
+          countries: announcement.countries || "N/A",
+        })
+      );
       setAnnouncements(safeAnnouncements);
       setTotalPages(data.totalPages);
       setCurrentPage(data.currentPage);
@@ -148,7 +150,9 @@ export function AnnouncementsTable() {
       return;
     }
     try {
-      const response = await fetch(`/api/announcements/${id}`, { method: "DELETE" });
+      const response = await fetch(`/api/announcements/${id}`, {
+        method: "DELETE",
+      });
       if (!response.ok) {
         throw new Error("Failed to delete announcement");
       }
@@ -175,20 +179,31 @@ export function AnnouncementsTable() {
 
   const modules = {
     toolbar: [
-      [{ 'header': [1, 2, false] }],
-      ['bold', 'italic', 'underline','strike', 'blockquote'],
-      [{'list': 'ordered'}, {'list': 'bullet'}, {'indent': '-1'}, {'indent': '+1'}],
-      ['link', 'image'],
-      ['clean']
+      [{ header: [1, 2, false] }],
+      ["bold", "italic", "underline", "strike", "blockquote"],
+      [
+        { list: "ordered" },
+        { list: "bullet" },
+        { indent: "-1" },
+        { indent: "+1" },
+      ],
+      ["link", "image"],
+      ["clean"],
     ],
-  }
+  };
 
   const formats = [
-    'header',
-    'bold', 'italic', 'underline', 'strike', 'blockquote',
-    'list', 'indent',
-    'link', 'image'
-  ]
+    "header",
+    "bold",
+    "italic",
+    "underline",
+    "strike",
+    "blockquote",
+    "list",
+    "indent",
+    "link",
+    "image",
+  ];
 
   return (
     <div className="space-y-4">
@@ -248,14 +263,18 @@ export function AnnouncementsTable() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleOpenContentModal(announcement.content)}
+                      onClick={() =>
+                        handleOpenContentModal(announcement.content)
+                      }
                     >
                       <ZoomIn className="h-4 w-4" />
                       <span className="sr-only">View Content</span>
                     </Button>
                   </TableCell>
                   <TableCell>
-                    {announcement.expirationDate ? announcement.expirationDate : "N/A"}
+                    {announcement.expirationDate
+                      ? announcement.expirationDate
+                      : "N/A"}
                   </TableCell>
                   <TableCell>{announcement.status}</TableCell>
                   <TableCell>{announcement.sent ? "Yes" : "No"}</TableCell>
@@ -269,7 +288,9 @@ export function AnnouncementsTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEdit(announcement)}>
+                        <DropdownMenuItem
+                          onClick={() => handleEdit(announcement)}
+                        >
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
@@ -369,11 +390,15 @@ export function AnnouncementsTable() {
           </DialogHeader>
           {/* Instead of using FormControl here (which requires a form context),
               we simply render the input directly. */}
-          <ReactQuill theme="snow" value={modalContent} modules={modules} formats={formats} readOnly/>
-          <DialogFooter>            
+          {/* <ReactQuill theme="snow" value={modalContent} modules={modules} formats={formats} readOnly/> */}
+          <div dangerouslySetInnerHTML={{ __html: modalContent }} />
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button onClick={() => setContentModalOpen(false)}>Close</Button>
+            </DialogClose>
           </DialogFooter>
         </DialogContent>
-      </Dialog>      
+      </Dialog>
     </div>
   );
 }

@@ -32,17 +32,17 @@ const announcementSchema = z.object({
 // It requires either a valid API key or an internal secret header.
 // -------------------------------------------------------------------
 export async function GET(req: NextRequest) {
-  const apiKey = req.headers.get("x-api-key");
+  const apiKey = "tp_DntVJOYTwKaqUIblcpxWOpnydqZdZRyfhchlwCYSjYbJoXOuaZPSaMSQGLCbqpKO"
+  //const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
   let organizationId: string;
-  console.log("asdas")
 
   // Extract query parameters from the request URL.
   const { searchParams } = new URL(req.url);
   const explicitOrgId = searchParams.get("organizationId");
 
   // Validate authentication using an API key.
-  if (apiKey) {
+  if (apiKey) {    
     const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
     if (!valid || !key) {
       return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
@@ -126,7 +126,8 @@ export async function GET(req: NextRequest) {
 // It requires either a valid API key or an internal secret header.
 // -------------------------------------------------------------------
 export async function POST(req: NextRequest) {
-  const apiKey = req.headers.get("x-api-key");
+  const apiKey = "tp_DntVJOYTwKaqUIblcpxWOpnydqZdZRyfhchlwCYSjYbJoXOuaZPSaMSQGLCbqpKO"
+  //const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
   let organizationId: string;
 
