@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import ReactQuill from "react-quill-new";
 import "react-quill-new/dist/quill.snow.css";
+import { Badge } from "@/components/ui/badge";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -278,7 +279,13 @@ export function AnnouncementsTable() {
                   </TableCell>
                   <TableCell>{announcement.status}</TableCell>
                   <TableCell>{announcement.sent ? "Yes" : "No"}</TableCell>
-                  <TableCell>{announcement.countries}</TableCell>
+                  <TableCell>
+                    {announcement.countries.map((annou) => (
+                      <Badge key={annou} variant="outline" className="mr-1">
+                        {annou}
+                      </Badge>
+                    ))}
+                  </TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>

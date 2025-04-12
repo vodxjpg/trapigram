@@ -14,6 +14,7 @@ import {
   Edit,
 } from "lucide-react";
 import Image from "next/image";
+import { Badge } from "@/components/ui/badge";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -237,8 +238,15 @@ export function CouponsTable() {
                   <TableCell>{coupon.usageLimit}</TableCell>
                   <TableCell>{coupon.expendingLimit}</TableCell>
                   <TableCell>
-                    {coupon.countries.length > 0
-                      ? coupon.countries : "N/A"}
+                    {coupon.countries.map((count) => (
+                      <Badge
+                      key={count}
+                      variant="outline"
+                      className="mr-1"
+                    >
+                      {count}
+                    </Badge>
+                    ))}
                   </TableCell>
                   <TableCell>{coupon.visibility ? "Visible" : "Hidden"}</TableCell>
                   <TableCell className="text-right">

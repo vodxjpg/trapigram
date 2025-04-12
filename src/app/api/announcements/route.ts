@@ -109,6 +109,9 @@ export async function GET(req: NextRequest) {
     // Execute select query.
     const result = await pool.query(query, values);
     const announcements = result.rows;
+    announcements.map((announcement) => {
+      announcement.countries = JSON.parse(announcement.countries)
+    })    
 
     return NextResponse.json({
       announcements,

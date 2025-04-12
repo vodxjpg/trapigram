@@ -42,7 +42,8 @@ const couponSchema = z.object({
 // It requires either a valid API key or an internal secret header.
 // -------------------------------------------------------------------
 export async function GET(req: NextRequest) {
-    const apiKey = req.headers.get("x-api-key");
+    const apiKey = "tp_DntVJOYTwKaqUIblcpxWOpnydqZdZRyfhchlwCYSjYbJoXOuaZPSaMSQGLCbqpKO"
+  //const apiKey = req.headers.get("x-api-key");
     const internalSecret = req.headers.get("x-internal-secret");
     let organizationId: string;
 
@@ -118,6 +119,10 @@ export async function GET(req: NextRequest) {
         // Run the select query to fetch the coupons.
         const result = await pool.query(query, values);
         const coupons = result.rows;
+        coupons.map((coupon) => {
+            coupon.countries = JSON.parse(coupon.countries)
+            console.log(coupon)
+          }) 
 
         return NextResponse.json({
             coupons,
