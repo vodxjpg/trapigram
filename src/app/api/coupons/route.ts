@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
         // Here, we stringify the countries array if your DB expects text.
         const values = [couponId, organizationId, name, code, description, expirationDate, limitPerUser, usageLimit, expendingLimit, JSON.stringify(countries), visibility];
 
-        //const result = await pool.query(insertQuery, values);
+        const result = await pool.query(insertQuery, values);
         return NextResponse.json(result.rows[0], { status: 201 });
     } catch (error: any) {
         console.error("[POST /api/coupons] error:", error);
