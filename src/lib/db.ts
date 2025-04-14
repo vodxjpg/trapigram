@@ -82,9 +82,12 @@ interface DB {
   };
   coupons: {
     id: string;
+    organizationId: string;
     name: string;
     code: string;
     description: string;
+    expirationDate: Date;
+    limitePerUser: number;
     usagePerUser: number;
     usageLimit: number;
     expendingMinimum: number;
@@ -113,6 +116,7 @@ interface DB {
   };
   anouncements:{
     id: string;
+    organizationId: string;
     title: string;
     content: string;
     deliveryDate: Date;

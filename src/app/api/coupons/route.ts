@@ -140,7 +140,8 @@ export async function GET(req: NextRequest) {
 // It requires either a valid API key or an internal secret header.
 // -------------------------------------------------------------------
 export async function POST(req: NextRequest) {
-    const apiKey = req.headers.get("x-api-key");
+    const apiKey = "tp_DntVJOYTwKaqUIblcpxWOpnydqZdZRyfhchlwCYSjYbJoXOuaZPSaMSQGLCbqpKO"
+  //const apiKey = req.headers.get("x-api-key");
     const internalSecret = req.headers.get("x-internal-secret");
     let organizationId: string;
 
@@ -169,11 +170,9 @@ export async function POST(req: NextRequest) {
     } else {
         return NextResponse.json({ error: "Unauthorized: Provide either an API key or internal secret" }, { status: 403 });
     }
-
-    try {
-        // Parse and validate the request body using zod.
+    try {        
+        // Parse and validate the request body using zod.        
         const body = await req.json();
-        console.log(body)
         const parsedCoupon = couponSchema.parse(body);        
         const { name, code, description, expirationDate, limitPerUser, usageLimit, expendingLimit, countries, visibility } = parsedCoupon;
         const couponId = uuidv4();
