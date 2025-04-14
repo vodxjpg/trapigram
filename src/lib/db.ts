@@ -224,6 +224,49 @@ interface DB {
     attributeId: string;
     termId: string;
   };
+
+
+
+
+  // New Tables
+
+  // The "products" table stores individual products
+  products: {
+    id: string;
+    organization_id: string;
+    tenant_id: string;
+    title: string;
+    description: string | null;
+    image: string | null;
+    sku: string;
+    status: "published" | "draft";
+    product_type: "simple" | "variable";
+    regular_price: number;
+    sale_price: number | null;
+    allow_backorders: boolean;
+    manage_stock: boolean;
+    // JSONB field: structure mapping warehouse ids to stock levels per country.
+    stock_data: Record<string, Record<string, number>> | null;
+    // Quick status field to mark managed/unmanaged inventory.
+    stock_status: "managed" | "unmanaged";
+    created_at: Date;
+    updated_at: Date;
+  };
+
+  // The "product_variations" table stores variations for variable products
+  productVariations: {
+    id: string;
+    product_id: string;
+    // JSONB field: mapping attribute IDs to term IDs.
+    attributes: Record<string, string>;
+    sku: string;
+    regular_price: number;
+    sale_price: number | null;
+    // JSONB field: structure mapping warehouse ids to stock levels per country.
+    stock: Record<string, Record<string, number>> | null;
+    created_at: Date;
+    updated_at: Date;
+  };
 }
 
 export const pool = new Pool({
