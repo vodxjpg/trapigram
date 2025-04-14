@@ -8,7 +8,7 @@ export default function CategoriesPage() {
     const { setHeaderTitle } = useHeaderTitle();
 
     useEffect(() => {
-        setHeaderTitle("Coupons"); // Set the header title for this page
+        setHeaderTitle("Announcements"); // Set the header title for this page
     }, [setHeaderTitle]);
 
   return (
