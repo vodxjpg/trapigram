@@ -42,8 +42,7 @@ const couponSchema = z.object({
 // It requires either a valid API key or an internal secret header.
 // -------------------------------------------------------------------
 export async function GET(req: NextRequest) {
-    const apiKey = "tp_DntVJOYTwKaqUIblcpxWOpnydqZdZRyfhchlwCYSjYbJoXOuaZPSaMSQGLCbqpKO"
-  //const apiKey = req.headers.get("x-api-key");
+    const apiKey = req.headers.get("x-api-key");
     const internalSecret = req.headers.get("x-internal-secret");
     let organizationId: string;
 
@@ -140,8 +139,7 @@ export async function GET(req: NextRequest) {
 // It requires either a valid API key or an internal secret header.
 // -------------------------------------------------------------------
 export async function POST(req: NextRequest) {
-    const apiKey = "tp_DntVJOYTwKaqUIblcpxWOpnydqZdZRyfhchlwCYSjYbJoXOuaZPSaMSQGLCbqpKO"
-  //const apiKey = req.headers.get("x-api-key");
+    const apiKey = req.headers.get("x-api-key");
     const internalSecret = req.headers.get("x-internal-secret");
     let organizationId: string;
 

@@ -55,7 +55,12 @@ const couponFormSchema = z.object({
     .int()
     .min(0, "Expending limit must be 0 or greater")
     .default(0),
-  countries: z.array(z.string().length(2)).min(1, "At least one country is required"),
+  organizationIds: z
+    .array(z.string())
+    .min(1, "Select at least one organization"),
+  countries: z
+    .array(z.string().length(2))
+    .min(1, "At least one country is required"),
   visibility: z.boolean().default(true),
   hasExpiration: z.boolean().default(false),
   expirationDate: z.string().nullable().optional(),
@@ -65,6 +70,12 @@ const couponFormSchema = z.object({
     .min(0, "Limit per user must be 0 or greater")
     .default(0),
 });
+
+type Organization = {
+  id: string;
+  name: string;
+  countries: string[];
+};
 
 type CouponFormValues = z.infer<typeof couponFormSchema>;
 
@@ -101,7 +112,6 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
       // Ensure countries is an array.
       const countriesValue = Array.isArray(couponData.countries)
         ? couponData.countries
-        
         : typeof couponData.countries === "string"
           ? JSON.parse(couponData.countries)
           : [];

@@ -27,8 +27,7 @@ const announcementUpdateSchema = z.object({
 // GET endpoint: Fetch an announcement by its ID and organization.
 // -------------------------------------------------------------------
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const apiKey = "tp_DntVJOYTwKaqUIblcpxWOpnydqZdZRyfhchlwCYSjYbJoXOuaZPSaMSQGLCbqpKO"
-  //const apiKey = req.headers.get("x-api-key");
+  const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
   let organizationId: string;
 
@@ -83,8 +82,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 // PATCH endpoint: Update an existing announcement using provided fields.
 // -------------------------------------------------------------------
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const apiKey = "tp_DntVJOYTwKaqUIblcpxWOpnydqZdZRyfhchlwCYSjYbJoXOuaZPSaMSQGLCbqpKO"
-  //const apiKey = req.headers.get("x-api-key");
+  const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
   let organizationId: string;
 
@@ -166,8 +164,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 // DELETE endpoint: Delete an existing announcement.
 // -------------------------------------------------------------------
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const apiKey = "tp_DntVJOYTwKaqUIblcpxWOpnydqZdZRyfhchlwCYSjYbJoXOuaZPSaMSQGLCbqpKO"
-  //const apiKey = req.headers.get("x-api-key");
+  const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
   let organizationId: string;
 
