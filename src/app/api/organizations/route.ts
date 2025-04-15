@@ -8,15 +8,19 @@ const pool = new Pool({
 });
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
-
 export async function GET(req: NextRequest) {
   try {
     const apiKey = req.headers.get("x-api-key");
     const internalSecret = req.headers.get("x-internal-secret");
     let userId: string;
 
-    // Case 1: External API request with API key
-    if (apiKey) {
+    // Case 1: Check for session (UI requests with session cookie)
+    const session = await auth.api.getSession({ headers: req.headers });
+    if (session) {
+      userId = session.user.id;
+    }
+    // Case 2: External API request with API key
+    else if (apiKey) {
       const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
       if (!valid || !key) {
         return NextResponse.json(
@@ -25,19 +29,19 @@ export async function GET(req: NextRequest) {
         );
       }
       userId = key.userId;
-
-      // Case 2: Internal UI request with secret
-    } else if (internalSecret === INTERNAL_API_SECRET) {
-      const session = await auth.api.getSession({ headers: req.headers });
-      if (!session) {
+    }
+    // Case 3: Internal request with secret
+    else if (internalSecret === INTERNAL_API_SECRET) {
+      const internalSession = await auth.api.getSession({ headers: req.headers });
+      if (!internalSession) {
         return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
       }
-      userId = session.user.id;
-
-      // No valid auth method provided
-    } else {
+      userId = internalSession.user.id;
+    }
+    // No valid auth method provided
+    else {
       return NextResponse.json(
-        { error: "Unauthorized: Provide either an API key or internal secret" },
+        { error: "Unauthorized: Provide a valid session, API key, or internal secret" },
         { status: 403 }
       );
     }

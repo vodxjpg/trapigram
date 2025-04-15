@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/announcements/announcements-form.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -13,7 +14,8 @@ import "react-quill-new/dist/quill.snow.css";
 import Select from "react-select";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+// Temporarily replace Card with div until Card import is fixed
+// import { Card, CardContent } from "@/components/ui/card";
 import {
   Form,
   FormControl,
@@ -43,22 +45,15 @@ const allCountries = getCountries().map((code) => ({
   name: countriesLib.getName(code, "en") || code,
 }));
 
-// ---------- Announcement Schema ----------
-// Updates:
-// - Renames expirationDate to deliveryDate.
-// - Removes the sent field.
-// - Adds a switch field "deliveryScheduled" for toggling the date picker.
+// Announcement Schema
 const announcementFormSchema = z.object({
   title: z.string().min(1, "Title is required"),
   content: z.string().min(1, "Content is required"),
   deliveryScheduled: z.boolean(),
-  deliveryDate: z.string().nullable().optional(), // Only set if deliveryScheduled is true.
-  organizationId: z.string().min(1, "Organization is required"),
-  countries: z
-    .array(z.string().length(2))
-    .min(1, "At least one country is required"),
-  country: z.string().length(2, "Country is required"),
-  sent: z.boolean()
+  deliveryDate: z.string().nullable().optional(),
+  countries: z.array(z.string()).min(1, "Select at least one country"),
+  status: z.string().min(1, "Status is required"),
+  organizationId: z.string().min(1, "Organization is required").optional(),
 });
 
 type AnnouncementFormValues = z.infer<typeof announcementFormSchema>;
@@ -76,7 +71,6 @@ export function AnnouncementForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [date, setDate] = useState<Date | null>(null);
   const [openDatePicker, setOpenDatePicker] = useState(false);
-  const [announcementValue, setAnnouncementValue] = useState("");
   const [switchDelivery, setSwitchDelivery] = useState(false);
 
   const [orgOptions, setOrgOptions] = useState<
@@ -89,14 +83,14 @@ export function AnnouncementForm({
 
   const form = useForm<AnnouncementFormValues>({
     resolver: zodResolver(announcementFormSchema),
-    defaultValues: {
+    defaultValues: announcementData || {
       title: "",
       content: "",
       deliveryScheduled: false,
       deliveryDate: null,
-      organizationId: "",
       countries: [],
-      country: "",
+      status: "draft",
+      organizationId: "",
     },
   });
 
@@ -104,16 +98,19 @@ export function AnnouncementForm({
   useEffect(() => {
     async function fetchOrganizations() {
       try {
-        const response = await fetch("/api/organizations");
+        const response = await fetch("/api/organizations", {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+          },
+        });
         if (!response.ok) {
           throw new Error("Failed to fetch organizations");
         }
         const data = await response.json();
-        // Map organizations to options.
         const options = data.organizations.map((org: any) => ({
           value: org.id,
           label: org.name,
-          countries: org.countries, // Expected as a JSON string or comma-separated list.
+          countries: org.countries, // Expected as a JSON string
         }));
         setOrgOptions(options);
       } catch (error: any) {
@@ -132,14 +129,11 @@ export function AnnouncementForm({
       if (org && org.countries) {
         let orgCountries: string[] = [];
         try {
-          const parsed = JSON.parse(org.countries);
-          if (Array.isArray(parsed)) {
-            orgCountries = parsed;
-          } else {
+          orgCountries = JSON.parse(org.countries);
+          if (!Array.isArray(orgCountries)) {
             orgCountries = [];
           }
         } catch (e) {
-          // Fallback: assume comma separated.
           orgCountries = org.countries.split(",").map((c: string) => c.trim());
         }
         const options = orgCountries.map((code: string) => {
@@ -158,10 +152,9 @@ export function AnnouncementForm({
   // Reset form values when editing an existing announcement or on initial render.
   useEffect(() => {
     if (isEditing && announcementData) {
-      // When editing, if deliveryDate exists, also mark deliveryScheduled as true.
       form.reset({
         ...announcementData,
-        deliveryScheduled: announcementData.deliveryDate ? true : false,
+        organizationId: announcementData.organizationId || "",
       });
       if (announcementData.deliveryDate) {
         setDate(new Date(announcementData.deliveryDate));
@@ -170,17 +163,6 @@ export function AnnouncementForm({
       } else {
         setDate(null);
       }
-    } else {
-      form.reset({
-        title: "",
-        content: "",
-        deliveryScheduled: false,
-        deliveryDate: null,
-        organizationId: "",
-        countries: [],
-        country: "",
-      });
-      setDate(null);
     }
   }, [announcementData, form, isEditing]);
 
@@ -193,14 +175,21 @@ export function AnnouncementForm({
       const method = isEditing ? "PATCH" : "POST";
 
       const payload = {
-        ...values,
-        // Ensure deliveryDate is only set when delivery is scheduled.
+        title: values.title,
+        content: values.content,
         deliveryDate: values.deliveryScheduled ? values.deliveryDate : null,
+        countries: JSON.stringify(values.countries),
+        status: values.status,
       };
+
+      console.log("[Form Submit] Payload:", payload);
 
       const response = await fetch(url, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+        },
         body: JSON.stringify(payload),
       });
       if (!response.ok) {
@@ -260,8 +249,10 @@ export function AnnouncementForm({
   ];
 
   return (
-    <Card className="w-full mx-auto">
-      <CardContent className="pt-6">
+    <div className="w-full mx-auto border rounded-lg shadow-sm">
+      {/* Replace with <Card className="w-full mx-auto"> once Card is fixed */}
+      <div className="p-6 pt-6">
+        {/* Replace with <CardContent className="pt-6"> */}
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -293,11 +284,13 @@ export function AnnouncementForm({
                       <FormControl>
                         <ReactQuill
                           theme="snow"
-                          value={announcementValue}
-                          onChange={setAnnouncementValue}
+                          value={field.value}
+                          onChange={(value) => {
+                            console.log("[ReactQuill] Content:", value);
+                            field.onChange(value);
+                          }}
                           modules={modules}
                           formats={formats}
-                          {...field}
                         />
                       </FormControl>
                       <FormMessage />
@@ -384,7 +377,43 @@ export function AnnouncementForm({
                 />
               </div>
 
-              {/* Row 5: Delivery Scheduling */}
+              {/* Row 5: Status */}
+              <div>
+                <FormField
+                  control={form.control}
+                  name="status"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Status *</FormLabel>
+                      <FormControl>
+                        <Select
+                          options={[
+                            { value: "draft", label: "Draft" },
+                            { value: "published", label: "Published" },
+                          ]}
+                          placeholder="Select status"
+                          value={
+                            field.value
+                              ? {
+                                  value: field.value,
+                                  label:
+                                    field.value.charAt(0).toUpperCase() +
+                                    field.value.slice(1),
+                                }
+                              : null
+                          }
+                          onChange={(selectedOption: any) =>
+                            field.onChange(selectedOption?.value || "")
+                          }
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* Row 6: Delivery Scheduling */}
               <div>
                 <FormField
                   control={form.control}
@@ -396,73 +425,70 @@ export function AnnouncementForm({
                         <div className="flex items-center gap-2">
                           <Switch
                             checked={field.value}
-                            onCheckedChange={field.onChange}
+                            onCheckedChange={(checked) => {
+                              field.onChange(checked);
+                              setSwitchDelivery(checked);
+                            }}
                             className="mr-2"
                           />
-                          <span>{switchDelivery ? "Yes" : "No"}</span>
+                          <span>{field.value ? "Yes" : "No"}</span>
                         </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-                  {form.watch("deliveryScheduled") && (
-                    <FormField
-                      control={form.control}
-                      name="deliveryDate"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Delivery Date</FormLabel>
-                          <FormControl>
-                            <Popover
-                              open={openDatePicker}
-                              onOpenChange={setOpenDatePicker}
-                            >
-                              <PopoverTrigger asChild>
-                                <Button
-                                  variant={"outline"}
-                                  onClick={() => setOpenDatePicker(true)}
-                                  className={cn(
-                                    "w-full justify-start text-left font-normal",
-                                    !date && "text-muted-foreground"
-                                  )}
-                                >
-                                  <CalendarIcon className="mr-2 h-4 w-4" />
-                                  {date ? format(date, "PPP") : "Pick a date"}
-                                </Button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-auto p-0">
-                                <Calendar
-                                  mode="single"
-                                  selected={date}
-                                  onSelect={(d: Date | null) => {
-                                    setDate(d);
-                                    if (d) {
-                                      field.onChange(
-                                        d.toISOString().split("T")[0]
-                                      );
-                                    } else {
-                                      field.onChange(null);
-                                    }
-                                    setOpenDatePicker(false);
-                                  }}
-                                  initialFocus
-                                  fromDate={
-                                    new Date(
-                                      new Date().setDate(
-                                        new Date().getDate() + 1
-                                      )
-                                    )
+                {form.watch("deliveryScheduled") && (
+                  <FormField
+                    control={form.control}
+                    name="deliveryDate"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Delivery Date</FormLabel>
+                        <FormControl>
+                          <Popover
+                            open={openDatePicker}
+                            onOpenChange={setOpenDatePicker}
+                          >
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant={"outline"}
+                                onClick={() => setOpenDatePicker(true)}
+                                className={cn(
+                                  "w-full justify-start text-left font-normal",
+                                  !date && "text-muted-foreground"
+                                )}
+                              >
+                                <CalendarIcon className="mr-2 h-4 w-4" />
+                                {date ? format(date, "PPP") : "Pick a date"}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0">
+                              <Calendar
+                                mode="single"
+                                selected={date}
+                                onSelect={(d: Date | null) => {
+                                  setDate(d);
+                                  if (d) {
+                                    field.onChange(d.toISOString().split("T")[0]);
+                                  } else {
+                                    field.onChange(null);
                                   }
-                                />
-                              </PopoverContent>
-                            </Popover>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
+                                  setOpenDatePicker(false);
+                                }}
+                                initialFocus
+                                fromDate={new Date(
+                                  new Date().setDate(new Date().getDate() + 1)
+                                )}
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
               </div>
             </div>
 
@@ -487,7 +513,7 @@ export function AnnouncementForm({
             </div>
           </form>
         </Form>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

@@ -1,31 +1,24 @@
-// File: src/app/api/anouncements/[id]/route.ts
-
+// /home/zodx/Desktop/trapigram/src/app/api/announcements/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
 import { auth } from "@/lib/auth";
+import purify from "@/lib/dompurify";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
-// -------------------------------------------------------------------
-// Define the announcement update schema using Zod.
-// All fields are optional so that you can update any subset of them.
-// -------------------------------------------------------------------
 const announcementUpdateSchema = z.object({
   title: z.string().min(1, { message: "Title is required." }).optional(),
   content: z.string().min(1, { message: "Content is required." }).optional(),
   deliveryDate: z.string().nullable().optional(),
-  countries: z.string().optional(),  // Announcement countries as a string field
+  countries: z.string().optional(),
   status: z.string().min(1, { message: "Status is required." }).optional(),
   sent: z.boolean().optional(),
 });
 
-// -------------------------------------------------------------------
-// GET endpoint: Fetch an announcement by its ID and organization.
-// -------------------------------------------------------------------
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
@@ -71,16 +64,15 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Announcement not found" }, { status: 404 });
     }
-    return NextResponse.json(result.rows[0]);
+    const announcement = result.rows[0];
+    announcement.countries = JSON.parse(announcement.countries); // Parse JSON string to array
+    return NextResponse.json(announcement);
   } catch (error: any) {
-    console.error("[GET /api/anouncements/[id]] error:", error);
+    console.error("[GET /api/announcements/[id]] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
-// -------------------------------------------------------------------
-// PATCH endpoint: Update an existing announcement using provided fields.
-// -------------------------------------------------------------------
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
@@ -124,11 +116,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const values: any[] = [];
     let paramIndex = 1;
 
-    // Build dynamic update query based on provided fields.
     for (const [key, value] of Object.entries(parsedAnnouncement)) {
       if (value !== undefined) {
-        updates.push(`"${key}" = $${paramIndex++}`);
-        values.push(value);
+        if (key === "content") {
+          updates.push(`"${key}" = $${paramIndex++}`);
+          values.push(purify.sanitize(value as string)); // Use configured purify
+        } else {
+          updates.push(`"${key}" = $${paramIndex++}`);
+          values.push(value);
+        }
       }
     }
 
@@ -136,9 +132,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ error: "No fields provided to update" }, { status: 400 });
     }
 
-    // Append the announcement id and organization id.
     values.push(id, organizationId);
-
     const query = `
       UPDATE announcements
       SET ${updates.join(", ")}, "updatedAt" = NOW()
@@ -152,7 +146,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
     return NextResponse.json(result.rows[0]);
   } catch (error: any) {
-    console.error("[PATCH /api/anouncements/[id]] error:", error);
+    console.error("[PATCH /api/announcements/[id]] error:", error);
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 });
     }
@@ -160,9 +154,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-// -------------------------------------------------------------------
-// DELETE endpoint: Delete an existing announcement.
-// -------------------------------------------------------------------
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
@@ -210,7 +201,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     }
     return NextResponse.json({ message: "Announcement deleted successfully" });
   } catch (error: any) {
-    console.error("[DELETE /api/anouncements/[id]] error:", error);
+    console.error("[DELETE /api/announcements/[id]] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

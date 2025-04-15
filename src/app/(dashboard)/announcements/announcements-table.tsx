@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/announcements/announcements-table.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -13,7 +14,7 @@ import {
   Trash2,
   Edit,
   ZoomIn,
-  Send, // <-- Import the Send icon from lucide-react
+  Send,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import "react-quill-new/dist/quill.snow.css";
@@ -42,7 +43,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-
 import {
   Dialog,
   DialogContent,
@@ -58,10 +58,10 @@ type Announcement = {
   id: string;
   title: string;
   content: string;
-  deliveryDate: string; // ISO string or null
+  deliveryDate: string | null; // ISO string or null
   status: string;
   sent: boolean;
-  countries: string; // Stored as a string
+  countries: string[]; // Array of country codes
 };
 
 export function AnnouncementsTable() {
@@ -79,26 +79,24 @@ export function AnnouncementsTable() {
   // Modal state for viewing announcement content.
   const [contentModalOpen, setContentModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState("");
-  const [announcementValue, setAnnouncementValue] = useState("");
 
   // Fetch announcements from the API endpoint.
   const fetchAnnouncements = async () => {
     setLoading(true);
     try {
       const response = await fetch(
-        `/api/announcements?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
+        `/api/announcements?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
+        {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+          },
+        }
       );
       if (!response.ok) {
         throw new Error("Failed to fetch announcements");
       }
       const data = await response.json();
-      const safeAnnouncements = data.announcements.map(
-        (announcement: Announcement) => ({
-          ...announcement,
-          countries: announcement.countries || "N/A",
-        })
-      );
-      setAnnouncements(safeAnnouncements);
+      setAnnouncements(data.announcements);
       setTotalPages(data.totalPages);
       setCurrentPage(data.currentPage);
     } catch (error) {
@@ -149,6 +147,9 @@ export function AnnouncementsTable() {
     try {
       const response = await fetch(`/api/announcements/${id}`, {
         method: "DELETE",
+        headers: {
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+        },
       });
       if (!response.ok) {
         throw new Error("Failed to delete announcement");
@@ -165,7 +166,6 @@ export function AnnouncementsTable() {
     router.push(`/announcements/${announcement.id}`);
   };
 
-  // New function: handleSend.
   const handleSend = async (announcement: Announcement) => {
     if (
       !confirm(
@@ -175,12 +175,12 @@ export function AnnouncementsTable() {
       return;
     }
     try {
-      const response = await fetch(
-        `/api/announcements/send/${announcement.id}`,
-        {
-          method: "PATCH",
-        }
-      );
+      const response = await fetch(`/api/announcements/send/${announcement.id}`, {
+        method: "PATCH",
+        headers: {
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+        },
+      });
       if (!response.ok) {
         throw new Error("Failed to send announcement");
       }
@@ -196,7 +196,6 @@ export function AnnouncementsTable() {
     router.push(`/announcements/new`);
   };
 
-  // Function to open modal with announcement content.
   const handleOpenContentModal = (content: string) => {
     setModalContent(content);
     setContentModalOpen(true);
@@ -246,23 +245,21 @@ export function AnnouncementsTable() {
                   Loading...
                 </TableCell>
               </TableRow>
-            ) : sortedAnnouncements.length === 0 ? (
+            ) : announcements.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="h-24 text-center">
                   No announcements found.
                 </TableCell>
               </TableRow>
             ) : (
-              sortedAnnouncements.map((announcement) => (
+              announcements.map((announcement) => (
                 <TableRow key={announcement.id}>
                   <TableCell>{announcement.title}</TableCell>
                   <TableCell>
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() =>
-                        handleOpenContentModal(announcement.content)
-                      }
+                      onClick={() => handleOpenContentModal(announcement.content)}
                     >
                       <ZoomIn className="h-4 w-4" />
                       <span className="sr-only">View Content</span>
@@ -270,7 +267,7 @@ export function AnnouncementsTable() {
                   </TableCell>
                   <TableCell>
                     {announcement.deliveryDate
-                      ? announcement.deliveryDate
+                      ? new Date(announcement.deliveryDate).toLocaleDateString()
                       : "N/A"}
                   </TableCell>
                   <TableCell>{announcement.status}</TableCell>
@@ -282,9 +279,9 @@ export function AnnouncementsTable() {
                     )}
                   </TableCell>
                   <TableCell>
-                    {announcement.countries.map((annou) => (
-                      <Badge key={annou} variant="outline" className="mr-1">
-                        {annou}
+                    {announcement.countries.map((country) => (
+                      <Badge key={country} variant="outline" className="mr-1">
+                        {country}
                       </Badge>
                     ))}
                   </TableCell>
@@ -297,17 +294,11 @@ export function AnnouncementsTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        {/* New "Send" option */}
-                        <DropdownMenuItem
-                          onClick={() => handleSend(announcement)}
-                          disabled={announcement.sent}
-                        >
+                        <DropdownMenuItem onClick={() => handleSend(announcement)}>
                           <Send className="mr-2 h-4 w-4" />
                           Send
                         </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleEdit(announcement)}
-                        >
+                        <DropdownMenuItem onClick={() => handleEdit(announcement)}>
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
@@ -338,7 +329,7 @@ export function AnnouncementsTable() {
             <p className="text-sm font-medium">Rows per page</p>
             <Select
               value={pageSize.toString()}
-              onValueChange={(value) => {
+              OnValueChange={(value) => {
                 setPageSize(Number(value));
                 setCurrentPage(1);
               }}

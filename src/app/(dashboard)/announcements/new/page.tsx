@@ -1,23 +1,22 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/announcements/new/page.tsx
 "use client";
 
 import { useEffect } from "react";
 import { AnnouncementForm } from "../announcements-form";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
-export default function CategoriesPage() {
-    const { setHeaderTitle } = useHeaderTitle();
+export default function AnnouncementsNewPage() {
+  const { setHeaderTitle } = useHeaderTitle();
 
-    useEffect(() => {
-        setHeaderTitle("Announcements"); // Set the header title for this page
-    }, [setHeaderTitle]);
+  useEffect(() => {
+    setHeaderTitle("New Announcement"); // Set the header title for this page
+  }, [setHeaderTitle]);
 
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-bold tracking-tight">Announcements</h1>
-        <p className="text-muted-foreground">
-          Manage your announcements.
-        </p>
+        <h1 className="text-3xl font-bold tracking-tight">New Announcement</h1>
+        <p className="text-muted-foreground">Create a new announcement.</p>
       </div>
       <AnnouncementForm />
     </div>

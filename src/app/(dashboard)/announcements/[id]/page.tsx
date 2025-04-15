@@ -1,4 +1,4 @@
-// src/app/(dashboard)/clients/[id]/page.tsx
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/announcements/[id]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -10,35 +10,38 @@ import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export default function EditClientPage() {
+export default function EditAnnouncementPage() {
   const params = useParams();
   const router = useRouter();
-  const [coupon, setCoupon] = useState<any>(null);
+  const [announcement, setAnnouncement] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchCoupons = async () => {
+    const fetchAnnouncement = async () => {
       try {
         const response = await fetch(`/api/announcements/${params.id}`, {
           headers: {
             "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
           },
-        }); 
+        });
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to fetch announcenemts");
+          throw new Error(errorData.error || "Failed to fetch announcement");
         }
-        const data = await response.json(); // parse JSON once
-        setCoupon(data);
+        const data = await response.json();
+        setAnnouncement({
+          ...data,
+          deliveryScheduled: !!data.deliveryDate,
+        });
       } catch (error: any) {
-        console.error("Error fetching announcenemts:", error);
-        toast.error(error.message || "Failed to load coupons data");
+        console.error("Error fetching announcement:", error);
+        toast.error(error.message || "Failed to load announcement data");
         router.push("/announcements");
       } finally {
         setLoading(false);
       }
     };
-    fetchCoupons();
+    fetchAnnouncement();
   }, [params.id, router]);
 
   return (
@@ -50,8 +53,8 @@ export default function EditClientPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Edit Announcenemts</h1>
-          <p className="text-muted-foreground">Update announcenemts information</p>
+          <h1 className="text-3xl font-bold tracking-tight">Edit Announcement</h1>
+          <p className="text-muted-foreground">Update announcement information</p>
         </div>
       </div>
 
@@ -69,7 +72,7 @@ export default function EditClientPage() {
           <Skeleton className="h-10 w-32 mx-auto" />
         </div>
       ) : (
-        <AnnouncementForm announcementData={coupon} isEditing={true} />
+        <AnnouncementForm announcementData={announcement} isEditing={true} />
       )}
     </div>
   );

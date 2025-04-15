@@ -87,7 +87,7 @@ interface DB {
     code: string;
     description: string;
     expirationDate: Date;
-    limitePerUser: number;
+    limitPerUser: number;
     usagePerUser: number;
     usageLimit: number;
     expendingMinimum: number;
@@ -114,14 +114,14 @@ interface DB {
     expiresAt: Date;
     createdAt: Date;
   };
-  anouncements:{
+  announcements: { 
     id: string;
     organizationId: string;
     title: string;
     content: string;
-    deliveryDate: Date;
-    countries: string;
-    status: string;
+    deliveryDate: Date | null; // Nullable for unscheduled deliveries
+    countries: string; 
+    status: string; 
     sent: boolean;
     createdAt: Date;
     updatedAt: Date;
