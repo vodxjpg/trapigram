@@ -18,7 +18,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { format } from "date-fns";
@@ -83,13 +87,16 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [date, setDate] = useState<Date | null>(null);
   const [openDatePicker, setOpenDatePicker] = useState(false);
+  const [switchExpiration, setSwitchExpiration] = useState(false);
 
   // Organizations options state. Each option includes a "countries" property.
   const [orgOptions, setOrgOptions] = useState<
     { value: string; label: string; countries?: string }[]
   >([]);
   // Country select options based on the selected organization.
-  const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]);
+  const [countryOptions, setCountryOptions] = useState<
+    { value: string; label: string }[]
+  >([]);
 
   const form = useForm<CouponFormValues>({
     resolver: zodResolver(couponFormSchema),
@@ -166,22 +173,32 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
   // Reset the form when editing.
   useEffect(() => {
     if (isEditing && couponData) {
-      const countriesValue =
-        Array.isArray(couponData.countries)
-          ? couponData.countries
-          : typeof couponData.countries === "string"
+      const countriesValue = Array.isArray(couponData.countries)
+        ? couponData.countries
+        : typeof couponData.countries === "string"
           ? JSON.parse(couponData.countries)
           : [];
+      // Reset the form with the provided coupon data.
       form.reset({
         ...couponData,
         countries: countriesValue,
       });
+
+      // Check if expirationDate exists:
       if (couponData.expirationDate) {
-        setDate(new Date(couponData.expirationDate));
+        // If there is a date value, update the local state and form field to show it and mark the switch as on.
+        const expDate = new Date(couponData.expirationDate);
+        setDate(expDate);
+        form.setValue("hasExpiration", true);
+        setSwitchExpiration(true);
       } else {
+        // Otherwise, clear the date and ensure the switch is off.
         setDate(null);
+        form.setValue("hasExpiration", false);
+        setSwitchExpiration(false);
       }
     } else {
+      // When not editing, reset the form and clear date.
       form.reset({
         name: "",
         code: "",
@@ -196,6 +213,7 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
         limitPerUser: 0,
       });
       setDate(null);
+      setSwitchExpiration(false);
     }
   }, [couponData, form, isEditing]);
 
@@ -211,11 +229,14 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
-          errorData.error || `Failed to ${isEditing ? "update" : "create"} coupon`
+          errorData.error ||
+            `Failed to ${isEditing ? "update" : "create"} coupon`
         );
       }
       toast.success(
-        isEditing ? "Coupon updated successfully" : "Coupon created successfully"
+        isEditing
+          ? "Coupon updated successfully"
+          : "Coupon created successfully"
       );
       router.push("/coupons");
       router.refresh();
@@ -340,7 +361,9 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                                 ) || null
                               }
                               onChange={(selectedOption: any) =>
-                                field.onChange(selectedOption ? selectedOption.value : "")
+                                field.onChange(
+                                  selectedOption ? selectedOption.value : ""
+                                )
                               }
                             />
                           </div>
@@ -368,9 +391,16 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                                 field.value.includes(option.value)
                               )}
                               onChange={(selectedOptions: any) =>
-                                field.onChange(selectedOptions.map((option: any) => option.value))
+                                field.onChange(
+                                  selectedOptions.map(
+                                    (option: any) => option.value
+                                  )
+                                )
                               }
-                              formatOptionLabel={(option: { value: string; label: string }) => (
+                              formatOptionLabel={(option: {
+                                value: string;
+                                label: string;
+                              }) => (
                                 <div className="flex items-center gap-2">
                                   <ReactCountryFlag
                                     countryCode={option.value}
@@ -405,7 +435,7 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                             onCheckedChange={field.onChange}
                             className="mr-2"
                           />
-                          <span>{field.value ? "Yes" : "No"}</span>
+                          <span>{switchExpiration ? "Yes" : "No"}</span>
                         </div>
                       </FormControl>
                       <FormMessage />
@@ -422,15 +452,25 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                       <FormItem>
                         <FormLabel>Expiration Date</FormLabel>
                         <FormControl>
-                          <Popover open={openDatePicker} onOpenChange={setOpenDatePicker}>
+                          <Popover
+                            open={openDatePicker}
+                            onOpenChange={setOpenDatePicker}
+                          >
                             <PopoverTrigger asChild>
                               <Button
                                 variant={"outline"}
                                 onClick={() => setOpenDatePicker(true)}
-                                className={cn("w-full justify-start text-left font-normal", !date && "text-muted-foreground")}
+                                className={cn(
+                                  "w-full justify-start text-left font-normal",
+                                  !date && "text-muted-foreground"
+                                )}
                               >
                                 <CalendarIcon className="mr-2 h-4 w-4" />
-                                {date ? format(date, "PPP") : <span>Pick a date</span>}
+                                {date ? (
+                                  format(date, "PPP")
+                                ) : (
+                                  <span>Pick a date</span>
+                                )}
                               </Button>
                             </PopoverTrigger>
                             <PopoverContent className="w-auto p-0">
@@ -440,13 +480,20 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                                 onSelect={(d: Date | null) => {
                                   setDate(d);
                                   if (d) {
-                                    field.onChange(d.toISOString().split("T")[0]);
+                                    field.onChange(
+                                      d.toISOString().split("T")[0]
+                                    );
                                   } else {
                                     field.onChange(null);
                                   }
                                   setOpenDatePicker(false);
                                 }}
                                 initialFocus
+                                fromDate={
+                                  new Date(
+                                    new Date().setDate(new Date().getDate() + 1)
+                                  )
+                                }
                               />
                             </PopoverContent>
                           </Popover>
@@ -500,7 +547,11 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
 
             {/* Submit/Cancel Buttons */}
             <div className="flex justify-center gap-4 mt-6">
-              <Button type="button" variant="outline" onClick={() => router.push("/coupons")}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push("/coupons")}
+              >
                 Cancel
               </Button>
               <Button type="submit" disabled={isSubmitting}>
@@ -509,8 +560,8 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                     ? "Updating..."
                     : "Creating..."
                   : isEditing
-                  ? "Update Coupon"
-                  : "Create Coupon"}
+                    ? "Update Coupon"
+                    : "Create Coupon"}
               </Button>
             </div>
           </form>

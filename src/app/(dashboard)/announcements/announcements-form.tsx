@@ -44,11 +44,10 @@ const allCountries = getCountries().map((code) => ({
 }));
 
 // ---------- Announcement Schema ----------
-// Updated schema:
+// Updates:
 // - Renames expirationDate to deliveryDate.
-// - Removes the status field and multi-country selection.
-// - Adds organization and country fields.
-// - Adds a boolean switch for scheduling delivery.
+// - Removes the sent field.
+// - Adds a switch field "deliveryScheduled" for toggling the date picker.
 const announcementFormSchema = z.object({
   title: z.string().min(1, "Title is required"),
   content: z.string().min(1, "Content is required"),
@@ -59,7 +58,7 @@ const announcementFormSchema = z.object({
     .array(z.string().length(2))
     .min(1, "At least one country is required"),
   country: z.string().length(2, "Country is required"),
-  sent: z.boolean(),
+  sent: z.boolean()
 });
 
 type AnnouncementFormValues = z.infer<typeof announcementFormSchema>;
@@ -78,6 +77,7 @@ export function AnnouncementForm({
   const [date, setDate] = useState<Date | null>(null);
   const [openDatePicker, setOpenDatePicker] = useState(false);
   const [announcementValue, setAnnouncementValue] = useState("");
+  const [switchDelivery, setSwitchDelivery] = useState(false);
 
   const [orgOptions, setOrgOptions] = useState<
     { value: string; label: string; countries?: string }[]
@@ -96,7 +96,7 @@ export function AnnouncementForm({
       deliveryDate: null,
       organizationId: "",
       countries: [],
-      sent: false,
+      country: "",
     },
   });
 
@@ -158,9 +158,15 @@ export function AnnouncementForm({
   // Reset form values when editing an existing announcement or on initial render.
   useEffect(() => {
     if (isEditing && announcementData) {
-      form.reset({ ...announcementData });
+      // When editing, if deliveryDate exists, also mark deliveryScheduled as true.
+      form.reset({
+        ...announcementData,
+        deliveryScheduled: announcementData.deliveryDate ? true : false,
+      });
       if (announcementData.deliveryDate) {
         setDate(new Date(announcementData.deliveryDate));
+        form.setValue("deliveryScheduled", true);
+        setSwitchDelivery(true);
       } else {
         setDate(null);
       }
@@ -170,9 +176,9 @@ export function AnnouncementForm({
         content: "",
         deliveryScheduled: false,
         deliveryDate: null,
-        organization: "",
-        countries: "",
-        sent: false,
+        organizationId: "",
+        countries: [],
+        country: "",
       });
       setDate(null);
     }
@@ -379,7 +385,7 @@ export function AnnouncementForm({
               </div>
 
               {/* Row 5: Delivery Scheduling */}
-              <div className="flex items-center space-x-4">
+              <div>
                 <FormField
                   control={form.control}
                   name="deliveryScheduled"
@@ -387,91 +393,76 @@ export function AnnouncementForm({
                     <FormItem className="flex items-center space-x-2">
                       <FormLabel>Schedule Delivery?</FormLabel>
                       <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="mr-2"
+                          />
+                          <span>{switchDelivery ? "Yes" : "No"}</span>
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-                {form.watch("deliveryScheduled") && (
-                  <FormField
-                    control={form.control}
-                    name="deliveryDate"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Delivery Date</FormLabel>
-                        <FormControl>
-                          <Popover
-                            open={openDatePicker}
-                            onOpenChange={setOpenDatePicker}
-                          >
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant={"outline"}
-                                onClick={() => setOpenDatePicker(true)}
-                                className={cn(
-                                  "w-full justify-start text-left font-normal",
-                                  !date && "text-muted-foreground"
-                                )}
-                              >
-                                <CalendarIcon className="mr-2 h-4 w-4" />
-                                {date ? format(date, "PPP") : "Pick a date"}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0">
-                              <Calendar
-                                mode="single"
-                                selected={date}
-                                onSelect={(d: Date | null) => {
-                                  setDate(d);
-                                  if (d) {
-                                    field.onChange(
-                                      d.toISOString().split("T")[0]
-                                    );
-                                  } else {
-                                    field.onChange(null);
+                  {form.watch("deliveryScheduled") && (
+                    <FormField
+                      control={form.control}
+                      name="deliveryDate"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Delivery Date</FormLabel>
+                          <FormControl>
+                            <Popover
+                              open={openDatePicker}
+                              onOpenChange={setOpenDatePicker}
+                            >
+                              <PopoverTrigger asChild>
+                                <Button
+                                  variant={"outline"}
+                                  onClick={() => setOpenDatePicker(true)}
+                                  className={cn(
+                                    "w-full justify-start text-left font-normal",
+                                    !date && "text-muted-foreground"
+                                  )}
+                                >
+                                  <CalendarIcon className="mr-2 h-4 w-4" />
+                                  {date ? format(date, "PPP") : "Pick a date"}
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0">
+                                <Calendar
+                                  mode="single"
+                                  selected={date}
+                                  onSelect={(d: Date | null) => {
+                                    setDate(d);
+                                    if (d) {
+                                      field.onChange(
+                                        d.toISOString().split("T")[0]
+                                      );
+                                    } else {
+                                      field.onChange(null);
+                                    }
+                                    setOpenDatePicker(false);
+                                  }}
+                                  initialFocus
+                                  fromDate={
+                                    new Date(
+                                      new Date().setDate(
+                                        new Date().getDate() + 1
+                                      )
+                                    )
                                   }
-                                  setOpenDatePicker(false);
-                                }}
-                                initialFocus
-                                // Set minDate to tomorrow; if you prefer to allow today, use "new Date()" instead.
-                                fromDate={
-                                  new Date(
-                                    new Date().setDate(new Date().getDate() + 1)
-                                  )
-                                }
-                              />
-                            </PopoverContent>
-                          </Popover>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
-              </div>
-
-              {/* Row 6: Sent Switch */}
-              <div className="md:col-span-2">
-                <FormField
-                  control={form.control}
-                  name="sent"
-                  render={({ field }) => (
-                    <FormItem className="flex items-center space-x-2">
-                      <FormLabel>Sent</FormLabel>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
+                                />
+                              </PopoverContent>
+                            </Popover>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                   )}
-                />
               </div>
             </div>
 

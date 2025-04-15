@@ -24,6 +24,7 @@ export default function EditClientPage() {
             "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
           },
         }); 
+        console.log(response)
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(errorData.error || "Failed to fetch coupons");

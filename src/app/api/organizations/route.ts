@@ -8,6 +8,7 @@ const pool = new Pool({
 });
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
+
 export async function GET(req: NextRequest) {
   try {
     const apiKey = req.headers.get("x-api-key");
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
       }
       userId = key.userId;
 
-    // Case 2: Internal UI request with secret
+      // Case 2: Internal UI request with secret
     } else if (internalSecret === INTERNAL_API_SECRET) {
       const session = await auth.api.getSession({ headers: req.headers });
       if (!session) {
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
       }
       userId = session.user.id;
 
-    // No valid auth method provided
+      // No valid auth method provided
     } else {
       return NextResponse.json(
         { error: "Unauthorized: Provide either an API key or internal secret" },

@@ -26,12 +26,12 @@ export default function EditClientPage() {
         }); 
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to fetch coupons");
+          throw new Error(errorData.error || "Failed to fetch announcenemts");
         }
         const data = await response.json(); // parse JSON once
         setCoupon(data);
       } catch (error: any) {
-        console.error("Error fetching coupons:", error);
+        console.error("Error fetching announcenemts:", error);
         toast.error(error.message || "Failed to load coupons data");
         router.push("/announcements");
       } finally {
@@ -50,8 +50,8 @@ export default function EditClientPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Edit Coupon</h1>
-          <p className="text-muted-foreground">Update coupon information</p>
+          <h1 className="text-3xl font-bold tracking-tight">Edit Announcenemts</h1>
+          <p className="text-muted-foreground">Update announcenemts information</p>
         </div>
       </div>
 

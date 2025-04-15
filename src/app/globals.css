@@ -3,9 +3,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* .ql-editor{
+.ql-editor{
   min-height:300px;
-} */
+}
+
 
 @theme inline {
   --color-background: var(--background);

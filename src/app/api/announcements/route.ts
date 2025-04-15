@@ -14,17 +14,17 @@ const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 // -------------------------------------------------------------------
 // Define the announcement schema using Zod for input validation.
-// Fields: id, title, content, expirationDate, countries, status, sent
-// Note: expirationDate is expected as an ISO date string (or null),
+// Fields: id, title, content, deliveryDate, countries, status, sent
+// Note: deliveryDate is expected as an ISO date string (or null),
 // and countries is a string (you can adjust this if it should be an array).
 // -------------------------------------------------------------------
 const announcementSchema = z.object({
   title: z.string().min(1, { message: "Title is required." }),
   content: z.string().min(1, { message: "Content is required." }),
-  expirationDate: z.string().nullable().optional(),
+  deliveryDate: z.string().nullable().optional(),
   countries: z.string().min(1, { message: "Countries is required." }),
   status: z.string().min(1, { message: "Status is required." }),
-  sent: z.boolean(),
+  sent: z.boolean().default(false),
 });
 
 // -------------------------------------------------------------------
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   const explicitOrgId = searchParams.get("organizationId");
 
   // Validate authentication using an API key.
-  if (apiKey) {    
+  if (apiKey) {
     const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
     if (!valid || !key) {
       return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
@@ -73,6 +73,7 @@ export async function GET(req: NextRequest) {
   const page = Number(searchParams.get("page")) || 1;
   const pageSize = Number(searchParams.get("pageSize")) || 10;
   const search = searchParams.get("search") || "";
+  console.log(search)
 
   // Build the count query.
   let countQuery = `
@@ -87,7 +88,7 @@ export async function GET(req: NextRequest) {
 
   // Build the select query with pagination and optional search.
   let query = `
-    SELECT id, "organizationId", title, content, "expirationDate", countries, status, sent, "createdAt", "updatedAt"
+    SELECT id, "organizationId", title, content, "deliveryDate", countries, status, sent, "createdAt", "updatedAt"
     FROM announcements
     WHERE "organizationId" = $1
   `;
@@ -110,7 +111,7 @@ export async function GET(req: NextRequest) {
     const announcements = result.rows;
     announcements.map((announcement) => {
       announcement.countries = JSON.parse(announcement.countries)
-    })    
+    })
 
     return NextResponse.json({
       announcements,
@@ -131,6 +132,7 @@ export async function POST(req: NextRequest) {
   const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
   let organizationId: string;
+  console.log(apiKey)
 
   // Validate authentication using an API key.
   if (apiKey) {
@@ -163,12 +165,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     console.log(body)
     const parsedAnnouncement = announcementSchema.parse(body);
-    const { title, content, expirationDate, countries, status, sent } = parsedAnnouncement;
+    const { title, content, deliveryDate, countries, status } = parsedAnnouncement;
     const announcementId = uuidv4();
 
     // Insert new announcement into the database.
     const insertQuery = `
-      INSERT INTO announcements(id, "organizationId", title, content, "expirationDate", countries, status, sent, "createdAt", "updatedAt")
+      INSERT INTO announcements(id, "organizationId", title, content, "deliveryDate", countries, status, "createdAt", "updatedAt")
       VALUES($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
       RETURNING *
     `;
@@ -178,7 +180,7 @@ export async function POST(req: NextRequest) {
       organizationId,
       title,
       content,
-      expirationDate,
+      deliveryDate,
       countries,
       status,
       sent,

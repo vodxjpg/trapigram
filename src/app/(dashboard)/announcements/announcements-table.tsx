@@ -13,10 +13,10 @@ import {
   Trash2,
   Edit,
   ZoomIn,
+  Send, // <-- Import the Send icon from lucide-react
 } from "lucide-react";
-import ReactQuill from "react-quill-new";
-import "react-quill-new/dist/quill.snow.css";
 import { Badge } from "@/components/ui/badge";
+import "react-quill-new/dist/quill.snow.css";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,7 +43,6 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 
-// Import Dialog components for modal usage.
 import {
   Dialog,
   DialogContent,
@@ -54,15 +53,12 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 
-// Remove the FormControl import if not needed in modal.
-// import { FormControl } from "@/components/ui/form";
-
 // Define the Announcement type.
 type Announcement = {
   id: string;
   title: string;
   content: string;
-  expirationDate: string; // ISO string or null
+  deliveryDate: string; // ISO string or null
   status: string;
   sent: boolean;
   countries: string; // Stored as a string
@@ -168,6 +164,34 @@ export function AnnouncementsTable() {
   const handleEdit = (announcement: Announcement) => {
     router.push(`/announcements/${announcement.id}`);
   };
+
+  // New function: handleSend.
+  const handleSend = async (announcement: Announcement) => {
+    if (
+      !confirm(
+        "Are you sure you want to send this announcement? This will mark it as sent."
+      )
+    ) {
+      return;
+    }
+    try {
+      const response = await fetch(
+        `/api/announcements/send/${announcement.id}`,
+        {
+          method: "PATCH",
+        }
+      );
+      if (!response.ok) {
+        throw new Error("Failed to send announcement");
+      }
+      toast.success("Announcement sent successfully");
+      fetchAnnouncements();
+    } catch (error: any) {
+      console.error("Error sending announcement:", error);
+      toast.error(error.message || "Failed to send announcement");
+    }
+  };
+
   const handleAdd = () => {
     router.push(`/announcements/new`);
   };
@@ -177,34 +201,6 @@ export function AnnouncementsTable() {
     setModalContent(content);
     setContentModalOpen(true);
   };
-
-  const modules = {
-    toolbar: [
-      [{ header: [1, 2, false] }],
-      ["bold", "italic", "underline", "strike", "blockquote"],
-      [
-        { list: "ordered" },
-        { list: "bullet" },
-        { indent: "-1" },
-        { indent: "+1" },
-      ],
-      ["link", "image"],
-      ["clean"],
-    ],
-  };
-
-  const formats = [
-    "header",
-    "bold",
-    "italic",
-    "underline",
-    "strike",
-    "blockquote",
-    "list",
-    "indent",
-    "link",
-    "image",
-  ];
 
   return (
     <div className="space-y-4">
@@ -236,7 +232,7 @@ export function AnnouncementsTable() {
             <TableRow>
               <TableHead>Title</TableHead>
               <TableHead>Content</TableHead>
-              <TableHead>Expiration Date</TableHead>
+              <TableHead>Delivery Date</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Sent</TableHead>
               <TableHead>Countries</TableHead>
@@ -273,12 +269,18 @@ export function AnnouncementsTable() {
                     </Button>
                   </TableCell>
                   <TableCell>
-                    {announcement.expirationDate
-                      ? announcement.expirationDate
+                    {announcement.deliveryDate
+                      ? announcement.deliveryDate
                       : "N/A"}
                   </TableCell>
                   <TableCell>{announcement.status}</TableCell>
-                  <TableCell>{announcement.sent ? "Yes" : "No"}</TableCell>
+                  <TableCell>
+                    {announcement.sent ? (
+                      <Badge variant="default">Yes</Badge>
+                    ) : (
+                      <Badge variant="destructive">No</Badge>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {announcement.countries.map((annou) => (
                       <Badge key={annou} variant="outline" className="mr-1">
@@ -295,6 +297,14 @@ export function AnnouncementsTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        {/* New "Send" option */}
+                        <DropdownMenuItem
+                          onClick={() => handleSend(announcement)}
+                          disabled={announcement.sent}
+                        >
+                          <Send className="mr-2 h-4 w-4" />
+                          Send
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => handleEdit(announcement)}
                         >
@@ -395,9 +405,6 @@ export function AnnouncementsTable() {
               Review and copy the announcement content.
             </DialogDescription>
           </DialogHeader>
-          {/* Instead of using FormControl here (which requires a form context),
-              we simply render the input directly. */}
-          {/* <ReactQuill theme="snow" value={modalContent} modules={modules} formats={formats} readOnly/> */}
           <div dangerouslySetInnerHTML={{ __html: modalContent }} />
           <DialogFooter>
             <DialogClose asChild>

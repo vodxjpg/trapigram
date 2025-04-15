@@ -17,7 +17,7 @@ const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 const announcementUpdateSchema = z.object({
   title: z.string().min(1, { message: "Title is required." }).optional(),
   content: z.string().min(1, { message: "Content is required." }).optional(),
-  expirationDate: z.string().nullable().optional(),
+  deliveryDate: z.string().nullable().optional(),
   countries: z.string().optional(),  // Announcement countries as a string field
   status: z.string().min(1, { message: "Status is required." }).optional(),
   sent: z.boolean().optional(),
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   try {
     const { id } = params;
     const query = `
-      SELECT id, "organizationId", title, content, "expirationDate", countries, status, sent, "createdAt", "updatedAt"
+      SELECT id, "organizationId", title, content, "deliveryDate", countries, status, sent, "createdAt", "updatedAt"
       FROM announcements
       WHERE id = $1 AND "organizationId" = $2
     `;
