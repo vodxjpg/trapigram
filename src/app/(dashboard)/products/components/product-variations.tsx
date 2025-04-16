@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Plus, Trash, Edit, Save, X, ChevronDown, ChevronUp } from "lucide-react"
 import { v4 as uuidv4 } from "uuid"
 
@@ -21,309 +21,241 @@ interface ProductVariationsProps {
 }
 
 export function ProductVariations({ attributes, variations, onVariationsChange, warehouses }: ProductVariationsProps) {
-  const [editingVariation, setEditingVariation] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState<Partial<Variation>>({})
-  const [expandedVariation, setExpandedVariation] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [form, setForm] = useState<{ sku: string; regularPrice: string; salePrice: string }>({ sku: "", regularPrice: "", salePrice: "" })
 
-  // Generate all possible combinations of attribute terms
+  // ensure stock shape is always complete
+  useEffect(() => {
+    if (warehouses.length === 0) return
+    const filled = variations.map((v) => {
+      const stock: Record<string, Record<string, number>> = { ...(v.stock || {}) }
+      warehouses.forEach((w) => {
+        if (!stock[w.id]) stock[w.id] = {}
+        w.countries.forEach((c) => {
+          if (stock[w.id][c] == null) stock[w.id][c] = 0
+        })
+      })
+      return { ...v, stock }
+    })
+    onVariationsChange(filled)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [warehouses])
+
   const generateVariations = () => {
-    if (attributes.length === 0 || attributes.every((attr) => attr.selectedTerms.length === 0)) {
+    if (attributes.length === 0 || attributes.every((a) => a.selectedTerms.length === 0)) {
       toast.error("Please select at least one attribute term for variations")
       return
     }
 
-    // Get all selected attributes and their terms
-    const attributesWithTerms = attributes
-      .filter((attr) => attr.useForVariations && attr.selectedTerms.length > 0)
-      .map((attr) => ({
-        id: attr.id,
-        name: attr.name,
-        terms: attr.terms.filter((term) => attr.selectedTerms.includes(term.id)),
-      }))
+    const attrs = attributes
+      .filter((a) => a.useForVariations && a.selectedTerms.length > 0)
+      .map((a) => ({ id: a.id, name: a.name, terms: a.terms.filter((t) => a.selectedTerms.includes(t.id)) }))
 
-    if (attributesWithTerms.length === 0) {
+    if (attrs.length === 0) {
       toast.error("Please mark at least one attribute for variations")
       return
     }
 
-    // Generate all combinations
-    const generateCombinations = (
-      attributes: Array<{ id: string; name: string; terms: Array<{ id: string; name: string }> }>,
-      index = 0,
-      current: Record<string, string> = {},
-    ): Array<Record<string, string>> => {
-      if (index === attributes.length) {
-        return [current]
+    const combos: Record<string, string>[] = []
+    const build = (idx: number, cur: Record<string, string>) => {
+      if (idx === attrs.length) {
+        combos.push(cur)
+        return
       }
-
-      const attribute = attributes[index]
-      const combinations: Array<Record<string, string>> = []
-
-      for (const term of attribute.terms) {
-        combinations.push(...generateCombinations(attributes, index + 1, { ...current, [attribute.id]: term.id }))
-      }
-
-      return combinations
+      const a = attrs[idx]
+      a.terms.forEach((t) => build(idx + 1, { ...cur, [a.id]: t.id }))
     }
+    build(0, {})
 
-    const combinations = generateCombinations(attributesWithTerms)
-
-    // Create variations from combinations
-    const newVariations = combinations.map((combo) => {
-      // Check if this combination already exists in variations
-      const existingVariation = variations.find((v) => {
-        return Object.entries(combo).every(([attrId, termId]) => v.attributes[attrId] === termId)
-      })
-
-      if (existingVariation) {
-        return existingVariation
-      }
-
-      // Initialize stock data structure
-      const stockData: Record<string, Record<string, number>> = {}
-      warehouses.forEach((warehouse) => {
-        stockData[warehouse.id] = {}
-        warehouse.countries.forEach((country) => {
-          stockData[warehouse.id][country] = 0
-        })
-      })
-
-      // Create a new variation with a text-based ID
-      return {
-        id: uuidv4(),
-        attributes: combo,
-        sku: `VAR-${uuidv4().slice(0, 8)}`,
-        regularPrice: 0,
-        salePrice: null,
-        stock: stockData,
-      }
+    const blankStock: Record<string, Record<string, number>> = {}
+    warehouses.forEach((w) => {
+      blankStock[w.id] = {}
+      w.countries.forEach((c) => (blankStock[w.id][c] = 0))
     })
 
-    onVariationsChange(newVariations)
-
-    toast.success(`Generated ${newVariations.length} variations`)
-  }
-
-  const startEditing = (variation: Variation) => {
-    setEditingVariation(variation.id)
-    setEditForm({
-      sku: variation.sku,
-      regularPrice: variation.regularPrice,
-      salePrice: variation.salePrice,
-    })
-  }
-
-  const saveEditing = () => {
-    if (!editingVariation) return
-
-    onVariationsChange(variations.map((v) => (v.id === editingVariation ? { ...v, ...editForm } : v)))
-
-    setEditingVariation(null)
-    setEditForm({})
-  }
-
-  const cancelEditing = () => {
-    setEditingVariation(null)
-    setEditForm({})
-  }
-
-  const deleteVariation = (variationId: string) => {
-    onVariationsChange(variations.filter((v) => v.id !== variationId))
-  }
-
-  const toggleExpandVariation = (variationId: string) => {
-    setExpandedVariation(expandedVariation === variationId ? null : variationId)
-  }
-
-  const updateVariationStock = (variationId: string, warehouseId: string, country: string, value: number) => {
-    onVariationsChange(
-      variations.map((v) => {
-        if (v.id === variationId) {
-          return {
-            ...v,
-            stock: {
-              ...v.stock,
-              [warehouseId]: {
-                ...v.stock[warehouseId],
-                [country]: value,
-              },
-            },
-          }
+    const merged = combos.map((combo) => {
+      const existing = variations.find((v) => Object.entries(combo).every(([k, vId]) => v.attributes[k] === vId))
+      return (
+        existing || {
+          id: uuidv4(),
+          attributes: combo,
+          sku: `VAR-${uuidv4().slice(0, 8)}`,
+          regularPrice: 0,
+          salePrice: null,
+          stock: JSON.parse(JSON.stringify(blankStock)),
         }
-        return v
-      }),
+      )
+    })
+
+    onVariationsChange(merged)
+    toast.success(`Generated ${merged.length} variations`)
+  }
+
+  const startEditing = (v: Variation) => {
+    setEditingId(v.id)
+    setExpandedId(v.id)
+    setForm({
+      sku: v.sku,
+      regularPrice: String(v.regularPrice ?? ""),
+      salePrice: v.salePrice == null ? "" : String(v.salePrice),
+    })
+  }
+
+  const save = () => {
+    if (!editingId) return
+    onVariationsChange(
+      variations.map((v) =>
+        v.id === editingId
+          ? {
+              ...v,
+              sku: form.sku.trim() || v.sku,
+              regularPrice: Number(form.regularPrice) || 0,
+              salePrice: form.salePrice === "" ? null : Number(form.salePrice) || 0,
+            }
+          : v,
+      ),
+    )
+    setEditingId(null)
+  }
+
+  const cancel = () => setEditingId(null)
+
+  const remove = (id: string) => onVariationsChange(variations.filter((v) => v.id !== id))
+
+  const toggle = (id: string) => setExpandedId((p) => (p === id ? null : id))
+
+  const updateStock = (vid: string, wid: string, country: string, value: number) => {
+    onVariationsChange(
+      variations.map((v) =>
+        v.id === vid
+          ? { ...v, stock: { ...v.stock, [wid]: { ...v.stock[wid], [country]: value } } }
+          : v,
+      ),
     )
   }
 
-  // Get attribute and term names for display
-  const getAttributeTermName = (attributeId: string, termId: string) => {
-    const attribute = attributes.find((a) => a.id === attributeId)
-    if (!attribute) return ""
-    const term = attribute.terms.find((t) => t.id === termId)
-    if (!term) return ""
-    return `${attribute.name}: ${term.name}`
+  const label = (aid: string, tid: string) => {
+    const a = attributes.find((x) => x.id === aid)
+    const t = a?.terms.find((y) => y.id === tid)
+    return a && t ? `${a.name}: ${t.name}` : ""
   }
 
   return (
     <div className="space-y-6">
-      {attributes.filter((attr) => attr.useForVariations).length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground">
-          No attributes marked for variations. Go to the Attributes tab and mark at least one attribute for variations.
-        </div>
+      {attributes.filter((a) => a.useForVariations).length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground">No attributes marked for variations.</div>
       ) : (
         <>
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-medium">Product Variations</h3>
-            <Button onClick={generateVariations}>
-              <Plus className="mr-2 h-4 w-4" />
-              Generate Variations
+            <Button type="button" onClick={generateVariations}>
+              <Plus className="mr-2 h-4 w-4" /> Generate Variations
             </Button>
           </div>
 
           {variations.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              No variations generated yet. Click the button above to generate variations based on your selected attributes.
-            </div>
+            <div className="text-center py-8 text-muted-foreground">No variations generated yet.</div>
           ) : (
             <div className="space-y-4">
-              {variations.map((variation) => (
-                <Card key={variation.id} className="overflow-hidden">
+              {variations.map((v) => (
+                <Card key={v.id} className="overflow-hidden">
                   <CardHeader
-                    className="py-3 px-4 flex flex-row items-center justify-between cursor-pointer bg-muted/40"
-                    onClick={() => toggleExpandVariation(variation.id)}
+                    className="py-3 px-4 flex flex-row items-center justify-between bg-muted/40 cursor-pointer"
+                    onClick={() => toggle(v.id)}
                   >
+                    <CardTitle className="text-base">
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(v.attributes).map(([aid, tid]) => (
+                          <Badge key={`${aid}-${tid}`} variant="outline">
+                            {label(aid, tid)}
+                          </Badge>
+                        ))}
+                      </div>
+                    </CardTitle>
                     <div className="flex items-center gap-2">
-                      <CardTitle className="text-base">
-                        <div className="flex flex-wrap gap-1">
-                          {Object.entries(variation.attributes).map(([attrId, termId]) => (
-                            <Badge key={`${attrId}-${termId}`} variant="outline">
-                              {getAttributeTermName(attrId, termId)}
-                            </Badge>
-                          ))}
-                        </div>
-                      </CardTitle>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {editingVariation === variation.id ? (
+                      {editingId === v.id ? (
                         <>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              saveEditing()
-                            }}
-                          >
+                          <Button type="button" variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); save() }}>
                             <Save className="h-4 w-4 mr-1" /> Save
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              cancelEditing()
-                            }}
-                          >
+                          <Button type="button" variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); cancel() }}>
                             <X className="h-4 w-4 mr-1" /> Cancel
                           </Button>
                         </>
                       ) : (
                         <>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              startEditing(variation)
-                            }}
-                          >
+                          <Button type="button" variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); startEditing(v) }}>
                             <Edit className="h-4 w-4 mr-1" /> Edit
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-red-500"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              deleteVariation(variation.id)
-                            }}
-                          >
+                          <Button type="button" variant="ghost" size="sm" className="text-red-500" onClick={(e) => { e.stopPropagation(); remove(v.id) }}>
                             <Trash className="h-4 w-4 mr-1" /> Delete
                           </Button>
                         </>
                       )}
-                      {expandedVariation === variation.id ? (
-                        <ChevronUp className="h-4 w-4" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4" />
-                      )}
+                      {expandedId === v.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </div>
                   </CardHeader>
-                  {expandedVariation === variation.id && (
+
+                  {expandedId === v.id && (
                     <CardContent className="p-4">
                       <div className="grid grid-cols-3 gap-4 mb-4">
+                        {/* SKU */}
                         <div>
-                          <label className="text-sm font-medium mb-1 block">SKU</label>
-                          {editingVariation === variation.id ? (
-                            <Input
-                              value={editForm.sku || ""}
-                              onChange={(e) => setEditForm({ ...editForm, sku: e.target.value })}
-                              className="w-full"
+                          <span className="text-sm font-medium mb-1 block">SKU</span>
+                          {editingId === v.id ? (
+                            <input
+                              className="w-full border rounded-md px-3 py-2 text-sm"
+                              value={form.sku}
+                              onChange={(e) => setForm({ ...form, sku: e.target.value })}
                             />
                           ) : (
-                            <div className="p-2 border rounded-md">{variation.sku}</div>
+                            <div className="p-2 border rounded-md text-sm">{v.sku}</div>
                           )}
                         </div>
+
+                        {/* Regular price */}
                         <div>
-                          <label className="text-sm font-medium mb-1 block">Regular Price</label>
-                          {editingVariation === variation.id ? (
-                            <Input
+                          <span className="text-sm font-medium mb-1 block">Regular Price</span>
+                          {editingId === v.id ? (
+                            <input
                               type="number"
                               min="0"
                               step="0.01"
-                              value={editForm.regularPrice || 0}
-                              onChange={(e) =>
-                                setEditForm({
-                                  ...editForm,
-                                  regularPrice: Number.parseFloat(e.target.value) || 0,
-                                })
-                              }
-                              className="w-full"
+                              className="w-full border rounded-md px-3 py-2 text-sm"
+                              value={form.regularPrice}
+                              onChange={(e) => setForm({ ...form, regularPrice: e.target.value })}
                             />
                           ) : (
-                            <div className="p-2 border rounded-md">${variation.regularPrice}</div>
+                            <div className="p-2 border rounded-md text-sm">${v.regularPrice}</div>
                           )}
                         </div>
+
+                        {/* Sale price */}
                         <div>
-                          <label className="text-sm font-medium mb-1 block">Sale Price</label>
-                          {editingVariation === variation.id ? (
-                            <Input
+                          <span className="text-sm font-medium mb-1 block">Sale Price</span>
+                          {editingId === v.id ? (
+                            <input
                               type="number"
                               min="0"
                               step="0.01"
-                              value={editForm.salePrice === null ? "" : editForm.salePrice}
-                              onChange={(e) =>
-                                setEditForm({
-                                  ...editForm,
-                                  salePrice: e.target.value === "" ? null : Number.parseFloat(e.target.value) || 0,
-                                })
-                              }
-                              className="w-full"
+                              className="w-full border rounded-md px-3 py-2 text-sm"
+                              value={form.salePrice}
+                              onChange={(e) => setForm({ ...form, salePrice: e.target.value })}
                             />
                           ) : (
-                            <div className="p-2 border rounded-md">
-                              {variation.salePrice === null ? "-" : `$${variation.salePrice}`}
-                            </div>
+                            <div className="p-2 border rounded-md text-sm">{v.salePrice == null ? "-" : `$${v.salePrice}`}</div>
                           )}
                         </div>
                       </div>
 
+                      {/* STOCK */}
                       <h4 className="font-medium mb-2">Stock Management</h4>
                       <div className="space-y-4">
-                        {warehouses.map((warehouse) => (
-                          <Accordion type="single" collapsible key={warehouse.id}>
-                            <AccordionItem value={warehouse.id}>
-                              <AccordionTrigger>{warehouse.name}</AccordionTrigger>
+                        {warehouses.map((w) => (
+                          <Accordion type="single" collapsible key={w.id}>
+                            <AccordionItem value={w.id}>
+                              <AccordionTrigger>{w.name}</AccordionTrigger>
                               <AccordionContent>
                                 <Table>
                                   <TableHeader>
@@ -333,22 +265,16 @@ export function ProductVariations({ attributes, variations, onVariationsChange, 
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
-                                    {warehouse.countries.map((country) => (
-                                      <TableRow key={`${warehouse.id}-${country}`}>
-                                        <TableCell>{country}</TableCell>
+                                    {w.countries.map((c) => (
+                                      <TableRow key={`${w.id}-${c}`}>
+                                        <TableCell>{c}</TableCell>
                                         <TableCell>
-                                          <Input
+                                          <input
                                             type="number"
                                             min="0"
-                                            value={variation.stock[warehouse.id]?.[country] || 0}
-                                            onChange={(e) =>
-                                              updateVariationStock(
-                                                variation.id,
-                                                warehouse.id,
-                                                country,
-                                                Number.parseInt(e.target.value) || 0,
-                                              )
-                                            }
+                                            className="w-full border rounded-md px-2 py-1 text-sm"
+                                            value={v.stock[w.id][c]}
+                                            onChange={(e) => updateStock(v.id, w.id, c, Number(e.target.value) || 0)}
                                           />
                                         </TableCell>
                                       </TableRow>
