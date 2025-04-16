@@ -96,6 +96,16 @@ interface DB {
     visibility: boolean;
     createdAt: Date;
     updatedAt: Date;
+  };
+  shipments: {
+    id: string;
+    organizationId: string;
+    countries: string;
+    title: string;
+    description: string;
+    costs: string;
+    createdAt: Date;
+    updatedAt: Date;
   }
   member: {
     id: string;
