@@ -128,8 +128,8 @@ export function ShipmentForm({
     if (group && isCostGroupValid(group)) {
       append({
         minOrderCost: Number(group.maxOrderCost) + 0.01,
-        maxOrderCost: 0,
-        shipmentCost: 0,
+        maxOrderCost: "",
+        shipmentCost: "",
       });
     }
   };
@@ -193,9 +193,9 @@ export function ShipmentForm({
         description: "",
         costs: [
           {
-            minOrderCost: 0,
-            maxOrderCost: 0,
-            shipmentCost: 0,
+            minOrderCost: "",
+            maxOrderCost: "",
+            shipmentCost: "",
           },
         ],
         countries: [],
@@ -385,7 +385,7 @@ export function ShipmentForm({
                               <FormControl>
                                 <Input
                                   type="number"
-                                  placeholder="0"
+                                  placeholder={index === 0 ? "0" : "Max"}
                                   {...field}
                                   className="appearance-none [&::-webkit-inner-spin-button]:hidden [&::-webkit-outer-spin-button]:hidden"
                                 />
