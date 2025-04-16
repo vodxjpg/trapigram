@@ -25,7 +25,7 @@ const productUpdateSchema = z.object({
         terms: z.array(z.object({ id: z.string(), name: z.string() })),
         useForVariations: z.boolean(),
         selectedTerms: z.array(z.string()),
-      }),
+      })
     )
     .optional(),
   variations: z
@@ -37,7 +37,7 @@ const productUpdateSchema = z.object({
         regularPrice: z.number(),
         salePrice: z.number().nullable(),
         stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
-      }),
+      })
     )
     .optional(),
 });
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 });
     }
-
+    
     const { id } = await params;
 
     // Fetch the product
@@ -67,16 +67,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
-    // Fetch category mappings
-    const categories = await db
+    // Fetch category mappings for the product
+    const categoryRows = await db
       .selectFrom("productCategory")
       .innerJoin("productCategories", "productCategories.id", "productCategory.categoryId")
       .select(["productCategories.id", "productCategories.name"])
       .where("productCategory.productId", "=", id)
       .execute();
 
-    // Fetch attribute values
-    const attributes = await db
+    // Fetch attribute mappings for the product
+    const attributeRows = await db
       .selectFrom("productAttributeValues")
       .innerJoin("productAttributes", "productAttributes.id", "productAttributeValues.attributeId")
       .innerJoin("productAttributeTerms", "productAttributeTerms.id", "productAttributeValues.termId")
@@ -89,7 +89,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       .where("productAttributeValues.productId", "=", id)
       .execute();
 
-    // Fetch variations (if variable product)
+    // Fetch variations if the product is a variable
     const variations = product.product_type === "variable"
       ? await db
           .selectFrom("productVariations")
@@ -98,28 +98,34 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           .execute()
       : [];
 
+    // Build attributes array from attributeRows
+    const attributes = attributeRows.reduce((acc, row) => {
+      const existing = acc.find((a) => a.id === row.attributeId);
+      if (existing) {
+        existing.terms.push({ id: row.termId, name: row.termName });
+        existing.selectedTerms.push(row.termId);
+      } else {
+        acc.push({
+          id: row.attributeId,
+          name: row.attributeName,
+          terms: [{ id: row.termId, name: row.termName }],
+          // You can set useForVariations as needed, for example, based on whether there are variations
+          useForVariations: variations.length > 0,
+          selectedTerms: [row.termId],
+        });
+      }
+      return acc;
+    }, [] as any[]);
+
     return NextResponse.json({
       product: {
         ...product,
+        // Override the stock status using the manage_stock flag
+        stock_status: product.manage_stock ? "managed" : "unmanaged",
         stockData: product.stock_data,
-        // If join returns rows, use them; otherwise fallback to product.categories
-        categories: categories.length ? categories.map((c) => c.id) : (product.categories || []),
-        attributes: attributes.reduce((acc, attr) => {
-          const existing = acc.find((a) => a.id === attr.attributeId);
-          if (existing) {
-            existing.terms.push({ id: attr.termId, name: attr.termName });
-            existing.selectedTerms.push(attr.termId);
-          } else {
-            acc.push({
-              id: attr.attributeId,
-              name: attr.attributeName,
-              terms: [{ id: attr.termId, name: attr.termName }],
-              useForVariations: variations.length > 0,
-              selectedTerms: [attr.termId],
-            });
-          }
-          return acc;
-        }, [] as any[]),
+        // Use the categories from mapping if present; fallback to product.categories
+        categories: categoryRows.length ? categoryRows.map((r) => r.id) : (product.categories || []),
+        attributes,
         variations: variations.map((v) => ({
           id: v.id,
           attributes: v.attributes,
@@ -147,7 +153,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 });
     }
-
     const { id } = await params;
     const body = await req.json();
     const parsedUpdate = productUpdateSchema.parse(body);
@@ -159,7 +164,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       .where("id", "=", id)
       .where("organization_id", "=", organizationId)
       .executeTakeFirst();
-
     if (!existingProduct) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
@@ -248,7 +252,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (parsedUpdate.variations && parsedUpdate.productType === "variable") {
       await db.deleteFrom("productVariations").where("id", "=", id).execute();
       for (const variation of parsedUpdate.variations) {
-        // Validate variation SKU
         const existingVariationSku = await db
           .selectFrom("productVariations")
           .select("id")
@@ -258,7 +261,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         if (existingVariationSku) {
           return NextResponse.json({ error: `Variation SKU ${variation.sku} already exists` }, { status: 400 });
         }
-
         await db
           .insertInto("productVariations")
           .values({
