@@ -67,7 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
-    // Fetch categories
+    // Fetch category mappings
     const categories = await db
       .selectFrom("productCategory")
       .innerJoin("productCategories", "productCategories.id", "productCategory.categoryId")
@@ -75,7 +75,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       .where("productCategory.productId", "=", id)
       .execute();
 
-    // Fetch attributes
+    // Fetch attribute values
     const attributes = await db
       .selectFrom("productAttributeValues")
       .innerJoin("productAttributes", "productAttributes.id", "productAttributeValues.attributeId")
@@ -94,7 +94,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       ? await db
           .selectFrom("productVariations")
           .selectAll()
-          .where("id", "=", id)
+          .where("product_id", "=", id)
           .execute()
       : [];
 
@@ -102,7 +102,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       product: {
         ...product,
         stockData: product.stock_data,
-        categories: categories.map((c) => c.name),
+        // If join returns rows, use them; otherwise fallback to product.categories
+        categories: categories.length ? categories.map((c) => c.id) : (product.categories || []),
         attributes: attributes.reduce((acc, attr) => {
           const existing = acc.find((a) => a.id === attr.attributeId);
           if (existing) {
@@ -113,7 +114,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
               id: attr.attributeId,
               name: attr.attributeName,
               terms: [{ id: attr.termId, name: attr.termName }],
-              useForVariations: variations.length > 0, // Assume true if variations exist
+              useForVariations: variations.length > 0,
               selectedTerms: [attr.termId],
             });
           }
@@ -121,11 +122,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         }, [] as any[]),
         variations: variations.map((v) => ({
           id: v.id,
-          attributes: v.attributes ? JSON.parse(v.attributes as any) : {},
+          attributes: v.attributes,
           sku: v.sku,
           regularPrice: v.regular_price,
           salePrice: v.sale_price,
-          stock: v.stock ? JSON.parse(v.stock as any) : null,
+          stock: v.stock,
         })),
       },
     });
@@ -174,6 +175,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         .executeTakeFirst();
       if (existingSku) {
         return NextResponse.json({ error: "SKU already exists" }, { status: 400 });
+      }
+    }
+
+    // Validate categories if provided
+    if (parsedUpdate.categories && parsedUpdate.categories.length > 0) {
+      const existingCategories = await db
+        .selectFrom("productCategories")
+        .select("id")
+        .where("organizationId", "=", organizationId)
+        .execute();
+      const existingCategoryIds = existingCategories.map((cat) => cat.id);
+      const invalidCategories = parsedUpdate.categories.filter((catId) => !existingCategoryIds.includes(catId));
+      if (invalidCategories.length > 0) {
+        return NextResponse.json(
+          { error: `The following category IDs do not exist: ${invalidCategories.join(", ")}` },
+          { status: 400 }
+        );
       }
     }
 
@@ -285,27 +303,20 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 });
     }
-
     const { id } = await params;
-
-    // Check if product exists
     const existingProduct = await db
       .selectFrom("products")
       .select("id")
       .where("id", "=", id)
       .where("organization_id", "=", organizationId)
       .executeTakeFirst();
-
     if (!existingProduct) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
-
-    // Delete related data
     await db.deleteFrom("productCategory").where("productId", "=", id).execute();
     await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
     await db.deleteFrom("productVariations").where("id", "=", id).execute();
     await db.deleteFrom("products").where("id", "=", id).execute();
-
     return NextResponse.json({ message: "Product deleted successfully" });
   } catch (error) {
     const { id } = await params;

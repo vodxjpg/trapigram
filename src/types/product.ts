@@ -1,0 +1,43 @@
+export interface Product {
+  id: string;
+  title: string;
+  description?: string | null;
+  image?: string | null;
+  sku: string;
+  status: "published" | "draft";
+  productType: "simple" | "variable";
+  regularPrice: number | null;
+  salePrice: number | null;
+  allowBackorders: boolean;
+  manageStock: boolean;
+  stockStatus: "managed" | "unmanaged";
+  stockData?: Record<string, Record<string, number>> | null;
+  categories?: string[];
+  attributes?: Attribute[];
+  variations?: Variation[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Attribute {
+  id: string;
+  name: string;
+  terms: Array<{ id: string; name: string }>;
+  useForVariations: boolean;
+  selectedTerms: string[];
+}
+
+export interface Variation {
+  id: string;
+  attributes: Record<string, string>;
+  sku: string;
+  regularPrice: number;
+  salePrice: number | null;
+  stock?: Record<string, Record<string, number>>;
+}
+
+export interface Warehouse {
+  id: string;
+  name: string;
+  countries: string[];
+}

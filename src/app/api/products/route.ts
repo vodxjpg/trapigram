@@ -257,6 +257,23 @@ export async function POST(req: NextRequest) {
     }
     parsedProduct = { ...parsedProduct, sku: finalSku };
 
+    // Validate categories if provided
+    if (parsedProduct.categories && parsedProduct.categories.length > 0) {
+      const existingCategories = await db
+        .selectFrom("productCategories")
+        .select("id")
+        .where("organizationId", "=", organizationId)
+        .execute();
+      const existingCategoryIds = existingCategories.map((cat) => cat.id);
+      const invalidCategories = parsedProduct.categories.filter((catId) => !existingCategoryIds.includes(catId));
+      if (invalidCategories.length > 0) {
+        return NextResponse.json(
+          { error: `The following category IDs do not exist: ${invalidCategories.join(", ")}` },
+          { status: 400 }
+        );
+      }
+    }
+
     // Generate product ID
     const productId = uuidv4();
 
@@ -359,7 +376,7 @@ export async function POST(req: NextRequest) {
           updatedAt: new Date().toISOString(),
         },
       },
-      { status: 201 },
+      { status: 201 }
     );
   } catch (error) {
     console.error("[PRODUCTS_POST]", error);

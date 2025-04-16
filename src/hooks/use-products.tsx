@@ -1,89 +1,89 @@
-"use client"
+import { useEffect, useState } from "react";
+import useSWR from "swr";
+import type { Product } from "@/types/product";
 
-import useSWR from "swr"
-import { useEffect } from "react"
-import { useRouter } from "next/navigation"
-
-export type Product = {
-  id: string
-  title: string
-  image: string | null
-  sku: string
-  status: "published" | "draft"
-  regularPrice: number
-  salePrice: number | null
-  stockStatus: "managed" | "unmanaged"
-  categories: string[]
-  createdAt: string
-}
-
-interface UseProductsOptions {
-  page?: number
-  pageSize?: number
-  search?: string
-  categoryId?: string
+interface UseProductsProps {
+  page: number;
+  pageSize: number;
+  search?: string;
 }
 
 const fetcher = async (url: string) => {
-  const res = await fetch(url)
-  if (!res.ok) {
-    const error = new Error("Failed to fetch products")
-    error.message = await res.text()
-    throw error
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("Failed to fetch products");
   }
-  return res.json()
-}
+  const data = await response.json();
+  return {
+    ...data,
+    products: data.products.map((product: any) => ({
+      ...product,
+      regularPrice: Number(product.regular_price),
+      salePrice: product.sale_price ? Number(product.sale_price) : null,
+      productType: product.product_type,
+      createdAt: product.created_at,
+      stockData: product.stock_data,
+      stockStatus: product.stock_status,
+      categories: product.categories, // Already names from API
+    })),
+  };
+};
 
-export function useProducts(options: UseProductsOptions = {}) {
-  const router = useRouter()
-  const { page = 1, pageSize = 10, search = "", categoryId } = options
+const singleProductFetcher = async (url: string) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("Failed to fetch product");
+  }
+  const data = await response.json();
+  return {
+    ...data.product,
+    regularPrice: Number(data.product.regular_price),
+    salePrice: data.product.sale_price ? Number(data.product.sale_price) : null,
+    productType: data.product.product_type,
+    createdAt: data.product.created_at,
+    stockData: data.product.stock_data,
+    stockStatus: data.product.stock_status,
+    categories: data.product.categories, // Names from API
+    attributes: data.product.attributes || [],
+    variations: data.product.variations || [],
+  };
+};
 
-  const queryParams = new URLSearchParams({
+export function useProducts({ page, pageSize, search }: UseProductsProps) {
+  const searchParams = new URLSearchParams({
     page: page.toString(),
     pageSize: pageSize.toString(),
-  })
+    ...(search && { search }),
+  });
 
-  if (search) queryParams.append("search", search)
-  if (categoryId) queryParams.append("categoryId", categoryId)
-
-  const { data, error, isLoading, mutate } = useSWR(`/api/products?${queryParams.toString()}`, fetcher, {
-    revalidateOnFocus: false,
-  })
-
-  // Handle authentication errors
-  useEffect(() => {
-    if (error && (error.message.includes("Unauthorized") || error.message.includes("No active organization"))) {
-      router.push("/auth/signin")
+  const { data, error, mutate } = useSWR(
+    `/api/products?${searchParams.toString()}`,
+    fetcher,
+    {
+      revalidateOnFocus: false,
     }
-  }, [error, router])
+  );
 
   return {
-    products: data?.products as Product[],
-    totalPages: data?.totalPages || 0,
-    currentPage: data?.currentPage || 1,
-    isLoading,
-    isError: error,
+    products: data?.products || [],
+    isLoading: !data && !error,
+    totalPages: data?.pagination?.totalPages || 1,
     mutate,
-  }
+  };
 }
 
-export function useProduct(id: string) {
-  const router = useRouter()
-  const { data, error, isLoading, mutate } = useSWR(id ? `/api/products/${id}` : null, fetcher, {
-    revalidateOnFocus: false,
-  })
-
-  // Handle authentication errors
-  useEffect(() => {
-    if (error && (error.message.includes("Unauthorized") || error.message.includes("No active organization"))) {
-      router.push("/auth/signin")
+export function useProduct(productId: string) {
+  const { data, error, mutate } = useSWR(
+    `/api/products/${productId}`,
+    singleProductFetcher,
+    {
+      revalidateOnFocus: false,
     }
-  }, [error, router])
+  );
 
   return {
-    product: data?.product as Product | undefined,
-    isLoading,
-    isError: error,
+    product: data,
+    isLoading: !data && !error,
     mutate,
-  }
+  };
 }

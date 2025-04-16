@@ -52,18 +52,19 @@ export function StockManagement({ warehouses, stockData, onStockChange }: StockM
           {warehouses.map((warehouse) => (
             <Card key={warehouse.id}>
               <CardHeader
-                className="py-3 px-4 flex flex-row items-center justify-between cursor-pointer"
-                onClick={() => toggleWarehouse(warehouse.id)}
-              >
-                <CardTitle className="text-base">{warehouse.name}</CardTitle>
-                <Button variant="ghost" size="sm">
-                  {expandedWarehouses[warehouse.id] ? (
-                    <ChevronUp className="h-4 w-4" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4" />
-                  )}
-                </Button>
-              </CardHeader>
+  className="py-3 px-4 flex flex-row items-center justify-between cursor-pointer"
+  onClick={() => toggleWarehouse(warehouse.id)}
+>
+  <CardTitle className="text-base">{warehouse.name}</CardTitle>
+  <Button variant="ghost" size="sm" type="button">
+    {expandedWarehouses[warehouse.id] ? (
+      <ChevronUp className="h-4 w-4" />
+    ) : (
+      <ChevronDown className="h-4 w-4" />
+    )}
+  </Button>
+</CardHeader>
+
               {expandedWarehouses[warehouse.id] && (
                 <CardContent>
                   <Table>

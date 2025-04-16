@@ -8,7 +8,10 @@ import { z } from "zod"
 import { v4 as uuidv4 } from "uuid"
 import Image from "next/image"
 import { Loader2, Upload, X } from "lucide-react"
-import ReactQuill from "react-quill-new"
+import dynamic from "next/dynamic"
+
+// Dynamically import ReactQuill to avoid SSR errors
+const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false })
 import "react-quill-new/dist/quill.snow.css"
 
 import { Button } from "@/components/ui/button"
@@ -48,7 +51,7 @@ interface ProductFormProps {
   initialData?: Product
 }
 
-// Add Quill modules and formats
+// Quill modules and formats
 const quillModules = {
   toolbar: [
     [{ header: [1, 2, false] }],
@@ -59,6 +62,7 @@ const quillModules = {
   ],
 }
 
+// Remove "bullet" from formats to avoid registration issues
 const quillFormats = [
   "header",
   "bold",
@@ -67,7 +71,6 @@ const quillFormats = [
   "strike",
   "blockquote",
   "list",
-  "bullet",
   "indent",
   "link",
   "image",
@@ -81,26 +84,28 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   const [skuAvailable, setSkuAvailable] = useState(true)
   const [categories, setCategories] = useState<Array<{ id: string; name: string; slug: string }>>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
-  const [stockData, setStockData] = useState<Record<string, Record<string, number>>>({})
-  const [attributes, setAttributes] = useState<Attribute[]>([])
-  const [variations, setVariations] = useState<Variation[]>([])
+  const [stockData, setStockData] = useState<Record<string, Record<string, number>>>(
+    initialData?.stockData || {}
+  )
+  const [attributes, setAttributes] = useState<Attribute[]>(initialData?.attributes || [])
+  const [variations, setVariations] = useState<Variation[]>(initialData?.variations || [])
 
-  // Initialize form with default values or initial data
+  // Initialize form with default values
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productSchema),
     defaultValues: initialData
       ? {
-          title: initialData.title,
+          title: initialData.title || "",
           description: initialData.description || "",
-          image: initialData.image,
-          sku: initialData.sku,
-          status: initialData.status,
-          productType: (initialData.productType as "simple" | "variable") || "simple",
+          image: initialData.image || null,
+          sku: initialData.sku || "",
+          status: initialData.status || "draft",
+          productType: initialData.productType || "simple",
           categories: initialData.categories || [],
-          regularPrice: initialData.regularPrice,
-          salePrice: initialData.salePrice,
-          allowBackorders: false,
-          manageStock: initialData.stockStatus === "managed",
+          regularPrice: initialData.regularPrice || 0,
+          salePrice: initialData.salePrice || null,
+          allowBackorders: initialData.allowBackorders || false,
+          manageStock: initialData.manageStock || false,
         }
       : {
           title: "",
@@ -117,10 +122,29 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         },
   })
 
+  // When initialData changes (edit mode), reset the form values so fields are pre-populated
+  useEffect(() => {
+    if (initialData) {
+      form.reset({
+        title: initialData.title || "",
+        description: initialData.description || "",
+        image: initialData.image || null,
+        sku: initialData.sku || "",
+        status: initialData.status || "draft",
+        productType: initialData.productType || (initialData as any).product_type || "simple",
+        categories: initialData.categories || [],
+        regularPrice: initialData.regularPrice || 0,
+        salePrice: initialData.salePrice || null,
+        allowBackorders: initialData.allowBackorders || false,
+        manageStock: initialData.manageStock || false,
+      })
+    }
+  }, [initialData, form])
+
   const productType = form.watch("productType")
   const manageStock = form.watch("manageStock")
 
-  // Fetch categories on component mount
+  // Fetch categories for the select options
   useEffect(() => {
     async function fetchCategories() {
       try {
@@ -133,11 +157,10 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         toast.error("Failed to load product categories")
       }
     }
-
     fetchCategories()
   }, [])
 
-  // Fetch warehouses on component mount
+  // Fetch warehouses for stock management
   useEffect(() => {
     async function fetchWarehouses() {
       try {
@@ -145,41 +168,36 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         if (!response.ok) throw new Error("Failed to fetch warehouses")
         const data = await response.json()
         setWarehouses(data.warehouses)
-
-        // Initialize stock data structure
-        const initialStockData: Record<string, Record<string, number>> = {}
-        data.warehouses.forEach((warehouse: any) => {
-          initialStockData[warehouse.id] = {}
-          warehouse.countries.forEach((country: string) => {
-            initialStockData[warehouse.id][country] = 0
+        if (!initialData) {
+          const initialStockData: Record<string, Record<string, number>> = {}
+          data.warehouses.forEach((warehouse: any) => {
+            initialStockData[warehouse.id] = {}
+            warehouse.countries.forEach((country: string) => {
+              initialStockData[warehouse.id][country] = 0
+            })
           })
-        })
-        setStockData(initialStockData)
+          setStockData(initialStockData)
+        }
       } catch (error) {
         console.error("Error fetching warehouses:", error)
         toast.error("Failed to load warehouses")
       }
     }
-
     fetchWarehouses()
-  }, [])
+  }, [initialData])
 
   // Check SKU availability
   const checkSkuAvailability = async (sku: string) => {
     if (!sku) return true
-
     setIsCheckingSku(true)
     try {
       const response = await fetch(`/api/products/check-sku?sku=${sku}`)
       if (!response.ok) throw new Error("Failed to check SKU")
       const data = await response.json()
-
-      // If editing, the current product's SKU should be considered available
       if (productId && initialData?.sku === sku) {
         setSkuAvailable(true)
         return true
       }
-
       setSkuAvailable(!data.exists)
       return !data.exists
     } catch (error) {
@@ -190,7 +208,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
     }
   }
 
-  // Generate a unique SKU if none provided (returns a string ID)
+  // Generate SKU if not provided
   const generateSku = () => {
     const prefix = "ORG"
     const randomPart = uuidv4().slice(0, 8)
@@ -201,20 +219,14 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
     const formData = new FormData()
     formData.append("file", file)
-
     try {
       const response = await fetch("/api/upload", {
         method: "POST",
         body: formData,
       })
-
-      if (!response.ok) {
-        throw new Error("Failed to upload image")
-      }
-
+      if (!response.ok) throw new Error("Failed to upload image")
       const data = await response.json()
       const imageUrl = data.filePath
       setImagePreview(imageUrl)
@@ -228,13 +240,10 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   // Handle form submission
   const onSubmit = async (data: ProductFormValues) => {
     setIsSubmitting(true)
-
     try {
-      // If no SKU provided, generate one
       if (!data.sku) {
         data.sku = generateSku()
       } else {
-        // Verify SKU is available
         const isAvailable = await checkSkuAvailability(data.sku)
         if (!isAvailable) {
           toast.error("The SKU is already in use. Please choose another.")
@@ -242,33 +251,24 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
           return
         }
       }
-
-      // Prepare the payload
       const payload = {
         ...data,
-        // For variable products, set parent product price fields to null
         ...(productType === "variable" ? { regularPrice: null, salePrice: null } : {}),
         stockData: manageStock && productType === "simple" ? stockData : null,
-        attributes: productType === "variable" ? attributes : [],
+        attributes: attributes,
         variations: productType === "variable" ? variations : [],
       }
-
-      // Determine if creating or updating
+      console.log("Form submitted with data:", payload)
       const url = productId ? `/api/products/${productId}` : "/api/products"
       const method = productId ? "PATCH" : "POST"
-
       const response = await fetch(url, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       })
-
       if (!response.ok) {
         throw new Error(`Failed to ${productId ? "update" : "create"} product`)
       }
-
       toast.success(`Product ${productId ? "updated" : "created"} successfully`)
       router.push("/products")
     } catch (error) {
@@ -352,14 +352,13 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                         </div>
                       </div>
                     </FormItem>
-
                     <FormField
                       control={form.control}
                       name="status"
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Status</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder="Select status" />
@@ -374,7 +373,6 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                         </FormItem>
                       )}
                     />
-
                     <FormField
                       control={form.control}
                       name="categories"
@@ -430,7 +428,6 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                       )}
                     />
                   </div>
-
                   {/* Right Column: Title, Product Type, Price */}
                   <div className="space-y-6">
                     <FormField
@@ -446,14 +443,13 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                         </FormItem>
                       )}
                     />
-
                     <FormField
                       control={form.control}
                       name="productType"
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Product Type</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder="Select product type" />
@@ -471,7 +467,6 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                         </FormItem>
                       )}
                     />
-
                     {productType === "simple" && (
                       <div className="grid grid-cols-2 gap-4">
                         <FormField
@@ -487,7 +482,6 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                             </FormItem>
                           )}
                         />
-
                         <FormField
                           control={form.control}
                           name="salePrice"
@@ -499,7 +493,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                                   type="number"
                                   min="0"
                                   step="0.01"
-                                  value={field.value === null ? "" : field.value}
+                                  value={field.value ?? ""}
                                   onChange={(e) => {
                                     const value = e.target.value === "" ? null : Number.parseFloat(e.target.value)
                                     field.onChange(value)
@@ -512,7 +506,6 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                         />
                       </div>
                     )}
-
                     <FormField
                       control={form.control}
                       name="sku"
@@ -546,8 +539,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                     />
                   </div>
                 </div>
-
-                {/* Description with React Quill - Full Width */}
+                {/* Description with ReactQuill */}
                 <FormField
                   control={form.control}
                   name="description"
@@ -568,12 +560,10 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                     </FormItem>
                   )}
                 />
-
                 {productType === "variable" && (
                   <div className="rounded-lg border p-4 bg-blue-50">
                     <p className="text-sm text-blue-700">
-                      <strong>Note:</strong> For variable products, pricing is set individually for each variation in
-                      the Variations tab.
+                      <strong>Note:</strong> For variable products, pricing is set individually for each variation in the Variations tab.
                     </p>
                   </div>
                 )}
@@ -599,12 +589,11 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                         <FormDescription>Enable stock management for this product</FormDescription>
                       </div>
                       <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        <Switch type="button" checked={field.value} onCheckedChange={field.onChange} />
                       </FormControl>
                     </FormItem>
                   )}
                 />
-
                 <FormField
                   control={form.control}
                   name="allowBackorders"
@@ -615,21 +604,18 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                         <FormDescription>Allow customers to purchase products that are out of stock</FormDescription>
                       </div>
                       <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        <Switch type="button" checked={field.value} onCheckedChange={field.onChange} />
                       </FormControl>
                     </FormItem>
                   )}
                 />
-
                 {manageStock && productType === "simple" && (
                   <StockManagement warehouses={warehouses} stockData={stockData} onStockChange={setStockData} />
                 )}
-
                 {manageStock && productType === "variable" && (
                   <div className="rounded-lg border p-4 bg-blue-50">
                     <p className="text-sm text-blue-700">
-                      <strong>Note:</strong> For variable products, stock is managed individually for each variation in
-                      the Variations tab.
+                      <strong>Note:</strong> For variable products, stock is managed individually for each variation in the Variations tab.
                     </p>
                   </div>
                 )}
@@ -652,12 +638,8 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                     </p>
                     <ol className="list-decimal ml-5 mt-2 text-sm text-blue-700">
                       <li>Add attributes (like Color, Size)</li>
-                      <li>
-                        <strong>Select the terms</strong> you want to use (like Red, Blue, Small, Large)
-                      </li>
-                      <li>
-                        Toggle <strong>"Use for Variations"</strong> for attributes you want to create variations from
-                      </li>
+                      <li><strong>Select the terms</strong> you want to use (like Red, Blue, Small, Large)</li>
+                      <li>Toggle <strong>"Use for Variations"</strong> for attributes you want to create variations from</li>
                     </ol>
                     <p className="text-sm text-blue-700 mt-2">
                       Then go to the Variations tab to generate product variations based on your selections.
@@ -691,7 +673,6 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
             </Card>
           </TabsContent>
         </Tabs>
-
         <div className="flex justify-end gap-4">
           <Button type="button" variant="outline" onClick={() => router.push("/products")}>
             Cancel
