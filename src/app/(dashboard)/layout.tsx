@@ -8,7 +8,7 @@ import { SiteHeader } from "@/components/dashboard/site-header";
 import FooterDashboard from "@/components/dashboard/FooterDashboard";
 import { siteDetails } from '@/data/siteDetails';
 import { HeaderTitleProvider } from "@/context/HeaderTitleContext";
-import { Toaster } from 'react-hot-toast';
+import { Toaster } from "@/components/ui/sonner"
 
 import "@/app/globals.css";
 
