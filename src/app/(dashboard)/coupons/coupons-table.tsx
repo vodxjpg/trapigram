@@ -52,6 +52,7 @@ type Coupon = {
   limitPerUser: string;
   usageLimit: number;
   expendingLimit: number;
+  expendingMinimum: number;
   countries: string[]; // Array of country names or codes.
   visibility: boolean; // true means visible, false means hidden.
 };
@@ -218,6 +219,7 @@ export function CouponsTable() {
                 {sortColumn === "usageLimit" &&
                   (sortDirection === "asc" ? "↑" : "↓")}
               </TableHead>
+              <TableHead>Expending Minimum</TableHead>
               <TableHead>Expending Limit</TableHead>
               <TableHead>Countries</TableHead>
               <TableHead>Visibility</TableHead>
@@ -246,6 +248,7 @@ export function CouponsTable() {
                   <TableCell>{coupon.expirationDate}</TableCell>
                   <TableCell>{coupon.limitPerUser}</TableCell>
                   <TableCell>{coupon.usageLimit}</TableCell>
+                  <TableCell>{coupon.expendingMinimum}</TableCell>
                   <TableCell>{coupon.expendingLimit}</TableCell>
                   <TableCell>
                     {coupon.countries.map((count) => (

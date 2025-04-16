@@ -8,6 +8,7 @@ const pool = new Pool({
 });
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
+// Updated coupon update schema with new field "expendingMinimum"
 const couponUpdateSchema = z.object({
   name: z.string().min(1, { message: "Name is required." }).optional(),
   code: z.string().min(1, { message: "Code is required." }).optional(),
@@ -16,11 +17,14 @@ const couponUpdateSchema = z.object({
   limitPerUser: z.coerce.number().int().min(0, { message: "Limit per user must be at least 0." }).optional(),
   usageLimit: z.coerce.number().int().min(0, { message: "Usage limit must be at least 0." }).optional(),
   expendingLimit: z.coerce.number().int().min(0, { message: "Expending limit must be at least 0." }).optional(),
+  // New field added:
+  expendingMinimum: z.coerce.number().int().min(0, { message: "Expending minimum must be at least 0." }).optional(),
   countries: z.array(z.string()).optional(),
   visibility: z.boolean().optional(),
 });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // Authenticate request as before.
   const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
   let organizationId: string;
@@ -44,10 +48,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     organizationId = explicitOrgId || "";
     if (!organizationId) {
-      return NextResponse.json(
-        { error: "Organization ID is required in query parameters" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
     }
   }
   // Case 3: Internal request with secret
@@ -70,7 +71,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params;
     const query = `
-      SELECT id, "organizationId", name, code, description, "expirationDate", "limitPerUser", "usageLimit", "expendingLimit", countries, visibility, "createdAt", "updatedAt"
+      SELECT id, "organizationId", name, code, description, "expirationDate", 
+             "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
       FROM coupons
       WHERE id = $1 AND "organizationId" = $2
     `;
@@ -111,10 +113,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     organizationId = explicitOrgId || "";
     if (!organizationId) {
-      return NextResponse.json(
-        { error: "Organization ID is required in query parameters" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
     }
   }
   // Case 3: Internal request with secret
@@ -137,15 +136,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const { id } = await params;
     const body = await req.json();
+    // Parse the request body with the updated schema.
     const parsedCoupon = couponUpdateSchema.parse(body);
 
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
 
+    // Build dynamic update query based on provided fields.
     for (const [key, value] of Object.entries(parsedCoupon)) {
       if (value !== undefined) {
         updates.push(`"${key}" = $${paramIndex++}`);
+        // For countries, we need to stringify the value.
         if (key === "countries" && value !== null) {
           values.push(JSON.stringify(value));
         } else {
@@ -158,6 +160,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: "No fields provided to update" }, { status: 400 });
     }
 
+    // Add coupon id and organization id.
     values.push(id, organizationId);
     const query = `
       UPDATE coupons
@@ -205,10 +208,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
     organizationId = explicitOrgId || "";
     if (!organizationId) {
-      return NextResponse.json(
-        { error: "Organization ID is required in query parameters" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
     }
   }
   // Case 3: Internal request with secret
@@ -239,7 +239,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Coupon not found" }, { status: 404 });
     }
-
     return NextResponse.json({ message: "Coupon deleted successfully" });
   } catch (error: any) {
     console.error("[DELETE /api/coupons/[id]] error:", error);

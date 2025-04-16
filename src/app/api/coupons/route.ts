@@ -10,16 +10,23 @@ const pool = new Pool({
 
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
+// Updated coupon schema with new "expendingMinimum" field.
 const couponSchema = z.object({
   name: z.string().min(1, { message: "Name is required." }),
   code: z.string().min(1, { message: "Code is required." }),
   description: z.string().min(1, { message: "Description is required." }),
   usageLimit: z.coerce.number().int().min(0, { message: "Usage limit must be at least 0." }),
   expendingLimit: z.coerce.number().int().min(0, { message: "Expending limit must be at least 0." }),
+  // New field:
+  expendingMinimum: z.coerce.number().int().min(0, { message: "Expending minimum must be at least 0." }).default(0),
   countries: z.array(z.string()).min(1, { message: "At least one country is required." }),
   visibility: z.boolean(),
   expirationDate: z.string().nullable().optional(),
-  limitPerUser: z.coerce.number().int().min(0, "Limit per user must be 0 or greater").default(0),
+  limitPerUser: z.coerce
+    .number()
+    .int()
+    .min(0, "Limit per user must be 0 or greater")
+    .default(0),
 });
 
 export async function GET(req: NextRequest) {
@@ -46,10 +53,7 @@ export async function GET(req: NextRequest) {
     }
     organizationId = explicitOrgId || "";
     if (!organizationId) {
-      return NextResponse.json(
-        { error: "Organization ID is required in query parameters" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
     }
   }
   // Case 3: Internal request with secret
@@ -83,8 +87,10 @@ export async function GET(req: NextRequest) {
     countValues.push(`%${search}%`);
   }
 
+  // Updated SELECT query to include "expendingMinimum"
   let query = `
-    SELECT id, "organizationId", name, code, description, "expirationDate", "limitPerUser", "usagePerUser", "usageLimit", "expendingLimit", countries, visibility, "createdAt", "updatedAt"
+    SELECT id, "organizationId", name, code, description, "expirationDate", 
+      "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
     FROM coupons
     WHERE "organizationId" = $1
   `;
@@ -142,10 +148,7 @@ export async function POST(req: NextRequest) {
     }
     organizationId = explicitOrgId || "";
     if (!organizationId) {
-      return NextResponse.json(
-        { error: "Organization ID is required in query parameters" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
     }
   }
   // Case 3: Internal request with secret
@@ -159,10 +162,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
     }
   } else {
-    return NextResponse.json(
-      { error: "Unauthorized: Provide a valid session, API key, or internal secret" },
-      { status: 403 }
-    );
+    return NextResponse.json({ error: "Unauthorized: Provide a valid session, API key, or internal secret" }, { status: 403 });
   }
 
   try {
@@ -176,14 +176,15 @@ export async function POST(req: NextRequest) {
       limitPerUser,
       usageLimit,
       expendingLimit,
+      expendingMinimum, // new field
       countries,
       visibility,
     } = parsedCoupon;
     const couponId = uuidv4();
 
     const insertQuery = `
-      INSERT INTO coupons(id, "organizationId", name, code, description, "expirationDate", "limitPerUser", "usageLimit", "expendingLimit", countries, visibility, "createdAt", "updatedAt")
-      VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+      INSERT INTO coupons(id, "organizationId", name, code, description, "expirationDate", "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt")
+      VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
       RETURNING *
     `;
     const values = [
@@ -196,6 +197,7 @@ export async function POST(req: NextRequest) {
       limitPerUser,
       usageLimit,
       expendingLimit,
+      expendingMinimum,  // new field value inserted here
       JSON.stringify(countries),
       visibility,
     ];
