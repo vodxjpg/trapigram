@@ -43,103 +43,108 @@ const productUpdateSchema = z.object({
     .optional(),
 });
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    // Authenticate
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
-    }
-    const organizationId = session.session.activeOrganizationId;
-    if (!organizationId) {
-      return NextResponse.json({ error: "No active organization" }, { status: 400 });
-    }
-    const { id } = await params;
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
 
-    // Fetch the product using camelCase column names
-    const product = await db
-      .selectFrom("products")
+  // 1) Authenticate
+  const session = await auth.api.getSession({ headers: req.headers });
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId) return NextResponse.json({ error: "No active organization" }, { status: 400 });
+
+  // 2) Fetch raw product row
+  const raw = await db
+    .selectFrom("products")
+    .selectAll()
+    .where("id", "=", id)
+    .where("organizationId", "=", orgId)
+    .executeTakeFirst();
+  if (!raw) return NextResponse.json({ error: "Product not found" }, { status: 404 });
+
+  // 3) Load categories
+  const categoryRows = await db
+    .selectFrom("productCategory")
+    .innerJoin("productCategories", "productCategories.id", "productCategory.categoryId")
+    .select(["productCategories.id"])
+    .where("productCategory.productId", "=", id)
+    .execute();
+  const categories = categoryRows.map((r) => r.id);
+
+  // 4) Load attributes (same as your existing code)
+  const attributeRows = await db
+    .selectFrom("productAttributeValues")
+    .innerJoin("productAttributes", "productAttributes.id", "productAttributeValues.attributeId")
+    .innerJoin(
+      "productAttributeTerms",
+      "productAttributeTerms.id",
+      "productAttributeValues.termId"
+    )
+    .select([
+      "productAttributeValues.attributeId as id",
+      "productAttributes.name as name",
+      "productAttributeTerms.id as termId",
+      "productAttributeTerms.name as termName",
+    ])
+    .where("productAttributeValues.productId", "=", id)
+    .execute();
+  const attributes = attributeRows.reduce<any[]>((acc, row) => {
+    let attr = acc.find((a) => a.id === row.id);
+    if (!attr) {
+      attr = { id: row.id, name: row.name, terms: [], selectedTerms: [], useForVariations: false };
+      acc.push(attr);
+    }
+    attr.terms.push({ id: row.termId, name: row.termName });
+    attr.selectedTerms.push(row.termId);
+    return acc;
+  }, []);
+
+  // 5) Load variations if needed
+  let variationsRaw: any[] = [];
+  if (raw.productType === "variable") {
+    variationsRaw = await db
+      .selectFrom("productVariations")
       .selectAll()
-      .where("id", "=", id)
-      .where("organizationId", "=", organizationId)
-      .executeTakeFirst();
-    if (!product) {
-      return NextResponse.json({ error: "Product not found" }, { status: 404 });
-    }
-
-    // Fetch category mappings for the product
-    const categoryRows = await db
-      .selectFrom("productCategory")
-      .innerJoin("productCategories", "productCategories.id", "productCategory.categoryId")
-      .select(["productCategories.id", "productCategories.name"])
-      .where("productCategory.productId", "=", id)
+      .where("productId", "=", id)
       .execute();
-
-    // Fetch attribute mappings for the product
-    const attributeRows = await db
-      .selectFrom("productAttributeValues")
-      .innerJoin("productAttributes", "productAttributes.id", "productAttributeValues.attributeId")
-      .innerJoin("productAttributeTerms", "productAttributeTerms.id", "productAttributeValues.termId")
-      .select([
-        "productAttributes.id as attributeId",
-        "productAttributes.name as attributeName",
-        "productAttributeTerms.id as termId",
-        "productAttributeTerms.name as termName",
-      ])
-      .where("productAttributeValues.productId", "=", id)
-      .execute();
-
-    // Fetch variations if the product is variable (using camelCase key "productId")
-    const variations = product.productType === "variable"
-      ? await db
-          .selectFrom("productVariations")
-          .selectAll()
-          .where("productId", "=", id)
-          .execute()
-      : [];
-
-    // Build attributes array from attributeRows
-    const attributes = attributeRows.reduce((acc, row) => {
-      const existing = acc.find((a) => a.id === row.attributeId);
-      if (existing) {
-        existing.terms.push({ id: row.termId, name: row.termName });
-        existing.selectedTerms.push(row.termId);
-      } else {
-        acc.push({
-          id: row.attributeId,
-          name: row.attributeName,
-          terms: [{ id: row.termId, name: row.termName }],
-          useForVariations: variations.length > 0,
-          selectedTerms: [row.termId],
-        });
-      }
-      return acc;
-    }, [] as any[]);
-
-    return NextResponse.json({
-      product: {
-        ...product,
-        // Set stockStatus based on manageStock field
-        stockStatus: product.manageStock ? "managed" : "unmanaged",
-        stockData: product.stockData,
-        // Use category IDs from mapping if available; fallback to product.categories if necessary
-        categories: categoryRows.length ? categoryRows.map((r) => r.id) : (product.categories || []),
-        attributes,
-        variations: variations.map((v) => ({
-          id: v.id,
-          attributes: v.attributes,
-          sku: v.sku,
-          regularPrice: v.regularPrice,
-          salePrice: v.salePrice,
-          stock: v.stock,
-        })),
-      },
-    });
-  } catch (error) {
-    const { id } = await params;
-    console.error(`[PRODUCT_GET_${id}]`, error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
+
+  // 6) Parse out JSON and numbers
+  const stockData =
+    raw.stockData && typeof raw.stockData === "string"
+      ? JSON.parse(raw.stockData)
+      : raw.stockData || {};
+
+  const variations = variationsRaw.map((v) => ({
+    id: v.id,
+    attributes: v.attributes,
+    sku: v.sku,
+    regularPrice: Number(v.regularPrice),
+    salePrice: v.salePrice != null ? Number(v.salePrice) : null,
+    stock:
+      v.stock && typeof v.stock === "string"
+        ? JSON.parse(v.stock)
+        : v.stock || {},
+  }));
+
+  // 7) Build the final product payload
+  const product = {
+    ...raw,
+    regularPrice: raw.regularPrice != null ? Number(raw.regularPrice) : 0,
+    salePrice: raw.salePrice != null ? Number(raw.salePrice) : null,
+    stockData,
+    stockStatus: raw.manageStock ? "managed" : "unmanaged",
+    categories,
+    attributes: attributes.map((attr) => ({
+      ...attr,
+      useForVariations: raw.productType === "variable",
+    })),
+    variations,
+  };
+
+  return NextResponse.json({ product });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

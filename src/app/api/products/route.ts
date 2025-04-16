@@ -26,7 +26,7 @@ const productSchema = z.object({
         terms: z.array(z.object({ id: z.string(), name: z.string() })),
         useForVariations: z.boolean(),
         selectedTerms: z.array(z.string()),
-      }),
+      })
     )
     .optional(),
   variations: z
@@ -38,7 +38,7 @@ const productSchema = z.object({
         regularPrice: z.number(),
         salePrice: z.number().nullable(),
         stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
-      }),
+      })
     )
     .optional(),
 });
@@ -129,10 +129,17 @@ export async function GET(req: NextRequest) {
           .execute()
       : [];
 
-    // Map categories to products
+    // Map categories to products and convert fields
     const productsWithCategories = products.map((product) => ({
       ...product,
-      stockData: product.stock_data,
+      // Convert numeric fields explicitly
+      regularPrice: product.regularPrice ? Number(product.regularPrice) : 0,
+      salePrice: product.salePrice !== null ? Number(product.salePrice) : null,
+      // If stockData is a string, parse it; if it is already an object, use it directly.
+      stockData:
+        product.stockData && typeof product.stockData === "string"
+          ? JSON.parse(product.stockData)
+          : product.stockData || null,
       categories: productCategories
         .filter((pc) => pc.productId === product.id)
         .map((pc) => pc.name),
@@ -173,6 +180,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// POST handler for creating a new product
 export async function POST(req: NextRequest) {
   const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
@@ -227,7 +235,6 @@ export async function POST(req: NextRequest) {
     if (!tenant) {
       return NextResponse.json({ error: "No tenant found for user" }, { status: 404 });
     }
-
     const tenantId = tenant.id;
 
     // Handle SKU: validate or auto-generate
@@ -277,7 +284,7 @@ export async function POST(req: NextRequest) {
     // Generate product ID
     const productId = uuidv4();
 
-    // Insert the product
+    // Insert the product (note: corrected the typo "productTyoe" to "productType")
     await db
       .insertInto("products")
       .values({
@@ -289,7 +296,7 @@ export async function POST(req: NextRequest) {
         image: parsedProduct.image || null,
         sku: parsedProduct.sku,
         status: parsedProduct.status,
-        productTyoe: parsedProduct.productType,
+        productType: parsedProduct.productType, // corrected field name
         regularPrice: parsedProduct.regularPrice,
         salePrice: parsedProduct.salePrice || null,
         allowBackorders: parsedProduct.allowBackorders,
@@ -301,14 +308,14 @@ export async function POST(req: NextRequest) {
       })
       .execute();
 
-    // Insert variations (for variable products)
+    // Insert variations for variable products, if any
     if (
       parsedProduct.productType === "variable" &&
       parsedProduct.variations &&
       parsedProduct.variations.length > 0
     ) {
       for (const variation of parsedProduct.variations) {
-        // Validate variation SKU
+        // Validate variation SKU uniqueness
         const existingVariationSku = await db
           .selectFrom("productVariations")
           .select("id")
@@ -323,7 +330,7 @@ export async function POST(req: NextRequest) {
           .insertInto("productVariations")
           .values({
             id: variation.id,
-            producftID: productId,
+            productId: productId, // using correct camelCase field
             attributes: JSON.stringify(variation.attributes),
             sku: variation.sku,
             regularPrice: variation.regularPrice,
@@ -336,7 +343,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Insert attributes
+    // Insert attribute mappings
     if (parsedProduct.attributes && parsedProduct.attributes.length > 0) {
       for (const attribute of parsedProduct.attributes) {
         for (const termId of attribute.selectedTerms) {

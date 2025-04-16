@@ -15,7 +15,15 @@ const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false })
 import "react-quill-new/dist/quill.snow.css"
 
 import { Button } from "@/components/ui/button"
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
@@ -62,7 +70,6 @@ const quillModules = {
   ],
 }
 
-// Remove "bullet" from formats to avoid registration issues
 const quillFormats = [
   "header",
   "bold",
@@ -84,13 +91,29 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   const [skuAvailable, setSkuAvailable] = useState(true)
   const [categories, setCategories] = useState<Array<{ id: string; name: string; slug: string }>>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
-  const [stockData, setStockData] = useState<Record<string, Record<string, number>>>(
-    initialData?.stockData || {}
-  )
+  const [stockData, setStockData] = useState<Record<string, Record<string, number>>>({}); // Initialize as empty object
   const [attributes, setAttributes] = useState<Attribute[]>(initialData?.attributes || [])
   const [variations, setVariations] = useState<Variation[]>(initialData?.variations || [])
 
-  // Initialize form with default values
+  // Parse stockData when initialData changes
+  useEffect(() => {
+    if (initialData?.stockData) {
+      try {
+        const parsedStockData =
+          typeof initialData.stockData === "string"
+            ? JSON.parse(initialData.stockData)
+            : initialData.stockData;
+        setStockData(parsedStockData);
+      } catch (error) {
+        console.error("Failed to parse stockData:", error);
+        setStockData({});
+      }
+    } else {
+      setStockData({});
+    }
+  }, [initialData]);
+
+  // Initialize form with default values, converting price fields to numbers
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productSchema),
     defaultValues: initialData
@@ -102,8 +125,12 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
           status: initialData.status || "draft",
           productType: initialData.productType || "simple",
           categories: initialData.categories || [],
-          regularPrice: initialData.regularPrice || 0,
-          salePrice: initialData.salePrice || null,
+          regularPrice:
+            initialData.regularPrice !== undefined ? Number(initialData.regularPrice) : 0,
+          salePrice:
+            initialData.salePrice !== undefined && initialData.salePrice !== null
+              ? Number(initialData.salePrice)
+              : null,
           allowBackorders: initialData.allowBackorders || false,
           manageStock: initialData.manageStock || false,
         }
@@ -122,7 +149,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         },
   })
 
-  // When initialData changes (edit mode), reset the form values so fields are pre-populated
+  // When initialData changes (edit mode), reset the form values and convert price fields
   useEffect(() => {
     if (initialData) {
       form.reset({
@@ -131,14 +158,20 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         image: initialData.image || null,
         sku: initialData.sku || "",
         status: initialData.status || "draft",
-        productType: initialData.productType || (initialData as any).product_type || "simple",
+        productType: initialData.productType || "simple",
         categories: initialData.categories || [],
-        regularPrice: initialData.regularPrice || 0,
-        salePrice: initialData.salePrice || null,
+        regularPrice:
+          initialData.regularPrice !== undefined ? Number(initialData.regularPrice) : 0,
+        salePrice:
+          initialData.salePrice !== undefined && initialData.salePrice !== null
+            ? Number(initialData.salePrice)
+            : null,
         allowBackorders: initialData.allowBackorders || false,
         manageStock: initialData.manageStock || false,
       })
     }
+    console.log("🔍 initialData:", initialData);
+  console.log("🔍 form.getValues():", form.getValues());
   }, [initialData, form])
 
   const productType = form.watch("productType")
@@ -259,6 +292,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         variations: productType === "variable" ? variations : [],
       }
       console.log("Form submitted with data:", payload)
+      console.log("🚀 Submitting payload:", payload);
       const url = productId ? `/api/products/${productId}` : "/api/products"
       const method = productId ? "PATCH" : "POST"
       const response = await fetch(url, {
@@ -476,7 +510,21 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                             <FormItem>
                               <FormLabel>Regular Price</FormLabel>
                               <FormControl>
-                                <Input type="number" min="0" step="0.01" {...field} />
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={
+                                    field.value !== undefined && field.value !== null
+                                      ? String(field.value)
+                                      : ""
+                                  }
+                                  onChange={(e) =>
+                                    field.onChange(
+                                      e.target.value === "" ? 0 : Number(e.target.value)
+                                    )
+                                  }
+                                />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
@@ -493,11 +541,16 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                                   type="number"
                                   min="0"
                                   step="0.01"
-                                  value={field.value ?? ""}
-                                  onChange={(e) => {
-                                    const value = e.target.value === "" ? null : Number.parseFloat(e.target.value)
-                                    field.onChange(value)
-                                  }}
+                                  value={
+                                    field.value !== undefined && field.value !== null
+                                      ? String(field.value)
+                                      : ""
+                                  }
+                                  onChange={(e) =>
+                                    field.onChange(
+                                      e.target.value === "" ? null : Number(e.target.value)
+                                    )
+                                  }
                                 />
                               </FormControl>
                               <FormMessage />
@@ -638,8 +691,12 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                     </p>
                     <ol className="list-decimal ml-5 mt-2 text-sm text-blue-700">
                       <li>Add attributes (like Color, Size)</li>
-                      <li><strong>Select the terms</strong> you want to use (like Red, Blue, Small, Large)</li>
-                      <li>Toggle <strong>"Use for Variations"</strong> for attributes you want to create variations from</li>
+                      <li>
+                        <strong>Select the terms</strong> you want to use (like Red, Blue, Small, Large)
+                      </li>
+                      <li>
+                        Toggle <strong>"Use for Variations"</strong> for attributes you want to create variations from
+                      </li>
                     </ol>
                     <p className="text-sm text-blue-700 mt-2">
                       Then go to the Variations tab to generate product variations based on your selections.

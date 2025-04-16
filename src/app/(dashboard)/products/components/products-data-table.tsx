@@ -124,12 +124,12 @@ export function ProductsDataTable() {
       accessorKey: "image",
       header: "Image",
       cell: ({ row }) => {
-        const image = row.getValue("image") as string | null
+        const image = row.original.image
         return (
           <div className="w-12 h-12 relative">
             <Image
               src={image || "/placeholder.svg"}
-              alt={row.getValue("title")}
+              alt={row.original.title}
               fill
               className="rounded-md object-cover"
             />
@@ -140,18 +140,18 @@ export function ProductsDataTable() {
     {
       accessorKey: "title",
       header: "Product Title",
-      cell: ({ row }) => <div className="font-medium">{row.getValue("title")}</div>,
+      cell: ({ row }) => <div className="font-medium">{row.original.title}</div>,
     },
     {
       accessorKey: "sku",
       header: "SKU",
-      cell: ({ row }) => <div className="text-sm">{row.getValue("sku")}</div>,
+      cell: ({ row }) => <div className="text-sm">{row.original.sku}</div>,
     },
     {
       accessorKey: "status",
       header: "Status",
       cell: ({ row }) => {
-        const status = row.getValue("status") as "published" | "draft"
+        const status = row.original.status
         return (
           <Select
             value={status}
@@ -176,14 +176,15 @@ export function ProductsDataTable() {
         )
       },
       filterFn: (row, id, value) => {
-        return value.includes(row.getValue(id))
+        return value.includes(row.original.status)
       },
     },
     {
       accessorKey: "regularPrice",
       header: "Regular Price",
       cell: ({ row }) => {
-        const price = row.getValue("regularPrice") as number
+        // Use original row data for the price value
+        const price = Number(row.original.regularPrice)
         return <div className="text-right">{price ? `$${price.toFixed(2)}` : "-"}</div>
       },
     },
@@ -191,7 +192,7 @@ export function ProductsDataTable() {
       accessorKey: "salePrice",
       header: "Sale Price",
       cell: ({ row }) => {
-        const salePrice = row.getValue("salePrice") as number | null
+        const salePrice = row.original.salePrice !== null ? Number(row.original.salePrice) : null
         return <div className="text-right">{salePrice ? `$${salePrice.toFixed(2)}` : "-"}</div>
       },
     },
@@ -199,7 +200,7 @@ export function ProductsDataTable() {
       accessorKey: "stockStatus",
       header: "Stock Status",
       cell: ({ row }) => {
-        const stockStatus = row.getValue("stockStatus") as "managed" | "unmanaged"
+        const stockStatus = row.original.stockStatus
         return (
           <Badge
             variant="outline"
@@ -218,7 +219,7 @@ export function ProductsDataTable() {
       accessorKey: "categories",
       header: "Categories",
       cell: ({ row }) => {
-        const categories = row.getValue("categories") as string[]
+        const categories = row.original.categories
         return (
           <div className="flex flex-wrap gap-1">
             {categories.length > 0 ? (
@@ -243,8 +244,13 @@ export function ProductsDataTable() {
       accessorKey: "createdAt",
       header: "Created At",
       cell: ({ row }) => {
-        const date = new Date(row.getValue("createdAt"))
-        return <div className="text-sm">{date.toLocaleDateString()}</div>
+        const dateStr = row.original.createdAt
+        const date = new Date(dateStr)
+        return (
+          <div className="text-sm">
+            {!isNaN(date.getTime()) ? date.toLocaleDateString() : "-"}
+          </div>
+        )
       },
     },
     {
@@ -346,13 +352,11 @@ export function ProductsDataTable() {
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => {
-                  return (
-                    <TableHead key={header.id}>
-                      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  )
-                })}
+                {headerGroup.headers.map((header) => (
+                  <TableHead key={header.id}>
+                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                  </TableHead>
+                ))}
               </TableRow>
             ))}
           </TableHeader>
@@ -371,7 +375,9 @@ export function ProductsDataTable() {
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
+                    <TableCell key={cell.id}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
                   ))}
                 </TableRow>
               ))
