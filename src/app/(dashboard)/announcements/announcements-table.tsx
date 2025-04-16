@@ -52,6 +52,7 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
+import Swal from "sweetalert2";
 
 // Define the Announcement type.
 type Announcement = {
@@ -88,7 +89,8 @@ export function AnnouncementsTable() {
         `/api/announcements?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
         {
           headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+            "x-internal-secret":
+              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
           },
         }
       );
@@ -141,25 +143,36 @@ export function AnnouncementsTable() {
   });
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this announcement?")) {
-      return;
-    }
-    try {
-      const response = await fetch(`/api/announcements/${id}`, {
-        method: "DELETE",
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-        },
-      });
-      if (!response.ok) {
-        throw new Error("Failed to delete announcement");
+    Swal.fire({
+      title: "Are you sure?",
+      text: "You won't be able to revert this!",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#3085d6",
+      cancelButtonColor: "#d33",
+      confirmButtonText: "Yes, delete it!",
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        try {
+          const response = await fetch(`/api/announcements/${id}`, {
+            method: "DELETE",
+            headers: {
+              "x-internal-secret":
+                process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+            },
+          });
+          if (!response.ok) {
+            throw new Error("Failed to delete announcement");
+          } else {
+            toast.success("Announcement deleted successfully");
+            fetchAnnouncements();
+          }
+        } catch (error) {
+          console.error("Error deleting announcement:", error);
+          toast.error("Failed to delete announcement");
+        }
       }
-      toast.success("Announcement deleted successfully");
-      fetchAnnouncements();
-    } catch (error) {
-      console.error("Error deleting announcement:", error);
-      toast.error("Failed to delete announcement");
-    }
+    });
   };
 
   const handleEdit = (announcement: Announcement) => {
@@ -175,12 +188,16 @@ export function AnnouncementsTable() {
       return;
     }
     try {
-      const response = await fetch(`/api/announcements/send/${announcement.id}`, {
-        method: "PATCH",
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-        },
-      });
+      const response = await fetch(
+        `/api/announcements/send/${announcement.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "x-internal-secret":
+              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+          },
+        }
+      );
       if (!response.ok) {
         throw new Error("Failed to send announcement");
       }
@@ -259,7 +276,9 @@ export function AnnouncementsTable() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleOpenContentModal(announcement.content)}
+                      onClick={() =>
+                        handleOpenContentModal(announcement.content)
+                      }
                     >
                       <ZoomIn className="h-4 w-4" />
                       <span className="sr-only">View Content</span>
@@ -294,11 +313,15 @@ export function AnnouncementsTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleSend(announcement)}>
+                        <DropdownMenuItem
+                          onClick={() => handleSend(announcement)}
+                        >
                           <Send className="mr-2 h-4 w-4" />
                           Send
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleEdit(announcement)}>
+                        <DropdownMenuItem
+                          onClick={() => handleEdit(announcement)}
+                        >
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>

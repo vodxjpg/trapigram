@@ -40,6 +40,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import Swal from "sweetalert2";
 
 // Define the Coupon type.
 type Coupon = {
@@ -139,25 +140,32 @@ export function CouponsTable() {
 
   // Handle coupon deletion.
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this coupon?")) {
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/coupons/${id}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to delete coupon");
+    Swal.fire({
+      title: "Are you sure?",
+      text: "You won't be able to revert this!",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#3085d6",
+      cancelButtonColor: "#d33",
+      confirmButtonText: "Yes, delete it!",
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        try {
+          const response = await fetch(`/api/coupons/${id}`, {
+            method: "DELETE",
+          });
+          if (!response.ok) {
+            throw new Error("Failed to delete coupon");
+          } else {
+            toast.success("Coupon deleted successfully");
+            fetchCoupons();
+          }
+        } catch (error) {
+          console.error("Error deleting coupon:", error);
+          toast.error("Failed to delete coupon");
+        }
       }
-
-      toast.success("Coupon deleted successfully");
-      fetchCoupons();
-    } catch (error) {
-      console.error("Error deleting coupon:", error);
-      toast.error("Failed to delete coupon");
-    }
+    });
   };
 
   // Navigation actions for editing and creating coupons.
@@ -206,7 +214,9 @@ export function CouponsTable() {
                 className="cursor-pointer"
                 onClick={() => handleSort("usageLimit")}
               >
-                Usage Limit {sortColumn === "usageLimit" && (sortDirection === "asc" ? "↑" : "↓")}
+                Usage Limit{" "}
+                {sortColumn === "usageLimit" &&
+                  (sortDirection === "asc" ? "↑" : "↓")}
               </TableHead>
               <TableHead>Expending Limit</TableHead>
               <TableHead>Countries</TableHead>
@@ -239,16 +249,14 @@ export function CouponsTable() {
                   <TableCell>{coupon.expendingLimit}</TableCell>
                   <TableCell>
                     {coupon.countries.map((count) => (
-                      <Badge
-                      key={count}
-                      variant="outline"
-                      className="mr-1"
-                    >
-                      {count}
-                    </Badge>
+                      <Badge key={count} variant="outline" className="mr-1">
+                        {count}
+                      </Badge>
                     ))}
                   </TableCell>
-                  <TableCell>{coupon.visibility ? "Visible" : "Hidden"}</TableCell>
+                  <TableCell>
+                    {coupon.visibility ? "Visible" : "Hidden"}
+                  </TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -262,7 +270,8 @@ export function CouponsTable() {
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleDelete(coupon.id)}
+                        <DropdownMenuItem
+                          onClick={() => handleDelete(coupon.id)}
                           className="text-destructive focus:text-destructive"
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
