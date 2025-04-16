@@ -1,7 +1,6 @@
-// /home/zodx/Desktop/trapigram/src/app/(dashboard)/announcements/announcements-form.tsx
 "use client";
 
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -14,8 +13,6 @@ import "react-quill-new/dist/quill.snow.css";
 import Select from "react-select";
 
 import { Button } from "@/components/ui/button";
-// Temporarily replace Card with div until Card import is fixed
-// import { Card, CardContent } from "@/components/ui/card";
 import {
   Form,
   FormControl,
@@ -25,15 +22,14 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+// Temporarily using a simple div as Card since Card import is pending.
+import { Card, CardContent } from "@/components/ui/card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Switch } from "@/components/ui/switch";
 
+// ---------- Countries Setup ----------
 import countriesLib from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 import { getCountries } from "libphonenumber-js";
@@ -45,7 +41,7 @@ const allCountries = getCountries().map((code) => ({
   name: countriesLib.getName(code, "en") || code,
 }));
 
-// Announcement Schema
+// ---------- Announcement Schema ----------
 const announcementFormSchema = z.object({
   title: z.string().min(1, "Title is required"),
   content: z.string().min(1, "Content is required"),
@@ -53,6 +49,7 @@ const announcementFormSchema = z.object({
   deliveryDate: z.string().nullable().optional(),
   countries: z.array(z.string()).min(1, "Select at least one country"),
   status: z.string().min(1, "Status is required"),
+  // organizationId is optional here since we’re auto‑setting it
   organizationId: z.string().min(1, "Organization is required").optional(),
 });
 
@@ -72,14 +69,12 @@ export function AnnouncementForm({
   const [date, setDate] = useState<Date | null>(null);
   const [openDatePicker, setOpenDatePicker] = useState(false);
   const [switchDelivery, setSwitchDelivery] = useState(false);
+  // Country select options fetched from the endpoint.
+  const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]);
 
-  const [orgOptions, setOrgOptions] = useState<
-    { value: string; label: string; countries?: string }[]
-  >([]);
-
-  const [countryOptions, setCountryOptions] = useState<
-    { value: string; label: string }[]
-  >([]);
+  // Simulate a session organization ID.
+  // Replace this with your session hook or context.
+  const organizationId = "sessionOrganizationId";
 
   const form = useForm<AnnouncementFormValues>({
     resolver: zodResolver(announcementFormSchema),
@@ -90,81 +85,93 @@ export function AnnouncementForm({
       deliveryDate: null,
       countries: [],
       status: "draft",
-      organizationId: "",
+      organizationId: organizationId,
     },
   });
 
-  // Fetch organizations from the API endpoint when the component mounts.
+  // Set the organizationId automatically from the session.
   useEffect(() => {
-    async function fetchOrganizations() {
+    form.setValue("organizationId", organizationId);
+  }, [form, organizationId]);
+
+  // Fetch the countries for the organization from your endpoint.
+  useEffect(() => {
+    async function fetchOrganizationCountries() {
       try {
-        const response = await fetch("/api/organizations", {
+        const response = await fetch("/api/organizations/countries", {
           headers: {
             "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
           },
         });
         if (!response.ok) {
-          throw new Error("Failed to fetch organizations");
+          throw new Error("Failed to fetch organization countries");
         }
         const data = await response.json();
-        const options = data.organizations.map((org: any) => ({
-          value: org.id,
-          label: org.name,
-          countries: org.countries, // Expected as a JSON string
-        }));
-        setOrgOptions(options);
-      } catch (error: any) {
-        console.error("Error fetching organizations:", error);
-        toast.error(error.message || "Failed to load organizations");
-      }
-    }
-    fetchOrganizations();
-  }, []);
-
-  // When organization is selected, update countryOptions.
-  useEffect(() => {
-    const selectedOrgId = form.watch("organizationId");
-    if (selectedOrgId) {
-      const org = orgOptions.find((option) => option.value === selectedOrgId);
-      if (org && org.countries) {
+        // Assume data.countries is a JSON string or comma-separated list.
         let orgCountries: string[] = [];
         try {
-          orgCountries = JSON.parse(org.countries);
-          if (!Array.isArray(orgCountries)) {
+          const parsed = JSON.parse(data.countries);
+          if (Array.isArray(parsed)) {
+            orgCountries = parsed;
+          } else {
             orgCountries = [];
           }
         } catch (e) {
-          orgCountries = org.countries.split(",").map((c: string) => c.trim());
+          orgCountries = data.countries.split(",").map((c: string) => c.trim());
         }
         const options = orgCountries.map((code: string) => {
           const found = allCountries.find((c) => c.code === code);
           return { value: code, label: found ? found.name : code };
         });
         setCountryOptions(options);
-      } else {
-        setCountryOptions([]);
+      } catch (error: any) {
+        console.error("Error fetching organization countries:", error);
+        toast.error(error.message || "Failed to load organization countries");
       }
-    } else {
-      setCountryOptions([]);
     }
-  }, [form.watch("organizationId"), orgOptions]);
+    // Only fetch if organizationId is available.
+    if (organizationId) {
+      fetchOrganizationCountries();
+    }
+  }, [organizationId]);
 
-  // Reset form values when editing an existing announcement or on initial render.
+  // Reset form values when editing or on initial load.
   useEffect(() => {
     if (isEditing && announcementData) {
       form.reset({
         ...announcementData,
-        organizationId: announcementData.organizationId || "",
+        // Ensure that countries is an array.
+        countries: Array.isArray(announcementData.countries)
+          ? announcementData.countries
+          : typeof announcementData.countries === "string"
+          ? JSON.parse(announcementData.countries)
+          : [],
+        organizationId: organizationId, // auto-set organization from session.
       });
       if (announcementData.deliveryDate) {
-        setDate(new Date(announcementData.deliveryDate));
+        const d = new Date(announcementData.deliveryDate);
+        setDate(d);
         form.setValue("deliveryScheduled", true);
         setSwitchDelivery(true);
       } else {
         setDate(null);
+        form.setValue("deliveryScheduled", false);
+        setSwitchDelivery(false);
       }
+    } else {
+      form.reset({
+        title: "",
+        content: "",
+        deliveryScheduled: false,
+        deliveryDate: null,
+        countries: [],
+        status: "draft",
+        organizationId: organizationId,
+      });
+      setDate(null);
+      setSwitchDelivery(false);
     }
-  }, [announcementData, form, isEditing]);
+  }, [announcementData, form, isEditing, organizationId]);
 
   async function onSubmit(values: AnnouncementFormValues) {
     setIsSubmitting(true);
@@ -172,25 +179,19 @@ export function AnnouncementForm({
       const url = isEditing
         ? `/api/announcements/${announcementData?.id}`
         : "/api/announcements";
-      const method = isEditing ? "PATCH" : "POST";
-
-      const payload = {
-        title: values.title,
-        content: values.content,
-        deliveryDate: values.deliveryScheduled ? values.deliveryDate : null,
-        countries: JSON.stringify(values.countries),
-        status: values.status,
-      };
-
-      console.log("[Form Submit] Payload:", payload);
-
       const response = await fetch(url, {
-        method,
+        method: isEditing ? "PATCH" : "POST",
         headers: {
           "Content-Type": "application/json",
           "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          title: values.title,
+          content: values.content,
+          deliveryDate: values.deliveryScheduled ? values.deliveryDate : null,
+          countries: JSON.stringify(values.countries),
+          status: values.status,
+        }),
       });
       if (!response.ok) {
         const errorData = await response.json();
@@ -224,12 +225,7 @@ export function AnnouncementForm({
     toolbar: [
       [{ header: [1, 2, false] }],
       ["bold", "italic", "underline", "strike", "blockquote"],
-      [
-        { list: "ordered" },
-        { list: "bullet" },
-        { indent: "-1" },
-        { indent: "+1" },
-      ],
+      [{ list: "ordered" }, { list: "bullet" }, { indent: "-1" }, { indent: "+1" }],
       ["link", "image"],
       ["clean"],
     ],
@@ -250,9 +246,7 @@ export function AnnouncementForm({
 
   return (
     <div className="w-full mx-auto border rounded-lg shadow-sm">
-      {/* Replace with <Card className="w-full mx-auto"> once Card is fixed */}
       <div className="p-6 pt-6">
-        {/* Replace with <CardContent className="pt-6"> */}
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -286,7 +280,6 @@ export function AnnouncementForm({
                           theme="snow"
                           value={field.value}
                           onChange={(value) => {
-                            console.log("[ReactQuill] Content:", value);
                             field.onChange(value);
                           }}
                           modules={modules}
@@ -299,40 +292,8 @@ export function AnnouncementForm({
                 />
               </div>
 
-              {/* Row 3: Organization Select */}
-              <div>
-                <FormField
-                  control={form.control}
-                  name="organizationId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Organization *</FormLabel>
-                      <FormControl>
-                        <div>
-                          <Select
-                            options={orgOptions}
-                            placeholder="Select an organization"
-                            value={
-                              orgOptions.find(
-                                (option) => option.value === field.value
-                              ) || null
-                            }
-                            onChange={(selectedOption: any) =>
-                              field.onChange(
-                                selectedOption ? selectedOption.value : ""
-                              )
-                            }
-                          />
-                        </div>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              {/* Row 4: Country Select */}
-              <div>
+              {/* Row 3: Country Select */}
+              <div className="md:col-span-2">
                 <FormField
                   control={form.control}
                   name="countries"
@@ -350,15 +311,10 @@ export function AnnouncementForm({
                             )}
                             onChange={(selectedOptions: any) =>
                               field.onChange(
-                                selectedOptions.map(
-                                  (option: any) => option.value
-                                )
+                                selectedOptions.map((option: any) => option.value)
                               )
                             }
-                            formatOptionLabel={(option: {
-                              value: string;
-                              label: string;
-                            }) => (
+                            formatOptionLabel={(option: { value: string; label: string }) => (
                               <div className="flex items-center gap-2">
                                 <ReactCountryFlag
                                   countryCode={option.value}
@@ -377,7 +333,7 @@ export function AnnouncementForm({
                 />
               </div>
 
-              {/* Row 5: Status */}
+              {/* Row 4: Status */}
               <div>
                 <FormField
                   control={form.control}
@@ -413,7 +369,7 @@ export function AnnouncementForm({
                 />
               </div>
 
-              {/* Row 6: Delivery Scheduling */}
+              {/* Row 5: Delivery Scheduling */}
               <div>
                 <FormField
                   control={form.control}
@@ -446,18 +402,12 @@ export function AnnouncementForm({
                       <FormItem>
                         <FormLabel>Delivery Date</FormLabel>
                         <FormControl>
-                          <Popover
-                            open={openDatePicker}
-                            onOpenChange={setOpenDatePicker}
-                          >
+                          <Popover open={openDatePicker} onOpenChange={setOpenDatePicker}>
                             <PopoverTrigger asChild>
                               <Button
                                 variant={"outline"}
                                 onClick={() => setOpenDatePicker(true)}
-                                className={cn(
-                                  "w-full justify-start text-left font-normal",
-                                  !date && "text-muted-foreground"
-                                )}
+                                className={cn("w-full justify-start text-left font-normal", !date && "text-muted-foreground")}
                               >
                                 <CalendarIcon className="mr-2 h-4 w-4" />
                                 {date ? format(date, "PPP") : "Pick a date"}
@@ -477,9 +427,7 @@ export function AnnouncementForm({
                                   setOpenDatePicker(false);
                                 }}
                                 initialFocus
-                                fromDate={new Date(
-                                  new Date().setDate(new Date().getDate() + 1)
-                                )}
+                                fromDate={new Date(new Date().setDate(new Date().getDate() + 1))}
                               />
                             </PopoverContent>
                           </Popover>
@@ -490,15 +438,50 @@ export function AnnouncementForm({
                   />
                 )}
               </div>
+
+              {/* Row 6: Limit Per User and Visibility */}
+              <div>
+                <FormField
+                  control={form.control}
+                  name="limitPerUser"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Limit Per User</FormLabel>
+                      <FormControl>
+                        <Input type="number" {...field} placeholder="0" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <div>
+                <FormField
+                  control={form.control}
+                  name="visibility"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Visibility</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="mr-2"
+                          />
+                          <span>{field.value ? "Visible" : "Hidden"}</span>
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </div>
 
             {/* Submit/Cancel Buttons */}
             <div className="flex justify-center gap-4 mt-6">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => router.push("/announcements")}
-              >
+              <Button type="button" variant="outline" onClick={() => router.push("/announcements")}>
                 Cancel
               </Button>
               <Button type="submit" disabled={isSubmitting}>
@@ -507,8 +490,8 @@ export function AnnouncementForm({
                     ? "Updating..."
                     : "Creating..."
                   : isEditing
-                    ? "Update Announcement"
-                    : "Create Announcement"}
+                  ? "Update Announcement"
+                  : "Create Announcement"}
               </Button>
             </div>
           </form>

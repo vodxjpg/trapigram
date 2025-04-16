@@ -18,20 +18,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 
-// Import react-select for organization and countries.
+// Import react-select for countries.
 import Select from "react-select";
 
-// Import the Switch component from shadcn
+// Import the Switch component from shadcn.
 import { Switch } from "@/components/ui/switch";
 
 // ---------- Countries Setup ----------
@@ -51,28 +47,14 @@ const couponFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   code: z.string().min(1, "Code is required"),
   description: z.string().min(1, "Description is required"),
-  usageLimit: z.coerce
-    .number()
-    .int()
-    .min(0, "Usage limit must be 0 or greater")
-    .default(0),
-  expendingLimit: z.coerce
-    .number()
-    .int()
-    .min(0, "Expending limit must be 0 or greater")
-    .default(0),
-  countries: z
-    .array(z.string().length(2))
-    .min(1, "At least one country is required"),
+  usageLimit: z.coerce.number().int().min(0, "Usage limit must be 0 or greater").default(0),
+  expendingLimit: z.coerce.number().int().min(0, "Expending limit must be 0 or greater").default(0),
+  countries: z.array(z.string().length(2)).min(1, "At least one country is required"),
   organizationId: z.string().min(1, "Organization is required"),
   visibility: z.boolean().default(true),
   hasExpiration: z.boolean().default(false),
   expirationDate: z.string().nullable().optional(),
-  limitPerUser: z.coerce
-    .number()
-    .int()
-    .min(0, "Limit per user must be 0 or greater")
-    .default(0),
+  limitPerUser: z.coerce.number().int().min(0, "Limit per user must be 0 or greater").default(0),
 });
 
 type CouponFormValues = z.infer<typeof couponFormSchema>;
@@ -88,15 +70,8 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
   const [date, setDate] = useState<Date | null>(null);
   const [openDatePicker, setOpenDatePicker] = useState(false);
   const [switchExpiration, setSwitchExpiration] = useState(false);
-
-  // Organizations options state. Each option includes a "countries" property.
-  const [orgOptions, setOrgOptions] = useState<
-    { value: string; label: string; countries?: string }[]
-  >([]);
-  // Country select options based on the selected organization.
-  const [countryOptions, setCountryOptions] = useState<
-    { value: string; label: string }[]
-  >([]);
+  // State for the country select options.
+  const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]);
 
   const form = useForm<CouponFormValues>({
     resolver: zodResolver(couponFormSchema),
@@ -115,90 +90,77 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
     },
   });
 
-  // Fetch organizations for the logged-in user.
+  // Assume the organization ID is stored in the session.
+  // In a real application, you might use a session hook (e.g., from next-auth)
+  // Here we'll simulate it with a constant.
+  const organizationId = "session.organizationId"; // Replace with real session value.
+
+  // Set the organizationId form field automatically.
   useEffect(() => {
-    async function fetchOrganizations() {
+    form.setValue("organizationId", organizationId);
+  }, [form, organizationId]);
+
+  // Fetch the countries for the organization using your endpoint.
+  useEffect(() => {
+    async function fetchOrganizationCountries() {
       try {
-        const response = await fetch("/api/organizations");
+        const response = await fetch(`/api/organizations/countries`);
         if (!response.ok) {
-          throw new Error("Failed to fetch organizations");
+          throw new Error("Failed to fetch organization countries");
         }
         const data = await response.json();
-        // Map organizations to options.
-        const options = data.organizations.map((org: any) => ({
-          value: org.id,
-          label: org.name,
-          countries: org.countries, // Expected as a JSON string or comma-separated list.
-        }));
-        setOrgOptions(options);
-      } catch (error: any) {
-        console.error("Error fetching organizations:", error);
-        toast.error(error.message || "Failed to load organizations");
-      }
-    }
-    fetchOrganizations();
-  }, []);
-
-  // When organization is selected, update countryOptions.
-  useEffect(() => {
-    const selectedOrgId = form.watch("organizationId");
-    if (selectedOrgId) {
-      const org = orgOptions.find((option) => option.value === selectedOrgId);
-      if (org && org.countries) {
+        // Assume data.countries is a JSON string or a comma-separated list.
         let orgCountries: string[] = [];
         try {
-          const parsed = JSON.parse(org.countries);
+          const parsed = JSON.parse(data.countries);
           if (Array.isArray(parsed)) {
             orgCountries = parsed;
           } else {
             orgCountries = [];
           }
         } catch (e) {
-          // Fallback: assume comma separated.
-          orgCountries = org.countries.split(",").map((c: string) => c.trim());
+          orgCountries = data.countries.split(",").map((c: string) => c.trim());
         }
         const options = orgCountries.map((code: string) => {
           const found = allCountries.find((c) => c.code === code);
           return { value: code, label: found ? found.name : code };
         });
         setCountryOptions(options);
-      } else {
-        setCountryOptions([]);
+      } catch (error: any) {
+        console.error("Error fetching organization countries:", error);
+        toast.error(error.message || "Failed to load organization countries");
       }
-    } else {
-      setCountryOptions([]);
     }
-  }, [form.watch("organizationId"), orgOptions]);
+    // Only fetch if we have an organization id.
+    if (organizationId) {
+      fetchOrganizationCountries();
+    }
+  }, [organizationId]);
 
   // Reset the form when editing.
   useEffect(() => {
     if (isEditing && couponData) {
-      const countriesValue = Array.isArray(couponData.countries)
-        ? couponData.countries
-        : typeof couponData.countries === "string"
+      const countriesValue =
+        Array.isArray(couponData.countries)
+          ? couponData.countries
+          : typeof couponData.countries === "string"
           ? JSON.parse(couponData.countries)
           : [];
-      // Reset the form with the provided coupon data.
       form.reset({
         ...couponData,
         countries: countriesValue,
       });
-
-      // Check if expirationDate exists:
       if (couponData.expirationDate) {
-        // If there is a date value, update the local state and form field to show it and mark the switch as on.
         const expDate = new Date(couponData.expirationDate);
         setDate(expDate);
         form.setValue("hasExpiration", true);
         setSwitchExpiration(true);
       } else {
-        // Otherwise, clear the date and ensure the switch is off.
         setDate(null);
         form.setValue("hasExpiration", false);
         setSwitchExpiration(false);
       }
     } else {
-      // When not editing, reset the form and clear date.
       form.reset({
         name: "",
         code: "",
@@ -206,7 +168,7 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
         usageLimit: 0,
         expendingLimit: 0,
         countries: [],
-        organizationId: "",
+        organizationId: organizationId, // auto-set to session value
         visibility: true,
         hasExpiration: false,
         expirationDate: null,
@@ -215,7 +177,7 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
       setDate(null);
       setSwitchExpiration(false);
     }
-  }, [couponData, form, isEditing]);
+  }, [couponData, form, isEditing, organizationId]);
 
   async function onSubmit(values: CouponFormValues) {
     setIsSubmitting(true);
@@ -241,10 +203,7 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
       router.push("/coupons");
       router.refresh();
     } catch (error: any) {
-      console.error(
-        `Error ${isEditing ? "updating" : "creating"} coupon:`,
-        error
-      );
+      console.error(`Error ${isEditing ? "updating" : "creating"} coupon:`, error);
       toast.error(
         error.message || `Failed to ${isEditing ? "update" : "create"} coupon`
       );
@@ -340,84 +299,45 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                 />
               </div>
 
-              {/* Row 4: Organization Select & Countries Multi-Select */}
-              <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                {/* Organization Select using react-select */}
-                <div>
-                  <FormField
-                    control={form.control}
-                    name="organizationId"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Organization *</FormLabel>
-                        <FormControl>
-                          <div>
-                            <Select
-                              options={orgOptions}
-                              placeholder="Select an organization"
-                              value={
-                                orgOptions.find(
-                                  (option) => option.value === field.value
-                                ) || null
-                              }
-                              onChange={(selectedOption: any) =>
-                                field.onChange(
-                                  selectedOption ? selectedOption.value : ""
-                                )
-                              }
-                            />
-                          </div>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-                {/* Countries Multi-Select using react-select */}
-                <div>
-                  <FormField
-                    control={form.control}
-                    name="countries"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Countries *</FormLabel>
-                        <FormControl>
-                          <div>
-                            <Select
-                              isMulti
-                              options={countryOptions}
-                              placeholder="Select country(s)"
-                              value={countryOptions.filter((option) =>
-                                field.value.includes(option.value)
-                              )}
-                              onChange={(selectedOptions: any) =>
-                                field.onChange(
-                                  selectedOptions.map(
-                                    (option: any) => option.value
-                                  )
-                                )
-                              }
-                              formatOptionLabel={(option: {
-                                value: string;
-                                label: string;
-                              }) => (
-                                <div className="flex items-center gap-2">
-                                  <ReactCountryFlag
-                                    countryCode={option.value}
-                                    svg
-                                    style={{ width: "1.5em", height: "1.5em" }}
-                                  />
-                                  <span>{option.label}</span>
-                                </div>
-                              )}
-                            />
-                          </div>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+              {/* Row 4: Countries Multi-Select (fetched from the countries endpoint) */}
+              <div className="md:col-span-2">
+                <FormField
+                  control={form.control}
+                  name="countries"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Countries *</FormLabel>
+                      <FormControl>
+                        <div>
+                          <Select
+                            isMulti
+                            options={countryOptions}
+                            placeholder="Select country(s)"
+                            value={countryOptions.filter((option) =>
+                              field.value.includes(option.value)
+                            )}
+                            onChange={(selectedOptions: any) =>
+                              field.onChange(
+                                selectedOptions.map((option: any) => option.value)
+                              )
+                            }
+                            formatOptionLabel={(option: { value: string; label: string }) => (
+                              <div className="flex items-center gap-2">
+                                <ReactCountryFlag
+                                  countryCode={option.value}
+                                  svg
+                                  style={{ width: "1.5em", height: "1.5em" }}
+                                />
+                                <span>{option.label}</span>
+                              </div>
+                            )}
+                          />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
 
               {/* Row 5: Has Expiration and Expiration Date */}
@@ -452,25 +372,15 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                       <FormItem>
                         <FormLabel>Expiration Date</FormLabel>
                         <FormControl>
-                          <Popover
-                            open={openDatePicker}
-                            onOpenChange={setOpenDatePicker}
-                          >
+                          <Popover open={openDatePicker} onOpenChange={setOpenDatePicker}>
                             <PopoverTrigger asChild>
                               <Button
                                 variant={"outline"}
                                 onClick={() => setOpenDatePicker(true)}
-                                className={cn(
-                                  "w-full justify-start text-left font-normal",
-                                  !date && "text-muted-foreground"
-                                )}
+                                className={cn("w-full justify-start text-left font-normal", !date && "text-muted-foreground")}
                               >
                                 <CalendarIcon className="mr-2 h-4 w-4" />
-                                {date ? (
-                                  format(date, "PPP")
-                                ) : (
-                                  <span>Pick a date</span>
-                                )}
+                                {date ? format(date, "PPP") : <span>Pick a date</span>}
                               </Button>
                             </PopoverTrigger>
                             <PopoverContent className="w-auto p-0">
@@ -480,20 +390,14 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                                 onSelect={(d: Date | null) => {
                                   setDate(d);
                                   if (d) {
-                                    field.onChange(
-                                      d.toISOString().split("T")[0]
-                                    );
+                                    field.onChange(d.toISOString().split("T")[0]);
                                   } else {
                                     field.onChange(null);
                                   }
                                   setOpenDatePicker(false);
                                 }}
                                 initialFocus
-                                fromDate={
-                                  new Date(
-                                    new Date().setDate(new Date().getDate() + 1)
-                                  )
-                                }
+                                fromDate={new Date(new Date().setDate(new Date().getDate() + 1))}
                               />
                             </PopoverContent>
                           </Popover>
@@ -560,8 +464,8 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                     ? "Updating..."
                     : "Creating..."
                   : isEditing
-                    ? "Update Coupon"
-                    : "Create Coupon"}
+                  ? "Update Coupon"
+                  : "Create Coupon"}
               </Button>
             </div>
           </form>
