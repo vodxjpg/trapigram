@@ -43,6 +43,7 @@ import {
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useProducts } from "@/hooks/use-products"
+import type { Attribute } from "@/types/product"
 
 // Product type definition
 export type Product = {
@@ -54,7 +55,9 @@ export type Product = {
   regularPrice: number
   salePrice: number | null
   stockStatus: "managed" | "unmanaged"
+  stockData: Record<string, Record<string, number>> | null
   categories: string[]
+  attributes: Attribute[]
   createdAt: string
 }
 
@@ -151,7 +154,7 @@ export function ProductsDataTable() {
         const status = row.getValue("status") as "published" | "draft"
         return (
           <Select
-            defaultValue={status}
+            value={status}
             onValueChange={(value) => handleStatusChange(row.original.id, value as "published" | "draft")}
           >
             <SelectTrigger className="w-[110px]">
@@ -179,14 +182,17 @@ export function ProductsDataTable() {
     {
       accessorKey: "regularPrice",
       header: "Regular Price",
-      cell: ({ row }) => <div className="text-right">${row.getValue("regularPrice")}</div>,
+      cell: ({ row }) => {
+        const price = row.getValue("regularPrice") as number
+        return <div className="text-right">{price ? `$${price.toFixed(2)}` : "-"}</div>
+      },
     },
     {
       accessorKey: "salePrice",
       header: "Sale Price",
       cell: ({ row }) => {
         const salePrice = row.getValue("salePrice") as number | null
-        return <div className="text-right">{salePrice ? `$${salePrice}` : "-"}</div>
+        return <div className="text-right">{salePrice ? `$${salePrice.toFixed(2)}` : "-"}</div>
       },
     },
     {
@@ -245,7 +251,6 @@ export function ProductsDataTable() {
       id: "actions",
       cell: ({ row }) => {
         const product = row.original
-
         return (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

@@ -11,7 +11,7 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import type { Attribute, Variation, Warehouse } from "@/types/products"
+import type { Attribute, Variation, Warehouse } from "@/types/product"
 
 interface ProductVariationsProps {
   attributes: Attribute[]

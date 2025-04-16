@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { Plus, Trash, Check } from "lucide-react"
-import type { Attribute } from "@/types/products"
+import type { Attribute } from "@/types/product"
 
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
