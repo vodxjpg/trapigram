@@ -87,18 +87,18 @@ export async function GET(req: NextRequest) {
         "image",
         "sku",
         "status",
-        "product_type",
-        "regular_price",
-        "sale_price",
-        "allow_backorders",
-        "manage_stock",
-        "stock_data",
-        "stock_status",
-        "created_at",
-        "updated_at",
+        "productType",
+        "regularPrice",
+        "salePrice",
+        "allowBackorders",
+        "manageStock",
+        "stockData",
+        "stockStatus",
+        "createdAt",
+        "updatedAt",
       ])
-      .where("organization_id", "=", organizationId)
-      .where("tenant_id", "=", tenantId);
+      .where("organizationId", "=", organizationId)
+      .where("tenantId", "=", tenantId);
 
     // Apply search filter
     if (search) {
@@ -142,8 +142,8 @@ export async function GET(req: NextRequest) {
     let totalCountQuery = db
       .selectFrom("products")
       .select(db.fn.count("id").as("total"))
-      .where("organization_id", "=", organizationId)
-      .where("tenant_id", "=", tenantId);
+      .where("organizationId", "=", organizationId)
+      .where("tenantId", "=", tenantId);
 
     if (search) {
       totalCountQuery = totalCountQuery.where("title", "ilike", `%${search}%`);
@@ -240,7 +240,7 @@ export async function POST(req: NextRequest) {
           .selectFrom("products")
           .select("id")
           .where("sku", "=", finalSku)
-          .where("organization_id", "=", organizationId)
+          .where("organizationId", "=", organizationId)
           .executeTakeFirst();
         isUnique = !existing;
       } while (!isUnique);
@@ -249,7 +249,7 @@ export async function POST(req: NextRequest) {
         .selectFrom("products")
         .select("id")
         .where("sku", "=", finalSku)
-        .where("organization_id", "=", organizationId)
+        .where("organizationId", "=", organizationId)
         .executeTakeFirst();
       if (existing) {
         return NextResponse.json({ error: "SKU already exists" }, { status: 400 });
@@ -282,22 +282,22 @@ export async function POST(req: NextRequest) {
       .insertInto("products")
       .values({
         id: productId,
-        organization_id: organizationId,
-        tenant_id: tenantId,
+        organizationId: organizationId,
+        tenantId: tenantId,
         title: parsedProduct.title,
         description: parsedProduct.description || null,
         image: parsedProduct.image || null,
         sku: parsedProduct.sku,
         status: parsedProduct.status,
-        product_type: parsedProduct.productType,
-        regular_price: parsedProduct.regularPrice,
-        sale_price: parsedProduct.salePrice || null,
-        allow_backorders: parsedProduct.allowBackorders,
-        manage_stock: parsedProduct.manageStock,
-        stock_data: parsedProduct.stockData ? JSON.stringify(parsedProduct.stockData) : null,
-        stock_status: parsedProduct.manageStock ? "managed" : "unmanaged",
-        created_at: new Date(),
-        updated_at: new Date(),
+        productTyoe: parsedProduct.productType,
+        regularPrice: parsedProduct.regularPrice,
+        salePrice: parsedProduct.salePrice || null,
+        allowBackorders: parsedProduct.allowBackorders,
+        manageStock: parsedProduct.manageStock,
+        stockData: parsedProduct.stockData ? JSON.stringify(parsedProduct.stockData) : null,
+        stockStatus: parsedProduct.manageStock ? "managed" : "unmanaged",
+        createdAt: new Date(),
+        updatedAt: new Date(),
       })
       .execute();
 
@@ -310,27 +310,27 @@ export async function POST(req: NextRequest) {
       for (const variation of parsedProduct.variations) {
         // Validate variation SKU
         const existingVariationSku = await db
-          .selectFrom("product_variations")
+          .selectFrom("productVariations")
           .select("id")
           .where("sku", "=", variation.sku)
-          .where("product_id", "!=", productId)
+          .where("productId", "!=", productId)
           .executeTakeFirst();
         if (existingVariationSku) {
           return NextResponse.json({ error: `Variation SKU ${variation.sku} already exists` }, { status: 400 });
         }
 
         await db
-          .insertInto("product_variations")
+          .insertInto("productVariations")
           .values({
             id: variation.id,
-            product_id: productId,
+            producftID: productId,
             attributes: JSON.stringify(variation.attributes),
             sku: variation.sku,
-            regular_price: variation.regularPrice,
-            sale_price: variation.salePrice,
+            regularPrice: variation.regularPrice,
+            salePrice: variation.salePrice,
             stock: variation.stock ? JSON.stringify(variation.stock) : null,
-            created_at: new Date(),
-            updated_at: new Date(),
+            createdAt: new Date(),
+            updatedAt: new Date(),
           })
           .execute();
       }

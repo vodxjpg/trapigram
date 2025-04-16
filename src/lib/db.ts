@@ -243,24 +243,24 @@ interface DB {
   // The "products" table stores individual products
   products: {
     id: string;
-    organization_id: string;
-    tenant_id: string;
+    organizationId: string;
+    tenantId: string;
     title: string;
     description: string | null;
     image: string | null;
     sku: string;
     status: "published" | "draft";
-    product_type: "simple" | "variable";
-    regular_price: number;
-    sale_price: number | null;
-    allow_backorders: boolean;
-    manage_stock: boolean;
+    productType: "simple" | "variable";
+    regularPrice: number;
+    salePrice: number | null;
+    allowBackorders: boolean;
+    manageStock: boolean;
     // JSONB field: structure mapping warehouse ids to stock levels per country.
-    stock_data: Record<string, Record<string, number>> | null;
+    stockData: Record<string, Record<string, number>> | null;
     // Quick status field to mark managed/unmanaged inventory.
-    stock_status: "managed" | "unmanaged";
-    created_at: Date;
-    updated_at: Date;
+    stockStatus: "managed" | "unmanaged";
+    createdAt: Date;
+    updatedAt: Date;
   };
 
   // The "product_variations" table stores variations for variable products

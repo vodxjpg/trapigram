@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 
-// Schema for product update
+// Schema for product update using camelCase
 const productUpdateSchema = z.object({
   title: z.string().min(1, "Title is required").optional(),
   description: z.string().optional(),
@@ -12,7 +12,8 @@ const productUpdateSchema = z.object({
   status: z.enum(["published", "draft"]).optional(),
   productType: z.enum(["simple", "variable"]).optional(),
   categories: z.array(z.string()).optional(),
-  regularPrice: z.number().min(0, "Price must be a positive number").optional(),
+  // Allow regularPrice to be null for variable products
+  regularPrice: z.number().min(0, "Price must be a positive number").nullable().optional(),
   salePrice: z.number().min(0, "Sale price must be a positive number").nullable().optional(),
   allowBackorders: z.boolean().optional(),
   manageStock: z.boolean().optional(),
@@ -25,7 +26,7 @@ const productUpdateSchema = z.object({
         terms: z.array(z.object({ id: z.string(), name: z.string() })),
         useForVariations: z.boolean(),
         selectedTerms: z.array(z.string()),
-      })
+      }),
     )
     .optional(),
   variations: z
@@ -34,16 +35,17 @@ const productUpdateSchema = z.object({
         id: z.string(),
         attributes: z.record(z.string(), z.string()),
         sku: z.string(),
-        regularPrice: z.number(),
+        regularPrice: z.number(), // for variations
         salePrice: z.number().nullable(),
         stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
-      })
+      }),
     )
     .optional(),
 });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    // Authenticate
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session) {
       return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
@@ -52,17 +54,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!organizationId) {
       return NextResponse.json({ error: "No active organization" }, { status: 400 });
     }
-    
     const { id } = await params;
 
-    // Fetch the product
+    // Fetch the product using camelCase column names
     const product = await db
       .selectFrom("products")
       .selectAll()
       .where("id", "=", id)
-      .where("organization_id", "=", organizationId)
+      .where("organizationId", "=", organizationId)
       .executeTakeFirst();
-
     if (!product) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
@@ -89,12 +89,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       .where("productAttributeValues.productId", "=", id)
       .execute();
 
-    // Fetch variations if the product is a variable
-    const variations = product.product_type === "variable"
+    // Fetch variations if the product is variable (using camelCase key "productId")
+    const variations = product.productType === "variable"
       ? await db
           .selectFrom("productVariations")
           .selectAll()
-          .where("product_id", "=", id)
+          .where("productId", "=", id)
           .execute()
       : [];
 
@@ -109,7 +109,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           id: row.attributeId,
           name: row.attributeName,
           terms: [{ id: row.termId, name: row.termName }],
-          // You can set useForVariations as needed, for example, based on whether there are variations
           useForVariations: variations.length > 0,
           selectedTerms: [row.termId],
         });
@@ -120,18 +119,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({
       product: {
         ...product,
-        // Override the stock status using the manage_stock flag
-        stock_status: product.manage_stock ? "managed" : "unmanaged",
-        stockData: product.stock_data,
-        // Use the categories from mapping if present; fallback to product.categories
+        // Set stockStatus based on manageStock field
+        stockStatus: product.manageStock ? "managed" : "unmanaged",
+        stockData: product.stockData,
+        // Use category IDs from mapping if available; fallback to product.categories if necessary
         categories: categoryRows.length ? categoryRows.map((r) => r.id) : (product.categories || []),
         attributes,
         variations: variations.map((v) => ({
           id: v.id,
           attributes: v.attributes,
           sku: v.sku,
-          regularPrice: v.regular_price,
-          salePrice: v.sale_price,
+          regularPrice: v.regularPrice,
+          salePrice: v.salePrice,
           stock: v.stock,
         })),
       },
@@ -162,7 +161,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       .selectFrom("products")
       .select("id")
       .where("id", "=", id)
-      .where("organization_id", "=", organizationId)
+      .where("organizationId", "=", organizationId)
       .executeTakeFirst();
     if (!existingProduct) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
@@ -175,7 +174,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         .select("id")
         .where("sku", "=", parsedUpdate.sku)
         .where("id", "!=", id)
-        .where("organization_id", "=", organizationId)
+        .where("organizationId", "=", organizationId)
         .executeTakeFirst();
       if (existingSku) {
         return NextResponse.json({ error: "SKU already exists" }, { status: 400 });
@@ -194,12 +193,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (invalidCategories.length > 0) {
         return NextResponse.json(
           { error: `The following category IDs do not exist: ${invalidCategories.join(", ")}` },
-          { status: 400 }
+          { status: 400 },
         );
       }
     }
 
-    // Update product
+    // Update the product with new camelCase column names
     await db
       .updateTable("products")
       .set({
@@ -208,19 +207,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         image: parsedUpdate.image,
         sku: parsedUpdate.sku,
         status: parsedUpdate.status,
-        product_type: parsedUpdate.productType,
-        regular_price: parsedUpdate.regularPrice,
-        sale_price: parsedUpdate.salePrice,
-        allow_backorders: parsedUpdate.allowBackorders,
-        manage_stock: parsedUpdate.manageStock,
-        stock_data: parsedUpdate.stockData ? JSON.stringify(parsedUpdate.stockData) : undefined,
-        stock_status: parsedUpdate.manageStock ? "managed" : "unmanaged",
-        updated_at: new Date(),
+        productType: parsedUpdate.productType,
+        regularPrice: parsedUpdate.regularPrice,
+        salePrice: parsedUpdate.salePrice,
+        allowBackorders: parsedUpdate.allowBackorders,
+        manageStock: parsedUpdate.manageStock,
+        stockData: parsedUpdate.stockData ? JSON.stringify(parsedUpdate.stockData) : undefined,
+        stockStatus: parsedUpdate.manageStock ? "managed" : "unmanaged",
+        updatedAt: new Date(),
       })
       .where("id", "=", id)
       .execute();
 
-    // Update categories
+    // Update product-category relationships
     if (parsedUpdate.categories) {
       await db.deleteFrom("productCategory").where("productId", "=", id).execute();
       for (const categoryId of parsedUpdate.categories) {
@@ -231,7 +230,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
     }
 
-    // Update attributes
+    // Update product attribute mappings
     if (parsedUpdate.attributes) {
       await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
       for (const attribute of parsedUpdate.attributes) {
@@ -248,9 +247,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
     }
 
-    // Update variations
+    // Update product variations (for variable products)
     if (parsedUpdate.variations && parsedUpdate.productType === "variable") {
-      await db.deleteFrom("productVariations").where("id", "=", id).execute();
+      // Delete all variations for this product (using camelCase)
+      await db.deleteFrom("productVariations").where("productId", "=", id).execute();
       for (const variation of parsedUpdate.variations) {
         const existingVariationSku = await db
           .selectFrom("productVariations")
@@ -265,14 +265,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           .insertInto("productVariations")
           .values({
             id: variation.id,
-            product_id: id,
+            productId: id, // using camelCase column name
             attributes: JSON.stringify(variation.attributes),
             sku: variation.sku,
-            regular_price: variation.regularPrice,
-            sale_price: variation.salePrice,
+            regularPrice: variation.regularPrice,
+            salePrice: variation.salePrice,
             stock: variation.stock ? JSON.stringify(variation.stock) : null,
-            created_at: new Date(),
-            updated_at: new Date(),
+            createdAt: new Date(),
+            updatedAt: new Date(),
           })
           .execute();
       }
@@ -310,7 +310,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       .selectFrom("products")
       .select("id")
       .where("id", "=", id)
-      .where("organization_id", "=", organizationId)
+      .where("organizationId", "=", organizationId)
       .executeTakeFirst();
     if (!existingProduct) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
