@@ -50,7 +50,6 @@ const couponFormSchema = z.object({
   expendingLimit: z.coerce.number().int().min(0, "Expending limit must be 0 or greater").default(0),
   expendingMinimum: z.coerce.number().int().min(0, "Expending minimum must be 0 or greater").default(0),
   countries: z.array(z.string().length(2)).min(1, "At least one country is required"),
-  organizationId: z.string().min(1, "Organization is required"),
   visibility: z.boolean().default(true),
   hasExpiration: z.boolean().default(false),
   expirationDate: z.string().nullable().optional(),
@@ -71,10 +70,7 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
   const [openDatePicker, setOpenDatePicker] = useState(false);
   const [switchExpiration, setSwitchExpiration] = useState(false);
   // Country select options from the countries endpoint.
-  const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]);
-
-  // Simulate a session organization ID.
-  const organizationId = "session.organizationId"; // Replace with your real session value.
+  const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]); // Replace with your real session value.
 
   const form = useForm<CouponFormValues>({
     resolver: zodResolver(couponFormSchema),
@@ -86,21 +82,14 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
       expendingLimit: 0,
       expendingMinimum: 0,
       countries: [],
-      organizationId: organizationId,
       visibility: true,
       hasExpiration: false,
       expirationDate: null,
       limitPerUser: 0,
     },
   });
-
-  // Automatically set organizationId from session.
-  useEffect(() => {
-    form.setValue("organizationId", organizationId);
-  }, [form, organizationId]);
-
   // Fetch the countries for the organization via the dedicated endpoint.
-  useEffect(() => {
+  useEffect(() => {    
     async function fetchOrganizationCountries() {
       try {
         const response = await fetch(`/api/organizations/countries`, {
@@ -134,10 +123,8 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
         toast.error(error.message || "Failed to load organization countries");
       }
     }
-    if (organizationId) {
-      fetchOrganizationCountries();
-    }
-  }, [organizationId]);
+    fetchOrganizationCountries()
+  }, []);
 
   // Reset the form when editing.
   useEffect(() => {
@@ -171,7 +158,6 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
         expendingLimit: 0,
         expendingMinimum: 0,
         countries: [],
-        organizationId: organizationId,
         visibility: true,
         hasExpiration: false,
         expirationDate: null,
@@ -180,7 +166,7 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
       setDate(null);
       setSwitchExpiration(false);
     }
-  }, [couponData, form, isEditing, organizationId]);
+  }, [couponData, form, isEditing]);
 
   async function onSubmit(values: CouponFormValues) {
     setIsSubmitting(true);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { ShipmentForm } from "./shipment-form";
+import { ShipmentsTable } from "./shipment-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
 export default function CategoriesPage() {
@@ -19,7 +19,7 @@ export default function CategoriesPage() {
           Manage your Shipments.
         </p>
       </div>
-      <ShipmentForm />
+      <ShipmentsTable />
     </div>
   );
 }

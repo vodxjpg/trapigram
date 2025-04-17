@@ -49,8 +49,6 @@ const announcementFormSchema = z.object({
   deliveryDate: z.string().nullable().optional(),
   countries: z.array(z.string()).min(1, "Select at least one country"),
   status: z.string().min(1, "Status is required"),
-  // organizationId is optional here since we’re auto‑setting it
-  organizationId: z.string().min(1, "Organization is required").optional(),
 });
 
 type AnnouncementFormValues = z.infer<typeof announcementFormSchema>;
@@ -72,9 +70,6 @@ export function AnnouncementForm({
   // Country select options fetched from the endpoint.
   const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]);
 
-  // Simulate a session organization ID.
-  // Replace this with your session hook or context.
-  const organizationId = "sessionOrganizationId";
 
   const form = useForm<AnnouncementFormValues>({
     resolver: zodResolver(announcementFormSchema),
@@ -85,14 +80,10 @@ export function AnnouncementForm({
       deliveryDate: null,
       countries: [],
       status: "draft",
-      organizationId: organizationId,
     },
   });
 
-  // Set the organizationId automatically from the session.
-  useEffect(() => {
-    form.setValue("organizationId", organizationId);
-  }, [form, organizationId]);
+
 
   // Fetch the countries for the organization from your endpoint.
   useEffect(() => {
@@ -129,11 +120,8 @@ export function AnnouncementForm({
         toast.error(error.message || "Failed to load organization countries");
       }
     }
-    // Only fetch if organizationId is available.
-    if (organizationId) {
-      fetchOrganizationCountries();
-    }
-  }, [organizationId]);
+    fetchOrganizationCountries();
+  }, []);
 
   // Reset form values when editing or on initial load.
   useEffect(() => {
@@ -145,8 +133,7 @@ export function AnnouncementForm({
           ? announcementData.countries
           : typeof announcementData.countries === "string"
           ? JSON.parse(announcementData.countries)
-          : [],
-        organizationId: organizationId, // auto-set organization from session.
+          : [],// auto-set organization from session.
       });
       if (announcementData.deliveryDate) {
         const d = new Date(announcementData.deliveryDate);
@@ -166,12 +153,11 @@ export function AnnouncementForm({
         deliveryDate: null,
         countries: [],
         status: "draft",
-        organizationId: organizationId,
       });
       setDate(null);
       setSwitchDelivery(false);
     }
-  }, [announcementData, form, isEditing, organizationId]);
+  }, [announcementData, form, isEditing]);
 
   async function onSubmit(values: AnnouncementFormValues) {
     setIsSubmitting(true);

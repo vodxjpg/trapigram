@@ -64,7 +64,6 @@ const shipmentFormSchema = z.object({
   description: z.string().min(1, "Description is required"),
   costs: z.array(costGroupSchema).min(1, "At least one cost group is required"),
   countries: z.array(z.string()).min(1, "Select at least one country"),
-  organizationId: z.string().min(1, "Organization is required"),
 });
 
 type ShipmentFormValues = z.infer<typeof shipmentFormSchema>;
@@ -85,9 +84,6 @@ export function ShipmentForm({
     { value: string; label: string }[]
   >([]);
 
-  // Simulate a session organization ID (replace with your session hook).
-  const organizationId = "session.organizationId";
-
   const form = useForm<ShipmentFormValues>({
     resolver: zodResolver(shipmentFormSchema),
     defaultValues: {
@@ -95,14 +91,8 @@ export function ShipmentForm({
       description: "",
       costs: [{ minOrderCost: 0, maxOrderCost: 0, shipmentCost: 0 }],
       countries: [],
-      organizationId: organizationId,
     },
   });
-
-  // Automatically set organizationId from the session.
-  useEffect(() => {
-    form.setValue("organizationId", organizationId);
-  }, [form, organizationId]);
 
   // Set up the field array for cost groups.
   const { fields, append } = useFieldArray({
@@ -124,7 +114,7 @@ export function ShipmentForm({
   // with its minOrderCost set to the current group's maxOrderCost + 0.01.
   const handleAddCostGroup = (index: number) => {
     const group = costGroups[index];
-    
+
     if (group && isCostGroupValid(group)) {
       append({
         minOrderCost: Number(group.maxOrderCost) + 0.01,
@@ -170,10 +160,8 @@ export function ShipmentForm({
         toast.error(error.message || "Failed to load organization countries");
       }
     }
-    if (organizationId) {
-      fetchOrganizationCountries();
-    }
-  }, [organizationId]);
+    fetchOrganizationCountries();
+  }, []);
 
   // Reset the form when editing.
   useEffect(() => {
@@ -195,14 +183,13 @@ export function ShipmentForm({
           {
             minOrderCost: "",
             maxOrderCost: "",
-            shipmentCost: "",
+            shipmentCost: 0,
           },
         ],
         countries: [],
-        organizationId: organizationId,
       });
     }
-  }, [shipmentData, form, isEditing, organizationId]);
+  }, [shipmentData, form, isEditing]);
 
   async function onSubmit(values: ShipmentFormValues) {
     setIsSubmitting(true);
@@ -222,7 +209,6 @@ export function ShipmentForm({
         description: values.description,
         countries: JSON.stringify(values.countries),
         costs: JSON.stringify(values.costs),
-        organizationId: values.organizationId,
       };
       const response = await fetch(url, {
         method: isEditing ? "PATCH" : "POST",
@@ -418,6 +404,7 @@ export function ShipmentForm({
                         />
                       </div>
                       <Button
+                        type="button"
                         size="icon"
                         disabled={plusDisabled}
                         className="shrink-0"

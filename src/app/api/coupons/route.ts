@@ -130,6 +130,7 @@ export async function POST(req: NextRequest) {
   let organizationId: string;
 
   const { searchParams } = new URL(req.url);
+  console.log(searchParams)
   const explicitOrgId = searchParams.get("organizationId");
 
   // Case 1: Check for session (UI requests)

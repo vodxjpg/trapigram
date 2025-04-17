@@ -13,10 +13,23 @@ const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 // Shipment schema definition.
 // Note: The "countries" field is expected to be provided as an array,
 // and it will be stringified before inserting into the database.
+
+const costGroupSchema = z.object({
+  minOrderCost: z.coerce
+    .number()
+    .min(0, "Minimum order cost must be 0 or greater"),
+  maxOrderCost: z.coerce
+    .number()
+    .min(0, "Maximum order cost must be 0 or greater"),
+  shipmentCost: z.coerce
+    .number()
+    .min(0, "Shipment cost must be 0 or greater"),
+});
+
 const shipmentSchema = z.object({
   title: z.string().min(1, { message: "Title is required." }),
   description: z.string().min(1, { message: "Description is required." }),
-  costs: z.string().min(1, { message: "Costs are required." }),
+  costs: z.array(costGroupSchema).optional(),
   countries: z.array(z.string()).min(1, { message: "At least one country is required." }),
   organizationId: z.string().min(1, { message: "Organization is required." }),
 });
@@ -100,10 +113,12 @@ export async function GET(req: NextRequest) {
     const totalPages = Math.ceil(totalRows / pageSize);
 
     const result = await pool.query(query, values);
+
     const shipments = result.rows;
     // Parse the countries field for each shipment.
     shipments.forEach((shipment) => {
       shipment.countries = JSON.parse(shipment.countries);
+      shipment.costs = JSON.parse(shipment.costs)
     });
 
     return NextResponse.json({
@@ -160,6 +175,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+    body.countries = JSON.parse(body.countries)
     const parsedShipment = shipmentSchema.parse({ ...body, organizationId });
     const { title, description, costs, countries } = parsedShipment;
     const shipmentId = uuidv4();
@@ -177,6 +193,8 @@ export async function POST(req: NextRequest) {
       costs,
       JSON.stringify(countries),
     ];
+
+    console.log(values)
 
     const result = await pool.query(insertQuery, values);
     const shipment = result.rows[0];
