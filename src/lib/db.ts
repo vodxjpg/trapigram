@@ -116,6 +116,12 @@ interface DB {
     createdAt: Date,
     updatedAt: Date,
   };
+  reviews: {
+    id: string,
+    organizationId: string,
+    text: string,
+    rate: string
+  };
   member: {
     id: string;
     userId: string;
