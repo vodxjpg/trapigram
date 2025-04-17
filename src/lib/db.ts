@@ -266,31 +266,30 @@ interface DB {
     sku: string;
     status: "published" | "draft";
     productType: "simple" | "variable";
-    regularPrice: number;
-    salePrice: number | null;
+    /** key = ISO‑3166 country (§ organization.countries) */
+    regularPrice: Record<string, number>;           //   « changed »
+    salePrice:   Record<string, number> | null;     //   « changed »
     allowBackorders: boolean;
     manageStock: boolean;
-    // JSONB field: structure mapping warehouse ids to stock levels per country.
     stockData: Record<string, Record<string, number>> | null;
-    // Quick status field to mark managed/unmanaged inventory.
     stockStatus: "managed" | "unmanaged";
     createdAt: Date;
     updatedAt: Date;
   };
 
+
   // The "product_variations" table stores variations for variable products
   productVariations: {
     id: string;
     product_id: string;
-    // JSONB field: mapping attribute IDs to term IDs.
     attributes: Record<string, string>;
     sku: string;
-    regular_price: number;
-    sale_price: number | null;
-    // JSONB field: structure mapping warehouse ids to stock levels per country.
+    /** country‑based pricing for the variation */
+    regularPrice: Record<string, number>;          //   « changed »
+    salePrice:   Record<string, number> | null;    //   « changed »
     stock: Record<string, Record<string, number>> | null;
-    created_at: Date;
-    updated_at: Date;
+    createdAt: Date;
+    updatedAt: Date;
   };
 }
 

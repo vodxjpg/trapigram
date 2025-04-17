@@ -37,10 +37,17 @@ import type { Attribute, Variation, Warehouse } from "@/types/product"
 import { StockManagement } from "./stock-management"
 import { ProductAttributes } from "./product-attributes"
 import { ProductVariations } from "./product-variations"
+import { PriceManagement } from "./price-management"
 
 // --------------------------------------------------
-//  validation schema
+//  helpers / types
 // --------------------------------------------------
+type PriceMap = Record<string, { regular: number; sale: number | null }>
+
+// --------------------------------------------------
+//  validation schema  (regular/sale removed)
+// --------------------------------------------------
+const priceObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() })
 const productSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
@@ -49,10 +56,9 @@ const productSchema = z.object({
   status: z.enum(["published", "draft"]),
   productType: z.enum(["simple", "variable"]),
   categories: z.array(z.string()).optional(),
-  regularPrice: z.coerce.number().min(0),
-  salePrice: z.coerce.number().min(0).nullable().optional(),
   allowBackorders: z.boolean().default(false),
   manageStock: z.boolean().default(false),
+  prices: z.record(z.string(), priceObj).optional(),
 })
 
 type ProductFormValues = z.infer<typeof productSchema>
@@ -106,6 +112,8 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   const [stockData, setStockData] = useState<Record<string, Record<string, number>>>({})
   const [attributes, setAttributes] = useState<Attribute[]>(initialData?.attributes || [])
   const [variations, setVariations] = useState<Variation[]>(initialData?.variations || [])
+  const [orgCountries, setOrgCountries] = useState<string[]>([])
+  const [prices, setPrices] = useState<PriceMap>({})
 
   // --------------------------------------------------
   //  parse initial stock
@@ -113,11 +121,36 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   useEffect(() => {
     if (!initialData?.stockData) return
     try {
-      const parsed = typeof initialData.stockData === "string" ? JSON.parse(initialData.stockData) : initialData.stockData
+      const parsed =
+        typeof initialData.stockData === "string"
+          ? JSON.parse(initialData.stockData)
+          : initialData.stockData
       setStockData(parsed)
     } catch {
       setStockData({})
     }
+  }, [initialData])
+
+  // --------------------------------------------------
+  //  fetch organization countries (for pricing map)
+  // --------------------------------------------------
+  useEffect(() => {
+    ;(async () => {
+      const res = await fetch("/api/organizations/countries")
+      if (!res.ok) return
+      const { countries } = await res.json()
+      const list = Array.isArray(countries) ? countries : JSON.parse(countries)
+      setOrgCountries(list)
+
+      if (initialData?.prices) {
+        setPrices(initialData.prices as PriceMap)
+      } else if (!initialData) {
+        // init blank prices for simple products
+        const blank: PriceMap = {}
+        list.forEach((c) => (blank[c] = { regular: 0, sale: null }))
+        setPrices(blank)
+      }
+    })()
   }, [initialData])
 
   // --------------------------------------------------
@@ -134,8 +167,6 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
           status: initialData.status ?? "draft",
           productType: initialData.productType ?? "simple",
           categories: initialData.categories ?? [],
-          regularPrice: Number(initialData.regularPrice ?? 0),
-          salePrice: initialData.salePrice == null ? null : Number(initialData.salePrice),
           allowBackorders: initialData.allowBackorders ?? false,
           manageStock: initialData.manageStock ?? false,
         }
@@ -147,8 +178,6 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
           status: "draft",
           productType: "simple",
           categories: [],
-          regularPrice: 0,
-          salePrice: null,
           allowBackorders: false,
           manageStock: false,
         },
@@ -165,11 +194,10 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
       status: initialData.status ?? "draft",
       productType: initialData.productType ?? "simple",
       categories: initialData.categories ?? [],
-      regularPrice: Number(initialData.regularPrice ?? 0),
-      salePrice: initialData.salePrice == null ? null : Number(initialData.salePrice),
       allowBackorders: initialData.allowBackorders ?? false,
       manageStock: initialData.manageStock ?? false,
     })
+    if (initialData.prices) setPrices(initialData.prices as PriceMap)
   }, [initialData, form])
 
   // watch values that affect UI
@@ -255,7 +283,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
 
       const payload = {
         ...values,
-        ...(productType === "variable" ? { regularPrice: null, salePrice: null } : {}),
+        prices: productType === "simple" ? prices : undefined,
         stockData: manageStock && productType === "simple" ? stockData : null,
         attributes,
         variations: productType === "variable" ? variations : [],
@@ -438,7 +466,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                       )}
                     />
                   </div>
-                  {/* Right Column: Title, Product Type, Price */}
+                  {/* Right Column: Title, Product Type, SKU (prices removed) */}
                   <div className="space-y-6">
                     <FormField
                       control={form.control}
@@ -471,70 +499,12 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                             </SelectContent>
                           </Select>
                           <FormDescription>
-                            Simple products have a single SKU and price. Variable products have multiple variations.
+                            Simple products have per‑country prices. Variable products have per‑country prices inside each variation.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
-                    {productType === "simple" && (
-                      <div className="grid grid-cols-2 gap-4">
-                        <FormField
-                          control={form.control}
-                          name="regularPrice"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Regular Price</FormLabel>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={
-                                    field.value !== undefined && field.value !== null
-                                      ? String(field.value)
-                                      : ""
-                                  }
-                                  onChange={(e) =>
-                                    field.onChange(
-                                      e.target.value === "" ? 0 : Number(e.target.value)
-                                    )
-                                  }
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={form.control}
-                          name="salePrice"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Sale Price (Optional)</FormLabel>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={
-                                    field.value !== undefined && field.value !== null
-                                      ? String(field.value)
-                                      : ""
-                                  }
-                                  onChange={(e) =>
-                                    field.onChange(
-                                      e.target.value === "" ? null : Number(e.target.value)
-                                    )
-                                  }
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-                    )}
                     <FormField
                       control={form.control}
                       name="sku"
@@ -592,7 +562,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                 {productType === "variable" && (
                   <div className="rounded-lg border p-4 bg-blue-50">
                     <p className="text-sm text-blue-700">
-                      <strong>Note:</strong> For variable products, pricing is set individually for each variation in the Variations tab.
+                      <strong>Note:</strong> For variable products, pricing is set per country in each variation.
                     </p>
                   </div>
                 )}
@@ -604,10 +574,20 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
           <TabsContent value="inventory" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Inventory Management</CardTitle>
-                <CardDescription>Configure stock management settings</CardDescription>
+                <CardTitle>Inventory &amp; Pricing</CardTitle>
+                <CardDescription>Configure prices per country and stock management</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                {productType === "simple" && (
+                 <PriceManagement
+                    title="Prices per country"
+                    countries={orgCountries}
+                    priceData={prices}
+                    onChange={setPrices}
+                  />
+                 
+                )}
+
                 <FormField
                   control={form.control}
                   name="manageStock"
@@ -639,7 +619,11 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                   )}
                 />
                 {manageStock && productType === "simple" && (
-                  <StockManagement warehouses={warehouses} stockData={stockData} onStockChange={setStockData} />
+                  <StockManagement
+                    warehouses={warehouses}
+                    stockData={stockData}
+                    onStockChange={setStockData}
+                  />
                 )}
                 {manageStock && productType === "variable" && (
                   <div className="rounded-lg border p-4 bg-blue-50">
@@ -701,6 +685,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                   variations={variations}
                   onVariationsChange={setVariations}
                   warehouses={warehouses}
+                  countries={orgCountries}
                 />
               </CardContent>
             </Card>

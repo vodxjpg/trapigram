@@ -3,7 +3,25 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 
-// Schema for product update using camelCase
+/* ------------------------------------------------------------------ */
+/* helper – merge regular/sale JSON objects ➜ { IT:{regular, sale}, …} */
+/* ------------------------------------------------------------------ */
+function mergePriceMaps(
+  regular: Record<string, number> | null,
+  sale: Record<string, number> | null,
+) {
+  const map: Record<string, { regular: number; sale: number | null }> = {};
+  const reg = regular || {};
+  const sal = sale   || {};
+  for (const [c, v] of Object.entries(reg)) map[c] = { regular: Number(v), sale: null };
+  for (const [c, v] of Object.entries(sal))
+    map[c] = { ...(map[c] || { regular: 0, sale: null }), sale: Number(v) };
+  return map;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Zod schema for PATCH (unchanged)                                   */
+/* ------------------------------------------------------------------ */
 const productUpdateSchema = z.object({
   title: z.string().min(1, "Title is required").optional(),
   description: z.string().optional(),
@@ -12,9 +30,8 @@ const productUpdateSchema = z.object({
   status: z.enum(["published", "draft"]).optional(),
   productType: z.enum(["simple", "variable"]).optional(),
   categories: z.array(z.string()).optional(),
-  // Allow regularPrice to be null for variable products
-  regularPrice: z.number().min(0, "Price must be a positive number").nullable().optional(),
-  salePrice: z.number().min(0, "Sale price must be a positive number").nullable().optional(),
+  regularPrice: z.number().min(0).nullable().optional(),   // kept for backward compat
+  salePrice: z.number().min(0).nullable().optional(),      // kept for backward compat
   allowBackorders: z.boolean().optional(),
   manageStock: z.boolean().optional(),
   stockData: z.record(z.string(), z.record(z.string(), z.number())).nullable().optional(),
@@ -35,7 +52,7 @@ const productUpdateSchema = z.object({
         id: z.string(),
         attributes: z.record(z.string(), z.string()),
         sku: z.string(),
-        regularPrice: z.number(), // for variations
+        regularPrice: z.number(),
         salePrice: z.number().nullable(),
         stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
       }),
@@ -43,44 +60,58 @@ const productUpdateSchema = z.object({
     .optional(),
 });
 
+/* ================================================================== */
+/*  GET                                                               */
+/* ================================================================== */
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
 
-  // 1) Authenticate
+  /* ---------- auth ------------------------------------------------ */
   const session = await auth.api.getSession({ headers: req.headers });
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const orgId = session.session.activeOrganizationId;
-  if (!orgId) return NextResponse.json({ error: "No active organization" }, { status: 400 });
+  if (!orgId)
+    return NextResponse.json({ error: "No active organization" }, { status: 400 });
 
-  // 2) Fetch raw product row
+  /* ---------- product row ---------------------------------------- */
   const raw = await db
     .selectFrom("products")
     .selectAll()
     .where("id", "=", id)
     .where("organizationId", "=", orgId)
     .executeTakeFirst();
-  if (!raw) return NextResponse.json({ error: "Product not found" }, { status: 404 });
+  if (!raw)
+    return NextResponse.json({ error: "Product not found" }, { status: 404 });
 
-  // 3) Load categories
+  /* ---------- categories ----------------------------------------- */
   const categoryRows = await db
     .selectFrom("productCategory")
-    .innerJoin("productCategories", "productCategories.id", "productCategory.categoryId")
+    .innerJoin(
+      "productCategories",
+      "productCategories.id",
+      "productCategory.categoryId",
+    )
     .select(["productCategories.id"])
     .where("productCategory.productId", "=", id)
     .execute();
   const categories = categoryRows.map((r) => r.id);
 
-  // 4) Load attributes (same as your existing code)
-  const attributeRows = await db
+  /* ---------- attributes ----------------------------------------- */
+  const attrRows = await db
     .selectFrom("productAttributeValues")
-    .innerJoin("productAttributes", "productAttributes.id", "productAttributeValues.attributeId")
+    .innerJoin(
+      "productAttributes",
+      "productAttributes.id",
+      "productAttributeValues.attributeId",
+    )
     .innerJoin(
       "productAttributeTerms",
       "productAttributeTerms.id",
-      "productAttributeValues.termId"
+      "productAttributeValues.termId",
     )
     .select([
       "productAttributeValues.attributeId as id",
@@ -90,10 +121,16 @@ export async function GET(
     ])
     .where("productAttributeValues.productId", "=", id)
     .execute();
-  const attributes = attributeRows.reduce<any[]>((acc, row) => {
+  const attributes = attrRows.reduce<any[]>((acc, row) => {
     let attr = acc.find((a) => a.id === row.id);
     if (!attr) {
-      attr = { id: row.id, name: row.name, terms: [], selectedTerms: [], useForVariations: false };
+      attr = {
+        id: row.id,
+        name: row.name,
+        terms: [],
+        selectedTerms: [],
+        useForVariations: false,
+      };
       acc.push(attr);
     }
     attr.terms.push({ id: row.termId, name: row.termName });
@@ -101,7 +138,7 @@ export async function GET(
     return acc;
   }, []);
 
-  // 5) Load variations if needed
+  /* ---------- variations (if any) -------------------------------- */
   let variationsRaw: any[] = [];
   if (raw.productType === "variable") {
     variationsRaw = await db
@@ -111,34 +148,51 @@ export async function GET(
       .execute();
   }
 
-  // 6) Parse out JSON and numbers
+  const variations = variationsRaw.map((v) => {
+    const reg =
+      v.regularPrice && typeof v.regularPrice === "string"
+        ? JSON.parse(v.regularPrice)
+        : v.regularPrice;
+    const sal =
+      v.salePrice && typeof v.salePrice === "string"
+        ? JSON.parse(v.salePrice)
+        : v.salePrice;
+    return {
+      id: v.id,
+      attributes: v.attributes,
+      sku: v.sku,
+      prices: mergePriceMaps(reg, sal),
+      stock:
+        v.stock && typeof v.stock === "string"
+          ? JSON.parse(v.stock)
+          : v.stock || {},
+    };
+  });
+
+  /* ---------- stock / price parsing ------------------------------ */
   const stockData =
     raw.stockData && typeof raw.stockData === "string"
       ? JSON.parse(raw.stockData)
       : raw.stockData || {};
 
-  const variations = variationsRaw.map((v) => ({
-    id: v.id,
-    attributes: v.attributes,
-    sku: v.sku,
-    regularPrice: Number(v.regularPrice),
-    salePrice: v.salePrice != null ? Number(v.salePrice) : null,
-    stock:
-      v.stock && typeof v.stock === "string"
-        ? JSON.parse(v.stock)
-        : v.stock || {},
-  }));
+  const reg =
+    raw.regularPrice && typeof raw.regularPrice === "string"
+      ? JSON.parse(raw.regularPrice)
+      : raw.regularPrice;
+  const sal =
+    raw.salePrice && typeof raw.salePrice === "string"
+      ? JSON.parse(raw.salePrice)
+      : raw.salePrice;
 
-  // 7) Build the final product payload
+  /* ---------- final product payload ------------------------------ */
   const product = {
     ...raw,
-    regularPrice: raw.regularPrice != null ? Number(raw.regularPrice) : 0,
-    salePrice: raw.salePrice != null ? Number(raw.salePrice) : null,
+    prices: mergePriceMaps(reg, sal),
     stockData,
     stockStatus: raw.manageStock ? "managed" : "unmanaged",
     categories,
-    attributes: attributes.map((attr) => ({
-      ...attr,
+    attributes: attributes.map((a) => ({
+      ...a,
       useForVariations: raw.productType === "variable",
     })),
     variations,
@@ -146,7 +200,6 @@ export async function GET(
 
   return NextResponse.json({ product });
 }
-
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await auth.api.getSession({ headers: req.headers });
