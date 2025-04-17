@@ -106,11 +106,20 @@ interface DB {
     costs: string;
     createdAt: Date;
     updatedAt: Date;
-  }
+  };
+  shippingMethods: {
+    id: string,
+    organizationId: string,
+    name: string,
+    url: string,
+    countries: string,
+    createdAt: Date,
+    updatedAt: Date,
+  };
   member: {
     id: string;
     userId: string;
-    organizationId: string;
+    organizationId: string,
     role: string;
     createdAt: Date;
   };

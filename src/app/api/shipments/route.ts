@@ -194,8 +194,6 @@ export async function POST(req: NextRequest) {
       JSON.stringify(countries),
     ];
 
-    console.log(values)
-
     const result = await pool.query(insertQuery, values);
     const shipment = result.rows[0];
     shipment.countries = JSON.parse(shipment.countries);

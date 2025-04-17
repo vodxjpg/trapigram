@@ -104,7 +104,6 @@ export async function PATCH(
         
         body.countries = JSON.parse(body.countries)
         body.costs = JSON.parse(body.costs)
-        console.log(typeof(body.costs))
         const parsed = shipmentUpdateSchema.parse(body);
         
 
