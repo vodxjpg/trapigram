@@ -1,3 +1,6 @@
+/* ---------------------------------------------------------------------------
+   src/app/(dashboard)/products/components/product-variations.tsx
+--------------------------------------------------------------------------- */
 "use client"
 
 import { useState, useEffect } from "react"
@@ -10,6 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { FormLabel } from "@/components/ui/form"           // ← ★ NEW ★
 
 import { PriceManagement } from "./price-management"
 import type { Attribute, Variation, Warehouse } from "@/types/product"

@@ -5,7 +5,6 @@ import { auth } from "@/lib/auth";
 
 /* ------------------------------------------------------------------ */
 /* helper – merge regular/sale JSON objects ➜ { IT:{regular, sale}, …} */
-/* ------------------------------------------------------------------ */
 function mergePriceMaps(
   regular: Record<string, number> | null,
   sale: Record<string, number> | null,
@@ -20,8 +19,49 @@ function mergePriceMaps(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Zod schema for PATCH (unchanged)                                   */
+/* helper – split map ➜ {regularPrice, salePrice} (JSONB ready)       */
 /* ------------------------------------------------------------------ */
+// ★ NEW
+const priceObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
+
+function splitPrices(
+  pr: Record<string, { regular: number; sale: number | null }>,
+) {
+  const regular: Record<string, number> = {};
+  const sale: Record<string, number> = {};
+  for (const [c, v] of Object.entries(pr)) {
+    regular[c] = v.regular;
+    if (v.sale != null) sale[c] = v.sale;
+  }
+  return {
+    regularPrice: regular,
+    salePrice: Object.keys(sale).length ? sale : null,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Zod schema for PATCH                                              */
+/* ------------------------------------------------------------------ */
+const variationPatchSchema = z.union([
+  /* legacy: flat regular/sale numbers */
+  z.object({
+    id: z.string(),
+    attributes: z.record(z.string(), z.string()),
+    sku: z.string(),
+    regularPrice: z.number(),
+    salePrice: z.number().nullable(),
+    stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
+  }),
+  /* ★ NEW: prices map */
+  z.object({
+    id: z.string(),
+    attributes: z.record(z.string(), z.string()),
+    sku: z.string(),
+    prices: z.record(z.string(), priceObj),
+    stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
+  }),
+]);
+
 const productUpdateSchema = z.object({
   title: z.string().min(1, "Title is required").optional(),
   description: z.string().optional(),
@@ -30,11 +70,17 @@ const productUpdateSchema = z.object({
   status: z.enum(["published", "draft"]).optional(),
   productType: z.enum(["simple", "variable"]).optional(),
   categories: z.array(z.string()).optional(),
-  regularPrice: z.number().min(0).nullable().optional(),   // kept for backward compat
-  salePrice: z.number().min(0).nullable().optional(),      // kept for backward compat
+  /* legacy flat fields (still accepted) */
+  regularPrice: z.number().min(0).nullable().optional(),
+  salePrice: z.number().min(0).nullable().optional(),
+  /* ★ NEW map‑based pricing */
+  prices: z.record(z.string(), priceObj).optional(),
   allowBackorders: z.boolean().optional(),
   manageStock: z.boolean().optional(),
-  stockData: z.record(z.string(), z.record(z.string(), z.number())).nullable().optional(),
+  stockData: z
+    .record(z.string(), z.record(z.string(), z.number()))
+    .nullable()
+    .optional(),
   attributes: z
     .array(
       z.object({
@@ -46,18 +92,7 @@ const productUpdateSchema = z.object({
       }),
     )
     .optional(),
-  variations: z
-    .array(
-      z.object({
-        id: z.string(),
-        attributes: z.record(z.string(), z.string()),
-        sku: z.string(),
-        regularPrice: z.number(),
-        salePrice: z.number().nullable(),
-        stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
-      }),
-    )
-    .optional(),
+  variations: z.array(variationPatchSchema).optional(),
 });
 
 /* ================================================================== */
@@ -200,135 +235,156 @@ export async function GET(
 
   return NextResponse.json({ product });
 }
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
-    }
+    if (!session)
+      return NextResponse.json(
+        { error: "Unauthorized: No session found" },
+        { status: 401 },
+      );
     const organizationId = session.session.activeOrganizationId;
-    if (!organizationId) {
+    if (!organizationId)
       return NextResponse.json({ error: "No active organization" }, { status: 400 });
-    }
+
     const { id } = await params;
     const body = await req.json();
-    const parsedUpdate = productUpdateSchema.parse(body);
+    const parsedUpdate = productUpdateSchema.parse(body);          // ★ MOD
 
-    // Check if product exists
+    /* -------------------------------------------------------------- */
+    /*  sanity / FK checks – unchanged                                */
+    /* -------------------------------------------------------------- */
     const existingProduct = await db
       .selectFrom("products")
       .select("id")
       .where("id", "=", id)
       .where("organizationId", "=", organizationId)
       .executeTakeFirst();
-    if (!existingProduct) {
+    if (!existingProduct)
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
-    }
 
-    // Validate SKU if provided
     if (parsedUpdate.sku) {
-      const existingSku = await db
+      const conflict = await db
         .selectFrom("products")
         .select("id")
         .where("sku", "=", parsedUpdate.sku)
         .where("id", "!=", id)
         .where("organizationId", "=", organizationId)
         .executeTakeFirst();
-      if (existingSku) {
+      if (conflict)
         return NextResponse.json({ error: "SKU already exists" }, { status: 400 });
-      }
     }
 
-    // Validate categories if provided
-    if (parsedUpdate.categories && parsedUpdate.categories.length > 0) {
-      const existingCategories = await db
-        .selectFrom("productCategories")
-        .select("id")
-        .where("organizationId", "=", organizationId)
-        .execute();
-      const existingCategoryIds = existingCategories.map((cat) => cat.id);
-      const invalidCategories = parsedUpdate.categories.filter((catId) => !existingCategoryIds.includes(catId));
-      if (invalidCategories.length > 0) {
+    if (parsedUpdate.categories?.length) {
+      const validIds = (
+        await db
+          .selectFrom("productCategories")
+          .select("id")
+          .where("organizationId", "=", organizationId)
+          .execute()
+      ).map((c) => c.id);
+      const bad = parsedUpdate.categories.filter((cid) => !validIds.includes(cid));
+      if (bad.length)
         return NextResponse.json(
-          { error: `The following category IDs do not exist: ${invalidCategories.join(", ")}` },
+          { error: `Invalid category IDs: ${bad.join(", ")}` },
           { status: 400 },
         );
-      }
     }
 
-    // Update the product with new camelCase column names
-    await db
-      .updateTable("products")
-      .set({
-        title: parsedUpdate.title,
-        description: parsedUpdate.description,
-        image: parsedUpdate.image,
-        sku: parsedUpdate.sku,
-        status: parsedUpdate.status,
-        productType: parsedUpdate.productType,
-        regularPrice: parsedUpdate.regularPrice,
-        salePrice: parsedUpdate.salePrice,
-        allowBackorders: parsedUpdate.allowBackorders,
-        manageStock: parsedUpdate.manageStock,
-        stockData: parsedUpdate.stockData ? JSON.stringify(parsedUpdate.stockData) : undefined,
-        stockStatus: parsedUpdate.manageStock ? "managed" : "unmanaged",
-        updatedAt: new Date(),
-      })
-      .where("id", "=", id)
-      .execute();
+    /* -------------------------------------------------------------- */
+    /*  build update payload                                          */
+    /* -------------------------------------------------------------- */
+    const updateCols: Record<string, any> = {
+      title: parsedUpdate.title,
+      description: parsedUpdate.description,
+      image: parsedUpdate.image,
+      sku: parsedUpdate.sku,
+      status: parsedUpdate.status,
+      productType: parsedUpdate.productType,
+      allowBackorders: parsedUpdate.allowBackorders,
+      manageStock: parsedUpdate.manageStock,
+      stockData: parsedUpdate.stockData
+        ? JSON.stringify(parsedUpdate.stockData)
+        : undefined,
+      stockStatus: parsedUpdate.manageStock ? "managed" : "unmanaged",
+      updatedAt: new Date(),
+    };
 
-    // Update product-category relationships
+    /* ----------  pricing (map OR legacy fields)  ------------------ */
+    if (parsedUpdate.prices) {
+      const { regularPrice, salePrice } = splitPrices(parsedUpdate.prices); // ★ NEW
+      updateCols.regularPrice = regularPrice;
+      updateCols.salePrice = salePrice;
+    } else {
+      if (parsedUpdate.regularPrice !== undefined)
+        updateCols.regularPrice = parsedUpdate.regularPrice;
+      if (parsedUpdate.salePrice !== undefined)
+        updateCols.salePrice = parsedUpdate.salePrice;
+    }
+
+    await db.updateTable("products").set(updateCols).where("id", "=", id).execute();
+
+    /* -------------------------------------------------------------- */
+    /*  categories – unchanged                                        */
+    /* -------------------------------------------------------------- */
     if (parsedUpdate.categories) {
       await db.deleteFrom("productCategory").where("productId", "=", id).execute();
-      for (const categoryId of parsedUpdate.categories) {
+      for (const cid of parsedUpdate.categories)
         await db
           .insertInto("productCategory")
-          .values({ productId: id, categoryId })
+          .values({ productId: id, categoryId: cid })
           .execute();
-      }
     }
 
-    // Update product attribute mappings
+    /* -------------------------------------------------------------- */
+    /*  attributes – unchanged                                        */
+    /* -------------------------------------------------------------- */
     if (parsedUpdate.attributes) {
-      await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
-      for (const attribute of parsedUpdate.attributes) {
-        for (const termId of attribute.selectedTerms) {
+      await db
+        .deleteFrom("productAttributeValues")
+        .where("productId", "=", id)
+        .execute();
+      for (const a of parsedUpdate.attributes)
+        for (const termId of a.selectedTerms)
           await db
             .insertInto("productAttributeValues")
-            .values({
-              productId: id,
-              attributeId: attribute.id,
-              termId,
-            })
+            .values({ productId: id, attributeId: a.id, termId })
             .execute();
-        }
-      }
     }
 
-    // Update product variations (for variable products)
-    if (parsedUpdate.variations && parsedUpdate.productType === "variable") {
-      // Delete all variations for this product (using camelCase)
+    /* -------------------------------------------------------------- */
+    /*  variations (variable products)                                */
+    /* -------------------------------------------------------------- */
+    if (parsedUpdate.productType === "variable" && parsedUpdate.variations) {
       await db.deleteFrom("productVariations").where("productId", "=", id).execute();
-      for (const variation of parsedUpdate.variations) {
-        const existingVariationSku = await db
-          .selectFrom("productVariations")
-          .select("id")
-          .where("sku", "=", variation.sku)
-          .where("id", "!=", id)
-          .executeTakeFirst();
-        if (existingVariationSku) {
-          return NextResponse.json({ error: `Variation SKU ${variation.sku} already exists` }, { status: 400 });
+
+      for (const v of parsedUpdate.variations) {
+        let regularPrice: any, salePrice: any;
+
+        if ("prices" in v) {
+          /* ★ NEW map‑style variation pricing */
+          const split = splitPrices(v.prices);
+          regularPrice = split.regularPrice;
+          salePrice = split.salePrice;
+        } else {
+          /* legacy flat numbers */
+          regularPrice = v.regularPrice;
+          salePrice = v.salePrice;
         }
+
         await db
           .insertInto("productVariations")
           .values({
-            id: variation.id,
-            productId: id, // using camelCase column name
-            attributes: JSON.stringify(variation.attributes),
-            sku: variation.sku,
-            regularPrice: variation.regularPrice,
-            salePrice: variation.salePrice,
-            stock: variation.stock ? JSON.stringify(variation.stock) : null,
+            id: v.id,
+            productId: id,
+            attributes: JSON.stringify(v.attributes),
+            sku: v.sku,
+            regularPrice,
+            salePrice,
+            stock: v.stock ? JSON.stringify(v.stock) : null,
             createdAt: new Date(),
             updatedAt: new Date(),
           })
@@ -337,18 +393,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     return NextResponse.json({
-      product: {
-        id,
-        ...parsedUpdate,
-        updatedAt: new Date().toISOString(),
-      },
+      product: { id, ...parsedUpdate, updatedAt: new Date().toISOString() },
     });
   } catch (error) {
     const { id } = await params;
     console.error(`[PRODUCT_PATCH_${id}]`, error);
-    if (error instanceof z.ZodError) {
+    if (error instanceof z.ZodError)
       return NextResponse.json({ error: error.errors }, { status: 400 });
-    }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
