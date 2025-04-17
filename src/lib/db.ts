@@ -118,9 +118,13 @@ interface DB {
   };
   reviews: {
     id: string,
+    orderId: string,
     organizationId: string,
     text: string,
-    rate: string
+    rate: string,
+    createdAt: Date,
+    updatedAt: Date,
+    
   };
   member: {
     id: string;
