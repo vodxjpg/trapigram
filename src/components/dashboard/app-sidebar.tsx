@@ -21,7 +21,8 @@ import {
   IconBoxMultiple,
   IconBolt,
   IconCreditCardPay,
-  IconPackageImport
+  IconPackageImport,
+  IconBuildingStore
 } from "@tabler/icons-react";
 
 import { NavOrganizations } from "@/components/dashboard/nav-organizations";
@@ -48,6 +49,11 @@ const data = {
       title: "Dashboard",
       url: "/dashboard",
       icon: IconDashboard,
+    },
+    {
+      title: "Shops",
+      url: "/organizations/",
+      icon: IconBuildingStore,
     },
     {
       title: "Inventory",
@@ -84,6 +90,10 @@ const data = {
       title: "Orders",
       url: "/orders",
       icon: IconReport,
+      items: [
+        { title: "View orders", url: "/orders" },
+        { title: "View reviews", url: "/reviews/" },
+      ],
     },
     {
       title: "Analytics",
@@ -100,14 +110,13 @@ const data = {
       icon: IconBoxMultiple,
     },
     {
-      title: "Shops",
-      url: "/organizations/",
-      icon: IconUsers,
-    },
-    {
-      title: "Shipping methods",
-      url: "/shipping-methods",
+      title: "Shipping",
+      url: "/shipping-companies",
       icon: IconPackageImport,
+      items: [
+        { title: "View shipping methods", url: "/shipments" },
+        { title: "View shipping companies", url: "/shipping-companies" },
+      ],
     },
     {
       title: "Payment methods",

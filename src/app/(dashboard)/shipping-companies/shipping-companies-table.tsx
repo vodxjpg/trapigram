@@ -64,16 +64,16 @@ export function ShippingMethodsTable() {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/shipping-methods?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
+        `/api/shipping-companies?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
       );
-      if (!res.ok) throw new Error("Failed to fetch shipping methods");
+      if (!res.ok) throw new Error("Failed to fetch shipping companies");
       const data = await res.json();
       setMethods(data.shippingMethods);
       setTotalPages(data.totalPages);
       setCurrentPage(data.currentPage);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to load shipping methods");
+      toast.error("Failed to load shipping companies");
     } finally {
       setLoading(false);
     }
@@ -100,7 +100,7 @@ export function ShippingMethodsTable() {
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(`/api/shipping-methods/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/shipping-companies/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Delete failed");
       toast.success("Shipping method deleted");
       fetchMethods();
@@ -111,11 +111,11 @@ export function ShippingMethodsTable() {
   };
 
   const handleEdit = (m: ShippingMethod) => {
-    router.push(`/shipping-methods/${m.id}`);
+    router.push(`/shipping-companies/${m.id}`);
   };
 
   const handleAdd = () => {
-    router.push(`/shipping-methods/new`);
+    router.push(`/shipping-companies/new`);
   };
 
   return (
@@ -127,7 +127,7 @@ export function ShippingMethodsTable() {
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               className="pl-8 w-full"
-              placeholder="Search methods..."
+              placeholder="Search companies..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -160,7 +160,7 @@ export function ShippingMethodsTable() {
             ) : methods.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={3} className="h-24 text-center">
-                  No shipping methods found.
+                  No shipping companies found.
                 </TableCell>
               </TableRow>
             ) : (

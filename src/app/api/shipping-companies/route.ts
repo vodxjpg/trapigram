@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get("search") || "";
 
   // count total
-  let countQuery = `SELECT COUNT(*) FROM shippingmethods WHERE "organizationId" = $1`;
+  let countQuery = `SELECT COUNT(*) FROM "shippingMethods" WHERE "organizationId" = $1`;
   const countValues: any[] = [organizationId];
   if (search) {
     countQuery += ` AND name ILIKE $2`;
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
   // fetch paginated
   let selQuery = `
     SELECT id, "organizationId", name, countries, "createdAt", "updatedAt"
-    FROM shippingmethods
+    FROM "shippingMethods"
     WHERE "organizationId" = $1
   `;
   const values: any[] = [organizationId];
@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
     const id = uuidv4();
     const url = "https://parcelsapp.com/en/tracking/"
     const insertQ = `
-      INSERT INTO shippingmethods
+      INSERT INTO "shippingMethods"
         (id, "organizationId", name, countries, url, "createdAt", "updatedAt")
       VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
       RETURNING *
@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
     created.countries = JSON.parse(created.countries);
     return NextResponse.json(created, { status: 201 });
   } catch (err: any) {
-    console.error("[POST /api/shipping-methods] error:", err);
+    console.error("[POST /api/shipping-companies] error:", err);
     if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });
     }

@@ -256,7 +256,7 @@ export function ShipmentForm({
                   <FormItem>
                     <FormLabel>Title *</FormLabel>
                     <FormControl>
-                      <Input placeholder="Shipment Title" {...field} />
+                      <Input placeholder="Shipping method Title" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -269,7 +269,7 @@ export function ShipmentForm({
                   <FormItem>
                     <FormLabel>Description *</FormLabel>
                     <FormControl>
-                      <Input placeholder="Shipment Description" {...field} />
+                      <Input placeholder="Shipping method Description" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

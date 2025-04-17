@@ -1,4 +1,4 @@
-// src/app/(dashboard)/shipping-methods/shipping-method-form.tsx
+// src/app/(dashboard)/shipping-companies/shipping-method-form.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -102,8 +102,8 @@ export function ShippingMethodForm({
     setIsSubmitting(true);
     try {
       const url = isEditing
-        ? `/api/shipping-methods/${methodData?.id}`
-        : "/api/shipping-methods";
+        ? `/api/shipping-companies/${methodData?.id}`
+        : "/api/shipping-companies";
       const payload = {
         name: values.name,
         countries: JSON.stringify(values.countries),
@@ -120,7 +120,7 @@ export function ShippingMethodForm({
       toast.success(
         isEditing ? "Method updated successfully" : "Method created successfully"
       );
-      router.push("/shipping-methods");
+      router.push("/shipping-companies");
       router.refresh();
     } catch (err: any) {
       console.error(err);
@@ -195,7 +195,7 @@ return (
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => router.push("/shippingMethods")}
+                onClick={() => router.push("/shipping-companies")}
               >
                 Cancel
               </Button>

@@ -1,4 +1,4 @@
-// File: src/app/api/shipping-methods/[id]/route.ts
+// File: src/app/api/shipping-companies/[id]/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -45,7 +45,7 @@ export async function GET(
     const { rows } = await pool.query(
       `
       SELECT id, "organizationId", name, countries, "createdAt", "updatedAt"
-      FROM shippingmethods
+      FROM "shippingMethods"
       WHERE id = $1 AND "organizationId" = $2
     `,
       [id, organizationId]
@@ -59,7 +59,7 @@ export async function GET(
     sm.countries = JSON.parse(sm.countries);
     return NextResponse.json(sm);
   } catch (err: any) {
-    console.error("[GET /api/shipping-methods/[id]]", err);
+    console.error("[GET /api/shipping-companies/[id]]", err);
     const status = err.message.includes("Unauthorized") ? 403 : 500;
     return NextResponse.json({ error: err.message }, { status });
   }
@@ -97,7 +97,7 @@ export async function PATCH(
 
     const result = await pool.query(
       `
-      UPDATE shippingmethods
+      UPDATE "shippingMethods"
       SET ${updates.join(", ")}, "updatedAt" = NOW()
       WHERE id = $${idx++} AND "organizationId" = $${idx}
       RETURNING *
@@ -113,7 +113,7 @@ export async function PATCH(
     sm.countries = JSON.parse(sm.countries)
     return NextResponse.json(sm);
   } catch (err: any) {
-    console.error("[PATCH /api/shipping-methods/[id]]", err);
+    console.error("[PATCH /api/shipping-companies/[id]]", err);
     const status = err instanceof z.ZodError ? 400 : err.message.includes("Unauthorized") ? 403 : 500;
     const payload = err instanceof z.ZodError ? { error: err.errors } : { error: err.message };
     return NextResponse.json(payload, { status });
@@ -130,7 +130,7 @@ export async function DELETE(
 
     const { rows } = await pool.query(
       `
-      DELETE FROM shippingmethods
+      DELETE FROM "shippingMethods"
       WHERE id = $1 AND "organizationId" = $2
       RETURNING *
     `,
@@ -143,7 +143,7 @@ export async function DELETE(
 
     return NextResponse.json({ message: "Deleted successfully" });
   } catch (err: any) {
-    console.error("[DELETE /api/shipping-methods/[id]]", err);
+    console.error("[DELETE /api/shipping-companies/[id]]", err);
     const status = err.message.includes("Unauthorized") ? 403 : 500;
     return NextResponse.json({ error: err.message }, { status });
   }
