@@ -176,6 +176,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     body.countries = JSON.parse(body.countries)
+    body.costs = JSON.parse(body.costs)
     const parsedShipment = shipmentSchema.parse({ ...body, organizationId });
     const { title, description, costs, countries } = parsedShipment;
     const shipmentId = uuidv4();
@@ -190,13 +191,12 @@ export async function POST(req: NextRequest) {
       organizationId,
       title,
       description,
-      costs,
+      JSON.stringify(costs),
       JSON.stringify(countries),
     ];
 
     const result = await pool.query(insertQuery, values);
     const shipment = result.rows[0];
-    shipment.countries = JSON.parse(shipment.countries);
     return NextResponse.json(shipment, { status: 201 });
   } catch (error: any) {
     console.error("[POST /api/shipments] error:", error);

@@ -406,7 +406,10 @@ export function ShipmentForm({
                       <Button
                         type="button"
                         size="icon"
-                        disabled={plusDisabled}
+                        // disable if the group itself isn’t valid, OR if it’s the very first row and there’s already at least one extra
+                        disabled={
+                          plusDisabled || (index === 0 && fields.length > 1)
+                        }
                         className="shrink-0"
                         onClick={() => handleAddCostGroup(index)}
                       >
