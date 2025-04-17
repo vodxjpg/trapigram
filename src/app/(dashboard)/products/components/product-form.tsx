@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from "uuid"
 import Image from "next/image"
 import { Loader2, Upload, X } from "lucide-react"
 import dynamic from "next/dynamic"
+import { mutate as swrMutate } from "swr"
 
 // Dynamically import ReactQuill to avoid SSR errors
 const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false })
@@ -37,17 +38,19 @@ import { StockManagement } from "./stock-management"
 import { ProductAttributes } from "./product-attributes"
 import { ProductVariations } from "./product-variations"
 
-// Define the form schema
+// --------------------------------------------------
+//  validation schema
+// --------------------------------------------------
 const productSchema = z.object({
-  title: z.string().min(1, "Title is required"),
+  title: z.string().min(1),
   description: z.string().optional(),
   image: z.string().nullable().optional(),
   sku: z.string().optional(),
   status: z.enum(["published", "draft"]),
   productType: z.enum(["simple", "variable"]),
   categories: z.array(z.string()).optional(),
-  regularPrice: z.coerce.number().min(0, "Price must be a positive number"),
-  salePrice: z.coerce.number().min(0, "Sale price must be a positive number").nullable().optional(),
+  regularPrice: z.coerce.number().min(0),
+  salePrice: z.coerce.number().min(0).nullable().optional(),
   allowBackorders: z.boolean().default(false),
   manageStock: z.boolean().default(false),
 })
@@ -59,7 +62,9 @@ interface ProductFormProps {
   initialData?: Product
 }
 
-// Quill modules and formats
+// --------------------------------------------------
+//  ReactQuill config
+// --------------------------------------------------
 const quillModules = {
   toolbar: [
     [{ header: [1, 2, false] }],
@@ -83,56 +88,56 @@ const quillFormats = [
   "image",
 ]
 
+// --------------------------------------------------
+//  component
+// --------------------------------------------------
 export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   const router = useRouter()
+
+  // --------------------------------------------------
+  //  local state
+  // --------------------------------------------------
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [imagePreview, setImagePreview] = useState<string | null>(initialData?.image || null)
   const [isCheckingSku, setIsCheckingSku] = useState(false)
   const [skuAvailable, setSkuAvailable] = useState(true)
   const [categories, setCategories] = useState<Array<{ id: string; name: string; slug: string }>>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
-  const [stockData, setStockData] = useState<Record<string, Record<string, number>>>({}); // Initialize as empty object
+  const [stockData, setStockData] = useState<Record<string, Record<string, number>>>({})
   const [attributes, setAttributes] = useState<Attribute[]>(initialData?.attributes || [])
   const [variations, setVariations] = useState<Variation[]>(initialData?.variations || [])
 
-  // Parse stockData when initialData changes
+  // --------------------------------------------------
+  //  parse initial stock
+  // --------------------------------------------------
   useEffect(() => {
-    if (initialData?.stockData) {
-      try {
-        const parsedStockData =
-          typeof initialData.stockData === "string"
-            ? JSON.parse(initialData.stockData)
-            : initialData.stockData;
-        setStockData(parsedStockData);
-      } catch (error) {
-        console.error("Failed to parse stockData:", error);
-        setStockData({});
-      }
-    } else {
-      setStockData({});
+    if (!initialData?.stockData) return
+    try {
+      const parsed = typeof initialData.stockData === "string" ? JSON.parse(initialData.stockData) : initialData.stockData
+      setStockData(parsed)
+    } catch {
+      setStockData({})
     }
-  }, [initialData]);
+  }, [initialData])
 
-  // Initialize form with default values, converting price fields to numbers
+  // --------------------------------------------------
+  //  react‑hook‑form
+  // --------------------------------------------------
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productSchema),
     defaultValues: initialData
       ? {
-          title: initialData.title || "",
-          description: initialData.description || "",
-          image: initialData.image || null,
-          sku: initialData.sku || "",
-          status: initialData.status || "draft",
-          productType: initialData.productType || "simple",
-          categories: initialData.categories || [],
-          regularPrice:
-            initialData.regularPrice !== undefined ? Number(initialData.regularPrice) : 0,
-          salePrice:
-            initialData.salePrice !== undefined && initialData.salePrice !== null
-              ? Number(initialData.salePrice)
-              : null,
-          allowBackorders: initialData.allowBackorders || false,
-          manageStock: initialData.manageStock || false,
+          title: initialData.title ?? "",
+          description: initialData.description ?? "",
+          image: initialData.image ?? null,
+          sku: initialData.sku ?? "",
+          status: initialData.status ?? "draft",
+          productType: initialData.productType ?? "simple",
+          categories: initialData.categories ?? [],
+          regularPrice: Number(initialData.regularPrice ?? 0),
+          salePrice: initialData.salePrice == null ? null : Number(initialData.salePrice),
+          allowBackorders: initialData.allowBackorders ?? false,
+          manageStock: initialData.manageStock ?? false,
         }
       : {
           title: "",
@@ -149,164 +154,135 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         },
   })
 
-  // When initialData changes (edit mode), reset the form values and convert price fields
+  // reset when initialData changes (edit mode)
   useEffect(() => {
-    if (initialData) {
-      form.reset({
-        title: initialData.title || "",
-        description: initialData.description || "",
-        image: initialData.image || null,
-        sku: initialData.sku || "",
-        status: initialData.status || "draft",
-        productType: initialData.productType || "simple",
-        categories: initialData.categories || [],
-        regularPrice:
-          initialData.regularPrice !== undefined ? Number(initialData.regularPrice) : 0,
-        salePrice:
-          initialData.salePrice !== undefined && initialData.salePrice !== null
-            ? Number(initialData.salePrice)
-            : null,
-        allowBackorders: initialData.allowBackorders || false,
-        manageStock: initialData.manageStock || false,
-      })
-    }
-    console.log("🔍 initialData:", initialData);
-  console.log("🔍 form.getValues():", form.getValues());
+    if (!initialData) return
+    form.reset({
+      title: initialData.title ?? "",
+      description: initialData.description ?? "",
+      image: initialData.image ?? null,
+      sku: initialData.sku ?? "",
+      status: initialData.status ?? "draft",
+      productType: initialData.productType ?? "simple",
+      categories: initialData.categories ?? [],
+      regularPrice: Number(initialData.regularPrice ?? 0),
+      salePrice: initialData.salePrice == null ? null : Number(initialData.salePrice),
+      allowBackorders: initialData.allowBackorders ?? false,
+      manageStock: initialData.manageStock ?? false,
+    })
   }, [initialData, form])
 
+  // watch values that affect UI
   const productType = form.watch("productType")
   const manageStock = form.watch("manageStock")
 
-  // Fetch categories for the select options
+  // --------------------------------------------------
+  //  fetch helpers
+  // --------------------------------------------------
   useEffect(() => {
-    async function fetchCategories() {
-      try {
-        const response = await fetch("/api/product-categories")
-        if (!response.ok) throw new Error("Failed to fetch categories")
-        const data = await response.json()
-        setCategories(data.categories)
-      } catch (error) {
-        console.error("Error fetching categories:", error)
-        toast.error("Failed to load product categories")
+    ;(async () => {
+      const res = await fetch("/api/product-categories")
+      if (res.ok) {
+        const { categories } = await res.json()
+        setCategories(categories)
       }
-    }
-    fetchCategories()
+    })()
   }, [])
 
-  // Fetch warehouses for stock management
   useEffect(() => {
-    async function fetchWarehouses() {
-      try {
-        const response = await fetch("/api/warehouses")
-        if (!response.ok) throw new Error("Failed to fetch warehouses")
-        const data = await response.json()
-        setWarehouses(data.warehouses)
-        if (!initialData) {
-          const initialStockData: Record<string, Record<string, number>> = {}
-          data.warehouses.forEach((warehouse: any) => {
-            initialStockData[warehouse.id] = {}
-            warehouse.countries.forEach((country: string) => {
-              initialStockData[warehouse.id][country] = 0
-            })
-          })
-          setStockData(initialStockData)
-        }
-      } catch (error) {
-        console.error("Error fetching warehouses:", error)
-        toast.error("Failed to load warehouses")
+    ;(async () => {
+      const res = await fetch("/api/warehouses")
+      if (!res.ok) return
+      const { warehouses } = await res.json()
+      setWarehouses(warehouses)
+      if (!initialData) {
+        const obj: Record<string, Record<string, number>> = {}
+        warehouses.forEach((w: Warehouse) => {
+          obj[w.id] = {}
+          w.countries.forEach((c: string) => (obj[w.id][c] = 0))
+        })
+        setStockData(obj)
       }
-    }
-    fetchWarehouses()
+    })()
   }, [initialData])
 
-  // Check SKU availability
+  // --------------------------------------------------
+  //  SKU helpers
+  // --------------------------------------------------
   const checkSkuAvailability = async (sku: string) => {
     if (!sku) return true
     setIsCheckingSku(true)
     try {
-      const response = await fetch(`/api/products/check-sku?sku=${sku}`)
-      if (!response.ok) throw new Error("Failed to check SKU")
-      const data = await response.json()
-      if (productId && initialData?.sku === sku) {
-        setSkuAvailable(true)
-        return true
-      }
+      const res = await fetch(`/api/products/check-sku?sku=${sku}`)
+      const data = await res.json()
+      if (productId && initialData?.sku === sku) return true
       setSkuAvailable(!data.exists)
       return !data.exists
-    } catch (error) {
-      console.error("Error checking SKU:", error)
-      return false
     } finally {
       setIsCheckingSku(false)
     }
   }
 
-  // Generate SKU if not provided
-  const generateSku = () => {
-    const prefix = "ORG"
-    const randomPart = uuidv4().slice(0, 8)
-    return `${prefix}-${randomPart}`
-  }
+  const generateSku = () => `ORG-${uuidv4().slice(0, 8)}`
 
-  // Handle image upload
+  // --------------------------------------------------
+  //  image upload
+  // --------------------------------------------------
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const formData = new FormData()
-    formData.append("file", file)
-    try {
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      })
-      if (!response.ok) throw new Error("Failed to upload image")
-      const data = await response.json()
-      const imageUrl = data.filePath
-      setImagePreview(imageUrl)
-      form.setValue("image", imageUrl)
-    } catch (error) {
-      console.error("Error uploading image:", error)
-      toast.error("Failed to upload image")
-    }
+    const fd = new FormData()
+    fd.append("file", file)
+    const res = await fetch("/api/upload", { method: "POST", body: fd })
+    if (!res.ok) return
+    const { filePath } = await res.json()
+    setImagePreview(filePath)
+    form.setValue("image", filePath)
   }
 
-  // Handle form submission
-  const onSubmit = async (data: ProductFormValues) => {
+  // --------------------------------------------------
+  //  submit
+  // --------------------------------------------------
+  const onSubmit = async (values: ProductFormValues) => {
     setIsSubmitting(true)
     try {
-      if (!data.sku) {
-        data.sku = generateSku()
-      } else {
-        const isAvailable = await checkSkuAvailability(data.sku)
-        if (!isAvailable) {
-          toast.error("The SKU is already in use. Please choose another.")
-          setIsSubmitting(false)
-          return
-        }
+      if (!values.sku) {
+        values.sku = generateSku()
+      } else if (!(await checkSkuAvailability(values.sku))) {
+        toast.error("The SKU is already in use.")
+        return
       }
+
       const payload = {
-        ...data,
+        ...values,
         ...(productType === "variable" ? { regularPrice: null, salePrice: null } : {}),
         stockData: manageStock && productType === "simple" ? stockData : null,
-        attributes: attributes,
+        attributes,
         variations: productType === "variable" ? variations : [],
       }
-      console.log("Form submitted with data:", payload)
-      console.log("🚀 Submitting payload:", payload);
+
       const url = productId ? `/api/products/${productId}` : "/api/products"
       const method = productId ? "PATCH" : "POST"
-      const response = await fetch(url, {
+
+      const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       })
-      if (!response.ok) {
-        throw new Error(`Failed to ${productId ? "update" : "create"} product`)
-      }
+
+      if (!res.ok) throw new Error()
+      const { product } = await res.json()
+
+      // --------------------------------------------------
+      //  SWR cache updates
+      // --------------------------------------------------
+      if (productId) swrMutate(`/api/products/${productId}`, product, false)
+      swrMutate((key: string) => key.startsWith("/api/products?"))
+
       toast.success(`Product ${productId ? "updated" : "created"} successfully`)
       router.push("/products")
-    } catch (error) {
-      console.error("Error submitting form:", error)
+      router.refresh()
+    } catch {
       toast.error(`Failed to ${productId ? "update" : "create"} product`)
     } finally {
       setIsSubmitting(false)
