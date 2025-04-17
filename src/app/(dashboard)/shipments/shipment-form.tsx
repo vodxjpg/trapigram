@@ -33,7 +33,7 @@ import countriesLib from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 import { getCountries } from "libphonenumber-js";
 import ReactCountryFlag from "react-country-flag";
-import { PlusCircle } from "lucide-react";
+import { PlusCircle, MinusCircle } from "lucide-react";
 
 countriesLib.registerLocale(enLocale);
 const allCountries = getCountries().map((code) => ({
@@ -95,7 +95,7 @@ export function ShipmentForm({
   });
 
   // Set up the field array for cost groups.
-  const { fields, append } = useFieldArray({
+  const { fields, append, remove } = useFieldArray({
     control: form.control,
     name: "costs",
   });
@@ -119,7 +119,7 @@ export function ShipmentForm({
       append({
         minOrderCost: Number(group.maxOrderCost) + 0.01,
         maxOrderCost: "",
-        shipmentCost: "",
+        shipmentCost: 0,
       });
     }
   };
@@ -325,6 +325,7 @@ export function ShipmentForm({
             <div className="flex justify-center items-center p-4">
               <div className="w-full max-w-4xl">
                 {fields.map((field, index) => {
+                  const isLast = index === fields.length - 1;
                   const currentGroup = costGroups[index];
                   const plusDisabled = !(
                     currentGroup &&
@@ -403,17 +404,26 @@ export function ShipmentForm({
                           )}
                         />
                       </div>
+                      
                       <Button
                         type="button"
                         size="icon"
-                        // disable if the group itself isn’t valid, OR if it’s the very first row and there’s already at least one extra
-                        disabled={
-                          plusDisabled || (index === 0 && fields.length > 1)
-                        }
+                        // only allow clicks on the last cost‐group AND when its own data is valid
+                        disabled={plusDisabled || index !== fields.length - 1}
                         className="shrink-0"
                         onClick={() => handleAddCostGroup(index)}
                       >
                         <PlusCircle className="h-5 w-5" />
+                      </Button>
+                      {/* Minus Button */}
+                      <Button
+                        type="button"
+                        size="icon"
+                        disabled={!isLast || fields.length === 1}
+                        className="shrink-0"
+                        onClick={() => remove(index)}
+                      >
+                        <MinusCircle className="h-5 w-5 text-red-500" />
                       </Button>
                     </div>
                   );
