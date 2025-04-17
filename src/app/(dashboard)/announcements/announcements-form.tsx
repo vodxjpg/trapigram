@@ -424,45 +424,6 @@ export function AnnouncementForm({
                   />
                 )}
               </div>
-
-              {/* Row 6: Limit Per User and Visibility */}
-              <div>
-                <FormField
-                  control={form.control}
-                  name="limitPerUser"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Limit Per User</FormLabel>
-                      <FormControl>
-                        <Input type="number" {...field} placeholder="0" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div>
-                <FormField
-                  control={form.control}
-                  name="visibility"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Visibility</FormLabel>
-                      <FormControl>
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                            className="mr-2"
-                          />
-                          <span>{field.value ? "Visible" : "Hidden"}</span>
-                        </div>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
             </div>
 
             {/* Submit/Cancel Buttons */}
