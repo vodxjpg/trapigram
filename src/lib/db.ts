@@ -302,14 +302,11 @@ interface DB {
   };
 }
 
-const sslRootCert = fs.readFileSync(
-  path.resolve(process.cwd(), 'supabase-ca.crt')
-).toString();
+const sslRootCert = Buffer.from(process.env.SUPABASE_CA_B64!, 'base64').toString('utf-8');
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    // now Node will verify the server cert against this root
     ca: sslRootCert
   }
 });
