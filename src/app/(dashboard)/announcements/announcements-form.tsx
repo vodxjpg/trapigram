@@ -1,3 +1,4 @@
+// src/app/(dashboard)/announcements/announcements-form.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -8,8 +9,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import ReactQuill from "react-quill-new";
-import "react-quill-new/dist/quill.snow.css";
+import dynamic from "next/dynamic"; // Added for dynamic import
 import Select from "react-select";
 
 import { Button } from "@/components/ui/button";
@@ -22,12 +22,16 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-// Temporarily using a simple div as Card since Card import is pending.
 import { Card, CardContent } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Switch } from "@/components/ui/switch";
+
+// Dynamically import ReactQuill with SSR disabled
+const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
+// Dynamically import ReactQuill CSS
+import("react-quill-new/dist/quill.snow.css");
 
 // ---------- Countries Setup ----------
 import countriesLib from "i18n-iso-countries";
@@ -67,9 +71,7 @@ export function AnnouncementForm({
   const [date, setDate] = useState<Date | null>(null);
   const [openDatePicker, setOpenDatePicker] = useState(false);
   const [switchDelivery, setSwitchDelivery] = useState(false);
-  // Country select options fetched from the endpoint.
   const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]);
-
 
   const form = useForm<AnnouncementFormValues>({
     resolver: zodResolver(announcementFormSchema),
@@ -82,8 +84,6 @@ export function AnnouncementForm({
       status: "draft",
     },
   });
-
-
 
   // Fetch the countries for the organization from your endpoint.
   useEffect(() => {
@@ -98,7 +98,6 @@ export function AnnouncementForm({
           throw new Error("Failed to fetch organization countries");
         }
         const data = await response.json();
-        // Assume data.countries is a JSON string or comma-separated list.
         let orgCountries: string[] = [];
         try {
           const parsed = JSON.parse(data.countries);
@@ -128,12 +127,11 @@ export function AnnouncementForm({
     if (isEditing && announcementData) {
       form.reset({
         ...announcementData,
-        // Ensure that countries is an array.
         countries: Array.isArray(announcementData.countries)
           ? announcementData.countries
           : typeof announcementData.countries === "string"
           ? JSON.parse(announcementData.countries)
-          : [],// auto-set organization from session.
+          : [],
       });
       if (announcementData.deliveryDate) {
         const d = new Date(announcementData.deliveryDate);
