@@ -7,6 +7,7 @@ import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ProductsDataTable } from "./components/products-data-table"
 import { PageHeader } from "@/components/page-header"
+import { Suspense } from 'react'; // Added Suspense import
 
 export default function ProductsPage() {
   const router = useRouter()
@@ -28,8 +29,9 @@ export default function ProductsPage() {
           </Button>
         }
       />
-
-      <ProductsDataTable />
+      <Suspense fallback={<div>Loading products table...</div>}>
+        <ProductsDataTable />
+      </Suspense>
     </div>
   )
 }

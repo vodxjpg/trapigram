@@ -1,6 +1,9 @@
 // /home/zodx/Desktop/trapigram/src/lib/db.ts
-import { Kysely, PostgresDialect } from "kysely";
+import fs from 'fs';
+import path from 'path';
 import { Pool } from "pg";
+import { Kysely, PostgresDialect } from "kysely";
+
 
 interface DB {
   // Base Better Auth Tables
@@ -299,8 +302,16 @@ interface DB {
   };
 }
 
+const sslRootCert = fs.readFileSync(
+  path.resolve(process.cwd(), 'supabase-ca.crt')
+).toString();
+
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: {
+    // now Node will verify the server cert against this root
+    ca: sslRootCert
+  }
 });
 
 export const db = new Kysely<DB>({
