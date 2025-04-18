@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { CouponsTable } from "./coupons-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { Suspense } from 'react'; // Added Suspense import
 
 export default function CategoriesPage() {
     const { setHeaderTitle } = useHeaderTitle();
@@ -19,7 +20,9 @@ export default function CategoriesPage() {
           Manage your coupons.
         </p>
       </div>
-      <CouponsTable />
+      <Suspense fallback={<div>Loading coupons table...</div>}>
+        <CouponsTable />
+      </Suspense>
     </div>
   );
 }
