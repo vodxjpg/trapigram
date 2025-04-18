@@ -1,6 +1,7 @@
-import { GalleryVerticalEnd } from "lucide-react"
-import { LoginForm } from "@/components/auth/login-form"
-import Globe from "@/components/Globe"
+import { GalleryVerticalEnd } from "lucide-react";
+import { LoginForm } from "@/components/auth/login-form";
+import Globe from "@/components/Globe";
+import { Suspense } from 'react'; // Added Suspense import
 
 export default function LoginPage() {
   return (
@@ -17,7 +18,9 @@ export default function LoginPage() {
         </div>
         <div className="flex flex-1 items-center justify-center">
           <div className="w-full max-w-xs">
-            <LoginForm />
+            <Suspense fallback={<div>Loading login form...</div>}>
+              <LoginForm />
+            </Suspense>
           </div>
         </div>
       </div>
@@ -34,5 +37,5 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }
