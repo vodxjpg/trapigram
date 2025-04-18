@@ -4,6 +4,7 @@
 import { useEffect } from "react";
 import { AnnouncementForm } from "../announcements-form";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { Suspense } from 'react'; // Added Suspense import
 
 export default function AnnouncementsNewPage() {
   const { setHeaderTitle } = useHeaderTitle();
@@ -18,7 +19,9 @@ export default function AnnouncementsNewPage() {
         <h1 className="text-3xl font-bold tracking-tight">New Announcement</h1>
         <p className="text-muted-foreground">Create a new announcement.</p>
       </div>
-      <AnnouncementForm />
+      <Suspense fallback={<div>Loading announcement form...</div>}>
+        <AnnouncementForm />
+      </Suspense>
     </div>
   );
 }
