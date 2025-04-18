@@ -123,7 +123,7 @@ export function LoginForm({ className, ...props }: React.ComponentPropsWithoutRe
           {errors.password && <p className="text-red-500 text-sm">{errors.password.message}</p>}
         </div>
         <Button type="submit" className="w-full">
-          {passwordValue ? "Login" : "Send Magic Link"}
+          {passwordValue ? "Login" : "Login"}
         </Button>
       </div>
       <div className="text-center text-sm">
