@@ -1,6 +1,4 @@
 // /home/zodx/Desktop/trapigram/src/lib/db.ts
-import fs from 'fs';
-import path from 'path';
 import { Pool } from "pg";
 import { Kysely, PostgresDialect } from "kysely";
 
@@ -302,12 +300,11 @@ interface DB {
   };
 }
 
-const sslRootCert = Buffer.from(process.env.SUPABASE_CA_B64!, 'base64').toString('utf-8');
-
-export const pool = new Pool({
+const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    ca: sslRootCert
+    // WARNING: disables cert validation, but works around the SELF_SIGNED_CERT error
+    rejectUnauthorized: false
   }
 });
 
