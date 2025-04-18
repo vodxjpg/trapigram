@@ -302,10 +302,7 @@ interface DB {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    // WARNING: disables cert validation, but works around the SELF_SIGNED_CERT error
-    rejectUnauthorized: false
-  }
+  ssl: true  // default cert validation against the public CA
 });
 
 export const db = new Kysely<DB>({
