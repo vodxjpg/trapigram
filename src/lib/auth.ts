@@ -24,7 +24,7 @@ export const auth = betterAuth({
   // Trusted Origins
   // -------------------------------------------------------------------------
   trustedOrigins: [
-    "http://localhost:3000",
+    "https://trapigram.vercel.app/",
   ],
 
   // -------------------------------------------------------------------------
