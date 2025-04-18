@@ -1,8 +1,10 @@
+// src/app/(dashboard)/announcements/page.tsx
 "use client";
 
 import { useEffect } from "react";
 import { AnnouncementsTable } from "./announcements-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { Suspense } from 'react'; // Added Suspense import
 
 export default function CategoriesPage() {
     const { setHeaderTitle } = useHeaderTitle();
@@ -19,7 +21,9 @@ export default function CategoriesPage() {
           Manage your Announcements.
         </p>
       </div>
-      <AnnouncementsTable />
+      <Suspense fallback={<div>Loading announcements table...</div>}>
+        <AnnouncementsTable />
+      </Suspense>
     </div>
   );
 }
