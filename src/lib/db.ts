@@ -302,9 +302,10 @@ interface DB {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: true  // default cert validation against the public CA
-});
+  // no need to import certs or disable validation—sslmode=require 
+  // in the URL does encryption without cert checking
+})
 
-export const db = new Kysely<DB>({
-  dialect: new PostgresDialect({ pool }),
-});
+export const db = new Kysely({
+  dialect: new PostgresDialect({ pool })
+})
