@@ -6,8 +6,10 @@ export interface Product {
   sku: string;
   status: "published" | "draft";
   productType: "simple" | "variable";
-  regularPrice: Record<string, number>; 
+  regularPrice: Record<string, number>;
   salePrice:    Record<string, number> | null;
+  /** NEW */
+  cost:         Record<string, number>;
   allowBackorders: boolean;
   manageStock: boolean;
   stockStatus: "managed" | "unmanaged";
@@ -33,6 +35,8 @@ export interface Variation {
   sku: string;
   regularPrice: Record<string, number>;
   salePrice:    Record<string, number> | null;
+  /** NEW */
+  cost:         Record<string, number>;
   stock?: Record<string, Record<string, number>>;
 }
 

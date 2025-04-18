@@ -13,18 +13,20 @@ import { Badge } from "@/components/ui/badge"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { FormLabel } from "@/components/ui/form"           // ← ★ NEW ★
-
+import { FormLabel } from "@/components/ui/form"
 import { PriceManagement } from "./price-management"
+import { CostManagement }  from "./cost-management"         // ★ NEW
 import type { Attribute, Variation, Warehouse } from "@/types/product"
 
 // ---------------------------------------------------------------------------
 // helpers / types
 // ---------------------------------------------------------------------------
 type PriceMap = Record<string, { regular: number; sale: number | null }>
+type CostMap  = Record<string, number>                    // ★ NEW
 
 interface VariationExt extends Variation {
   prices: PriceMap
+  cost:   CostMap                                        // ★ NEW
 }
 
 interface Props {
@@ -49,12 +51,12 @@ export function ProductVariations({
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [skuDraft, setSkuDraft] = useState("")
 
-  // ensure every variation has prices & stock for each country -------------
+  // ensure every variation has prices, cost & stock for each country -------
   useEffect(() => {
     if (countries.length === 0) return
     onVariationsChange((cur) =>
       cur.map((v) => {
-        // prices
+        /* prices --------------------------------------------------------- */
         const priceMap: PriceMap = { ...(v.prices || {}) }
         let priceChanged = false
         countries.forEach((c) => {
@@ -64,7 +66,17 @@ export function ProductVariations({
           }
         })
 
-        // stock (existing logic kept)
+        /* cost ----------------------------------------------------------- */
+        const costMap: CostMap = { ...(v.cost || {}) }                   // ★ NEW
+        let costChanged = false                                          // ★ NEW
+        countries.forEach((c) => {
+          if (costMap[c] == null) {
+            costMap[c] = 0
+            costChanged = true
+          }
+        })
+
+        /* stock (existing logic) ---------------------------------------- */
         const stock: Record<string, Record<string, number>> = { ...(v.stock || {}) }
         warehouses.forEach((w) => {
           if (!stock[w.id]) stock[w.id] = {}
@@ -73,8 +85,8 @@ export function ProductVariations({
           })
         })
 
-        if (!priceChanged && JSON.stringify(stock) === JSON.stringify(v.stock)) return v
-        return { ...v, prices: priceMap, stock }
+        if (!priceChanged && !costChanged && JSON.stringify(stock) === JSON.stringify(v.stock)) return v
+        return { ...v, prices: priceMap, cost: costMap, stock }
       }),
     )
   }, [countries, warehouses, onVariationsChange])
@@ -105,6 +117,7 @@ export function ProductVariations({
     }
     build(0, {})
 
+    /* blank maps -------------------------------------------------------- */
     const blankStock: Record<string, Record<string, number>> = {}
     warehouses.forEach((w) => {
       blankStock[w.id] = {}
@@ -112,7 +125,11 @@ export function ProductVariations({
     })
 
     const blankPrices: PriceMap = {}
-    countries.forEach((c) => (blankPrices[c] = { regular: 0, sale: null }))
+    const blankCosts : CostMap  = {}                                     // ★ NEW
+    countries.forEach((c) => {
+      blankPrices[c] = { regular: 0, sale: null }
+      blankCosts[c]  = 0                                                 // ★ NEW
+    })
 
     const merged = combos.map((combo) => {
       const existing = variations.find((v) => Object.entries(combo).every(([k, vId]) => v.attributes[k] === vId))
@@ -122,6 +139,7 @@ export function ProductVariations({
           attributes: combo,
           sku: `VAR-${uuidv4().slice(0, 8)}`,
           prices: JSON.parse(JSON.stringify(blankPrices)),
+          cost:   JSON.parse(JSON.stringify(blankCosts)),                // ★ NEW
           stock: JSON.parse(JSON.stringify(blankStock)),
         }
       )
@@ -146,6 +164,9 @@ export function ProductVariations({
 
   const updatePrice = (vid: string, map: PriceMap) =>
     onVariationsChange((cur) => cur.map((v) => (v.id === vid ? { ...v, prices: map } : v)))
+
+  const updateCost = (vid: string, map: CostMap) =>                     // ★ NEW
+    onVariationsChange((cur) => cur.map((v) => (v.id === vid ? { ...v, cost: map } : v)))
 
   const updateStock = (vid: string, wid: string, c: string, qty: number) =>
     onVariationsChange((cur) =>
@@ -232,8 +253,16 @@ export function ProductVariations({
                 <PriceManagement
                   title="Prices per country"
                   countries={countries}
-                  priceData={v.prices}          // <- correct prop
+                  priceData={v.prices}
                   onChange={(map) => updatePrice(v.id, map)}
+                />
+
+                {/* COST ------------------------------------------------------ */}
+                <CostManagement                                          // ★ NEW
+                  title="Cost per country"
+                  countries={countries}
+                  costData={v.cost}
+                  onChange={(map) => updateCost(v.id, map)}
                 />
 
                 {/* STOCK ----------------------------------------------------- */}

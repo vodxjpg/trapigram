@@ -273,6 +273,7 @@ interface DB {
     /** key = ISO‑3166 country (§ organization.countries) */
     regularPrice: Record<string, number>;           //   « changed »
     salePrice:   Record<string, number> | null;     //   « changed »
+    cost:         Record<string, number>;               // ← ★
     allowBackorders: boolean;
     manageStock: boolean;
     stockData: Record<string, Record<string, number>> | null;
@@ -291,6 +292,7 @@ interface DB {
     /** country‑based pricing for the variation */
     regularPrice: Record<string, number>;          //   « changed »
     salePrice:   Record<string, number> | null;    //   « changed »
+    cost:         Record<string, number>;     
     stock: Record<string, Record<string, number>> | null;
     createdAt: Date;
     updatedAt: Date;

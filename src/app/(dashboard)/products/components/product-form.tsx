@@ -38,14 +38,16 @@ import { StockManagement } from "./stock-management"
 import { ProductAttributes } from "./product-attributes"
 import { ProductVariations } from "./product-variations"
 import { PriceManagement } from "./price-management"
+import { CostManagement } from "./cost-management"            // ★ NEW
 
 // --------------------------------------------------
 //  helpers / types
 // --------------------------------------------------
 type PriceMap = Record<string, { regular: number; sale: number | null }>
+type CostMap  = Record<string, number>                           // ★ NEW
 
 // --------------------------------------------------
-//  validation schema  (regular/sale removed)
+//  validation schema
 // --------------------------------------------------
 const priceObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() })
 const productSchema = z.object({
@@ -59,6 +61,7 @@ const productSchema = z.object({
   allowBackorders: z.boolean().default(false),
   manageStock: z.boolean().default(false),
   prices: z.record(z.string(), priceObj).optional(),
+  cost:   z.record(z.string(), z.number().min(0)).optional(),   // ★ NEW
 })
 
 type ProductFormValues = z.infer<typeof productSchema>
@@ -114,6 +117,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   const [variations, setVariations] = useState<Variation[]>(initialData?.variations || [])
   const [orgCountries, setOrgCountries] = useState<string[]>([])
   const [prices, setPrices] = useState<PriceMap>({})
+  const [costs,  setCosts]  = useState<CostMap>({})            // ★ NEW
 
   // --------------------------------------------------
   //  parse initial stock
@@ -132,7 +136,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   }, [initialData])
 
   // --------------------------------------------------
-  //  fetch organization countries (for pricing map)
+  //  fetch organization countries (for pricing & cost maps)
   // --------------------------------------------------
   useEffect(() => {
     ;(async () => {
@@ -142,13 +146,22 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
       const list = Array.isArray(countries) ? countries : JSON.parse(countries)
       setOrgCountries(list)
 
+      /* prices ----------------------------------------------------- */
       if (initialData?.prices) {
         setPrices(initialData.prices as PriceMap)
       } else if (!initialData) {
-        // init blank prices for simple products
         const blank: PriceMap = {}
         list.forEach((c) => (blank[c] = { regular: 0, sale: null }))
         setPrices(blank)
+      }
+
+      /* cost ------------------------------------------------------- */
+      if (initialData?.cost) {                                      // ★ NEW
+        setCosts(initialData.cost as CostMap)
+      } else if (!initialData) {
+        const blankCost: CostMap = {}
+        list.forEach((c) => (blankCost[c] = 0))
+        setCosts(blankCost)
       }
     })()
   }, [initialData])
@@ -198,6 +211,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
       manageStock: initialData.manageStock ?? false,
     })
     if (initialData.prices) setPrices(initialData.prices as PriceMap)
+    if (initialData.cost)   setCosts(initialData.cost   as CostMap)   // ★ NEW
   }, [initialData, form])
 
   // watch values that affect UI
@@ -284,6 +298,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
       const payload = {
         ...values,
         prices: productType === "simple" ? prices : undefined,
+        cost:   productType === "simple" ? costs  : undefined,         // ★ NEW
         stockData: manageStock && productType === "simple" ? stockData : null,
         attributes,
         variations: productType === "variable" ? variations : [],
@@ -316,6 +331,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
       setIsSubmitting(false)
     }
   }
+
 
   return (
     <Form {...form}>
@@ -579,13 +595,20 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
               </CardHeader>
               <CardContent className="space-y-6">
                 {productType === "simple" && (
-                 <PriceManagement
-                    title="Prices per country"
-                    countries={orgCountries}
-                    priceData={prices}
-                    onChange={setPrices}
-                  />
-                 
+                  <>
+                    <PriceManagement
+                      title="Prices per country"
+                      countries={orgCountries}
+                      priceData={prices}
+                      onChange={setPrices}
+                    />
+                    <CostManagement         
+                      title="Cost per country"
+                      countries={orgCountries}
+                      costData={costs}
+                      onChange={setCosts}
+                    />
+                  </>
                 )}
 
                 <FormField
