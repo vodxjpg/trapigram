@@ -1,6 +1,8 @@
+// src/app/(auth)/sign-up/page.tsx
 import { GalleryVerticalEnd } from "lucide-react"
 import { SignUpForm } from "@/components/auth/sign-up-form"
 import Globe from "@/components/Globe"
+import { Suspense } from 'react' // Added Suspense import
 
 export default function SignUpPage() {
   return (
@@ -17,7 +19,9 @@ export default function SignUpPage() {
         </div>
         <div className="flex flex-1 items-center justify-center">
           <div className="w-full max-w-lg">
-            <SignUpForm />
+            <Suspense fallback={<div>Loading sign-up form...</div>}>
+              <SignUpForm />
+            </Suspense>
           </div>
         </div>
       </div>
