@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { AttributeTable } from "./attribute-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { Suspense } from 'react'; // Added Suspense import
 
 export default function ProductAttributesPage() {
   const { setHeaderTitle } = useHeaderTitle();
@@ -19,7 +20,9 @@ export default function ProductAttributesPage() {
           Manage your product attributes (e.g., Brand, Color) and their terms.
         </p>
       </div>
-      <AttributeTable />
+      <Suspense fallback={<div>Loading attributes table...</div>}>
+        <AttributeTable />
+      </Suspense>
     </div>
   );
 }

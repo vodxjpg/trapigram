@@ -3,6 +3,8 @@
 import { useEffect } from "react";
 import { CategoryTable } from "./category-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { Suspense } from 'react'; // Added Suspense import
+
 
 export default function CategoriesPage() {
     const { setHeaderTitle } = useHeaderTitle();
@@ -19,7 +21,9 @@ export default function CategoriesPage() {
           Manage your product categories and their organization.
         </p>
       </div>
-      <CategoryTable />
+      <Suspense fallback={<div>Loading categories table...</div>}>
+        <CategoryTable />
+      </Suspense>
     </div>
   );
 }
