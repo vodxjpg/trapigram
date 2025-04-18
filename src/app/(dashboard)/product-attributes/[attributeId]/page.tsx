@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { TermTable } from "./term-table";
+import { TermTable } from "./terms/term-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
 export default function AttributeTermsPage({ params }: { params: { attributeId: string } }) {
