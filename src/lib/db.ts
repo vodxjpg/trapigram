@@ -301,11 +301,7 @@ interface DB {
 }
 
 const pool = new Pool({
-  connectionString: process.env.SUPABASE_URL,
-  ssl: {
-    // allow the self‑signed chain from the pooler
-    rejectUnauthorized: false
-  }
+  connectionString: process.env.POSTGRES_URL,
 })
 
 
