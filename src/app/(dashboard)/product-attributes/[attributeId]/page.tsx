@@ -4,8 +4,16 @@ import { useEffect } from "react";
 import { TermTable } from "./terms/term-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
-export default function AttributeTermsPage({ params }: { params: { attributeId: string } }) {
+// Define the props interface to match Next.js dynamic route expectations
+interface AttributeTermsPageProps {
+  params: Promise<{ attributeId: string }>; // Use Promise for dynamic params
+}
+
+// Use async to handle the Promise in params
+export default async function AttributeTermsPage({ params }: AttributeTermsPageProps) {
   const { setHeaderTitle } = useHeaderTitle();
+  // Resolve the params Promise
+  const { attributeId } = await params;
 
   useEffect(() => {
     setHeaderTitle("Attribute Terms");
@@ -19,7 +27,7 @@ export default function AttributeTermsPage({ params }: { params: { attributeId: 
           Manage terms for this attribute (e.g., Nike, Puma for Brand).
         </p>
       </div>
-      <TermTable attributeId={params.attributeId} />
+      <TermTable attributeId={attributeId} />
     </div>
   );
 }
