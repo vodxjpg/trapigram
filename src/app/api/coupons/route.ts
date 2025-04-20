@@ -15,6 +15,10 @@ const couponSchema = z.object({
   name: z.string().min(1, { message: "Name is required." }),
   code: z.string().min(1, { message: "Code is required." }),
   description: z.string().min(1, { message: "Description is required." }),
+  discountType: z.enum(["fixed", "percentage"]),
+  discountAmount: z.coerce
+    .number()
+    .min(0.01, "Amount must be greater than 0"),
   usageLimit: z.coerce.number().int().min(0, { message: "Usage limit must be at least 0." }),
   expendingLimit: z.coerce.number().int().min(0, { message: "Expending limit must be at least 0." }),
   // New field:
@@ -89,7 +93,7 @@ export async function GET(req: NextRequest) {
 
   // Updated SELECT query to include "expendingMinimum"
   let query = `
-    SELECT id, "organizationId", name, code, description, "expirationDate", 
+    SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "expirationDate", 
       "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
     FROM coupons
     WHERE "organizationId" = $1
@@ -169,10 +173,14 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const parsedCoupon = couponSchema.parse(body);
+    console.log(body)
+    
     const {
       name,
       code,
       description,
+      discountType,
+      discountAmount,
       expirationDate,
       limitPerUser,
       usageLimit,
@@ -181,11 +189,12 @@ export async function POST(req: NextRequest) {
       countries,
       visibility,
     } = parsedCoupon;
+
     const couponId = uuidv4();
 
     const insertQuery = `
-      INSERT INTO coupons(id, "organizationId", name, code, description, "expirationDate", "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt")
-      VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+      INSERT INTO coupons(id, "organizationId", name, code, description, "discountType", "discountAmount", "expirationDate", "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt")
+      VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
       RETURNING *
     `;
     const values = [
@@ -194,6 +203,8 @@ export async function POST(req: NextRequest) {
       name,
       code,
       description,
+      discountType,
+      discountAmount,
       expirationDate,
       limitPerUser,
       usageLimit,

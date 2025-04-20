@@ -87,6 +87,8 @@ interface DB {
     name: string;
     code: string;
     description: string;
+    discountType: string;
+    discountAmount: number;
     expirationDate: Date;
     limitPerUser: number;
     usagePerUser: number;

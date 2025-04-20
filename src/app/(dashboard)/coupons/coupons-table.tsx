@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
@@ -13,9 +13,7 @@ import {
   Trash2,
   Edit,
 } from "lucide-react";
-import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -42,26 +40,39 @@ import {
 import { toast } from "sonner";
 import Swal from "sweetalert2";
 
-// Define the Coupon type.
+/* ------------------------------------------------------------------------ */
+/* 1. Coupon type                                                           */
+/* ------------------------------------------------------------------------ */
 type Coupon = {
   id: string;
   name: string;
   code: string;
   description: string;
-  expirationDate: string;
-  limitPerUser: string;
+  discountType: "fixed" | "percentage";
+  discountAmount: number;
+  expirationDate: string | null; // ISO string in UTC
+  limitPerUser: number;
   usageLimit: number;
   expendingLimit: number;
   expendingMinimum: number;
-  countries: string[]; // Array of country names or codes.
-  visibility: boolean; // true means visible, false means hidden.
+  countries: string[];
+  visibility: boolean;
 };
+
+/* ------------------------------------------------------------------------ */
+/* 2. Helper – format ISO to local string                                   */
+/* ------------------------------------------------------------------------ */
+const fmtLocal = (iso: string | null) =>
+  iso
+    ? new Date(iso).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : "—";
 
 export function CouponsTable() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
-  // State for coupon data and UI behavior.
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalPages, setTotalPages] = useState(1);
@@ -69,69 +80,59 @@ export function CouponsTable() {
   const [searchQuery, setSearchQuery] = useState("");
   const [pageSize, setPageSize] = useState(10);
 
-  // Fetch coupons from the API endpoint.
+  /* ---------------------------------------------------------------------- */
+  /* 3. Fetch                                                               */
+  /* ---------------------------------------------------------------------- */
   const fetchCoupons = async () => {
     setLoading(true);
     try {
-      const response = await fetch(
-        `/api/coupons?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
+      const res = await fetch(
+        `/api/coupons?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
       );
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch coupons");
-      }
-
-      const data = await response.json();
-
-      // Ensure the countries field is always an array.
-      const safeCoupons = data.coupons.map((coupon: Coupon) => ({
-        ...coupon,
-        countries: coupon.countries ?? [],
-      }));
-
-      setCoupons(safeCoupons);
+      if (!res.ok) throw new Error("Failed to fetch coupons");
+      const data = await res.json();
+      setCoupons(
+        data.coupons.map((c: Coupon) => ({
+          ...c,
+          countries: c.countries ?? [],
+        })),
+      );
       setTotalPages(data.totalPages);
       setCurrentPage(data.currentPage);
-    } catch (error) {
-      console.error("Error fetching coupons:", error);
+    } catch (err) {
+      console.error(err);
       toast.error("Failed to load coupons");
     } finally {
       setLoading(false);
     }
   };
 
-  // Fetch coupons on initial load and when dependencies change.
   useEffect(() => {
     fetchCoupons();
   }, [currentPage, pageSize, searchQuery]);
 
-  // Handle search form submission.
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCurrentPage(1);
-    fetchCoupons();
-  };
-
-  // Sorting state and function.
-  const [sortColumn, setSortColumn] = useState<string>("name");
+  /* ---------------------------------------------------------------------- */
+  /* 4. Sorting                                                             */
+  /* ---------------------------------------------------------------------- */
+  const [sortColumn, setSortColumn] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
-  const handleSort = (column: string) => {
-    if (sortColumn === column) {
-      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+  const handleSort = (col: string) => {
+    if (sortColumn === col) {
+      setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
     } else {
-      setSortColumn(column);
+      setSortColumn(col);
       setSortDirection("asc");
     }
   };
 
-  // Sort coupons based on sortColumn and sortDirection.
   const sortedCoupons = [...coupons].sort((a, b) => {
     if (sortColumn === "name") {
       return sortDirection === "asc"
         ? a.name.localeCompare(b.name)
         : b.name.localeCompare(a.name);
-    } else if (sortColumn === "usageLimit") {
+    }
+    if (sortColumn === "usageLimit") {
       return sortDirection === "asc"
         ? a.usageLimit - b.usageLimit
         : b.usageLimit - a.usageLimit;
@@ -139,7 +140,9 @@ export function CouponsTable() {
     return 0;
   });
 
-  // Handle coupon deletion.
+  /* ---------------------------------------------------------------------- */
+  /* 5. CRUD helpers                                                        */
+  /* ---------------------------------------------------------------------- */
   const handleDelete = async (id: string) => {
     Swal.fire({
       title: "Are you sure?",
@@ -152,37 +155,36 @@ export function CouponsTable() {
     }).then(async (result) => {
       if (result.isConfirmed) {
         try {
-          const response = await fetch(`/api/coupons/${id}`, {
-            method: "DELETE",
-          });
-          if (!response.ok) {
-            throw new Error("Failed to delete coupon");
-          } else {
-            toast.success("Coupon deleted successfully");
-            fetchCoupons();
-          }
-        } catch (error) {
-          console.error("Error deleting coupon:", error);
+          const res = await fetch(`/api/coupons/${id}`, { method: "DELETE" });
+          if (!res.ok) throw new Error("Failed to delete coupon");
+          toast.success("Coupon deleted successfully");
+          fetchCoupons();
+        } catch (err) {
+          console.error(err);
           toast.error("Failed to delete coupon");
         }
       }
     });
   };
 
-  // Navigation actions for editing and creating coupons.
-  const handleEdit = (coupon: Coupon) => {
-    router.push(`/coupons/${coupon.id}`);
-  };
+  const handleEdit = (c: Coupon) => router.push(`/coupons/${c.id}`);
+  const handleAdd = () => router.push("/coupons/new");
 
-  const handleAdd = () => {
-    router.push(`/coupons/new`);
-  };
-
+  /* ---------------------------------------------------------------------- */
+  /* 6. Render                                                              */
+  /* ---------------------------------------------------------------------- */
   return (
     <div className="space-y-4">
-      {/* Header: Search & Add Coupon */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
-        <form onSubmit={handleSearch} className="flex w-full sm:w-auto gap-2">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setCurrentPage(1);
+            fetchCoupons();
+          }}
+          className="flex w-full sm:w-auto gap-2"
+        >
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
@@ -201,7 +203,7 @@ export function CouponsTable() {
         </Button>
       </div>
 
-      {/* Coupons Table */}
+      {/* Table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -209,6 +211,7 @@ export function CouponsTable() {
               <TableHead>Name</TableHead>
               <TableHead>Code</TableHead>
               <TableHead>Description</TableHead>
+              <TableHead>Discount</TableHead>
               <TableHead>Expiration Date</TableHead>
               <TableHead>Limit Per User</TableHead>
               <TableHead
@@ -216,8 +219,7 @@ export function CouponsTable() {
                 onClick={() => handleSort("usageLimit")}
               >
                 Usage Limit{" "}
-                {sortColumn === "usageLimit" &&
-                  (sortDirection === "asc" ? "↑" : "↓")}
+                {sortColumn === "usageLimit" && (sortDirection === "asc" ? "↑" : "↓")}
               </TableHead>
               <TableHead>Expending Minimum</TableHead>
               <TableHead>Expending Limit</TableHead>
@@ -226,40 +228,46 @@ export function CouponsTable() {
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
+
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-24 text-center">
-                  Loading...
+                <TableCell colSpan={12} className="h-24 text-center">
+                  Loading…
                 </TableCell>
               </TableRow>
             ) : sortedCoupons.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-24 text-center">
+                <TableCell colSpan={12} className="h-24 text-center">
                   No coupons found.
                 </TableCell>
               </TableRow>
             ) : (
-              sortedCoupons.map((coupon) => (
-                <TableRow key={coupon.id}>
-                  <TableCell>{coupon.name}</TableCell>
-                  <TableCell>{coupon.code}</TableCell>
-                  <TableCell>{coupon.description}</TableCell>
-                  <TableCell>{coupon.expirationDate}</TableCell>
-                  <TableCell>{coupon.limitPerUser}</TableCell>
-                  <TableCell>{coupon.usageLimit}</TableCell>
-                  <TableCell>{coupon.expendingMinimum}</TableCell>
-                  <TableCell>{coupon.expendingLimit}</TableCell>
+              sortedCoupons.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell>{c.name}</TableCell>
+                  <TableCell>{c.code}</TableCell>
+                  <TableCell>{c.description}</TableCell>
+
                   <TableCell>
-                    {coupon.countries.map((count) => (
-                      <Badge key={count} variant="outline" className="mr-1">
-                        {count}
+                    {c.discountType === "percentage" ? `${c.discountAmount}%` : c.discountAmount}
+                  </TableCell>
+
+                  {/* LOCAL timezone formatting here */}
+                  <TableCell>{fmtLocal(c.expirationDate)}</TableCell>
+
+                  <TableCell>{c.limitPerUser}</TableCell>
+                  <TableCell>{c.usageLimit}</TableCell>
+                  <TableCell>{c.expendingMinimum}</TableCell>
+                  <TableCell>{c.expendingLimit}</TableCell>
+                  <TableCell>
+                    {c.countries.map((ct) => (
+                      <Badge key={ct} variant="outline" className="mr-1">
+                        {ct}
                       </Badge>
                     ))}
                   </TableCell>
-                  <TableCell>
-                    {coupon.visibility ? "Visible" : "Hidden"}
-                  </TableCell>
+                  <TableCell>{c.visibility ? "Visible" : "Hidden"}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -269,12 +277,12 @@ export function CouponsTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEdit(coupon)}>
+                        <DropdownMenuItem onClick={() => handleEdit(c)}>
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          onClick={() => handleDelete(coupon.id)}
+                          onClick={() => handleDelete(c.id)}
                           className="text-destructive focus:text-destructive"
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
@@ -290,33 +298,31 @@ export function CouponsTable() {
         </Table>
       </div>
 
-      {/* Pagination Controls */}
+      {/* Pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
           Showing page {currentPage} of {totalPages}
         </div>
         <div className="flex items-center space-x-2">
-          <div className="flex items-center space-x-2">
-            <p className="text-sm font-medium">Rows per page</p>
-            <Select
-              value={pageSize.toString()}
-              onValueChange={(value) => {
-                setPageSize(Number(value));
-                setCurrentPage(1);
-              }}
-            >
-              <SelectTrigger className="h-8 w-[70px]">
-                <SelectValue placeholder={pageSize} />
-              </SelectTrigger>
-              <SelectContent side="top">
-                {[5, 10, 20, 50, 100].map((size) => (
-                  <SelectItem key={size} value={size.toString()}>
-                    {size}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <p className="text-sm font-medium">Rows per page</p>
+          <Select
+            value={pageSize.toString()}
+            onValueChange={(v) => {
+              setPageSize(Number(v));
+              setCurrentPage(1);
+            }}
+          >
+            <SelectTrigger className="h-8 w-[70px]">
+              <SelectValue placeholder={pageSize} />
+            </SelectTrigger>
+            <SelectContent side="top">
+              {[5, 10, 20, 50, 100].map((n) => (
+                <SelectItem key={n} value={n.toString()}>
+                  {n}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <div className="flex items-center space-x-2">
             <Button
               variant="outline"
@@ -325,25 +331,22 @@ export function CouponsTable() {
               disabled={currentPage === 1}
             >
               <ChevronsLeft className="h-4 w-4" />
-              <span className="sr-only">First page</span>
             </Button>
             <Button
               variant="outline"
               size="icon"
-              onClick={() => setCurrentPage(currentPage - 1)}
+              onClick={() => setCurrentPage((p) => p - 1)}
               disabled={currentPage === 1}
             >
               <ChevronLeft className="h-4 w-4" />
-              <span className="sr-only">Previous page</span>
             </Button>
             <Button
               variant="outline"
               size="icon"
-              onClick={() => setCurrentPage(currentPage + 1)}
+              onClick={() => setCurrentPage((p) => p + 1)}
               disabled={currentPage === totalPages}
             >
               <ChevronRight className="h-4 w-4" />
-              <span className="sr-only">Next page</span>
             </Button>
             <Button
               variant="outline"
@@ -352,7 +355,6 @@ export function CouponsTable() {
               disabled={currentPage === totalPages}
             >
               <ChevronsRight className="h-4 w-4" />
-              <span className="sr-only">Last page</span>
             </Button>
           </div>
         </div>

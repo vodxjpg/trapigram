@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -17,67 +17,83 @@ import {
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar as CalendarIcon } from "lucide-react";
-import { Calendar } from "@/components/ui/calendar";
-import { format } from "date-fns";
-import { cn } from "@/lib/utils";
-
-// Import react-select for countries.
 import Select from "react-select";
-
-// Import the Switch component from shadcn.
 import { Switch } from "@/components/ui/switch";
-
-// ---------- Countries Setup ----------
 import countriesLib from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 import { getCountries } from "libphonenumber-js";
 import ReactCountryFlag from "react-country-flag";
 
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
 countriesLib.registerLocale(enLocale);
-const allCountries = getCountries().map((code) => ({
-  code,
-  name: countriesLib.getName(code, "en") || code,
+const allCountries = getCountries().map((c) => ({
+  code: c,
+  name: countriesLib.getName(c, "en") || c,
 }));
+const pad = (n: number) => n.toString().padStart(2, "0");
+const nowPlus1sLocal = () => {
+  const d = new Date(Date.now() + 1000);
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+};
+/* Convert UTC ISO -> local “YYYY‑MM‑DDTHH:MM:SS” for the input */
+const isoToLocalInput = (iso: string) => {
+  const d = new Date(iso);
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+};
 
-// ---------- Coupon Schema ----------
-const couponFormSchema = z.object({
+/* -------------------------------------------------------------------------- */
+/* Zod schema                                                                 */
+/* -------------------------------------------------------------------------- */
+const schema = z.object({
   name: z.string().min(1, "Name is required"),
   code: z.string().min(1, "Code is required"),
   description: z.string().min(1, "Description is required"),
-  usageLimit: z.coerce.number().int().min(0, "Usage limit must be 0 or greater").default(0),
-  expendingLimit: z.coerce.number().int().min(0, "Expending limit must be 0 or greater").default(0),
-  expendingMinimum: z.coerce.number().int().min(0, "Expending minimum must be 0 or greater").default(0),
+  discountType: z.enum(["fixed", "percentage"]),
+  discountAmount: z.coerce.number().min(0.01, "Amount must be greater than 0"),
+  usageLimit: z.coerce.number().int().min(0).default(0),
+  expendingLimit: z.coerce.number().int().min(0).default(0),
+  expendingMinimum: z.coerce.number().int().min(0).default(0),
   countries: z.array(z.string().length(2)).min(1, "At least one country is required"),
   visibility: z.boolean().default(true),
   hasExpiration: z.boolean().default(false),
-  expirationDate: z.string().nullable().optional(),
-  limitPerUser: z.coerce.number().int().min(0, "Limit per user must be 0 or greater").default(0),
+  expirationDate: z
+    .string()
+    .nullable()
+    .refine(
+      (v) => !v || new Date(v) > new Date(),
+      { message: "Expiration must be in the future" },
+    )
+    .optional(),
+  limitPerUser: z.coerce.number().int().min(0).default(0),
 });
+type Values = z.infer<typeof schema>;
+type Props = { couponData?: Values | null; isEditing?: boolean };
 
-type CouponFormValues = z.infer<typeof couponFormSchema>;
-
-type CouponFormProps = {
-  couponData?: CouponFormValues | null;
-  isEditing?: boolean;
-};
-
-export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
+/* -------------------------------------------------------------------------- */
+/* Component                                                                  */
+/* -------------------------------------------------------------------------- */
+export function CouponForm({ couponData, isEditing = false }: Props) {
   const router = useRouter();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [date, setDate] = useState<Date | null>(null);
-  const [openDatePicker, setOpenDatePicker] = useState(false);
-  const [switchExpiration, setSwitchExpiration] = useState(false);
-  // Country select options from the countries endpoint.
-  const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]); // Replace with your real session value.
+  const [submitting, setSubmitting] = useState(false);
+  const minDateTimeLocal = useMemo(nowPlus1sLocal, []);
 
-  const form = useForm<CouponFormValues>({
-    resolver: zodResolver(couponFormSchema),
+  /* ---------------------------- form ------------------------------------- */
+  const form = useForm<Values>({
+    resolver: zodResolver(schema),
     defaultValues: {
       name: "",
       code: "",
       description: "",
+      discountType: "fixed",
+      discountAmount: 0,
       usageLimit: 0,
       expendingLimit: 0,
       expendingMinimum: 0,
@@ -88,146 +104,111 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
       limitPerUser: 0,
     },
   });
-  // Fetch the countries for the organization via the dedicated endpoint.
-  useEffect(() => {    
-    async function fetchOrganizationCountries() {
+
+  /* ---------------------------- countries -------------------------------- */
+  const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]);
+  useEffect(() => {
+    (async () => {
       try {
-        const response = await fetch(`/api/organizations/countries`, {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-          },
+        const res = await fetch("/api/organizations/countries", {
+          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
         });
-        if (!response.ok) {
-          throw new Error("Failed to fetch organization countries");
-        }
-        const data = await response.json();
-        // Assume data.countries is a JSON string or comma-separated list.
-        let orgCountries: string[] = [];
-        try {
-          const parsed = JSON.parse(data.countries);
-          if (Array.isArray(parsed)) {
-            orgCountries = parsed;
-          } else {
-            orgCountries = [];
-          }
-        } catch (e) {
-          orgCountries = data.countries.split(",").map((c: string) => c.trim());
-        }
-        const options = orgCountries.map((code: string) => {
-          const found = allCountries.find((c) => c.code === code);
-          return { value: code, label: found ? found.name : code };
-        });
-        setCountryOptions(options);
-      } catch (error: any) {
-        console.error("Error fetching organization countries:", error);
-        toast.error(error.message || "Failed to load organization countries");
+        if (!res.ok) throw new Error("Failed to fetch organization countries");
+        const data = await res.json();
+        const list: string[] = Array.isArray(data.countries)
+          ? data.countries
+          : JSON.parse(data.countries || "[]");
+        setCountryOptions(
+          list.map((c: string) => ({
+            value: c,
+            label: allCountries.find((co) => co.code === c)?.name || c,
+          })),
+        );
+      } catch (err: any) {
+        toast.error(err.message || "Failed to load organization countries");
       }
-    }
-    fetchOrganizationCountries()
+    })();
   }, []);
 
-  // Reset the form when editing.
+  /* ---------------------------- preload edit ----------------------------- */
   useEffect(() => {
     if (isEditing && couponData) {
-      const countriesValue =
-        Array.isArray(couponData.countries)
-          ? couponData.countries
-          : typeof couponData.countries === "string"
-          ? JSON.parse(couponData.countries)
-          : [];
+      const countries = Array.isArray(couponData.countries)
+        ? couponData.countries
+        : JSON.parse(couponData.countries as unknown as string);
+
       form.reset({
         ...couponData,
-        countries: countriesValue,
+        countries,
+        hasExpiration: Boolean(couponData.expirationDate), // <<< ensures switch ON/OFF
       });
-      if (couponData.expirationDate) {
-        const expDate = new Date(couponData.expirationDate);
-        setDate(expDate);
-        form.setValue("hasExpiration", true);
-        setSwitchExpiration(true);
-      } else {
-        setDate(null);
-        form.setValue("hasExpiration", false);
-        setSwitchExpiration(false);
-      }
-    } else {
-      form.reset({
-        name: "",
-        code: "",
-        description: "",
-        usageLimit: 0,
-        expendingLimit: 0,
-        expendingMinimum: 0,
-        countries: [],
-        visibility: true,
-        hasExpiration: false,
-        expirationDate: null,
-        limitPerUser: 0,
-      });
-      setDate(null);
-      setSwitchExpiration(false);
     }
-  }, [couponData, form, isEditing]);
+  }, [couponData, isEditing, form]);
 
-  async function onSubmit(values: CouponFormValues) {
-    setIsSubmitting(true);
+  /* ---------------------------- keep switch in sync ---------------------- */
+  const expVal = form.watch("expirationDate");
+  useEffect(() => {
+    const on = Boolean(expVal);
+    if (form.getValues("hasExpiration") !== on) {
+      form.setValue("hasExpiration", on, { shouldValidate: false, shouldDirty: true });
+    }
+  }, [expVal, form]);
+
+  /* ---------------------------- submit ----------------------------------- */
+  const onSubmit = async (vals: Values) => {
+    setSubmitting(true);
     try {
       const url = isEditing ? `/api/coupons/${couponData?.id}` : "/api/coupons";
-      const response = await fetch(url, {
+      const res = await fetch(url, {
         method: isEditing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify(vals),
       });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Failed to ${isEditing ? "update" : "create"} coupon`);
-      }
-      toast.success(isEditing ? "Coupon updated successfully" : "Coupon created successfully");
+      if (!res.ok) throw new Error((await res.json()).error || "Request failed");
+      toast.success(isEditing ? "Coupon updated" : "Coupon created");
       router.push("/coupons");
       router.refresh();
-    } catch (error: any) {
-      console.error(`Error ${isEditing ? "updating" : "creating"} coupon:`, error);
-      toast.error(error.message || `Failed to ${isEditing ? "update" : "create"} coupon`);
+    } catch (err: any) {
+      toast.error(err.message || "Something went wrong");
     } finally {
-      setIsSubmitting(false);
+      setSubmitting(false);
     }
-  }
+  };
 
+  /* ---------------------------- render ----------------------------------- */
   return (
     <Card className="w-full mx-auto">
       <CardContent className="pt-6">
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            {/* Row 1: Name and Code */}
+            {/* ------------------------------------------------------------------ */}
+            {/* Name & Code                                                        */}
+            {/* ------------------------------------------------------------------ */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Name *</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Coupon Name" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="code"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Code *</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Coupon Code" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {[
+                { name: "name", label: "Name *", placeholder: "Coupon Name" },
+                { name: "code", label: "Code *", placeholder: "Coupon Code" },
+              ].map(({ name, label, placeholder }) => (
+                <FormField
+                  key={name}
+                  control={form.control}
+                  name={name as keyof Values}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{label}</FormLabel>
+                      <FormControl>
+                        <Input placeholder={placeholder} {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ))}
             </div>
 
-            {/* Row 2: Description and Countries Multi-Select */}
+            {/* ------------------------------------------------------------------ */}
+            {/* Description & Countries                                            */}
+            {/* ------------------------------------------------------------------ */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <FormField
                 control={form.control}
@@ -249,28 +230,138 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
                   <FormItem>
                     <FormLabel>Countries *</FormLabel>
                     <FormControl>
-                      <div>
-                        <Select
-                          isMulti
-                          options={countryOptions}
-                          placeholder="Select country(s)"
-                          value={countryOptions.filter(option =>
-                            field.value.includes(option.value)
-                          )}
-                          onChange={(selectedOptions: any) =>
-                            field.onChange(selectedOptions.map((option: any) => option.value))
-                          }
-                          formatOptionLabel={(option: { value: string; label: string }) => (
-                            <div className="flex items-center gap-2">
-                              <ReactCountryFlag
-                                countryCode={option.value}
-                                svg
-                                style={{ width: "1.5em", height: "1.5em" }}
-                              />
-                              <span>{option.label}</span>
-                            </div>
-                          )}
+                      <Select
+                        isMulti
+                        options={countryOptions}
+                        placeholder="Select country(s)"
+                        value={countryOptions.filter((o) => field.value.includes(o.value))}
+                        onChange={(opts: any) => field.onChange(opts.map((o: any) => o.value))}
+                        formatOptionLabel={(o: { value: string; label: string }) => (
+                          <div className="flex items-center gap-2">
+                            <ReactCountryFlag countryCode={o.value} svg style={{ width: 20 }} />
+                            <span>{o.label}</span>
+                          </div>
+                        )}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            {/* ------------------------------------------------------------------ */}
+            {/* Discount                                                           */}
+            {/* ------------------------------------------------------------------ */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+              <FormField
+                control={form.control}
+                name="discountType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Discount Type</FormLabel>
+                    <FormControl>
+                      <div className="flex items-center gap-3">
+                        <span className={field.value === "fixed" ? "font-semibold" : ""}>Fixed</span>
+                        <Switch
+                          checked={field.value === "percentage"}
+                          onCheckedChange={(c) => field.onChange(c ? "percentage" : "fixed")}
                         />
+                        <span className={field.value === "percentage" ? "font-semibold" : ""}>%</span>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="discountAmount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Amount {form.watch("discountType") === "percentage" ? "(%)" : "(currency)"}
+                    </FormLabel>
+                    <FormControl>
+                      <Input type="number" step="0.01" placeholder="0.00" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            {/* ------------------------------------------------------------------ */}
+            {/* Numeric limits                                                     */}
+            {/* ------------------------------------------------------------------ */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {[
+                { name: "usageLimit", label: "Usage Limit" },
+                { name: "expendingMinimum", label: "Expending Minimum" },
+                { name: "expendingLimit", label: "Expending Limit" },
+                { name: "limitPerUser", label: "Limit Per User" },
+              ].map(({ name, label }) => (
+                <FormField
+                  key={name}
+                  control={form.control}
+                  name={name as keyof Values}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{label}</FormLabel>
+                      <FormControl>
+                        <Input type="number" placeholder="0" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ))}
+            </div>
+
+            {/* ------------------------------------------------------------------ */}
+            {/* Expiration & Visibility                                            */}
+            {/* ------------------------------------------------------------------ */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Has Expiration */}
+              <FormField
+                control={form.control}
+                name="hasExpiration"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Has Expiration?</FormLabel>
+                    <FormControl>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={(checked) => {
+                            field.onChange(checked);
+                            if (!checked) {
+                              form.setValue("expirationDate", null, {
+                                shouldValidate: true,
+                                shouldDirty: true,
+                              });
+                            }
+                          }}
+                        />
+                        <span>{field.value ? "Yes" : "No"}</span>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {/* Visibility */}
+              <FormField
+                control={form.control}
+                name="visibility"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Visibility</FormLabel>
+                    <FormControl>
+                      <div className="flex items-center gap-2">
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        <span>{field.value ? "Visible" : "Hidden"}</span>
                       </div>
                     </FormControl>
                     <FormMessage />
@@ -279,167 +370,42 @@ export function CouponForm({ couponData, isEditing = false }: CouponFormProps) {
               />
             </div>
 
-            {/* Row 3: Usage Limit, Expending Minimum, Expending Limit, Limit Per User */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {/* Date‑time input */}
+            {form.watch("hasExpiration") && (
               <FormField
                 control={form.control}
-                name="usageLimit"
+                name="expirationDate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Usage Limit</FormLabel>
+                    <FormLabel>Expiration Date &amp; Time</FormLabel>
                     <FormControl>
-                      <Input type="number" placeholder="0" {...field} />
+                      <Input
+                        type="datetime-local"
+                        step={1}
+                        min={minDateTimeLocal}
+                        value={field.value ? isoToLocalInput(field.value) : ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          field.onChange(val ? new Date(val).toISOString() : null);
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="expendingMinimum"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Expending Minimum</FormLabel>
-                    <FormControl>
-                      <Input type="number" placeholder="0" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="expendingLimit"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Expending Limit</FormLabel>
-                    <FormControl>
-                      <Input type="number" placeholder="0" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="limitPerUser"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Limit Per User</FormLabel>
-                    <FormControl>
-                      <Input type="number" placeholder="0" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+            )}
 
-            {/* Row 4: Has Expiration Switch (with Date Picker) and Visibility Switch */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <FormField
-                  control={form.control}
-                  name="hasExpiration"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Has Expiration?</FormLabel>
-                      <FormControl>
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                            className="mr-2"
-                          />
-                          <span>{field.value ? "Yes" : "No"}</span>
-                        </div>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                {form.watch("hasExpiration") && (
-                  <FormField
-                    control={form.control}
-                    name="expirationDate"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Expiration Date</FormLabel>
-                        <FormControl>
-                          <Popover open={openDatePicker} onOpenChange={setOpenDatePicker}>
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant={"outline"}
-                                onClick={() => setOpenDatePicker(true)}
-                                className={cn("w-full justify-start text-left font-normal", !date && "text-muted-foreground")}
-                              >
-                                <CalendarIcon className="mr-2 h-4 w-4" />
-                                {date ? format(date, "PPP") : "Pick a date"}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0">
-                              <Calendar
-                                mode="single"
-                                selected={date}
-                                onSelect={(d: Date | null) => {
-                                  setDate(d);
-                                  if (d) {
-                                    field.onChange(d.toISOString().split("T")[0]);
-                                  } else {
-                                    field.onChange(null);
-                                  }
-                                  setOpenDatePicker(false);
-                                }}
-                                initialFocus
-                                fromDate={new Date(new Date().setDate(new Date().getDate() + 1))}
-                              />
-                            </PopoverContent>
-                          </Popover>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
-              </div>
-              <div>
-                <FormField
-                  control={form.control}
-                  name="visibility"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Visibility</FormLabel>
-                      <FormControl>
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                            className="mr-2"
-                          />
-                          <span>{field.value ? "Visible" : "Hidden"}</span>
-                        </div>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-            </div>
-
-            {/* Submit/Cancel Buttons */}
+            {/* Submit */}
             <div className="flex justify-center gap-4 mt-6">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => router.push("/coupons")}
-              >
+              <Button type="button" variant="outline" onClick={() => router.push("/coupons")}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting
+              <Button type="submit" disabled={submitting}>
+                {submitting
                   ? isEditing
-                    ? "Updating..."
-                    : "Creating..."
+                    ? "Updating…"
+                    : "Creating…"
                   : isEditing
                   ? "Update Coupon"
                   : "Create Coupon"}

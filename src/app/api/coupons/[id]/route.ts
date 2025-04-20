@@ -10,17 +10,25 @@ const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 // Updated coupon update schema with new field "expendingMinimum"
 const couponUpdateSchema = z.object({
-  name: z.string().min(1, { message: "Name is required." }).optional(),
-  code: z.string().min(1, { message: "Code is required." }).optional(),
-  description: z.string().min(1, { message: "Description is required." }).optional(),
-  expirationDate: z.string().optional().nullable(),
-  limitPerUser: z.coerce.number().int().min(0, { message: "Limit per user must be at least 0." }).optional(),
-  usageLimit: z.coerce.number().int().min(0, { message: "Usage limit must be at least 0." }).optional(),
-  expendingLimit: z.coerce.number().int().min(0, { message: "Expending limit must be at least 0." }).optional(),
-  // New field added:
-  expendingMinimum: z.coerce.number().int().min(0, { message: "Expending minimum must be at least 0." }).optional(),
-  countries: z.array(z.string()).optional(),
-  visibility: z.boolean().optional(),
+  name: z.string().min(1, { message: "Name is required." }),
+  code: z.string().min(1, { message: "Code is required." }),
+  description: z.string().min(1, { message: "Description is required." }),
+  discountType: z.enum(["fixed", "percentage"]),
+  discountAmount: z.coerce
+    .number()
+    .min(0.01, "Amount must be greater than 0"),
+  usageLimit: z.coerce.number().int().min(0, { message: "Usage limit must be at least 0." }),
+  expendingLimit: z.coerce.number().int().min(0, { message: "Expending limit must be at least 0." }),
+  // New field:
+  expendingMinimum: z.coerce.number().int().min(0, { message: "Expending minimum must be at least 0." }).default(0),
+  countries: z.array(z.string()).min(1, { message: "At least one country is required." }),
+  visibility: z.boolean(),
+  expirationDate: z.string().nullable().optional(),
+  limitPerUser: z.coerce
+    .number()
+    .int()
+    .min(0, "Limit per user must be 0 or greater")
+    .default(0),
 });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -71,8 +79,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params;
     const query = `
-      SELECT id, "organizationId", name, code, description, "expirationDate", 
-             "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
+      SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "expirationDate", 
+      "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
       FROM coupons
       WHERE id = $1 AND "organizationId" = $2
     `;
@@ -135,7 +143,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const { id } = await params;
-    const body = await req.json();
+    const body = await req.json();    
     // Parse the request body with the updated schema.
     const parsedCoupon = couponUpdateSchema.parse(body);
 
