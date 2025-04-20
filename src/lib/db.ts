@@ -153,7 +153,6 @@ interface DB {
     content: string;
     deliveryDate: Date | null; // Nullable for unscheduled deliveries
     countries: string; 
-    status: string; 
     sent: boolean;
     createdAt: Date;
     updatedAt: Date;

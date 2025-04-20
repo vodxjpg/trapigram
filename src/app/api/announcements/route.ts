@@ -17,7 +17,6 @@ const announcementSchema = z.object({
   content: z.string().min(1, { message: "Content is required." }),
   deliveryDate: z.string().nullable().optional(),
   countries: z.string().min(1, { message: "Countries is required." }),
-  status: z.string().min(1, { message: "Status is required." }),
   sent: z.boolean().default(false),
 });
 
@@ -70,7 +69,7 @@ export async function GET(req: NextRequest) {
   }
 
   let query = `
-    SELECT id, "organizationId", title, content, "deliveryDate", countries, status, sent, "createdAt", "updatedAt"
+    SELECT id, "organizationId", title, content, "deliveryDate", countries, sent, "createdAt", "updatedAt"
     FROM announcements
     WHERE "organizationId" = $1
   `;
@@ -134,15 +133,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    console.log("[POST /api/announcements] Request body:", body);
     const parsedAnnouncement = announcementSchema.parse(body);
     const sanitizedContent = purify.sanitize(parsedAnnouncement.content);
-    console.log("[POST /api/announcements] Sanitized content:", sanitizedContent);
     const announcementId = uuidv4();
 
     const insertQuery = `
-      INSERT INTO announcements(id, "organizationId", title, content, "deliveryDate", countries, status, sent, "createdAt", "updatedAt")
-      VALUES($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+      INSERT INTO announcements(id, "organizationId", title, content, "deliveryDate", countries, sent, "createdAt", "updatedAt")
+      VALUES($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
       RETURNING *
     `;
     const values = [
@@ -152,7 +149,6 @@ export async function POST(req: NextRequest) {
       sanitizedContent,
       parsedAnnouncement.deliveryDate || null,
       parsedAnnouncement.countries,
-      parsedAnnouncement.status,
       parsedAnnouncement.sent || false,
     ];
 

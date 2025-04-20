@@ -15,7 +15,6 @@ const announcementUpdateSchema = z.object({
   content: z.string().min(1, { message: "Content is required." }).optional(),
   deliveryDate: z.string().nullable().optional(),
   countries: z.string().optional(),
-  status: z.string().min(1, { message: "Status is required." }).optional(),
   sent: z.boolean().optional(),
 });
 
@@ -56,7 +55,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   try {
     const { id } = params;
     const query = `
-      SELECT id, "organizationId", title, content, "deliveryDate", countries, status, sent, "createdAt", "updatedAt"
+      SELECT id, "organizationId", title, content, "deliveryDate", countries, sent, "createdAt", "updatedAt"
       FROM announcements
       WHERE id = $1 AND "organizationId" = $2
     `;

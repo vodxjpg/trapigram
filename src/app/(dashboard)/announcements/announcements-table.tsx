@@ -65,6 +65,14 @@ type Announcement = {
   countries: string[]; // Array of country codes
 };
 
+const fmtLocal = (iso: string | null) =>
+  iso
+    ? new Date(iso).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : "—";
+
 export function AnnouncementsTable() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -249,7 +257,6 @@ export function AnnouncementsTable() {
               <TableHead>Title</TableHead>
               <TableHead>Content</TableHead>
               <TableHead>Delivery Date</TableHead>
-              <TableHead>Status</TableHead>
               <TableHead>Sent</TableHead>
               <TableHead>Countries</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -284,12 +291,7 @@ export function AnnouncementsTable() {
                       <span className="sr-only">View Content</span>
                     </Button>
                   </TableCell>
-                  <TableCell>
-                    {announcement.deliveryDate
-                      ? new Date(announcement.deliveryDate).toLocaleDateString()
-                      : "N/A"}
-                  </TableCell>
-                  <TableCell>{announcement.status}</TableCell>
+                  <TableCell>{fmtLocal(announcement.deliveryDate)}</TableCell>
                   <TableCell>
                     {announcement.sent ? (
                       <Badge variant="default">Yes</Badge>
