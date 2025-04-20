@@ -7,8 +7,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { format } from "date-fns";
-import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic"; // Added for dynamic import
 import Select from "react-select";
 
@@ -23,9 +21,6 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar as CalendarIcon } from "lucide-react";
-import { Calendar } from "@/components/ui/calendar";
 import { Switch } from "@/components/ui/switch";
 
 // ─────────────── dynamic Quill ───────────────
@@ -77,7 +72,8 @@ const announcementFormSchema = z.object({
       message: "Delivery must be in the future",
     })
     .optional(),
-  countries: z.array(z.string()).min(1, "Select at least one country")
+  countries: z.array(z.string()).min(1, "Select at least one country"),
+  status: z.string().default("draft"), // hidden field
 });
 
 type AnnouncementFormValues = z.infer<typeof announcementFormSchema>;
