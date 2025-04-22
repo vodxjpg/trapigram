@@ -101,7 +101,7 @@ export async function GET(req: NextRequest) {
         "products.createdAt", "products.updatedAt",
       ])
       .leftJoin("warehouseStock", "warehouseStock.productId", "products.id")
-      .where("products.organizationId", "=", organizationId) // Explicitly qualify organizationId
+      .where("products.organizationId", "=", organizationId)
       .where("products.tenantId", "=", tenantId)
 
     if (search) productsQuery = productsQuery.where("title", "ilike", `%${search}%`)
@@ -169,9 +169,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const products = Array.from(productsMap.values()).map(p => ({
-      ...p,
-      variations: variations
+    const products = Array.from(productsMap.values()).map(p => {
+      const variationData = variations
         .filter(v => v.productId === p.id)
         .map(v => ({
           id: v.id,
@@ -191,7 +190,24 @@ export async function GET(req: NextRequest) {
               return acc
             }, {} as Record<string, Record<string, number>>)
         }))
-    }))
+      
+      // Compute stockStatus for variable products
+      let stockStatus = p.stockStatus
+      if (p.productType === "variable" && p.manageStock) {
+        const hasVariationStock = variationData.some(v => Object.keys(v.stock).length > 0)
+        stockStatus = hasVariationStock ? "managed" : "unmanaged"
+      } else if (p.manageStock && Object.keys(p.stockData).length > 0) {
+        stockStatus = "managed"
+      } else {
+        stockStatus = "unmanaged"
+      }
+
+      return {
+        ...p,
+        stockStatus,
+        variations: variationData
+      }
+    })
 
     const totalRes = await db
       .selectFrom("products")
@@ -303,6 +319,12 @@ export async function POST(req: NextRequest) {
 
     const productId = uuidv4()
 
+    /* Compute stockStatus */
+    let stockStatus = parsedProduct.manageStock ? "managed" : "unmanaged"
+    if (parsedProduct.productType === "variable" && parsedProduct.warehouseStock?.some(ws => ws.variationId)) {
+      stockStatus = "managed"
+    }
+
     await db.insertInto("products").values({
       id: productId,
       organizationId,
@@ -318,7 +340,7 @@ export async function POST(req: NextRequest) {
       cost: parsedProduct.cost ?? {},
       allowBackorders: parsedProduct.allowBackorders,
       manageStock: parsedProduct.manageStock,
-      stockStatus: parsedProduct.manageStock ? "managed" : "unmanaged",
+      stockStatus,
       createdAt: new Date(),
       updatedAt: new Date(),
     }).execute()
