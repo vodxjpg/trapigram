@@ -52,13 +52,23 @@ export type Product = {
   image: string | null
   sku: string
   status: "published" | "draft"
-  regularPrice: number
-  salePrice: number | null
+  regularPrice: Record<string, number>
+  salePrice: Record<string, number> | null
   stockStatus: "managed" | "unmanaged"
   stockData: Record<string, Record<string, number>> | null
   categories: string[]
   attributes: Attribute[]
   createdAt: string
+  productType: "simple" | "variable"
+  variations: Array<{
+    id: string
+    attributes: Record<string, string>
+    sku: string
+    image: string | null
+    prices: Record<string, { regular: number; sale: number | null }>
+    cost: Record<string, number>
+    stock: Record<string, Record<string, number>>
+  }>
 }
 
 export function ProductsDataTable() {
@@ -125,14 +135,27 @@ export function ProductsDataTable() {
       header: "Image",
       cell: ({ row }) => {
         const image = row.original.image
+        const title = row.original.title
+        const initials = title
+          .split(" ")
+          .slice(0, 2)
+          .map((word) => word.charAt(0).toUpperCase())
+          .join("")
+          .slice(0, 2)
         return (
           <div className="w-12 h-12 relative">
-            <Image
-              src={image || "/placeholder.svg"}
-              alt={row.original.title}
-              fill
-              className="rounded-md object-cover"
-            />
+            {image ? (
+              <Image
+                src={image}
+                alt={title}
+                fill
+                className="rounded-md object-cover"
+              />
+            ) : (
+              <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-medium">
+                {initials}
+              </div>
+            )}
           </div>
         )
       },
@@ -180,20 +203,41 @@ export function ProductsDataTable() {
       },
     },
     {
-      accessorKey: "regularPrice",
-      header: "Regular Price",
+      accessorKey: "price",
+      header: "Prices",
       cell: ({ row }) => {
-        // Use original row data for the price value
-        const price = Number(row.original.regularPrice)
-        return <div className="text-right">{price ? `$${price.toFixed(2)}` : "-"}</div>
-      },
-    },
-    {
-      accessorKey: "salePrice",
-      header: "Sale Price",
-      cell: ({ row }) => {
-        const salePrice = row.original.salePrice !== null ? Number(row.original.salePrice) : null
-        return <div className="text-right">{salePrice ? `$${salePrice.toFixed(2)}` : "-"}</div>
+        const product = row.original
+        // Choose the first country from regularPrice (assumes all countries are consistent)
+        const country = Object.keys(product.regularPrice)[0] || "US"
+        
+        if (product.productType === "simple") {
+          const salePrice = product.salePrice?.[country] ?? null
+          const regularPrice = product.regularPrice[country] ?? 0
+          const displayPrice = salePrice !== null ? salePrice : regularPrice
+          return (
+            <div className="text-left">
+              {displayPrice ? `$${displayPrice.toFixed(2)}` : "-"}
+              {salePrice !== null && (
+                <span className="ml-2 text-sm text-gray-500 line-through">
+                  ${regularPrice.toFixed(2)}
+                </span>
+              )}
+            </div>
+          )
+        } else {
+          // For variable products, find the highest price across variations
+          const variationPrices = product.variations.map((v) => {
+            const salePrice = v.prices[country]?.sale ?? null
+            const regularPrice = v.prices[country]?.regular ?? 0
+            return salePrice !== null ? salePrice : regularPrice
+          })
+          const maxPrice = variationPrices.length > 0 ? Math.max(...variationPrices) : 0
+          return (
+            <div className="text-left">
+              {maxPrice ? `$${maxPrice.toFixed(2)}` : "-"}
+            </div>
+          )
+        }
       },
     },
     {
