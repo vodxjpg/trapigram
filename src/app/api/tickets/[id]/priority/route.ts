@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { object, string, z } from "zod";
+import { z } from "zod";
 import { Pool } from "pg";
 import { auth } from "@/lib/auth";
-import { v4 as uuidv4 } from "uuid";
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -11,16 +10,14 @@ const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 // Messages schema 
 
-const messagesSchema = z.object({
-    message: z.string().min(1, { message: "Message is required." }),
-    attachments: z.string(),
-    isInternal: z.boolean()
+const priorityTicketSchema = z.object({
+    priority: z.string(),
 });
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const apiKey = req.headers.get("x-api-key");
     const internalSecret = req.headers.get("x-internal-secret");
-    const internal = req.headers.get("x-is-internal");
+    const priority = req.headers.get("x-priority");
 
     let organizationId: string;
 
@@ -61,49 +58,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     try {
 
         const { id } = await params;
-        const body = await req.json();
-        body.attachments !== typeof (string) ? body.attachments = "[]" : body.attachments;
-        internal === "true" ? body.isInternal = true : body.isInternal = false;
-        const parsedMessage = messagesSchema.parse(body);
 
-        const { message, attachments, isInternal } = parsedMessage
-
-        const messageId = uuidv4();
-
-        const insertQuery = `
-      INSERT INTO "ticketMessages"(id, "ticketId", message, attachments, "isInternal", "createdAt", "updatedAt")
-      VALUES($1, $2, $3, $4, $5, NOW(), NOW())
-      RETURNING *
-    `;
+        const insertQuery = `UPDATE "tickets"
+            SET priority = $1
+            WHERE id = $2`;
 
         const values = [
-            messageId,
+            priority,
             id,
-            message,
-            attachments,
-            isInternal,
         ];
 
         const result = await pool.query(insertQuery, values);
-        const messages = result.rows[0];
-        messages.attachments = JSON.parse(messages.attachments)
 
-        const amountQuery = `SELECT * FROM "ticketMessages"`
-        const amountResult = await pool.query(amountQuery)
-        const amount = amountResult.rows.length
-        if (amount === 2) {
-            const statusQuery = `UPDATE "tickets"
-            SET status = 'in-progress'
-            WHERE id = $1`
-
-            const statusValue = [
-                id
-            ]
-
-            await pool.query(statusQuery, statusValue)
-        }
-
-        return NextResponse.json(messages, { status: 201 });
+        return NextResponse.json(result, { status: 201 });
 
     } catch (error: any) {
 

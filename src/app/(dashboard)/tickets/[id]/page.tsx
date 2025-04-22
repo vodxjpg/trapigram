@@ -6,6 +6,7 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Paperclip, Send } from "lucide-react";
+import Swal from "sweetalert2";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,9 +56,9 @@ type TicketMessage = {
 const fmtLocal = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    })
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
     : "—";
 
 export default function TicketDetail({ params }: { params: { id: string } }) {
@@ -72,6 +73,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
   const [status, setStatus] = useState<"open" | "in-progress" | "closed">(
     "open"
   );
+  const [priority, setPriority] = useState<"low" | "medium" | "high">("medium");
   const [attachments, setAttachments] = useState<File[]>([]);
 
   /* fetch ticket + messages */
@@ -84,6 +86,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
         setHeader(data.ticket);
         setMessages(data.messages);
         setStatus(data.ticket.status);
+        setPriority(data.ticket.priority)
       } catch {
         toast.error("Failed to load ticket");
       } finally {
@@ -92,13 +95,68 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     })();
   }, [id]);
 
+  /* -------- new status‐change handler -------- */
+  const handleStatusChange = async (
+    newStatus: "open" | "in-progress" | "closed"
+  ) => {
+    // if they picked "closed", ask first
+    if (newStatus === "closed") {
+      const result = await Swal.fire({
+        title: "Close Ticket?",
+        text: "Are you sure you want to close this ticket?",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Yes, close it",
+      });
+
+      if (!result.isConfirmed) {
+        // revert to in-progress
+        setStatus("in-progress");
+        return;
+      }
+    }
+
+    // optimistically update UI
+    setStatus(newStatus);
+
+    // call your status‐update endpoint
+    try {
+      const res = await fetch(`/api/tickets/${id}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-status": newStatus, // send new status in header
+        },
+      });
+      if (!res.ok) throw new Error();
+      toast.success(`Ticket marked ${newStatus}`);
+    } catch {
+      toast.error("Failed to update status");
+      // on error, revert UI
+      setStatus(header?.status || "in-progress");
+    }
+  };
+
+  const handlePriorityChange = async (
+    newPriority: "low" | "medium" | "high"
+  ) => {
+    setPriority(newPriority);
+    try {
+      const res = await fetch(`/api/tickets/${id}/priority`, {
+        method: "PATCH",
+        headers: { "x-priority": newPriority },
+      });
+      if (!res.ok) throw new Error();
+      toast.success(`Priority set to ${newPriority}`);
+    } catch {
+      toast.error("Failed to update priority");
+      setPriority(header?.priority ?? "medium");
+    }
+  };
+
   /* attachment handler */
   const handleAttachmentChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     e.target.files && setAttachments(Array.from(e.target.files));
-
-  /* loading / not‑found guards */
-  if (loading) return <p className="p-6">Loading…</p>;
-  if (!header) return <p className="p-6">Ticket not found.</p>;
 
   const handleSendMessage = async () => {
     if (!newMessage.trim()) {
@@ -111,12 +169,12 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
            In real life you’d upload files first and send their URLs. */
       const attachJson = attachments.length
         ? JSON.stringify(
-          attachments.map((f) => ({
-            name: f.name,
-            url: "",
-            size: f.size,
-          })),
-        )
+            attachments.map((f) => ({
+              name: f.name,
+              url: "",
+              size: f.size,
+            }))
+          )
         : [];
 
       /* 2 · POST to the API with x‑is‑internal = true */
@@ -124,7 +182,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-is-internal": "true",          // <- required header
+          "x-is-internal": "true", // <- required header
         },
         body: JSON.stringify({
           message: newMessage,
@@ -137,6 +195,9 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
       /* 3 · append the returned message to local state */
       const created: TicketMessage = await res.json();
       setMessages((m) => [...m, created]);
+      const status = await fetch(`/api/tickets/${id}`);
+      const data = await status.json();
+      setStatus(data.ticket.status);
 
       /* 4 · reset composer */
       setNewMessage("");
@@ -144,7 +205,11 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     } catch {
       toast.error("Failed to send message");
     }
-  }
+  };
+
+  /* loading / not‑found guards */
+  if (loading) return <p className="p-6">Loading…</p>;
+  if (!header) return <p className="p-6">Ticket not found.</p>;
 
   return (
     <div className="container mx-auto py-10">
@@ -157,27 +222,52 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between">
+        <CardHeader className="flex items-start justify-between">
+          {/* left side: title & info */}
           <div>
-            <CardTitle className="flex items-center gap-2">
-              {header.title}:
-              <PriorityBadge priority={header.priority} />
+            <CardTitle className="text-lg font-semibold">
+              {header.title}
             </CardTitle>
-            <CardTitle>Ticket #{header.id}</CardTitle>
             <CardDescription>
               Created on {fmtLocal(header.createdAt)} by {header.username}
             </CardDescription>
           </div>
-          <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger className="w-[150px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="open">Open</SelectItem>
-              <SelectItem value="in-progress">In Progress</SelectItem>
-              <SelectItem value="closed">Closed</SelectItem>
-            </SelectContent>
-          </Select>
+
+          {/* right side: priority + status, side by side */}
+          <div className="flex items-center gap-4">
+            <Select value={priority} onValueChange={handlePriorityChange}>
+              <SelectTrigger className="w-[120px]">
+                <Badge
+                  className={
+                    {
+                      low: "bg-green-100 text-green-800",
+                      medium: "bg-yellow-100 text-yellow-800",
+                      high: "bg-red-100 text-red-800",
+                    }[priority]
+                  }
+                  variant="outline"
+                >
+                  {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                </Badge>
+              </SelectTrigger>
+              <SelectContent side="bottom">
+                <SelectItem value="low">Low</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={status} onValueChange={handleStatusChange}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent side="bottom">
+                <SelectItem value="open">Open</SelectItem>
+                <SelectItem value="in-progress">In Progress</SelectItem>
+                <SelectItem value="closed">Closed</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </CardHeader>
 
         <CardContent>
@@ -201,10 +291,11 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
                   </Avatar>
                   <div>
                     <div
-                      className={`rounded-lg p-3 ${message.isInternal === false
-                        ? "bg-muted text-foreground"
-                        : "bg-primary text-primary-foreground"
-                        }`}
+                      className={`rounded-lg p-3 ${
+                        message.isInternal === false
+                          ? "bg-muted text-foreground"
+                          : "bg-primary text-primary-foreground"
+                      }`}
                     >
                       <p>{message.message}</p>
                       {message.attachments &&
