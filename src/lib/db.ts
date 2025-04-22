@@ -17,6 +17,7 @@ interface DB {
     createdAt: Date | null;
     updatedAt: Date | null;
   };
+
   account: {
     id: string;
     userId: string;
@@ -32,6 +33,7 @@ interface DB {
     createdAt: Date | null;
     updatedAt: Date | null;
   };
+
   session: {
     id: string;
     userId: string;
@@ -43,6 +45,7 @@ interface DB {
     createdAt: Date | null;
     updatedAt: Date | null;
   };
+
   verification: {
     id: string;
     identifier: string;
@@ -51,7 +54,6 @@ interface DB {
     createdAt: Date | null;
     updatedAt: Date | null;
   };
-
   // Better Auth Organization Plugin Tables
   organization: {
     id: string;
@@ -81,6 +83,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   coupons: {
     id: string;
     organizationId: string;
@@ -100,6 +103,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   shipments: {
     id: string;
     organizationId: string;
@@ -110,25 +114,27 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   shippingMethods: {
-    id: string,
-    organizationId: string,
-    name: string,
-    url: string,
-    countries: string,
-    createdAt: Date,
-    updatedAt: Date,
+    id: string;
+    organizationId: string;
+    name: string;
+    url: string;
+    countries: string;
+    createdAt: Date;
+    updatedAt: Date;
   };
+
   reviews: {
-    id: string,
-    orderId: string,
-    organizationId: string,
-    text: string,
-    rate: string,
-    createdAt: Date,
-    updatedAt: Date,
-    
+    id: string;
+    orderId: string;
+    organizationId: string;
+    text: string;
+    rate: string;
+    createdAt: Date;
+    updatedAt: Date;    
   };
+
   member: {
     id: string;
     userId: string;
@@ -136,6 +142,7 @@ interface DB {
     role: string;
     createdAt: Date;
   };
+
   invitation: {
     id: string;
     email: string;
@@ -146,6 +153,7 @@ interface DB {
     expiresAt: Date;
     createdAt: Date;
   };
+
   announcements: { 
     id: string;
     organizationId: string;
@@ -157,6 +165,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   team: {
     id: string;
     name: string;
@@ -164,7 +173,6 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
-
   // Custom Tables
   tenant: {
     id: string;
@@ -175,6 +183,7 @@ interface DB {
     updatedAt: Date;
     onboardingCompleted: number | null;
   };
+
   subscription: {
     id: string;
     userId: string;
@@ -185,12 +194,34 @@ interface DB {
     periodStart: Date | null;
     periodEnd: Date | null;
   };
+
   warehouse: {
     id: string;
     tenantId: string;
     organizationId: string; // JSON array
     name: string;
     countries: string; // JSON array
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  tickets:{
+    id: string;
+    organizationId: string;
+    clientId: string;
+    title: string;
+    status: string;
+    priority: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  ticketMessages:{
+    id: string;
+    ticketId: string;
+    message: string;
+    attachments: string;
+    isInternal: boolean;
     createdAt: Date;
     updatedAt: Date;
   };
@@ -255,12 +286,6 @@ interface DB {
     attributeId: string;
     termId: string;
   };
-
-
-
-
-  // New Tables
-
   // The "products" table stores individual products
   products: {
     id: string;
@@ -283,8 +308,6 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
-
-
   // The "product_variations" table stores variations for variable products
   productVariations: {
     id: string;
@@ -304,7 +327,6 @@ interface DB {
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 })
-
 
 export const db = new Kysely({
   dialect: new PostgresDialect({ pool })

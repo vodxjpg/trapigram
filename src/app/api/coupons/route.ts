@@ -173,8 +173,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const parsedCoupon = couponSchema.parse(body);
-    console.log(body)
-    
+
     const {
       name,
       code,
