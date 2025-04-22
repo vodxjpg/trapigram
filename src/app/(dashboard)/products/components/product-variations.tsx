@@ -40,6 +40,71 @@ interface Props {
 // ---------------------------------------------------------------------------
 // component
 // ---------------------------------------------------------------------------
+
+/* -----------------------------------------------------------
+   Upload / preview widget reused by each variation card
+----------------------------------------------------------- */
+function VariationImagePicker({
+  value,
+  onChange,
+}: {
+  value: string | null
+  onChange: (url: string | null) => void
+}) {
+  const [preview, setPreview] = useState<string | null>(value)
+
+  /* one stable ID per instance */
+  const inputId = useState(() => `var-img-${uuidv4()}`)[0]            // ★ FIX
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const fd = new FormData()
+    fd.append("file", file)
+    const res = await fetch("/api/upload", { method: "POST", body: fd })
+    if (!res.ok) {
+      // quick feedback – reuse parent toast if you like
+      return
+    }
+    const { filePath } = await res.json()
+    setPreview(filePath)
+    onChange(filePath)                                               // ★ keeps image in variation
+  }
+
+  return (
+    <>
+      {preview ? (
+        <div className="relative w-full h-40 rounded-md overflow-hidden mb-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={preview} alt="Variation" className="object-cover w-full h-full" />
+        </div>
+      ) : (
+        <div className="w-full h-40 border border-dashed rounded-md flex items-center justify-center mb-2">
+          <span className="text-xs text-muted-foreground">No image</span>
+        </div>
+      )}
+
+      {/* input & button use the SAME id ----------------------------- */}
+      <input
+        type="file"
+        accept="image/*"
+        id={inputId}
+        className="hidden"
+        onChange={handleUpload}
+      />
+      <Button
+        variant="outline"
+        type="button"
+        onClick={() => document.getElementById(inputId)?.click()}     // ★ FIX
+        className="w-full"
+      >
+        {preview ? "Change Image" : "Upload Image"}
+      </Button>
+    </>
+  )
+}
+
+
 export function ProductVariations({
   attributes,
   variations,
@@ -138,6 +203,7 @@ export function ProductVariations({
           id: uuidv4(),
           attributes: combo,
           sku: `VAR-${uuidv4().slice(0, 8)}`,
+          image: null,
           prices: JSON.parse(JSON.stringify(blankPrices)),
           cost:   JSON.parse(JSON.stringify(blankCosts)),                // ★ NEW
           stock: JSON.parse(JSON.stringify(blankStock)),
@@ -236,7 +302,7 @@ export function ProductVariations({
                 {/* SKU ------------------------------------------------------- */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <FormLabel className="text-sm mb-1 block">SKU</FormLabel>
+                    <FormLabel className="text-sm mb-1 block">SKUS</FormLabel>
                     {editingId === v.id ? (
                       <input
                         className="w-full border rounded-md px-3 py-2 text-sm"
@@ -246,6 +312,21 @@ export function ProductVariations({
                     ) : (
                       <div className="p-2 border rounded-md text-sm">{v.sku}</div>
                     )}
+                  </div>
+                </div>
+
+                {/* IMAGE ---------------------------------------------------- */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <FormLabel className="text-sm mb-1 block">Variation Image</FormLabel>
+                    <VariationImagePicker                                   // ★ IMAGE (component below)
+                      value={v.image}
+                      onChange={(filePath)=>onVariationsChange(cur=>cur.map(x=>x.id===v.id?{...x,image:filePath}:x))}
+                    />
+                  </div>
+                  <div>
+                    <FormLabel className="text-sm mb-1 block">SKU</FormLabel>
+                    {/* existing SKU edit UI unchanged */}
                   </div>
                 </div>
 

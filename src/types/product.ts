@@ -33,6 +33,7 @@ export interface Variation {
   id: string;
   attributes: Record<string, string>;
   sku: string;
+  image: string | null
   regularPrice: Record<string, number>;
   salePrice:    Record<string, number> | null;
   /** NEW */

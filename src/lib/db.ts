@@ -317,8 +317,22 @@ interface DB {
     /** country‑based pricing for the variation */
     regularPrice: Record<string, number>;          //   « changed »
     salePrice:   Record<string, number> | null;    //   « changed »
-    cost:         Record<string, number>;     
+    cost:         Record<string, number>;
+    image: string | null;
     stock: Record<string, Record<string, number>> | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  warehouseStock: {
+    id: string;
+    warehouseId: string; // References warehouse.id
+    productId: string; // References products.id
+    variationId: string | null; // References productVariations.id (nullable for simple products)
+    country: string; // ISO-3166 country code (e.g., "ES")
+    quantity: number; // Stock quantity for this product/variation in the warehouse for the country
+    organizationId: string; // References organization.id
+    tenantId: string; // References tenant.id
     createdAt: Date;
     updatedAt: Date;
   };

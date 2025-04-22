@@ -18,6 +18,7 @@ const variationSchema = z.object({
   id: z.string(),
   attributes: z.record(z.string(), z.string()),
   sku: z.string(),
+  image: z.string().nullable().optional(),
   prices: z.record(z.string(), priceObj),              // ⇦ NEW
   cost:   costMap.optional(), 
   stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
@@ -244,6 +245,7 @@ export async function POST(req: NextRequest) {
           productId,
           attributes: JSON.stringify(v.attributes),
           sku: v.sku,
+          image: v.image ?? null,
           regularPrice,
           salePrice,
           cost        : v.cost ?? {},
