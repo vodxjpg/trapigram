@@ -334,10 +334,11 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
 
         <CardFooter className="flex flex-col gap-4">
           <Textarea
-            placeholder="Type your response here..."
+            placeholder= {status === "closed" ? "Ticket is closed" : "Type your response here..."}
             className="min-h-[100px]"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
+            disabled = {status === "closed" ? true : false}
           />
 
           <div className="flex items-center justify-between w-full">
