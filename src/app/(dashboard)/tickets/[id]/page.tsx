@@ -235,7 +235,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
 
           {/* right side: priority + status, side by side */}
           <div className="flex items-center gap-4">
-            <Select value={priority} onValueChange={handlePriorityChange}>
+            <Select value={priority} onValueChange={handlePriorityChange} disabled = {status === "closed" ? true : false}>
               <SelectTrigger className="w-[120px]">
                 <Badge
                   className={
@@ -257,7 +257,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
               </SelectContent>
             </Select>
 
-            <Select value={status} onValueChange={handleStatusChange}>
+            <Select value={status} onValueChange={handleStatusChange} disabled = {status === "closed" ? true : false}>
               <SelectTrigger className="w-[150px]">
                 <SelectValue />
               </SelectTrigger>
@@ -350,7 +350,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
                 className="hidden"
                 onChange={handleAttachmentChange}
               />
-              <Button variant="outline" size="sm" asChild>
+              <Button variant="outline" size="sm" asChild >
                 <label htmlFor="file-upload" className="cursor-pointer">
                   <Paperclip className="h-4 w-4 mr-2" />
                   Attach Files
@@ -363,7 +363,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
               )}
             </div>
 
-            <Button onClick={handleSendMessage}>
+            <Button onClick={handleSendMessage} disabled = {status === "closed" ? true : false}>
               <Send className="h-4 w-4 mr-2" />
               Send Response
             </Button>
