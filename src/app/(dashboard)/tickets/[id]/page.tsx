@@ -262,9 +262,9 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent side="bottom">
-                <SelectItem value="open">Open</SelectItem>
-                <SelectItem value="in-progress">In Progress</SelectItem>
-                <SelectItem value="closed">Closed</SelectItem>
+                <SelectItem value="open" disabled={status === "closed" || status === "in-progress" ? true : false}>Open</SelectItem>
+                <SelectItem value="in-progress" disabled={status === "closed" || status === "open" ? true : false}>In Progress</SelectItem>
+                <SelectItem value="closed" disabled={status === "open" ? true : false}>Closed</SelectItem>
               </SelectContent>
             </Select>
           </div>
