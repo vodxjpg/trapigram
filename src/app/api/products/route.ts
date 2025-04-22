@@ -12,11 +12,14 @@ const priceObj = z.object({
   sale:    z.number().nullable(),
 })
 
+const costMap = z.record(z.string(), z.number().min(0))
+
 const variationSchema = z.object({
   id: z.string(),
   attributes: z.record(z.string(), z.string()),
   sku: z.string(),
   prices: z.record(z.string(), priceObj),              // ⇦ NEW
+  cost:   costMap.optional(), 
   stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
 })
 
@@ -29,6 +32,7 @@ const productSchema = z.object({
   productType: z.enum(["simple", "variable"]),
   categories: z.array(z.string()).optional(),
   prices: z.record(z.string(), priceObj),              // ⇦ NEW
+  cost:   costMap.optional(), 
   allowBackorders: z.boolean().default(false),
   manageStock: z.boolean().default(false),
   stockData: z.record(z.string(), z.record(z.string(), z.number())).nullable().optional(),
@@ -84,7 +88,7 @@ export async function GET(req: NextRequest) {
       .selectFrom("products")
       .select([
         "id","title","description","image","sku","status","productType",
-        "regularPrice","salePrice",
+        "regularPrice","salePrice", "cost",
         "allowBackorders","manageStock","stockData","stockStatus",
         "createdAt","updatedAt",
       ])
@@ -222,6 +226,7 @@ export async function POST(req: NextRequest) {
       productType: parsedProduct.productType,
       regularPrice,
       salePrice,
+      cost          : parsedProduct.cost ?? {},
       allowBackorders: parsedProduct.allowBackorders,
       manageStock: parsedProduct.manageStock,
       stockData: parsedProduct.stockData ? JSON.stringify(parsedProduct.stockData) : null,
@@ -241,6 +246,7 @@ export async function POST(req: NextRequest) {
           sku: v.sku,
           regularPrice,
           salePrice,
+          cost        : v.cost ?? {},
           stock: v.stock ? JSON.stringify(v.stock) : null,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -261,7 +267,7 @@ export async function POST(req: NextRequest) {
         await db.insertInto("productCategory").values({ productId, categoryId:cid }).execute()
     }
 
-    return NextResponse.json({ product:{ id:productId, ...parsedProduct, organizationId, tenantId,
+    return NextResponse.json({ product:{ id:productId, ...parsedProduct, cost           : parsedProduct.cost ?? {}, organizationId, tenantId,
                                          createdAt:new Date().toISOString(),
                                          updatedAt:new Date().toISOString() } },{ status:201 })
   } catch (err) {

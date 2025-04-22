@@ -23,6 +23,7 @@ function mergePriceMaps(
 /* ------------------------------------------------------------------ */
 // ★ NEW
 const priceObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
+const costMap  = z.record(z.string(), z.number().min(0))
 
 function splitPrices(
   pr: Record<string, { regular: number; sale: number | null }>,
@@ -50,6 +51,7 @@ const variationPatchSchema = z.union([
     sku: z.string(),
     regularPrice: z.number(),
     salePrice: z.number().nullable(),
+    cost: costMap.optional(),
     stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
   }),
   /* ★ NEW: prices map */
@@ -58,6 +60,7 @@ const variationPatchSchema = z.union([
     attributes: z.record(z.string(), z.string()),
     sku: z.string(),
     prices: z.record(z.string(), priceObj),
+    cost  : costMap.optional(),
     stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
   }),
 ]);
@@ -75,6 +78,7 @@ const productUpdateSchema = z.object({
   salePrice: z.number().min(0).nullable().optional(),
   /* ★ NEW map‑based pricing */
   prices: z.record(z.string(), priceObj).optional(),
+  cost  : costMap.optional(),
   allowBackorders: z.boolean().optional(),
   manageStock: z.boolean().optional(),
   stockData: z
@@ -183,6 +187,8 @@ export async function GET(
       .execute();
   }
 
+  const cost = raw.cost && typeof raw.cost === "string" ? JSON.parse(raw.cost) : raw.cost ?? {}
+
   const variations = variationsRaw.map((v) => {
     const reg =
       v.regularPrice && typeof v.regularPrice === "string"
@@ -192,11 +198,13 @@ export async function GET(
       v.salePrice && typeof v.salePrice === "string"
         ? JSON.parse(v.salePrice)
         : v.salePrice;
+    const cost = typeof v.cost         === "string" ? JSON.parse(v.cost)         : v.cost ?? {}
     return {
       id: v.id,
       attributes: v.attributes,
       sku: v.sku,
       prices: mergePriceMaps(reg, sal),
+      cost,
       stock:
         v.stock && typeof v.stock === "string"
           ? JSON.parse(v.stock)
@@ -223,6 +231,7 @@ export async function GET(
   const product = {
     ...raw,
     prices: mergePriceMaps(reg, sal),
+    cost,
     stockData,
     stockStatus: raw.manageStock ? "managed" : "unmanaged",
     categories,
@@ -319,6 +328,7 @@ export async function PATCH(
       updateCols.regularPrice = regularPrice;
       updateCols.salePrice = salePrice;
     } else {
+      if (parsedUpdate.cost) updateCols.cost = parsedUpdate.cost
       if (parsedUpdate.regularPrice !== undefined)
         updateCols.regularPrice = parsedUpdate.regularPrice;
       if (parsedUpdate.salePrice !== undefined)
@@ -384,6 +394,7 @@ export async function PATCH(
             sku: v.sku,
             regularPrice,
             salePrice,
+            cost       : v.cost ?? {},
             stock: v.stock ? JSON.stringify(v.stock) : null,
             createdAt: new Date(),
             updatedAt: new Date(),
