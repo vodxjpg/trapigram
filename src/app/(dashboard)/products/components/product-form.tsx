@@ -38,13 +38,13 @@ import { StockManagement } from "./stock-management"
 import { ProductAttributes } from "./product-attributes"
 import { ProductVariations } from "./product-variations"
 import { PriceManagement } from "./price-management"
-import { CostManagement } from "./cost-management"            // ★ NEW
+import { CostManagement } from "./cost-management"
 
 // --------------------------------------------------
 //  helpers / types
 // --------------------------------------------------
 type PriceMap = Record<string, { regular: number; sale: number | null }>
-type CostMap  = Record<string, number>                           // ★ NEW
+type CostMap = Record<string, number>
 
 // --------------------------------------------------
 //  validation schema
@@ -61,7 +61,7 @@ const productSchema = z.object({
   allowBackorders: z.boolean().default(false),
   manageStock: z.boolean().default(false),
   prices: z.record(z.string(), priceObj).optional(),
-  cost:   z.record(z.string(), z.number().min(0)).optional(),   // ★ NEW
+  cost: z.record(z.string(), z.number().min(0)).optional(),
 })
 
 type ProductFormValues = z.infer<typeof productSchema>
@@ -117,10 +117,10 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   const [variations, setVariations] = useState<Variation[]>(initialData?.variations || [])
   const [orgCountries, setOrgCountries] = useState<string[]>([])
   const [prices, setPrices] = useState<PriceMap>({})
-  const [costs,  setCosts]  = useState<CostMap>({})            // ★ NEW
+  const [costs, setCosts] = useState<CostMap>({})
 
   // --------------------------------------------------
-  //  parse initial stock
+  //  parse initial stock for simple products
   // --------------------------------------------------
   useEffect(() => {
     if (!initialData?.stockData) return
@@ -139,14 +139,14 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   //  fetch organization countries (for pricing & cost maps)
   // --------------------------------------------------
   useEffect(() => {
-    ;(async () => {
+    (async () => {
       const res = await fetch("/api/organizations/countries")
       if (!res.ok) return
       const { countries } = await res.json()
       const list = Array.isArray(countries) ? countries : JSON.parse(countries)
       setOrgCountries(list)
 
-      /* prices ----------------------------------------------------- */
+      /* prices */
       if (initialData?.prices) {
         setPrices(initialData.prices as PriceMap)
       } else if (!initialData) {
@@ -155,8 +155,8 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         setPrices(blank)
       }
 
-      /* cost ------------------------------------------------------- */
-      if (initialData?.cost) {                                      // ★ NEW
+      /* cost */
+      if (initialData?.cost) {
         setCosts(initialData.cost as CostMap)
       } else if (!initialData) {
         const blankCost: CostMap = {}
@@ -196,7 +196,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         },
   })
 
-  // reset when initialData changes (edit mode)
+  // reset form when initialData changes (edit mode)
   useEffect(() => {
     if (!initialData) return
     form.reset({
@@ -211,8 +211,34 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
       manageStock: initialData.manageStock ?? false,
     })
     if (initialData.prices) setPrices(initialData.prices as PriceMap)
-    if (initialData.cost)   setCosts(initialData.cost   as CostMap)   // ★ NEW
+    if (initialData.cost) setCosts(initialData.cost as CostMap)
+    // Explicitly set variations with stock data
+    if (initialData.variations) setVariations(initialData.variations)
   }, [initialData, form])
+
+  // synchronize variations with warehouses and countries
+  useEffect(() => {
+    if (!initialData?.variations || warehouses.length === 0 || orgCountries.length === 0) return
+    setVariations((cur) =>
+      cur.map((v) => {
+        const stock: Record<string, Record<string, number>> = { ...(v.stock || {}) }
+        let stockChanged = false
+        warehouses.forEach((w) => {
+          if (!stock[w.id]) {
+            stock[w.id] = {}
+            stockChanged = true
+          }
+          w.countries.forEach((c) => {
+            if (stock[w.id][c] === undefined) {
+              stock[w.id][c] = 0
+              stockChanged = true
+            }
+          })
+        })
+        return stockChanged ? { ...v, stock } : v
+      })
+    )
+  }, [warehouses, orgCountries, initialData])
 
   // watch values that affect UI
   const productType = form.watch("productType")
@@ -222,7 +248,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   //  fetch helpers
   // --------------------------------------------------
   useEffect(() => {
-    ;(async () => {
+    (async () => {
       const res = await fetch("/api/product-categories")
       if (res.ok) {
         const { categories } = await res.json()
@@ -232,7 +258,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   }, [])
 
   useEffect(() => {
-    ;(async () => {
+    (async () => {
       const res = await fetch("/api/warehouses")
       if (!res.ok) return
       const { warehouses } = await res.json()
@@ -283,6 +309,31 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   }
 
   // --------------------------------------------------
+  //  transform stock data to warehouseStock format
+  // --------------------------------------------------
+  const transformStockToWarehouseStock = (
+    stockData: Record<string, Record<string, number>>,
+    productId: string,
+    variationId: string | null = null
+  ) => {
+    const warehouseStock = []
+    for (const [warehouseId, countries] of Object.entries(stockData)) {
+      for (const [country, quantity] of Object.entries(countries)) {
+        if (quantity > 0) {
+          warehouseStock.push({
+            warehouseId,
+            productId,
+            variationId,
+            country,
+            quantity,
+          })
+        }
+      }
+    }
+    return warehouseStock
+  }
+
+  // --------------------------------------------------
   //  submit
   // --------------------------------------------------
   const onSubmit = async (values: ProductFormValues) => {
@@ -295,11 +346,22 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         return
       }
 
+      let warehouseStock = []
+      if (manageStock && productType === "simple") {
+        warehouseStock = transformStockToWarehouseStock(stockData, productId || uuidv4())
+      } else if (productType === "variable" && variations.length > 0) {
+        for (const variation of variations) {
+          warehouseStock.push(
+            ...transformStockToWarehouseStock(variation.stock || {}, productId || uuidv4(), variation.id)
+          )
+        }
+      }
+
       const payload = {
         ...values,
         prices: productType === "simple" ? prices : undefined,
-        cost:   productType === "simple" ? costs  : undefined,         // ★ NEW
-        stockData: manageStock && productType === "simple" ? stockData : null,
+        cost: productType === "simple" ? costs : undefined,
+        warehouseStock: warehouseStock.length > 0 ? warehouseStock : undefined,
         attributes,
         variations: productType === "variable" ? variations : [],
       }
@@ -331,7 +393,6 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
       setIsSubmitting(false)
     }
   }
-
 
   return (
     <Form {...form}>
@@ -482,7 +543,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                       )}
                     />
                   </div>
-                  {/* Right Column: Title, Product Type, SKU (prices removed) */}
+                  {/* Right Column: Title, Product Type, SKU */}
                   <div className="space-y-6">
                     <FormField
                       control={form.control}
@@ -590,7 +651,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
           <TabsContent value="inventory" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Inventory &amp; Pricing</CardTitle>
+                <CardTitle>Inventory & Pricing</CardTitle>
                 <CardDescription>Configure prices per country and stock management</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -602,7 +663,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                       priceData={prices}
                       onChange={setPrices}
                     />
-                    <CostManagement         
+                    <CostManagement
                       title="Cost per country"
                       countries={orgCountries}
                       costData={costs}

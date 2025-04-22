@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
+import { v4 as uuidv4 } from "uuid";
 
 /* ------------------------------------------------------------------ */
 /* helper – merge regular/sale JSON objects ➜ { IT:{regular, sale}, …} */
@@ -21,7 +22,6 @@ function mergePriceMaps(
 /* ------------------------------------------------------------------ */
 /* helper – split map ➜ {regularPrice, salePrice} (JSONB ready)       */
 /* ------------------------------------------------------------------ */
-// ★ NEW
 const priceObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
 const costMap  = z.record(z.string(), z.number().min(0))
 
@@ -43,27 +43,22 @@ function splitPrices(
 /* ------------------------------------------------------------------ */
 /*  Zod schema for PATCH                                              */
 /* ------------------------------------------------------------------ */
+const warehouseStockSchema = z.array(z.object({
+  warehouseId: z.string(),
+  productId: z.string(),
+  variationId: z.string().nullable(),
+  country: z.string(),
+  quantity: z.number().min(0),
+}))
+
 const variationPatchSchema = z.union([
-  /* legacy: flat regular/sale numbers */
-  z.object({
-    id: z.string(),
-    attributes: z.record(z.string(), z.string()),
-    sku: z.string(),
-    image: z.string().nullable().optional(),
-    regularPrice: z.number(),
-    salePrice: z.number().nullable(),
-    cost: costMap.optional(),
-    stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
-  }),
-  /* ★ NEW: prices map */
   z.object({
     id: z.string(),
     attributes: z.record(z.string(), z.string()),
     sku: z.string(),
     image: z.string().nullable().optional(),
     prices: z.record(z.string(), priceObj),
-    cost  : costMap.optional(),
-    stock: z.record(z.string(), z.record(z.string(), z.number())).optional(),
+    cost: costMap.optional(),
   }),
 ]);
 
@@ -75,18 +70,11 @@ const productUpdateSchema = z.object({
   status: z.enum(["published", "draft"]).optional(),
   productType: z.enum(["simple", "variable"]).optional(),
   categories: z.array(z.string()).optional(),
-  /* legacy flat fields (still accepted) */
-  regularPrice: z.number().min(0).nullable().optional(),
-  salePrice: z.number().min(0).nullable().optional(),
-  /* ★ NEW map‑based pricing */
   prices: z.record(z.string(), priceObj).optional(),
-  cost  : costMap.optional(),
+  cost: costMap.optional(),
   allowBackorders: z.boolean().optional(),
   manageStock: z.boolean().optional(),
-  stockData: z
-    .record(z.string(), z.record(z.string(), z.number()))
-    .nullable()
-    .optional(),
+  warehouseStock: warehouseStockSchema.optional(),
   attributes: z
     .array(
       z.object({
@@ -179,6 +167,21 @@ export async function GET(
     return acc;
   }, []);
 
+  /* ---------- stock data ----------------------------------------- */
+  const stockRows = await db
+    .selectFrom("warehouseStock")
+    .select(["warehouseId", "country", "quantity", "variationId"])
+    .where("productId", "=", id)
+    .execute();
+
+  const stockData = stockRows
+    .filter(row => !row.variationId)
+    .reduce((acc, row) => {
+      if (!acc[row.warehouseId]) acc[row.warehouseId] = {};
+      acc[row.warehouseId][row.country] = row.quantity;
+      return acc;
+    }, {} as Record<string, Record<string, number>>);
+
   /* ---------- variations (if any) -------------------------------- */
   let variationsRaw: any[] = [];
   if (raw.productType === "variable") {
@@ -200,7 +203,7 @@ export async function GET(
       v.salePrice && typeof v.salePrice === "string"
         ? JSON.parse(v.salePrice)
         : v.salePrice;
-    const cost = typeof v.cost         === "string" ? JSON.parse(v.cost)         : v.cost ?? {}
+    const cost = typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost ?? {}
     return {
       id: v.id,
       attributes: v.attributes,
@@ -208,19 +211,17 @@ export async function GET(
       image: v.image,
       prices: mergePriceMaps(reg, sal),
       cost,
-      stock:
-        v.stock && typeof v.stock === "string"
-          ? JSON.parse(v.stock)
-          : v.stock || {},
+      stock: stockRows
+        .filter(row => row.variationId === v.id)
+        .reduce((acc, row) => {
+          if (!acc[row.warehouseId]) acc[row.warehouseId] = {};
+          acc[row.warehouseId][row.country] = row.quantity;
+          return acc;
+        }, {} as Record<string, Record<string, number>>),
     };
   });
 
-  /* ---------- stock / price parsing ------------------------------ */
-  const stockData =
-    raw.stockData && typeof raw.stockData === "string"
-      ? JSON.parse(raw.stockData)
-      : raw.stockData || {};
-
+  /* ---------- price parsing ------------------------------ */
   const reg =
     raw.regularPrice && typeof raw.regularPrice === "string"
       ? JSON.parse(raw.regularPrice)
@@ -247,6 +248,10 @@ export async function GET(
 
   return NextResponse.json({ product });
 }
+
+/* ================================================================== */
+/*  PATCH                                                             */
+/* ================================================================== */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -262,12 +267,21 @@ export async function PATCH(
     if (!organizationId)
       return NextResponse.json({ error: "No active organization" }, { status: 400 });
 
+    const tenant = await db
+      .selectFrom("tenant")
+      .select(["id"])
+      .where("ownerUserId", "=", session.user.id)
+      .executeTakeFirst();
+    if (!tenant)
+      return NextResponse.json({ error: "No tenant found for user" }, { status: 404 });
+    const tenantId = tenant.id;
+
     const { id } = await params;
     const body = await req.json();
-    const parsedUpdate = productUpdateSchema.parse(body);          // ★ MOD
+    const parsedUpdate = productUpdateSchema.parse(body);
 
     /* -------------------------------------------------------------- */
-    /*  sanity / FK checks – unchanged                                */
+    /*  sanity / FK checks                                           */
     /* -------------------------------------------------------------- */
     const existingProduct = await db
       .selectFrom("products")
@@ -318,30 +332,23 @@ export async function PATCH(
       productType: parsedUpdate.productType,
       allowBackorders: parsedUpdate.allowBackorders,
       manageStock: parsedUpdate.manageStock,
-      stockData: parsedUpdate.stockData
-        ? JSON.stringify(parsedUpdate.stockData)
-        : undefined,
       stockStatus: parsedUpdate.manageStock ? "managed" : "unmanaged",
       updatedAt: new Date(),
     };
 
-    /* ----------  pricing (map OR legacy fields)  ------------------ */
+    /* ----------  pricing  ----------------------------------------- */
     if (parsedUpdate.prices) {
-      const { regularPrice, salePrice } = splitPrices(parsedUpdate.prices); // ★ NEW
+      const { regularPrice, salePrice } = splitPrices(parsedUpdate.prices);
       updateCols.regularPrice = regularPrice;
       updateCols.salePrice = salePrice;
-    } else {
-      if (parsedUpdate.cost) updateCols.cost = parsedUpdate.cost
-      if (parsedUpdate.regularPrice !== undefined)
-        updateCols.regularPrice = parsedUpdate.regularPrice;
-      if (parsedUpdate.salePrice !== undefined)
-        updateCols.salePrice = parsedUpdate.salePrice;
     }
+
+    if (parsedUpdate.cost) updateCols.cost = parsedUpdate.cost;
 
     await db.updateTable("products").set(updateCols).where("id", "=", id).execute();
 
     /* -------------------------------------------------------------- */
-    /*  categories – unchanged                                        */
+    /*  categories                                                  */
     /* -------------------------------------------------------------- */
     if (parsedUpdate.categories) {
       await db.deleteFrom("productCategory").where("productId", "=", id).execute();
@@ -353,7 +360,7 @@ export async function PATCH(
     }
 
     /* -------------------------------------------------------------- */
-    /*  attributes – unchanged                                        */
+    /*  attributes                                                  */
     /* -------------------------------------------------------------- */
     if (parsedUpdate.attributes) {
       await db
@@ -369,25 +376,13 @@ export async function PATCH(
     }
 
     /* -------------------------------------------------------------- */
-    /*  variations (variable products)                                */
+    /*  variations (variable products)                               */
     /* -------------------------------------------------------------- */
     if (parsedUpdate.productType === "variable" && parsedUpdate.variations) {
       await db.deleteFrom("productVariations").where("productId", "=", id).execute();
 
       for (const v of parsedUpdate.variations) {
-        let regularPrice: any, salePrice: any;
-
-        if ("prices" in v) {
-          /* ★ NEW map‑style variation pricing */
-          const split = splitPrices(v.prices);
-          regularPrice = split.regularPrice;
-          salePrice = split.salePrice;
-        } else {
-          /* legacy flat numbers */
-          regularPrice = v.regularPrice;
-          salePrice = v.salePrice;
-        }
-
+        const { regularPrice, salePrice } = splitPrices(v.prices);
         await db
           .insertInto("productVariations")
           .values({
@@ -398,12 +393,32 @@ export async function PATCH(
             image: v.image ?? null,
             regularPrice,
             salePrice,
-            cost       : v.cost ?? {},
-            stock: v.stock ? JSON.stringify(v.stock) : null,
+            cost: v.cost ?? {},
             createdAt: new Date(),
             updatedAt: new Date(),
           })
           .execute();
+      }
+    }
+
+    /* -------------------------------------------------------------- */
+    /*  warehouseStock                                              */
+    /* -------------------------------------------------------------- */
+    if (parsedUpdate.warehouseStock) {
+      await db.deleteFrom("warehouseStock").where("productId", "=", id).execute();
+      for (const entry of parsedUpdate.warehouseStock) {
+        await db.insertInto("warehouseStock").values({
+          id: uuidv4(),
+          warehouseId: entry.warehouseId,
+          productId: entry.productId,
+          variationId: entry.variationId,
+          country: entry.country,
+          quantity: entry.quantity,
+          organizationId,
+          tenantId,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }).execute();
       }
     }
 
@@ -419,6 +434,9 @@ export async function PATCH(
   }
 }
 
+/* ================================================================== */
+/*  DELETE                                                            */
+/* ================================================================== */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await auth.api.getSession({ headers: req.headers });
@@ -441,7 +459,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
     await db.deleteFrom("productCategory").where("productId", "=", id).execute();
     await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
-    await db.deleteFrom("productVariations").where("id", "=", id).execute();
+    await db.deleteFrom("productVariations").where("productId", "=", id).execute();
     await db.deleteFrom("products").where("id", "=", id).execute();
     return NextResponse.json({ message: "Product deleted successfully" });
   } catch (error) {
