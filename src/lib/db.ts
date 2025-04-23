@@ -2,7 +2,6 @@
 import { Pool } from "pg";
 import { Kysely, PostgresDialect } from "kysely";
 
-
 interface DB {
   // Base Better Auth Tables
   user: {
@@ -41,7 +40,7 @@ interface DB {
     expiresAt: Date | null;
     ipAddress: string | null;
     userAgent: string | null;
-    activeOrganizationId: string | null; // Added for organization plugin
+    activeOrganizationId: string | null;
     createdAt: Date | null;
     updatedAt: Date | null;
   };
@@ -54,6 +53,7 @@ interface DB {
     createdAt: Date | null;
     updatedAt: Date | null;
   };
+
   // Better Auth Organization Plugin Tables
   organization: {
     id: string;
@@ -61,7 +61,7 @@ interface DB {
     slug: string;
     logo: string | null;
     metadata: string | null;
-    countries: string; // JSON array of country codes
+    countries: string;
     encryptedSecret: string;
     createdAt: Date;
     updatedAt: Date;
@@ -76,8 +76,8 @@ interface DB {
     lastName: string;
     lastInteraction: Date;
     email: string;
-    phoneNumber: string; 
-    country: string | null
+    phoneNumber: string;
+    country: string | null;
     levelId: string;
     referredBy: string;
     createdAt: Date;
@@ -97,7 +97,7 @@ interface DB {
     usagePerUser: number;
     usageLimit: number;
     expendingMinimum: number;
-    expendingLImit: number;
+    expendingLimit: number;
     countries: string;
     visibility: boolean;
     createdAt: Date;
@@ -132,13 +132,13 @@ interface DB {
     text: string;
     rate: string;
     createdAt: Date;
-    updatedAt: Date;    
+    updatedAt: Date;
   };
 
   member: {
     id: string;
     userId: string;
-    organizationId: string,
+    organizationId: string;
     role: string;
     createdAt: Date;
   };
@@ -154,13 +154,13 @@ interface DB {
     createdAt: Date;
   };
 
-  announcements: { 
+  announcements: {
     id: string;
     organizationId: string;
     title: string;
     content: string;
-    deliveryDate: Date | null; // Nullable for unscheduled deliveries
-    countries: string; 
+    deliveryDate: Date | null;
+    countries: string;
     sent: boolean;
     createdAt: Date;
     updatedAt: Date;
@@ -173,12 +173,13 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   // Custom Tables
   tenant: {
     id: string;
     ownerUserId: string;
-    owner_name: string | null; // Added for tenant owner’s name
-    owner_email: string | null; // Added for tenant owner’s email
+    owner_name: string | null;
+    owner_email: string | null;
     createdAt: Date;
     updatedAt: Date;
     onboardingCompleted: number | null;
@@ -198,14 +199,14 @@ interface DB {
   warehouse: {
     id: string;
     tenantId: string;
-    organizationId: string; // JSON array
+    organizationId: string;
     name: string;
-    countries: string; // JSON array
+    countries: string;
     createdAt: Date;
     updatedAt: Date;
   };
 
-  tickets:{
+  tickets: {
     id: string;
     organizationId: string;
     clientId: string;
@@ -216,7 +217,7 @@ interface DB {
     updatedAt: Date;
   };
 
-  ticketMessages:{
+  ticketMessages: {
     id: string;
     ticketId: string;
     message: string;
@@ -237,9 +238,9 @@ interface DB {
 
   organizationSupportEmail: {
     id: string;
-    organizationId: string; // references "organization"
-    country: string | null; // e.g. "ES", "IT", or null if global
-    isGlobal: boolean; // if true, this row applies to all org countries
+    organizationId: string;
+    country: string | null;
+    isGlobal: boolean;
     email: string;
     createdAt: Date;
     updatedAt: Date;
@@ -286,7 +287,7 @@ interface DB {
     attributeId: string;
     termId: string;
   };
-  // The "products" table stores individual products
+
   products: {
     id: string;
     organizationId: string;
@@ -297,10 +298,9 @@ interface DB {
     sku: string;
     status: "published" | "draft";
     productType: "simple" | "variable";
-    /** key = ISO‑3166 country (§ organization.countries) */
-    regularPrice: Record<string, number>;           //   « changed »
-    salePrice:   Record<string, number> | null;     //   « changed »
-    cost:         Record<string, number>;               // ← ★
+    regularPrice: Record<string, number>;
+    salePrice: Record<string, number> | null;
+    cost: Record<string, number>;
     allowBackorders: boolean;
     manageStock: boolean;
     stockData: Record<string, Record<string, number>> | null;
@@ -308,16 +308,15 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
-  // The "product_variations" table stores variations for variable products
+
   productVariations: {
     id: string;
     product_id: string;
     attributes: Record<string, string>;
     sku: string;
-    /** country‑based pricing for the variation */
-    regularPrice: Record<string, number>;          //   « changed »
-    salePrice:   Record<string, number> | null;    //   « changed »
-    cost:         Record<string, number>;
+    regularPrice: Record<string, number>;
+    salePrice: Record<string, number> | null;
+    cost: Record<string, number>;
     image: string | null;
     stock: Record<string, Record<string, number>> | null;
     createdAt: Date;
@@ -326,13 +325,41 @@ interface DB {
 
   warehouseStock: {
     id: string;
-    warehouseId: string; // References warehouse.id
-    productId: string; // References products.id
-    variationId: string | null; // References productVariations.id (nullable for simple products)
-    country: string; // ISO-3166 country code (e.g., "ES")
-    quantity: number; // Stock quantity for this product/variation in the warehouse for the country
-    organizationId: string; // References organization.id
-    tenantId: string; // References tenant.id
+    warehouseId: string;
+    productId: string;
+    variationId: string | null;
+    country: string;
+    quantity: number;
+    organizationId: string;
+    tenantId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  warehouseShareLink: {
+    id: string;
+    warehouseId: string;
+    creatorUserId: string;
+    token: string;
+    status: "active" | "revoked";
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  warehouseShareRecipient: {
+    id: string;
+    shareLinkId: string;
+    recipientUserId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  sharedProduct: {
+    id: string;
+    shareLinkId: string;
+    productId: string;
+    variationId: string | null;
+    cost: Record<string, number>;
     createdAt: Date;
     updatedAt: Date;
   };
@@ -340,8 +367,8 @@ interface DB {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-})
+});
 
-export const db = new Kysely({
-  dialect: new PostgresDialect({ pool })
-})
+export const db = new Kysely<DB>({
+  dialect: new PostgresDialect({ pool }),
+});

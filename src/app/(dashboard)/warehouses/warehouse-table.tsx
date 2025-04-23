@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, Search, MoreVertical, Edit, Trash2 } from "lucide-react";
+import { Plus, Search, MoreVertical, Edit, Trash2, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -21,13 +21,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { WarehouseDrawer } from "./warehouse-drawer";
+import Link from "next/link";
 
 type Warehouse = {
   id: string;
   tenantId: string | null;
-  organizationId: string[]; // Array of organization IDs (not a JSON string)
+  organizationId: string[];
   name: string;
-  countries: string[]; // Array of country codes (not a JSON string)
+  countries: string[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -124,7 +125,6 @@ export function WarehouseTable() {
               </TableRow>
             ) : (
               warehouses.map((warehouse) => {
-                // Ensure orgIds and countries are arrays, default to empty if null/undefined
                 const orgIds = Array.isArray(warehouse.organizationId)
                   ? warehouse.organizationId
                   : [];
@@ -159,6 +159,12 @@ export function WarehouseTable() {
                           <DropdownMenuItem onClick={() => handleEdit(warehouse)}>
                             <Edit className="mr-2 h-4 w-4" />
                             Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>
+                            <Link href={`/warehouses/${warehouse.id}/share`} className="flex items-center">
+                              <Share2 className="mr-2 h-4 w-4" />
+                              Share
+                            </Link>
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => handleDelete(warehouse.id)}
