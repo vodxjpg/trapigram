@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, Search, MoreVertical, Edit, Trash2, Share2 } from "lucide-react";
+import { Plus, Search, MoreVertical, Edit, Trash2, Share2, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -94,10 +94,18 @@ export function WarehouseTable() {
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Search warehouses..." className="pl-8" />
         </div>
-        <Button onClick={handleAdd}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Warehouse
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={handleAdd}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Warehouse
+          </Button>
+          <Button asChild>
+            <Link href="/warehouses/share-links">
+              <Link2 className="mr-2 h-4 w-4" />
+              View Share Links
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-md border">

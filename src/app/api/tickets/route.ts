@@ -13,7 +13,7 @@ const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 /* -------------------------------------------------------------------------- */
 const ticketSchema = z.object({
   title: z.string().min(1, "Title is required"),
-  clientId: z.coerce.number().int(),                   // Telegram user
+  clientId: z.string().uuid(),              // Telegram user
   priority: z.enum(["low", "medium", "high"]).default("medium"),
   status: z.enum(["open", "in-progress", "closed"]).default("open"), // optional, but handy
 });

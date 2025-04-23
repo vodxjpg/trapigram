@@ -73,6 +73,7 @@ const data = {
       icon: IconUsers,
       items: [
         { title: "Manage", url: "/clients" },
+        { title: "Custom support", url: "/tickets" },
       ],
     },
     {
