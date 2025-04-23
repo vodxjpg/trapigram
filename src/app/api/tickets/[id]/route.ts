@@ -48,7 +48,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     SELECT tickets.id,
            tickets."organizationId",
            tickets."clientId",
-           clients.username,
+           clients."firstName",
            tickets.title,
            tickets.priority,
            tickets.status,

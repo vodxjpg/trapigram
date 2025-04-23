@@ -62,7 +62,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
         const { id } = await params;
         const body = await req.json();
-        body.attachments !== typeof (string) ? body.attachments = "[]" : body.attachments;
+        typeof(body.attachments) !== "string" ? body.attachments = "[]" : body.attachments;
         internal === "true" ? body.isInternal = true : body.isInternal = false;
         const parsedMessage = messagesSchema.parse(body);
 

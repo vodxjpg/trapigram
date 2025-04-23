@@ -38,7 +38,7 @@ type TicketHeader = {
   priority: "low" | "medium" | "high";
   status: "open" | "in-progress" | "closed";
   userId: string;
-  username: string;
+  firstName: string;
   createdAt: Date;
 };
 
@@ -229,7 +229,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
               {header.title}
             </CardTitle>
             <CardDescription>
-              Created on {fmtLocal(header.createdAt)} by {header.username}
+              Created on {fmtLocal(header.createdAt)} by {header.firstName}. ID: <Link href={`/clients/`+(header.id)}>{header.id}</Link>
             </CardDescription>
           </div>
 
@@ -285,7 +285,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
                   >
                     <AvatarFallback>
                       {message.isInternal === false
-                        ? header.username.charAt(0).toUpperCase()
+                        ? header.firstName.charAt(0).toUpperCase()
                         : "A"}
                     </AvatarFallback>
                   </Avatar>
