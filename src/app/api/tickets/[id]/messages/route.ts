@@ -88,10 +88,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const messages = result.rows[0];
         messages.attachments = JSON.parse(messages.attachments)
 
-        const amountQuery = `SELECT * FROM "ticketMessages"`
+        const amountQuery = `SELECT * FROM "ticketMessages" WHERE "ticketId" = '${id}'`
         const amountResult = await pool.query(amountQuery)
         const amount = amountResult.rows.length
-        if (amount === 2) {
+        if (amount > 1) {
             const statusQuery = `UPDATE "tickets"
             SET status = 'in-progress'
             WHERE id = $1`
