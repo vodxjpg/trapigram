@@ -116,7 +116,7 @@ declare module "better-auth/react" {
 
 /* ─────────────────────────── CLIENT INSTANCE ───────────────────────────── */
 export const authClient = createAuthClient({
-  baseURL: process.env.BETTER_AUTH_URL || "http://localhost:3000/api/auth",
+  baseURL: process.env.BETTER_AUTH_URL || "https://trapigram.vercel.app/api/auth",
   plugins: [
     apiKeyClient(),
     organizationClient({
