@@ -731,12 +731,12 @@ export default function OnboardingPage() {
                     </button>
 
                     <div className="p-3 border border-gray-300 rounded opacity-50 cursor-not-allowed flex flex-col items-center justify-center">
-                      <IconMessageCircle />
+                      <IconBrandWhatsapp />
                       <span className="text-sm">WhatsApp (coming soon)</span>
                     </div>
 
                     <div className="p-3 border border-gray-300 rounded opacity-50 cursor-not-allowed flex flex-col items-center justify-center">
-                      <IconBrandWhatsapp />
+                      <IconMessageCircle />
                       <span className="text-sm">Signal (coming soon)</span>
                     </div>
                   </div>

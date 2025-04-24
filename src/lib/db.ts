@@ -178,8 +178,9 @@ interface DB {
   tenant: {
     id: string;
     ownerUserId: string;
-    owner_name: string | null;
-    owner_email: string | null;
+    ownerName: string | null;
+    ownerEmail: string | null;
+    plan: string | null;
     createdAt: Date;
     updatedAt: Date;
     onboardingCompleted: number | null;
@@ -303,7 +304,6 @@ interface DB {
     cost: Record<string, number>;
     allowBackorders: boolean;
     manageStock: boolean;
-    stockData: Record<string, Record<string, number>> | null;
     stockStatus: "managed" | "unmanaged";
     createdAt: Date;
     updatedAt: Date;
@@ -360,6 +360,15 @@ interface DB {
     productId: string;
     variationId: string | null;
     cost: Record<string, number>;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  sharedProductMapping: {
+    id: string;
+    shareLinkId: string;
+    sourceProductId: string;
+    targetProductId: string;
     createdAt: Date;
     updatedAt: Date;
   };

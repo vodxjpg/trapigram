@@ -95,7 +95,7 @@ export async function GET(req: NextRequest) {
     // 7) Onboarding
     if (!isGuest) {
       const onboardingCompleted = tenants[0]?.onboardingCompleted === -1;
-      if (!onboardingCompleted && isGuest) {
+      if (!onboardingCompleted && !isGuest) {
         console.log("Onboarding not completed => /onboarding");
         return NextResponse.json({ redirect: "/onboarding" });
       }
