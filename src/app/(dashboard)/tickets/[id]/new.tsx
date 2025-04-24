@@ -1,7 +1,5 @@
 "use client";
 
-import type React from "react";
-
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -14,64 +12,48 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
+  CardDescription,
+  CardContent,
+  CardFooter,
 } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogTrigger,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogClose,
-} from "@/components/ui/dialog";
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
-  SelectContent,
-  SelectItem,
   SelectTrigger,
   SelectValue,
+  SelectContent,
+  SelectItem,
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 /* ------------------------------------------------------------------ */
-/* 1. API payload types                                               */
+/* Types & helpers                                                    */
 /* ------------------------------------------------------------------ */
 type TicketHeader = {
   id: string;
   title: string;
   priority: "low" | "medium" | "high";
   status: "open" | "in-progress" | "closed";
-  userId: string;
-  firstName: string;
-  createdAt: Date;
+  username: string;
+  createdAt: string;
 };
-
 type TicketMessage = {
   id: string;
-  message: string;
+  content: string;
   attachments: { name: string; url: string; size: number }[];
   isInternal: boolean;
-  createdAt: Date;
+  createdAt: string;
 };
+const fmtLocal = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 
-/* ------------------------------------------------------------------ */
-/* 2. Helper                                                          */
-/* ------------------------------------------------------------------ */
-const fmtLocal = (iso: string | null) =>
-  iso
-    ? new Date(iso).toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      })
-    : "—";
-
-export default function TicketDetail({ params }: { params: { id: string } }) {
+export default function TicketDetail() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
 
@@ -84,44 +66,28 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
   const [newMessage, setNewMessage] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
 
-  const [tagsOptions, setTagsOptions] = useState<
-    { value: string; label: string }[]
-  >([]);
+  // tags modal state
+  const [tagsOptions, setTagsOptions] = useState<{ value: string; label: string }[]>([]);
   const [selectedTags, setSelectedTags] = useState<typeof tagsOptions>([]);
   const [tagsDialogOpen, setTagsDialogOpen] = useState(false);
-  const [tags, setTags] = useState([]);
 
-  /* fetch ticket + messages */
+  /* fetch ticket + messages + initial tags */
   useEffect(() => {
     (async () => {
       try {
         const [tRes, tagsRes] = await Promise.all([
           fetch(`/api/tickets/${id}`),
-          fetch(`/api/tickets/${id}/tags`),
+          fetch("/api/tickets/tags"),
         ]);
-        if (!tRes.ok) throw new Error();
+        if (!tRes.ok || !tagsRes.ok) throw new Error();
         const { ticket, messages } = await tRes.json();
-        const { tagList, tags } = await tagsRes.json();
-        console.log(tags)
+        const tagsList: string[] = await tagsRes.json();
         setHeader(ticket);
         setMessages(messages);
         setStatus(ticket.status);
         setPriority(ticket.priority);
-        setTagsOptions(
-          tagList.map((t) => ({
-            value: t.description,
-            label: t.description,
-          }))
-        );
-        setTags(tags);
-        if (Array.isArray(tags)) {
-          setSelectedTags(
-            tags.map((t) => ({
-              value: t.description,
-              label: t.description,
-            }))
-          );
-        }
+        setTagsOptions(tagsList.map((t) => ({ value: t, label: t })));
+        // if you have existing ticket.tags, you could also setSelectedTags here
       } catch {
         toast.error("Failed to load ticket or tags");
       } finally {
@@ -130,7 +96,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     })();
   }, [id]);
 
-  /* -------- new status‐change handler -------- */
+  /* status‐change handler (unchanged) */
   const handleStatusChange = async (newStatus: TicketHeader["status"]) => {
     if (newStatus === "closed") {
       const { isConfirmed } = await Swal.fire({
@@ -159,9 +125,8 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     }
   };
 
-  const handlePriorityChange = async (
-    newPriority: TicketHeader["priority"]
-  ) => {
+  /* priority-change handler (unchanged) */
+  const handlePriorityChange = async (newPriority: TicketHeader["priority"]) => {
     setPriority(newPriority);
     try {
       const res = await fetch(`/api/tickets/${id}/priority`, {
@@ -176,27 +141,25 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     }
   };
 
+  /* “Add tags” save */
   const handleSaveTags = async () => {
     try {
       const res = await fetch(`/api/tickets/${id}/tags`, {
-        method: "POST",
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tags: selectedTags.map((t) => t.value),
         }),
       });
       if (!res.ok) throw new Error();
-      toast.success("Tags created");
+      toast.success("Tags updated");
       setTagsDialogOpen(false);
-
-      //Option B: or simply mirror back the selectedTags
-      setTags(selectedTags.map(t => ({ description: t.value })));
     } catch {
-      toast.error("Failed to save tags");
+      toast.error("Failed to update tags");
     }
   };
 
-  /* attachment handler */
+  /* message composer (unchanged) */
   const handleAttachmentChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     e.target.files && setAttachments(Array.from(e.target.files));
   const handleSendMessage = async () => {
@@ -235,7 +198,6 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     }
   };
 
-  /* loading / not‑found guards */
   if (loading) return <p className="p-6">Loading…</p>;
   if (!header) return <p className="p-6">Ticket not found.</p>;
 
@@ -250,25 +212,17 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
       </div>
 
       <Card>
-        <CardHeader className="flex items-start justify-between">
-          {/* left side: title & info */}
+        <CardHeader className="flex justify-between items-start">
           <div>
-            <CardTitle className="text-lg font-semibold">
-              {header.title}{" "}
-              {tags.map((t: any) => (
-                <Badge key={t.description} variant="outline">
-                  {t.description}
-                </Badge>
-              ))}
-            </CardTitle>
+            <CardTitle>{header.title}</CardTitle>
             <CardDescription>
-              Created on {fmtLocal(header.createdAt)} by {header.firstName}. ID:{" "}
-              <Link href={`/clients/` + header.id}>{header.id}</Link>
+              Created {fmtLocal(header.createdAt)} by {header.username}
             </CardDescription>
           </div>
 
-          {/* right side: priority + status, side by side */}
-          <div className="flex items-center gap-4">
+          {/* priority + status + add‐tags button */}
+          <div className="flex items-center gap-3">
+            {/* Add Tags */}
             <Dialog open={tagsDialogOpen} onOpenChange={setTagsDialogOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="icon">
@@ -295,20 +249,19 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+
+            {/* Priority */}
             <Select
               value={priority}
               onValueChange={handlePriorityChange}
-              disabled={status === "closed" ? true : false}
             >
               <SelectTrigger className="w-[120px]">
                 <Badge
-                  className={
-                    {
-                      low: "bg-green-100 text-green-800",
-                      medium: "bg-yellow-100 text-yellow-800",
-                      high: "bg-red-100 text-red-800",
-                    }[priority]
-                  }
+                  className={{
+                    low: "bg-green-100 text-green-800",
+                    medium: "bg-yellow-100 text-yellow-800",
+                    high: "bg-red-100 text-red-800",
+                  }[priority]}
                   variant="outline"
                 >
                   {priority.charAt(0).toUpperCase() + priority.slice(1)}
@@ -321,117 +274,90 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
               </SelectContent>
             </Select>
 
-            <Select
-              value={status}
-              onValueChange={handleStatusChange}
-              disabled={status === "closed" ? true : false}
-            >
+            {/* Status */}
+            <Select value={status} onValueChange={handleStatusChange}>
               <SelectTrigger className="w-[150px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent side="bottom">
-                <SelectItem
-                  value="open"
-                  disabled={
-                    status === "closed" || status === "in-progress"
-                      ? true
-                      : false
-                  }
-                >
-                  Open
-                </SelectItem>
-                <SelectItem
-                  value="in-progress"
-                  disabled={
-                    status === "closed" || status === "open" ? true : false
-                  }
-                >
-                  In Progress
-                </SelectItem>
-                <SelectItem
-                  value="closed"
-                  disabled={status === "open" ? true : false}
-                >
-                  Closed
-                </SelectItem>
+                <SelectItem value="open">Open</SelectItem>
+                <SelectItem value="in-progress">In Progress</SelectItem>
+                <SelectItem value="closed">Closed</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </CardHeader>
 
-        <CardContent>
-          <div className="space-y-4">
-            {messages.map((message, index) => (
+        <CardContent className="space-y-4">
+          {messages.map((m) => {
+            const fromUser = !m.isInternal;
+            return (
               <div
-                key={index}
-                className={`flex ${message.isInternal === false ? "justify-start" : "justify-end"}`}
+                key={m.id}
+                className={`flex ${fromUser ? "justify-start" : "justify-end"}`}
               >
                 <div
-                  className={`flex gap-3 max-w-[80%] ${message.isInternal === false ? "flex-row" : "flex-row-reverse"}`}
+                  className={`flex gap-3 max-w-[80%] ${
+                    fromUser ? "flex-row" : "flex-row-reverse"
+                  }`}
                 >
-                  <Avatar
-                    className={message.isInternal === false ? "mt-1" : "mt-1"}
-                  >
+                  <Avatar className="mt-1">
                     <AvatarFallback>
-                      {message.isInternal === false
-                        ? header.firstName.charAt(0).toUpperCase()
+                      {fromUser
+                        ? header.username.charAt(0)
                         : "A"}
                     </AvatarFallback>
                   </Avatar>
                   <div>
                     <div
                       className={`rounded-lg p-3 ${
-                        message.isInternal === false
+                        fromUser
                           ? "bg-muted text-foreground"
                           : "bg-primary text-primary-foreground"
                       }`}
                     >
-                      <p>{message.message}</p>
-                      {message.attachments &&
-                        message.attachments.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {message.attachments.map((attachment, i) => (
-                              <div
-                                key={i}
-                                className="flex items-center gap-1 text-sm"
+                      <p>{m.content}</p>
+                      {m.attachments.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {m.attachments.map((a) => (
+                            <div
+                              key={a.url}
+                              className="flex items-center gap-1 text-sm"
+                            >
+                              <Paperclip className="h-3 w-3" />
+                              <a
+                                href={a.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="underline"
                               >
-                                <Paperclip className="h-3 w-3" />
-                                <a
-                                  href={attachment.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="underline"
-                                >
-                                  {attachment.name}
-                                </a>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                                {a.name}
+                              </a>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div
-                      className={`text-xs text-muted-foreground mt-1 ${message.isInternal === false ? "text-left" : "text-right"}`}
+                      className={`text-xs text-muted-foreground mt-1 ${
+                        fromUser ? "text-left" : "text-right"
+                      }`}
                     >
-                      {fmtLocal(message.createdAt)}
+                      {fmtLocal(m.createdAt)}
                     </div>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
         </CardContent>
 
         <CardFooter className="flex flex-col gap-4">
           <Textarea
-            placeholder={
-              status === "closed"
-                ? "Ticket is closed"
-                : "Type your response here..."
-            }
+            placeholder="Type your response here..."
             className="min-h-[100px]"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            disabled={status === "closed" ? true : false}
           />
 
           <div className="flex items-center justify-between w-full">
@@ -449,17 +375,8 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
                   Attach Files
                 </label>
               </Button>
-              {attachments.length > 0 && (
-                <span className="text-sm text-muted-foreground">
-                  {attachments.length} file(s) selected
-                </span>
-              )}
             </div>
-
-            <Button
-              onClick={handleSendMessage}
-              disabled={status === "closed" ? true : false}
-            >
+            <Button onClick={handleSendMessage}>
               <Send className="h-4 w-4 mr-2" />
               Send Response
             </Button>
@@ -467,19 +384,5 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
         </CardFooter>
       </Card>
     </div>
-  );
-}
-
-function PriorityBadge({ priority }: { priority: "low" | "medium" | "high" }) {
-  const variants = {
-    low: "bg-green-100 text-green-800 hover:bg-green-100",
-    medium: "bg-yellow-100 text-yellow-800 hover:bg-yellow-100",
-    high: "bg-red-100 text-red-800 hover:bg-red-100",
-  };
-
-  return (
-    <Badge className={variants[priority]} variant="outline">
-      {priority.charAt(0).toUpperCase() + priority.slice(1)}
-    </Badge>
   );
 }
