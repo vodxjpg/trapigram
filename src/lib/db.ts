@@ -363,6 +363,11 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
+  paymentMethods: {
+    id: string;
+    description: string;
+  };
 }
 
 const pool = new Pool({
