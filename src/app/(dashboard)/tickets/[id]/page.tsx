@@ -45,6 +45,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 type TicketHeader = {
   id: string;
   title: string;
+  clientId: string;
   priority: "low" | "medium" | "high";
   status: "open" | "in-progress" | "closed";
   userId: string;
@@ -263,7 +264,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
             </CardTitle>
             <CardDescription>
               Created on {fmtLocal(header.createdAt)} by {header.firstName}. ID:{" "}
-              <Link href={`/clients/` + header.id}>{header.id}</Link>
+              <Link href={`/clients/` + header.clientId + `/info/`}>{header.clientId}</Link>
             </CardDescription>
           </div>
 
