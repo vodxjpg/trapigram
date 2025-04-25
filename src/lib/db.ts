@@ -366,7 +366,11 @@ interface DB {
 
   paymentMethods: {
     id: string;
-    description: string;
+    name: string;
+    tenantId: string;
+    active: boolean;
+    createdAt: Date;
+    updatedAt: Date;
   };
 
   sharedProductMapping: {
