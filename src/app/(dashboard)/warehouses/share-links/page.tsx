@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Edit, Trash2, ArrowLeft } from "lucide-react";
+import { Edit, Trash2, ArrowLeft, Copy } from "lucide-react";
 import Link from "next/link";
 
 type ShareLink = {
@@ -71,6 +71,17 @@ export default function ShareLinksPage() {
     } catch (error) {
       console.error("Error deleting share link:", error);
       toast.error("Failed to delete share link");
+    }
+  };
+
+  const handleCopyLink = async (token: string) => {
+    const shareLinkUrl = `${window.location.origin}/share/${token}`;
+    try {
+      await navigator.clipboard.writeText(shareLinkUrl);
+      toast.success("Share link copied to clipboard!");
+    } catch (error) {
+      console.error("Error copying share link:", error);
+      toast.error("Failed to copy share link");
     }
   };
 
@@ -136,6 +147,10 @@ export default function ShareLinksPage() {
                       <TableCell>{new Date(link.createdAt).toLocaleDateString()}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
+                          <Button variant="outline" size="sm" onClick={() => handleCopyLink(link.token)}>
+                            <Copy className="h-4 w-4 mr-1" />
+                            Copy Link
+                          </Button>
                           <Button variant="outline" size="sm" asChild>
                             <Link href={`/warehouses/share-links/${link.shareLinkId}`}>
                               <Edit className="h-4 w-4 mr-1" />

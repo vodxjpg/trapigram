@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
-import { v4 as uuidv4 } from "uuid";
 
 const costSchema = z.record(z.string(), z.number().positive("Cost must be a positive number")).optional();
 
@@ -16,6 +15,11 @@ const updateSchema = z.object({
   recipientUserIds: z.array(z.string()).min(1, "At least one recipient is required"),
   products: z.array(productSchema).min(1, "At least one product is required"),
 });
+
+// Helper to generate string-based IDs
+function generateId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(36).substring(2, 10)}`;
+}
 
 export async function GET(req: NextRequest, context: { params: Promise<{ shareLinkId: string }> }) {
   try {
@@ -53,11 +57,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ shareLi
     const recipients = await db
       .selectFrom("warehouseShareRecipient")
       .innerJoin("user", "user.id", "warehouseShareRecipient.recipientUserId")
-      .select([
-        "warehouseShareRecipient.recipientUserId",
-        "user.email",
-        "user.name",
-      ])
+      .select(["warehouseShareRecipient.recipientUserId", "user.email", "user.name"])
       .where("warehouseShareRecipient.shareLinkId", "=", shareLinkId)
       .execute();
 
@@ -129,11 +129,7 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
     const shareLink = await db
       .selectFrom("warehouseShareLink")
       .innerJoin("warehouse", "warehouse.id", "warehouseShareLink.warehouseId")
-      .select([
-        "warehouseShareLink.id",
-        "warehouseShareLink.warehouseId",
-        "warehouse.countries",
-      ])
+      .select(["warehouseShareLink.id", "warehouseShareLink.warehouseId", "warehouse.countries"])
       .where("warehouseShareLink.id", "=", shareLinkId)
       .where("warehouseShareLink.creatorUserId", "=", userId)
       .where("warehouseShareLink.status", "=", "active")
@@ -178,7 +174,7 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
           .selectFrom("productVariations")
           .select(["id", "cost"])
           .where("id", "=", variationId)
-          .where("product_id", "=", productId)
+          .where("productId", "=", productId)
           .executeTakeFirst();
         if (!variation) {
           return NextResponse.json({ error: `Variation ${variationId} not found` }, { status: 400 });
@@ -228,10 +224,103 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
       }
     }
 
+    // Fetch current recipients before updating
+    const currentRecipients = await db
+      .selectFrom("warehouseShareRecipient")
+      .select("recipientUserId")
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    const currentRecipientUserIds = currentRecipients.map((r) => r.recipientUserId);
+
+    // Identify removed recipients
+    const removedRecipientUserIds = currentRecipientUserIds.filter(
+      (id) => !recipientUserIds.includes(id)
+    );
+
+    // Clean up products and stock for removed recipients
+    if (removedRecipientUserIds.length > 0) {
+      console.log(
+        `[CLEANUP] Identified ${removedRecipientUserIds.length} removed recipients: ${removedRecipientUserIds.join(", ")}`
+      );
+
+      for (const removedUserId of removedRecipientUserIds) {
+        console.log(`[CLEANUP] Processing removed recipient: ${removedUserId}`);
+
+        // Find the tenant of the removed recipient
+        const removedTenant = await db
+          .selectFrom("tenant")
+          .select("id")
+          .where("ownerUserId", "=", removedUserId)
+          .executeTakeFirst();
+
+        if (!removedTenant) {
+          console.log(`[CLEANUP] No tenant found for removed recipientUserId: ${removedUserId}, skipping`);
+          continue;
+        }
+
+        // Find all target products synced to this recipient via the share link
+        const mappings = await db
+          .selectFrom("sharedProductMapping")
+          .select(["sourceProductId", "targetProductId"])
+          .where("shareLinkId", "=", shareLinkId)
+          .execute();
+
+        const targetProductIds = mappings.map((m) => m.targetProductId);
+
+        if (targetProductIds.length === 0) {
+          console.log(`[CLEANUP] No synced products found for shareLinkId: ${shareLinkId} for recipient: ${removedUserId}`);
+          continue;
+        }
+
+        console.log(
+          `[CLEANUP] Found ${targetProductIds.length} synced products for recipient: ${removedUserId}: ${targetProductIds.join(", ")}`
+        );
+
+        // Delete sharedProductMapping entries first to avoid foreign key constraints
+        await db
+          .deleteFrom("sharedProductMapping")
+          .where("shareLinkId", "=", shareLinkId)
+          .where("targetProductId", "in", targetProductIds)
+          .execute();
+        console.log(`[CLEANUP] Deleted sharedProductMapping entries for shareLinkId: ${shareLinkId}`);
+
+        // Delete sharedVariationMapping entries
+        await db
+          .deleteFrom("sharedVariationMapping")
+          .where("shareLinkId", "=", shareLinkId)
+          .where("targetProductId", "in", targetProductIds)
+          .execute();
+        console.log(`[CLEANUP] Deleted sharedVariationMapping entries for shareLinkId: ${shareLinkId}`);
+
+        // Delete associated warehouseStock entries for these products
+        await db
+          .deleteFrom("warehouseStock")
+          .where("productId", "in", targetProductIds)
+          .where("tenantId", "=", removedTenant.id)
+          .execute();
+        console.log(`[CLEANUP] Deleted warehouseStock entries for products: ${targetProductIds.join(", ")}`);
+
+        // Delete associated variations (if any)
+        await db
+          .deleteFrom("productVariations")
+          .where("productId", "in", targetProductIds)
+          .execute();
+        console.log(`[CLEANUP] Deleted productVariations for products: ${targetProductIds.join(", ")}`);
+
+        // Delete the products themselves
+        await db
+          .deleteFrom("products")
+          .where("id", "in", targetProductIds)
+          .where("tenantId", "=", removedTenant.id)
+          .execute();
+        console.log(`[CLEANUP] Deleted products: ${targetProductIds.join(", ")}`);
+      }
+    }
+
     // Update share link (recipients and products)
     await db.deleteFrom("warehouseShareRecipient").where("shareLinkId", "=", shareLinkId).execute();
     const recipientInserts = recipientUserIds.map((recipientUserId) => ({
-      id: uuidv4(),
+      id: generateId("WSR"),
       shareLinkId,
       recipientUserId,
       createdAt: new Date(),
@@ -241,7 +330,7 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
 
     await db.deleteFrom("sharedProduct").where("shareLinkId", "=", shareLinkId).execute();
     const productInserts = products.map(({ productId, variationId, cost }) => ({
-      id: uuidv4(),
+      id: generateId("SP"),
       shareLinkId,
       productId,
       variationId,
@@ -256,6 +345,38 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
       .set({ updatedAt: new Date() })
       .where("id", "=", shareLinkId)
       .execute();
+
+    // Update costs for all synced products in recipients' catalogs
+    const mappings = await db
+      .selectFrom("sharedProductMapping")
+      .select(["sourceProductId", "targetProductId"])
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+
+    for (const mapping of mappings) {
+      const sourceProduct = products.find((p) => p.productId === mapping.sourceProductId);
+      if (!sourceProduct || !sourceProduct.cost) continue;
+
+      const targetProduct = await db
+        .selectFrom("products")
+        .select(["id", "cost"])
+        .where("id", "=", mapping.targetProductId)
+        .executeTakeFirst();
+
+      if (targetProduct) {
+        const currentCost = typeof targetProduct.cost === "string" ? JSON.parse(targetProduct.cost) : targetProduct.cost;
+        const updatedCost = { ...currentCost, ...sourceProduct.cost };
+
+        await db
+          .updateTable("products")
+          .set({
+            cost: updatedCost,
+            updatedAt: new Date(),
+          })
+          .where("id", "=", mapping.targetProductId)
+          .execute();
+      }
+    }
 
     return NextResponse.json({ message: "Share link updated successfully" }, { status: 200 });
   } catch (error) {

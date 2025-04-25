@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
-import { v4 as uuidv4 } from "uuid";
 
 const costSchema = z.record(z.string(), z.number().positive("Cost must be a positive number")).optional();
 
@@ -16,6 +15,11 @@ const requestSchema = z.object({
   recipientUserIds: z.array(z.string()).min(1, "At least one recipient is required"),
   products: z.array(productSchema).min(1, "At least one product is required"),
 });
+
+// Helper to generate string-based IDs
+function generateId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(36).substring(2, 10)}`;
+}
 
 export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
@@ -89,7 +93,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
           .selectFrom("productVariations")
           .select(["id", "cost"])
           .where("id", "=", variationId)
-          .where("product_id", "=", productId)
+          .where("productId", "=", productId) // Fixed: Corrected `product_id` to `productId`
           .executeTakeFirst();
         if (!variation) {
           return NextResponse.json({ error: `Variation ${variationId} not found` }, { status: 400 });
@@ -150,8 +154,8 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     }
 
     // Create share link
-    const shareLinkId = uuidv4();
-    const token = uuidv4();
+    const shareLinkId = generateId("SL");
+    const token = generateId("TOKEN");
     await db
       .insertInto("warehouseShareLink")
       .values({
@@ -167,7 +171,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
 
     // Create recipients
     const recipientInserts = recipientUserIds.map((recipientUserId) => ({
-      id: uuidv4(),
+      id: generateId("WSR"),
       shareLinkId,
       recipientUserId,
       createdAt: new Date(),
@@ -177,7 +181,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
 
     // Create shared products
     const productInserts = products.map(({ productId, variationId, cost }) => ({
-      id: uuidv4(),
+      id: generateId("SP"),
       shareLinkId,
       productId,
       variationId,
@@ -197,7 +201,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       { status: 201 }
     );
   } catch (error) {
-    console.error("[POST /api/warehouses/:id/share-links] error:", error);
+    console.error("[POST /api/warehouses/[id]/share-links] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
