@@ -368,6 +368,8 @@ interface DB {
     id: string;
     name: string;
     tenantId: string;
+    apiKey: string;
+    secretKey: string;
     active: boolean;
     createdAt: Date;
     updatedAt: Date;

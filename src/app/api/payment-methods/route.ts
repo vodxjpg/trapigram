@@ -17,6 +17,8 @@ const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 const paymentCreateSchema = z.object({
   name: z.string().min(1, { message: "Name is required." }),
   active: z.boolean().optional().default(true),
+  apiKey: z.string().optional().nullable(),
+  secretKey: z.string().optional().nullable()
 });
 
 // The shape we return in each row
@@ -25,6 +27,8 @@ const paymentRowSchema = z.object({
   name: z.string(),
   tenantId: z.string(),
   active: z.boolean(),
+  apiKey: z.string(),
+  secretKey: z.string()
 });
 
 // ———————— GET / POST handler ————————
@@ -95,7 +99,7 @@ export async function GET(req: NextRequest) {
   }
 
   let query = `
-    SELECT id, name, active, "createdAt"
+    SELECT id, name, active, "apiKey", "secretKey", "createdAt"
     FROM "paymentMethods"
     WHERE "tenantId" = $1
   `;
@@ -114,7 +118,6 @@ export async function GET(req: NextRequest) {
 
     const result = await pool.query(query, values);
     const methods = result.rows;
-    console.log(methods)
 
     return NextResponse.json({
       methods,
@@ -180,20 +183,22 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { name, active } = paymentCreateSchema.parse(body);
+    const { name, active, apiKey, secretKey } = paymentCreateSchema.parse(body);
 
     const id = uuidv4();
     const insertSql = `
-      INSERT INTO "paymentMethods" (id, name, active, "tenantId", "createdAt", "updatedAt")
-      VALUES ($1, $2, $3, $4, NOW(), NOW())
-      RETURNING id, name, active
+      INSERT INTO "paymentMethods" (id, name, active, "apiKey", "secretKey", "tenantId", "createdAt", "updatedAt")
+      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+      RETURNING id, name, active, "apiKey", "secretKey"
     `;
 
     const values = [
       id,
       name,
       active,
-      tenantId,
+      apiKey,
+      secretKey,
+      tenantId      
     ];
     const res = await pool.query(insertSql, values);
     const newMethod = res.rows[0];

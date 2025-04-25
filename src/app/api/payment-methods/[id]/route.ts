@@ -15,7 +15,8 @@ const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 const paymentUpdateSchema = z.object({
   name: z.string().min(1, { message: "Name is required." }),
   active: z.boolean(),
-  //tenantId: z.string()
+  apiKey: z.string().nullable().optional(),
+  secretKey: z.string().nullable().optional()
 });
 
 type Params = { params: { id: string } };
@@ -61,11 +62,11 @@ export async function GET(req: NextRequest, { params }: Params) {
   try {
     const { id } = params;
     const sql = `
-      SELECT id, "tenantId", name, active, "createdAt", "updatedAt"
+      SELECT id, "tenantId", name, active, "apiKey", "secretKey", "createdAt", "updatedAt"
       FROM "paymentMethods"
       WHERE id = $1
     `;
-    const result = await pool.query(sql, [id]);
+    const result = await pool.query(sql, [id]);    
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
     }
@@ -116,9 +117,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   try {
     const { id } = params;
-    console.log(id)
     const body = await req.json();
+    console.log(body)
     const parsed = paymentUpdateSchema.parse(body);
+    console.log(parsed)
 
     // build dynamic update
     const updates: string[] = [];

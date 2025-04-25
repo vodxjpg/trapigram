@@ -44,6 +44,8 @@ type PaymentMethod = {
   id: string;
   name: string;
   active: boolean;
+  apiKey: string,
+  secretKey: string
 };
 
 export function PaymentMethodsTable() {
