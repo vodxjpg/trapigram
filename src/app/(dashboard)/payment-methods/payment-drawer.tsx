@@ -82,13 +82,14 @@ export function PaymentMethodDrawer({ open, onClose, method }: Props) {
           body: JSON.stringify(payload),
         });
       }
+      if (!res.ok) throw new Error();
+
+      // reset fields
       setName("");
       setActive(true);
       setApiKey("");
       setSecretKey("");
 
-      onClose(true);
-      if (!res.ok) throw new Error();
       toast.success(method ? "Updated" : "Created");
       onClose(true);
     } catch {
@@ -118,41 +119,53 @@ export function PaymentMethodDrawer({ open, onClose, method }: Props) {
 
         <div className="px-4 space-y-4">
           {/* Name */}
-          <Input
-            placeholder="Payment name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full"
-            disabled={saving}
-          />
-
-          {/* Active Switch */}
-          <div className="flex items-center space-x-2">
-            <Switch
-              checked={active}
-              onCheckedChange={setActive}
+          <div>
+            <label className="block text-sm font-medium mb-1">Name</label>
+            <Input
+              placeholder="Payment name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full"
               disabled={saving}
             />
-            <span>{active ? "Active" : "Inactive"}</span>
+          </div>
+
+          {/* Active Switch */}
+          <div>
+            <label className="block text-sm font-medium mb-1">Active</label>
+            <div className="flex items-center space-x-2">
+              <Switch
+                checked={active}
+                onCheckedChange={setActive}
+                disabled={saving}
+              />
+              <span>{active ? "Active" : "Inactive"}</span>
+            </div>
           </div>
 
           {/* API Key */}
-          <Input
-            placeholder="API Key (optional)"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            className="w-full"
-            disabled={saving}
-          />
+          <div>
+            <label className="block text-sm font-medium mb-1">API Key</label>
+            <Input
+              placeholder="API Key (optional)"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              className="w-full"
+              disabled={saving}
+            />
+          </div>
 
           {/* Secret Key */}
-          <Input
-            placeholder="Secret Key (optional)"
-            value={secretKey}
-            onChange={(e) => setSecretKey(e.target.value)}
-            className="w-full"
-            disabled={saving}
-          />
+          <div>
+            <label className="block text-sm font-medium mb-1">Secret Key</label>
+            <Input
+              placeholder="Secret Key (optional)"
+              value={secretKey}
+              onChange={(e) => setSecretKey(e.target.value)}
+              className="w-full"
+              disabled={saving}
+            />
+          </div>
         </div>
 
         <DrawerFooter className="space-x-2">
