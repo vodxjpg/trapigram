@@ -529,17 +529,22 @@ export async function POST(req: NextRequest) {
           // Only copy stock entries if variationId is null (simple product) or if we have a mapped variationId
           if (stockEntry.variationId && !targetVariationId) continue;
 
-          // After inserting/updating the stock for this share link, re-aggregate stock across all linked source warehouses
-          const allSourceMappings = await db
-            .selectFrom("sharedProductMapping")
-            .innerJoin("warehouseShareLink", "warehouseShareLink.id", "sharedProductMapping.shareLinkId")
-            .innerJoin("warehouseShareRecipient", "warehouseShareRecipient.shareLinkId", "warehouseShareLink.id")
+          // Fetch all share links that the recipient user is part of and that map to this target product
+          const recipientShareLinks = await db
+            .selectFrom("warehouseShareRecipient")
+            .innerJoin("sharedProductMapping", "sharedProductMapping.shareLinkId", "warehouseShareRecipient.shareLinkId")
+            .innerJoin("warehouseShareLink", "warehouseShareLink.id", "warehouseShareRecipient.shareLinkId")
             .select(["warehouseShareLink.warehouseId"])
+            .where("warehouseShareRecipient.recipientUserId", "=", userId)
             .where("sharedProductMapping.targetProductId", "=", targetProductId)
-            .where("warehouseShareRecipient.warehouseId", "=", targetWarehouse.id)
             .execute();
 
-          const sourceWarehouseIds = allSourceMappings.map(m => m.warehouseId);
+          const sourceWarehouseIds = recipientShareLinks.map(link => link.warehouseId);
+
+          if (sourceWarehouseIds.length === 0) {
+            console.log(`[SYNC] No source warehouses found for targetProductId: ${targetProductId}`);
+            continue;
+          }
 
           // Fetch stock from all source warehouses
           let stockQuery = db
@@ -628,7 +633,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ message: "Warehouse synced successfully" }, { status: 200 });
+    // Return the targetProductIds in the response
+    const syncedProducts = Array.from(productIdMap.entries()).map(([sourceProductId, targetProductId]) => ({
+      sourceProductId,
+      targetProductId,
+    }));
+
+    return NextResponse.json(
+      { 
+        message: "Warehouse synced successfully",
+        syncedProducts, // Include the mapping so the frontend knows the new product IDs
+      }, 
+      { status: 200 }
+    );
   } catch (error) {
     console.error("[POST /api/warehouses/sync] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
