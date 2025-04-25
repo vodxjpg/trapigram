@@ -143,19 +143,21 @@ export async function POST(req: NextRequest) {
         if (productIdMap.has(product.productId)) {
           targetProductId = productIdMap.get(product.productId)!;
         } else {
-          // Check if a mapping already exists for this shareLinkId and product
+          // Check if this product has already been synced into User B's tenant (across all share links)
           const existingMapping = await db
             .selectFrom("sharedProductMapping")
-            .select(["targetProductId"])
-            .where("shareLinkId", "=", shareLinkId)
-            .where("sourceProductId", "=", product.productId)
+            .innerJoin("products", "products.id", "sharedProductMapping.targetProductId")
+            .select(["sharedProductMapping.targetProductId"])
+            .where("sharedProductMapping.sourceProductId", "=", product.productId)
+            .where("products.tenantId", "=", targetWarehouse.tenantId)
             .executeTakeFirst();
 
           if (existingMapping) {
             targetProductId = existingMapping.targetProductId;
             productIdMap.set(product.productId, targetProductId);
+            console.log(`[SYNC] Reusing existing product mapping for sourceProductId: ${product.productId} -> targetProductId: ${targetProductId}`);
           } else {
-            // Check if the product exists in the target tenant
+            // Check if the product exists in the target tenant (unlikely since we're generating new IDs, but good to check)
             const existingProduct = await db
               .selectFrom("products")
               .select(["id", "cost"])
@@ -170,6 +172,7 @@ export async function POST(req: NextRequest) {
               // Product doesn't exist in the target tenant, so create a new one with a new ID
               targetProductId = generateId("PROD");
               productIdMap.set(product.productId, targetProductId);
+              console.log(`[SYNC] Creating new product for sourceProductId: ${product.productId} -> targetProductId: ${targetProductId}`);
 
               // Fetch the source product to copy required fields
               const sourceProduct = await db
@@ -484,58 +487,120 @@ export async function POST(req: NextRequest) {
                     .execute();
                 }
               }
-
-              // Delete any existing warehouseStock entries for this product that might have the wrong warehouseId
-              await db
-                .deleteFrom("warehouseStock")
-                .where("productId", "=", targetProductId)
-                .where("warehouseId", "!=", targetWarehouse.id)
-                .execute();
-
-              // Fetch and copy warehouseStock entries for the source product
-              const sourceStock = await db
-                .selectFrom("warehouseStock")
-                .select(["warehouseId", "country", "quantity", "variationId"])
-                .where("productId", "=", product.productId)
-                .where("warehouseId", "=", shareLink.warehouseId)
-                .execute();
-
-              for (const stockEntry of sourceStock) {
-                const targetVariationId = stockEntry.variationId ? variationIdMap.get(stockEntry.variationId) : null;
-
-                // Only copy stock entries if variationId is null (simple product) or if we have a mapped variationId
-                if (stockEntry.variationId && !targetVariationId) continue;
-
-                await db
-                  .insertInto("warehouseStock")
-                  .values({
-                    id: generateId("WS"),
-                    warehouseId: targetWarehouse.id, // Use User B's warehouseId
-                    productId: targetProductId,
-                    variationId: targetVariationId,
-                    country: stockEntry.country,
-                    quantity: stockEntry.quantity,
-                    organizationId,
-                    tenantId: targetWarehouse.tenantId,
-                    createdAt: new Date(),
-                    updatedAt: new Date(),
-                  })
-                  .execute();
-              }
-
-              // Insert the mapping into sharedProductMapping
-              await db
-                .insertInto("sharedProductMapping")
-                .values({
-                  id: generateId("SPM"),
-                  shareLinkId,
-                  sourceProductId: product.productId,
-                  targetProductId,
-                  createdAt: new Date(),
-                  updatedAt: new Date(),
-                })
-                .execute();
             }
+          }
+        }
+
+        // Insert the mapping into sharedProductMapping (even if the product was reused)
+        const existingMappingForShareLink = await db
+          .selectFrom("sharedProductMapping")
+          .select("id")
+          .where("shareLinkId", "=", shareLinkId)
+          .where("sourceProductId", "=", product.productId)
+          .where("targetProductId", "=", targetProductId)
+          .executeTakeFirst();
+
+        if (!existingMappingForShareLink) {
+          await db
+            .insertInto("sharedProductMapping")
+            .values({
+              id: generateId("SPM"),
+              shareLinkId,
+              sourceProductId: product.productId,
+              targetProductId,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .execute();
+          console.log(`[SYNC] Created sharedProductMapping for shareLinkId: ${shareLinkId}, sourceProductId: ${product.productId} -> targetProductId: ${targetProductId}`);
+        }
+
+        // Fetch and copy warehouseStock entries for the source product
+        const sourceStock = await db
+          .selectFrom("warehouseStock")
+          .select(["warehouseId", "country", "quantity", "variationId"])
+          .where("productId", "=", product.productId)
+          .where("warehouseId", "=", shareLink.warehouseId)
+          .execute();
+
+        for (const stockEntry of sourceStock) {
+          const targetVariationId = stockEntry.variationId ? variationIdMap.get(stockEntry.variationId) : null;
+
+          // Only copy stock entries if variationId is null (simple product) or if we have a mapped variationId
+          if (stockEntry.variationId && !targetVariationId) continue;
+
+          // After inserting/updating the stock for this share link, re-aggregate stock across all linked source warehouses
+          const allSourceMappings = await db
+            .selectFrom("sharedProductMapping")
+            .innerJoin("warehouseShareLink", "warehouseShareLink.id", "sharedProductMapping.shareLinkId")
+            .innerJoin("warehouseShareRecipient", "warehouseShareRecipient.shareLinkId", "warehouseShareLink.id")
+            .select(["warehouseShareLink.warehouseId"])
+            .where("sharedProductMapping.targetProductId", "=", targetProductId)
+            .where("warehouseShareRecipient.warehouseId", "=", targetWarehouse.id)
+            .execute();
+
+          const sourceWarehouseIds = allSourceMappings.map(m => m.warehouseId);
+
+          // Fetch stock from all source warehouses
+          let stockQuery = db
+            .selectFrom("warehouseStock")
+            .select(["quantity"])
+            .where("productId", "=", product.productId)
+            .where("country", "=", stockEntry.country)
+            .where("warehouseId", "in", sourceWarehouseIds);
+          if (stockEntry.variationId) {
+            stockQuery = stockQuery.where("variationId", "=", stockEntry.variationId);
+          } else {
+            stockQuery = stockQuery.where("variationId", "is", null);
+          }
+
+          const sourceStocks = await stockQuery.execute();
+
+          // Aggregate the stock quantities
+          const totalQuantity = sourceStocks.reduce((sum, stock) => sum + stock.quantity, 0);
+
+          // Update or insert the aggregated stock in the target warehouse
+          let targetStockQuery = db
+            .selectFrom("warehouseStock")
+            .select(["id", "quantity"])
+            .where("warehouseId", "=", targetWarehouse.id)
+            .where("productId", "=", targetProductId)
+            .where("country", "=", stockEntry.country);
+          if (stockEntry.variationId) {
+            targetStockQuery = targetStockQuery.where("variationId", "=", targetVariationId!);
+          } else {
+            targetStockQuery = targetStockQuery.where("variationId", "is", null);
+          }
+
+          const existingStock = await targetStockQuery.executeTakeFirst();
+
+          if (existingStock) {
+            await db
+              .updateTable("warehouseStock")
+              .set({
+                quantity: totalQuantity,
+                updatedAt: new Date(),
+              })
+              .where("id", "=", existingStock.id)
+              .execute();
+            console.log(`[SYNC] Updated stock for targetProductId: ${targetProductId}, country: ${stockEntry.country}, new quantity: ${totalQuantity}`);
+          } else {
+            await db
+              .insertInto("warehouseStock")
+              .values({
+                id: generateId("WS"),
+                warehouseId: targetWarehouse.id,
+                productId: targetProductId,
+                variationId: targetVariationId,
+                country: stockEntry.country,
+                quantity: totalQuantity,
+                organizationId,
+                tenantId: targetWarehouse.tenantId,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              })
+              .execute();
+            console.log(`[SYNC] Inserted stock for targetProductId: ${targetProductId}, country: ${stockEntry.country}, quantity: ${totalQuantity}`);
           }
         }
 

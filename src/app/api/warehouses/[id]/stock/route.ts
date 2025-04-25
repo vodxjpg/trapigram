@@ -188,7 +188,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       }
 
       // Update or insert stock for User A
-      const stockQuery = db
+      let stockQuery = db
         .selectFrom("warehouseStock")
         .select("id")
         .where("warehouseId", "=", warehouseId)
@@ -196,9 +196,9 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         .where("country", "=", country);
 
       if (variationId) {
-        stockQuery.where("variationId", "=", variationId);
+        stockQuery = stockQuery.where("variationId", "=", variationId);
       } else {
-        stockQuery.where("variationId", "is", null);
+        stockQuery = stockQuery.where("variationId", "is", null);
       }
 
       const existingStock = await stockQuery.executeTakeFirst();
@@ -240,15 +240,15 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       );
 
       // Step 1: Find all share links that include this product
-      const sharedProductQuery = db
+      let sharedProductQuery = db
         .selectFrom("sharedProduct")
         .select(["id", "shareLinkId"])
         .where("productId", "=", productId);
 
       if (variationId) {
-        sharedProductQuery.where("variationId", "=", variationId);
+        sharedProductQuery = sharedProductQuery.where("variationId", "=", variationId);
       } else {
-        sharedProductQuery.where("variationId", "is", null);
+        sharedProductQuery = sharedProductQuery.where("variationId", "is", null);
       }
 
       const sharedProducts = await sharedProductQuery.execute();
@@ -281,138 +281,131 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         for (const mapping of mappings) {
           console.log(`[PROPAGATE] Mapping - sourceProductId: ${mapping.sourceProductId}, targetProductId: ${mapping.targetProductId}`);
 
-          // Step 3: Find the target warehouse for User B
-          let targetWarehouse = await db
-            .selectFrom("warehouseStock")
-            .select(["warehouseId", "tenantId", "organizationId"])
-            .where("productId", "=", mapping.targetProductId)
-            .distinct()
-            .executeTakeFirst();
+          // Step 3: Find the target warehouse for User B and all linked source warehouses
+          const targetWarehouses = await db
+            .selectFrom("warehouseShareRecipient")
+            .innerJoin("warehouse", "warehouse.id", "warehouseShareRecipient.warehouseId")
+            .select(["warehouse.id as warehouseId", "warehouse.tenantId", "warehouse.organizationId"])
+            .where("warehouseShareRecipient.shareLinkId", "=", sharedProduct.shareLinkId)
+            .execute();
 
-          if (!targetWarehouse) {
-            console.log(
-              `[PROPAGATE] No warehouseStock found for targetProductId: ${mapping.targetProductId}, falling back to share link data`
-            );
-
-            // Fallback: Find the warehouse used during sync
-            const shareLink = await db
-              .selectFrom("warehouseShareLink")
-              .select(["id", "warehouseId"])
-              .where("id", "=", sharedProduct.shareLinkId)
-              .executeTakeFirst();
-
-            if (!shareLink) {
-              console.log(`[PROPAGATE] Share link ${sharedProduct.shareLinkId} not found`);
-              continue;
-            }
-
-            const recipient = await db
-              .selectFrom("warehouseShareRecipient")
-              .select("recipientUserId")
-              .where("shareLinkId", "=", sharedProduct.shareLinkId)
-              .executeTakeFirst();
-
-            if (!recipient) {
-              console.log(`[PROPAGATE] No recipient found for shareLinkId: ${sharedProduct.shareLinkId}`);
-              continue;
-            }
-
-            const targetTenant = await db
-              .selectFrom("tenant")
-              .select("id")
-              .where("ownerUserId", "=", recipient.recipientUserId)
-              .executeTakeFirst();
-
-            if (!targetTenant) {
-              console.log(`[PROPAGATE] No tenant found for recipientUserId: ${recipient.recipientUserId}`);
-              continue;
-            }
-
-            // Find a warehouse associated with the target tenant
-            targetWarehouse = await db
-              .selectFrom("warehouse")
-              .select(["id as warehouseId", "tenantId", "organizationId"])
-              .where("tenantId", "=", targetTenant.id)
-              .executeTakeFirst();
-
-            if (!targetWarehouse) {
-              console.log(`[PROPAGATE] No warehouse found for tenantId: ${targetTenant.id}, skipping`);
-              continue;
-            }
+          if (targetWarehouses.length === 0) {
+            console.log(`[PROPAGATE] No target warehouses found for shareLinkId: ${sharedProduct.shareLinkId}`);
+            continue;
           }
 
-          console.log(`[PROPAGATE] Target warehouse found - warehouseId: ${targetWarehouse.warehouseId}, tenantId: ${targetWarehouse.tenantId}`);
+          for (const targetWarehouse of targetWarehouses) {
+            console.log(`[PROPAGATE] Target warehouse found - warehouseId: ${targetWarehouse.warehouseId}, tenantId: ${targetWarehouse.tenantId}`);
 
-          // Step 4: Map the source variationId to the target variationId (if applicable)
-          let targetVariationId: string | null = null;
-          if (variationId) {
-            const variationMapping = await db
-              .selectFrom("sharedVariationMapping")
-              .select("targetVariationId")
-              .where("shareLinkId", "=", sharedProduct.shareLinkId)
-              .where("sourceProductId", "=", productId)
-              .where("targetProductId", "=", mapping.targetProductId)
-              .where("sourceVariationId", "=", variationId)
-              .executeTakeFirst();
-
-            if (!variationMapping) {
-              console.log(`[PROPAGATE] No variation mapping found for sourceVariationId: ${variationId}, skipping`);
-              continue;
-            }
-            targetVariationId = variationMapping.targetVariationId;
-            console.log(`[PROPAGATE] Mapped sourceVariationId: ${variationId} to targetVariationId: ${targetVariationId}`);
-          }
-
-          // Step 5: Update or insert stock for User B
-          const targetStockQuery = db
-            .selectFrom("warehouseStock")
-            .select(["id"])
-            .where("productId", "=", mapping.targetProductId)
-            .where("warehouseId", "=", targetWarehouse.warehouseId)
-            .where("country", "=", country);
-
-          if (targetVariationId) {
-            targetStockQuery.where("variationId", "=", targetVariationId);
-          } else {
-            targetStockQuery.where("variationId", "is", null);
-          }
-
-          const targetStock = await targetStockQuery.executeTakeFirst();
-
-          if (targetStock) {
-            console.log(
-              `[PROPAGATE] Updating existing stock entry for targetProductId: ${mapping.targetProductId}, warehouseId: ${targetWarehouse.warehouseId}, country: ${country}, quantity: ${quantity}`
-            );
-            await db
-              .updateTable("warehouseStock")
-              .set({
-                quantity,
-                updatedAt: new Date(),
-              })
-              .where("id", "=", targetStock.id)
+            // Step 4: Find all source warehouses linked to this target warehouse for the targetProductId
+            const allSourceMappings = await db
+              .selectFrom("sharedProductMapping")
+              .innerJoin("warehouseShareLink", "warehouseShareLink.id", "sharedProductMapping.shareLinkId")
+              .innerJoin("warehouseShareRecipient", "warehouseShareRecipient.shareLinkId", "warehouseShareLink.id")
+              .select(["warehouseShareLink.warehouseId"])
+              .where("sharedProductMapping.targetProductId", "=", mapping.targetProductId)
+              .where("warehouseShareRecipient.warehouseId", "=", targetWarehouse.warehouseId)
               .execute();
-          } else {
-            console.log(
-              `[PROPAGATE] Inserting new stock entry for targetProductId: ${mapping.targetProductId}, warehouseId: ${targetWarehouse.warehouseId}, country: ${country}, quantity: ${quantity}`
-            );
-            await db
-              .insertInto("warehouseStock")
-              .values({
-                id: generateId("WS"),
-                warehouseId: targetWarehouse.warehouseId,
-                productId: mapping.targetProductId,
-                variationId: targetVariationId,
-                country,
-                quantity,
-                organizationId: targetWarehouse.organizationId,
-                tenantId: targetWarehouse.tenantId,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              })
-              .execute();
-          }
 
-          console.log(`[PROPAGATE] Successfully updated stock for targetProductId: ${mapping.targetProductId}`);
+            const sourceWarehouseIds = allSourceMappings.map(m => m.warehouseId);
+
+            if (sourceWarehouseIds.length === 0) {
+              console.log(`[PROPAGATE] No source warehouses linked to target warehouseId: ${targetWarehouse.warehouseId} for targetProductId: ${mapping.targetProductId}`);
+              continue;
+            }
+
+            // Step 5: Fetch stock from all source warehouses
+            let sourceStockQuery = db
+              .selectFrom("warehouseStock")
+              .select(["quantity"])
+              .where("productId", "=", productId)
+              .where("country", "=", country)
+              .where("warehouseId", "in", sourceWarehouseIds);
+
+            if (variationId) {
+              sourceStockQuery = sourceStockQuery.where("variationId", "=", variationId);
+            } else {
+              sourceStockQuery = sourceStockQuery.where("variationId", "is", null);
+            }
+
+            const sourceStocks = await sourceStockQuery.execute();
+
+            // Aggregate the stock quantities
+            const totalQuantity = sourceStocks.reduce((sum, stock) => sum + stock.quantity, 0);
+
+            console.log(`[PROPAGATE] Aggregated stock for productId: ${productId}, country: ${country}, total quantity: ${totalQuantity}`);
+
+            // Step 6: Map the source variationId to the target variationId (if applicable)
+            let targetVariationId: string | null = null;
+            if (variationId) {
+              const variationMapping = await db
+                .selectFrom("sharedVariationMapping")
+                .select("targetVariationId")
+                .where("shareLinkId", "=", sharedProduct.shareLinkId)
+                .where("sourceProductId", "=", productId)
+                .where("targetProductId", "=", mapping.targetProductId)
+                .where("sourceVariationId", "=", variationId)
+                .executeTakeFirst();
+
+              if (!variationMapping) {
+                console.log(`[PROPAGATE] No variation mapping found for sourceVariationId: ${variationId}, skipping`);
+                continue;
+              }
+              targetVariationId = variationMapping.targetVariationId;
+              console.log(`[PROPAGATE] Mapped sourceVariationId: ${variationId} to targetVariationId: ${targetVariationId}`);
+            }
+
+            // Step 7: Update or insert the aggregated stock in User B's warehouse
+            let targetStockQuery = db
+              .selectFrom("warehouseStock")
+              .select(["id"])
+              .where("productId", "=", mapping.targetProductId)
+              .where("warehouseId", "=", targetWarehouse.warehouseId)
+              .where("country", "=", country);
+
+            if (targetVariationId) {
+              targetStockQuery = targetStockQuery.where("variationId", "=", targetVariationId);
+            } else {
+              targetStockQuery = targetStockQuery.where("variationId", "is", null);
+            }
+
+            const targetStock = await targetStockQuery.executeTakeFirst();
+
+            if (targetStock) {
+              console.log(
+                `[PROPAGATE] Updating existing stock entry for targetProductId: ${mapping.targetProductId}, warehouseId: ${targetWarehouse.warehouseId}, country: ${country}, quantity: ${totalQuantity}`
+              );
+              await db
+                .updateTable("warehouseStock")
+                .set({
+                  quantity: totalQuantity,
+                  updatedAt: new Date(),
+                })
+                .where("id", "=", targetStock.id)
+                .execute();
+            } else {
+              console.log(
+                `[PROPAGATE] Inserting new stock entry for targetProductId: ${mapping.targetProductId}, warehouseId: ${targetWarehouse.warehouseId}, country: ${country}, quantity: ${totalQuantity}`
+              );
+              await db
+                .insertInto("warehouseStock")
+                .values({
+                  id: generateId("WS"),
+                  warehouseId: targetWarehouse.warehouseId,
+                  productId: mapping.targetProductId,
+                  variationId: targetVariationId,
+                  country,
+                  quantity: totalQuantity,
+                  organizationId: targetWarehouse.organizationId,
+                  tenantId: targetWarehouse.tenantId,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .execute();
+            }
+
+            console.log(`[PROPAGATE] Successfully updated stock for targetProductId: ${mapping.targetProductId}`);
+          }
         }
       }
     }
