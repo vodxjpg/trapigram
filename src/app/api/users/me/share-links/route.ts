@@ -109,7 +109,90 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Share link not found or you are not the creator" }, { status: 404 });
     }
 
-    // Delete related recipients and products
+    // Step 1: Delete all sharedProductMapping and sharedVariationMapping entries for the share link
+    const mappings = await db
+      .selectFrom("sharedProductMapping")
+      .select(["sourceProductId", "targetProductId"])
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+
+    const targetProductIds = mappings.map((m) => m.targetProductId);
+
+    await db
+      .deleteFrom("sharedProductMapping")
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    console.log(`[CLEANUP] Deleted all sharedProductMapping entries for shareLinkId: ${shareLinkId}`);
+
+    await db
+      .deleteFrom("sharedVariationMapping")
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    console.log(`[CLEANUP] Deleted all sharedVariationMapping entries for shareLinkId: ${shareLinkId}`);
+
+    // Step 2: Fetch all recipients of the share link and clean up their products
+    const recipients = await db
+      .selectFrom("warehouseShareRecipient")
+      .select("recipientUserId")
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    const recipientUserIds = recipients.map((r) => r.recipientUserId);
+
+    if (recipientUserIds.length > 0) {
+      console.log(
+        `[CLEANUP] Identified ${recipientUserIds.length} recipients for share link ${shareLinkId}: ${recipientUserIds.join(", ")}`
+      );
+
+      for (const recipientUserId of recipientUserIds) {
+        console.log(`[CLEANUP] Processing recipient: ${recipientUserId}`);
+
+        // Find the tenant of the recipient
+        const recipientTenant = await db
+          .selectFrom("tenant")
+          .select("id")
+          .where("ownerUserId", "=", recipientUserId)
+          .executeTakeFirst();
+
+        if (!recipientTenant) {
+          console.log(`[CLEANUP] No tenant found for recipientUserId: ${recipientUserId}, skipping`);
+          continue;
+        }
+
+        if (targetProductIds.length === 0) {
+          console.log(`[CLEANUP] No synced products found for shareLinkId: ${shareLinkId} for recipient: ${recipientUserId}`);
+          continue;
+        }
+
+        console.log(
+          `[CLEANUP] Found ${targetProductIds.length} synced products for recipient: ${recipientUserId}: ${targetProductIds.join(", ")}`
+        );
+
+        // Delete associated warehouseStock entries for these products
+        await db
+          .deleteFrom("warehouseStock")
+          .where("productId", "in", targetProductIds)
+          .where("tenantId", "=", recipientTenant.id)
+          .execute();
+        console.log(`[CLEANUP] Deleted warehouseStock entries for products: ${targetProductIds.join(", ")}`);
+
+        // Delete associated variations (if any)
+        await db
+          .deleteFrom("productVariations")
+          .where("productId", "in", targetProductIds)
+          .execute();
+        console.log(`[CLEANUP] Deleted productVariations for products: ${targetProductIds.join(", ")}`);
+
+        // Delete the products themselves
+        await db
+          .deleteFrom("products")
+          .where("id", "in", targetProductIds)
+          .where("tenantId", "=", recipientTenant.id)
+          .execute();
+        console.log(`[CLEANUP] Deleted products: ${targetProductIds.join(", ")}`);
+      }
+    }
+
+    // Step 3: Delete related recipients and products
     await db.deleteFrom("warehouseShareRecipient").where("shareLinkId", "=", shareLinkId).execute();
     await db.deleteFrom("sharedProduct").where("shareLinkId", "=", shareLinkId).execute();
     await db.deleteFrom("warehouseShareLink").where("id", "=", shareLinkId).execute();

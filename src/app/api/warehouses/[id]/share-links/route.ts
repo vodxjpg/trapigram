@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
+import crypto from "crypto";
 
 const costSchema = z.record(z.string(), z.number().positive("Cost must be a positive number")).optional();
 
@@ -19,6 +20,11 @@ const requestSchema = z.object({
 // Helper to generate string-based IDs
 function generateId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).substring(2, 10)}`;
+}
+
+// Helper to generate a secure random token
+function generateSecureToken(): string {
+  return crypto.randomBytes(16).toString("hex"); // Generates a 32-character hexadecimal string
 }
 
 export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -93,7 +99,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
           .selectFrom("productVariations")
           .select(["id", "cost"])
           .where("id", "=", variationId)
-          .where("productId", "=", productId) // Fixed: Corrected `product_id` to `productId`
+          .where("productId", "=", productId)
           .executeTakeFirst();
         if (!variation) {
           return NextResponse.json({ error: `Variation ${variationId} not found` }, { status: 400 });
@@ -155,7 +161,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
 
     // Create share link
     const shareLinkId = generateId("SL");
-    const token = generateId("TOKEN");
+    const token = generateSecureToken(); // Use the new secure token generator
     await db
       .insertInto("warehouseShareLink")
       .values({
