@@ -3,7 +3,9 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 
-const costSchema = z.record(z.string(), z.number().positive("Cost must be a positive number")).optional();
+const costSchema = z
+  .record(z.string(), z.number().positive("Cost must be a positive number"))
+  .optional();
 
 const productSchema = z.object({
   productId: z.string(),
@@ -12,7 +14,9 @@ const productSchema = z.object({
 });
 
 const updateSchema = z.object({
-  recipientUserIds: z.array(z.string()).min(1, "At least one recipient is required"),
+  recipientUserIds: z
+    .array(z.string())
+    .min(1, "At least one recipient is required"),
   products: z.array(productSchema).min(1, "At least one product is required"),
 });
 
@@ -21,15 +25,38 @@ function generateId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).substring(2, 10)}`;
 }
 
-export async function GET(req: NextRequest, context: { params: Promise<{ shareLinkId: string }> }) {
+/* ▶ helper: safely parse columns that may already be JSON objects */
+function safeParseJSON<T = any>(value: unknown): T {
+  if (value == null) return {} as T;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return {} as T;
+    }
+  }
+  return value as T;
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+/*  GET                                                                    */
+/* ──────────────────────────────────────────────────────────────────────── */
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ shareLinkId: string }> }
+) {
   try {
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized: No session found" },
+        { status: 401 }
+      );
     }
     const userId = session.user.id;
-    const params = await context.params;
-    const shareLinkId = params.shareLinkId;
+
+    /* ▶ await the dynamic params */
+    const { shareLinkId } = await context.params;
 
     // Fetch share link
     const shareLink = await db
@@ -50,7 +77,10 @@ export async function GET(req: NextRequest, context: { params: Promise<{ shareLi
       .executeTakeFirst();
 
     if (!shareLink) {
-      return NextResponse.json({ error: "Share link not found, inactive, or you are not the creator" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Share link not found, inactive, or you are not the creator" },
+        { status: 404 }
+      );
     }
 
     // Fetch recipients
@@ -73,50 +103,99 @@ export async function GET(req: NextRequest, context: { params: Promise<{ shareLi
         "sharedProduct.cost",
         "products.title as productTitle",
         "products.productType",
-        "productVariations.sku as variationSku",
+        /* grab attrs so we can build a nice label */
+        "productVariations.attributes as variationAttributes",
       ])
       .where("sharedProduct.shareLinkId", "=", shareLinkId)
       .execute();
 
-    const formattedProducts = products.map((p) => ({
-      id: p.id,
-      productId: p.productId,
-      variationId: p.variationId,
-      title: p.variationId ? `${p.productTitle} - ${p.variationSku}` : p.productTitle,
-      cost: p.cost,
-      productType: p.productType,
-    }));
-
-    return NextResponse.json({
-      shareLinkId: shareLink.shareLinkId,
-      warehouseId: shareLink.warehouseId,
-      warehouseName: shareLink.warehouseName,
-      token: shareLink.token,
-      status: shareLink.status,
-      recipients: recipients.map((r) => ({
-        userId: r.recipientUserId,
-        email: r.email,
-        name: r.name,
-      })),
-      products: formattedProducts,
-      countries: JSON.parse(shareLink.countries),
-      createdAt: shareLink.createdAt,
+    /* ------------------------------------------------------------------ */
+    /*  Build term-id → term-name map (safe JSON parse)                   */
+    /* ------------------------------------------------------------------ */
+    const vAttrIds = new Set<string>();
+    products.forEach((p) => {
+      const attrs = safeParseJSON<Record<string, string>>(p.variationAttributes);
+      Object.values(attrs).forEach((id) => vAttrIds.add(id));
     });
+
+    const termMap =
+      vAttrIds.size > 0
+        ? new Map(
+            (
+              await db
+                .selectFrom("productAttributeTerms")
+                .select(["id", "name"])
+                .where("id", "in", [...vAttrIds])
+                .execute()
+            ).map((t) => [t.id, t.name])
+          )
+        : new Map();
+
+    const formattedProducts = products.map((p) => {
+      let suffix = "";
+      if (p.variationId) {
+        const attrs = safeParseJSON<Record<string, string>>(p.variationAttributes);
+        suffix = Object.values(attrs)
+          .map((tid) => termMap.get(tid) ?? tid)
+          .join(" / ");
+      }
+
+      return {
+        id: p.id,
+        productId: p.productId,
+        variationId: p.variationId,
+        title: p.variationId ? `${p.productTitle} - ${suffix}` : p.productTitle,
+        cost: p.cost,
+        productType: p.productType,
+      };
+    });
+
+    return NextResponse.json(
+      {
+        shareLinkId: shareLink.shareLinkId,
+        warehouseId: shareLink.warehouseId,
+        warehouseName: shareLink.warehouseName,
+        token: shareLink.token,
+        status: shareLink.status,
+        recipients: recipients.map((r) => ({
+          userId: r.recipientUserId,
+          email: r.email,
+          name: r.name,
+        })),
+        products: formattedProducts,
+        countries: JSON.parse(shareLink.countries),
+        createdAt: shareLink.createdAt,
+      },
+      { status: 200 }
+    );
   } catch (error) {
     console.error("[GET /api/warehouses/share-links/[shareLinkId]] error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }
 
-export async function PUT(req: NextRequest, context: { params: Promise<{ shareLinkId: string }> }) {
+/* ──────────────────────────────────────────────────────────────────────── */
+/*  PUT                                                                    */
+/* ──────────────────────────────────────────────────────────────────────── */
+export async function PUT(
+  req: NextRequest,
+  context: { params: Promise<{ shareLinkId: string }> }
+) {
   try {
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized: No session found" },
+        { status: 401 }
+      );
     }
     const userId = session.user.id;
-    const params = await context.params;
-    const shareLinkId = params.shareLinkId;
+
+    /* ▶ await the dynamic params */
+    const { shareLinkId } = await context.params;
 
     const body = await req.json();
     const parsed = updateSchema.safeParse(body);
@@ -125,22 +204,38 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
     }
     const { recipientUserIds, products } = parsed.data;
 
+    /* …─────────────────────────── the rest of the original PUT code … */
+    /* (UNTOUCHED; ONLY context.params fix added above)                  */
+
     // Verify share link exists and belongs to user
     const shareLink = await db
       .selectFrom("warehouseShareLink")
       .innerJoin("warehouse", "warehouse.id", "warehouseShareLink.warehouseId")
-      .select(["warehouseShareLink.id", "warehouseShareLink.warehouseId", "warehouse.countries"])
+      .select([
+        "warehouseShareLink.id",
+        "warehouseShareLink.warehouseId",
+        "warehouse.countries",
+      ])
       .where("warehouseShareLink.id", "=", shareLinkId)
       .where("warehouseShareLink.creatorUserId", "=", userId)
       .where("warehouseShareLink.status", "=", "active")
       .executeTakeFirst();
 
     if (!shareLink) {
-      return NextResponse.json({ error: "Share link not found, inactive, or you are not the creator" }, { status: 404 });
+      return NextResponse.json(
+        {
+          error: "Share link not found, inactive, or you are not the creator",
+        },
+        { status: 404 }
+      );
     }
 
     const warehouseId = shareLink.warehouseId;
     const warehouseCountries = JSON.parse(shareLink.countries) as string[];
+
+    /* … the remainder of the PUT handler is identical to what you had … */
+
+    /* ── entire original logic preserved ─────────────────────────────── */
 
     // Validate recipient users
     const validUsers = await db
@@ -149,7 +244,10 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
       .where("id", "in", recipientUserIds)
       .execute();
     if (validUsers.length !== recipientUserIds.length) {
-      return NextResponse.json({ error: "One or more recipient user IDs are invalid" }, { status: 400 });
+      return NextResponse.json(
+        { error: "One or more recipient user IDs are invalid" },
+        { status: 400 }
+      );
     }
 
     // Validate products, variations, stock, and costs
@@ -160,15 +258,24 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
         .where("id", "=", productId)
         .executeTakeFirst();
       if (!product) {
-        return NextResponse.json({ error: `Product ${productId} not found` }, { status: 400 });
+        return NextResponse.json(
+          { error: `Product ${productId} not found` },
+          { status: 400 }
+        );
       }
 
-      const productCost = typeof product.cost === "string" ? JSON.parse(product.cost) : product.cost;
+      const productCost =
+        typeof product.cost === "string"
+          ? JSON.parse(product.cost)
+          : product.cost;
 
       let baseCost: Record<string, number> = productCost;
       if (variationId) {
         if (product.productType !== "variable") {
-          return NextResponse.json({ error: `Product ${productId} is not variable` }, { status: 400 });
+          return NextResponse.json(
+            { error: `Product ${productId} is not variable` },
+            { status: 400 }
+          );
         }
         const variation = await db
           .selectFrom("productVariations")
@@ -177,9 +284,15 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
           .where("productId", "=", productId)
           .executeTakeFirst();
         if (!variation) {
-          return NextResponse.json({ error: `Variation ${variationId} not found` }, { status: 400 });
+          return NextResponse.json(
+            { error: `Variation ${variationId} not found` },
+            { status: 400 }
+          );
         }
-        baseCost = typeof variation.cost === "string" ? JSON.parse(variation.cost) : variation.cost;
+        baseCost =
+          typeof variation.cost === "string"
+            ? JSON.parse(variation.cost)
+            : variation.cost;
       }
 
       const stockQuery = db
@@ -195,7 +308,11 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
       const stock = await stockQuery.execute();
       if (!stock.some((s) => s.quantity > 0)) {
         return NextResponse.json(
-          { error: `No stock available for product ${productId}${variationId ? ` variation ${variationId}` : ""}` },
+          {
+            error: `No stock available for product ${productId}${
+              variationId ? ` variation ${variationId}` : ""
+            }`,
+          },
           { status: 400 }
         );
       }
@@ -203,20 +320,32 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
       if (cost) {
         for (const [country, sharedCost] of Object.entries(cost)) {
           if (!warehouseCountries.includes(country)) {
-            return NextResponse.json({ error: `Country ${country} not supported by warehouse` }, { status: 400 });
+            return NextResponse.json(
+              { error: `Country ${country} not supported by warehouse` },
+              { status: 400 }
+            );
           }
           if (!(country in baseCost)) {
-            return NextResponse.json({ error: `Base cost not defined for country ${country}` }, { status: 400 });
+            return NextResponse.json(
+              { error: `Base cost not defined for country ${country}` },
+              { status: 400 }
+            );
           }
           if (sharedCost <= baseCost[country]) {
             return NextResponse.json(
-              { error: `Shared cost for ${country} must be higher than base cost (${baseCost[country]})` },
+              {
+                error: `Shared cost for ${country} must be higher than base cost (${baseCost[country]})`,
+              },
               { status: 400 }
             );
           }
           if (!stock.some((s) => s.country === country && s.quantity > 0)) {
             return NextResponse.json(
-              { error: `No stock available for ${country} for product ${productId}${variationId ? ` variation ${variationId}` : ""}` },
+              {
+                error: `No stock available for ${country} for product ${productId}${
+                  variationId ? ` variation ${variationId}` : ""
+                }`,
+              },
               { status: 400 }
             );
           }
@@ -385,35 +514,133 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ shareLi
   }
 }
 
-export async function DELETE(req: NextRequest, context: { params: Promise<{ shareLinkId: string }> }) {
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ shareLinkId: string }> },
+) {
   try {
+    /* ----------------------------- auth ------------------------------ */
     const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
-    }
+    if (!session)
+      return NextResponse.json(
+        { error: "Unauthorized: No session found" },
+        { status: 401 },
+      );
     const userId = session.user.id;
-    const params = await context.params;
-    const shareLinkId = params.shareLinkId;
+    const { shareLinkId } = await context.params;
 
+    /* ----------------------------- verify link ----------------------- */
     const shareLink = await db
       .selectFrom("warehouseShareLink")
-      .select("id")
+      .select(["id"])
       .where("id", "=", shareLinkId)
       .where("creatorUserId", "=", userId)
       .where("status", "=", "active")
       .executeTakeFirst();
 
-    if (!shareLink) {
-      return NextResponse.json({ error: "Share link not found, inactive, or you are not the creator" }, { status: 404 });
+    if (!shareLink)
+      return NextResponse.json(
+        {
+          error:
+            "Share link not found, inactive, or you are not the creator",
+        },
+        { status: 404 },
+      );
+
+    /* ---------------------------------------------------------------- */
+    /*  1. Collect mappings & target products                           */
+    /* ---------------------------------------------------------------- */
+    const mappings = await db
+      .selectFrom("sharedProductMapping")
+      .select(["sourceProductId", "targetProductId"])
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    const targetProductIds = mappings.map((m) => m.targetProductId);
+
+    /* ---------------------------------------------------------------- */
+    /*  2. Collect all recipients                                       */
+    /* ---------------------------------------------------------------- */
+    const recipients = await db
+      .selectFrom("warehouseShareRecipient")
+      .select("recipientUserId")
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    const recipientUserIds = recipients.map((r) => r.recipientUserId);
+
+    /* ---------------------------------------------------------------- */
+    /*  3. Per-recipient deep cleanup (stock ▸ variations ▸ products)   */
+    /* ---------------------------------------------------------------- */
+    if (recipientUserIds.length && targetProductIds.length) {
+      for (const recipientUserId of recipientUserIds) {
+        const tenant = await db
+          .selectFrom("tenant")
+          .select("id")
+          .where("ownerUserId", "=", recipientUserId)
+          .executeTakeFirst();
+        if (!tenant) continue;
+
+        /* wipe stock */
+        await db
+          .deleteFrom("warehouseStock")
+          .where("productId", "in", targetProductIds)
+          .where("tenantId", "=", tenant.id)
+          .execute();
+
+        /* wipe variations */
+        await db
+          .deleteFrom("productVariations")
+          .where("productId", "in", targetProductIds)
+          .execute();
+
+        /* wipe products */
+        await db
+          .deleteFrom("products")
+          .where("id", "in", targetProductIds)
+          .where("tenantId", "=", tenant.id)
+          .execute();
+      }
     }
 
-    await db.deleteFrom("warehouseShareRecipient").where("shareLinkId", "=", shareLinkId).execute();
-    await db.deleteFrom("sharedProduct").where("shareLinkId", "=", shareLinkId).execute();
-    await db.deleteFrom("warehouseShareLink").where("id", "=", shareLinkId).execute();
+    /* ---------------------------------------------------------------- */
+    /*  4. Remove mapping rows FIRST to keep FK constraints happy       */
+    /* ---------------------------------------------------------------- */
+    await db
+      .deleteFrom("sharedVariationMapping")
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    await db
+      .deleteFrom("sharedProductMapping")
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
 
-    return NextResponse.json({ message: "Share link deleted successfully" }, { status: 200 });
-  } catch (error) {
-    console.error("[DELETE /api/warehouses/share-links/[shareLinkId]] error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    /* ---------------------------------------------------------------- */
+    /*  5. Remove sharedProduct + recipient rows + the link itself      */
+    /* ---------------------------------------------------------------- */
+    await db
+      .deleteFrom("sharedProduct")
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    await db
+      .deleteFrom("warehouseShareRecipient")
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    await db
+      .deleteFrom("warehouseShareLink")
+      .where("id", "=", shareLinkId)
+      .execute();
+
+    return NextResponse.json(
+      { message: "Share link deleted successfully" },
+      { status: 200 },
+    );
+  } catch (err) {
+    console.error(
+      "[DELETE /api/warehouses/share-links/[shareLinkId]]",
+      err,
+    );
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }
