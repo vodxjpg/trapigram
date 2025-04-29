@@ -14,7 +14,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table"
 import { useRouter } from "next/navigation"
-import { Edit, MoreHorizontal, Trash } from "lucide-react"
+import { Copy, Edit, MoreHorizontal, Trash } from "lucide-react"
 import Image from "next/image"
 
 import { Button } from "@/components/ui/button"
@@ -88,20 +88,28 @@ export function ProductsDataTable() {
     search,
   })
 
+  /* ------------------------------------------------------------ */
+  /*  NEW – duplicate handler                                     */
+  /* ------------------------------------------------------------ */
+  const handleDuplicateProduct = async (productId: string) => {
+    try {
+      const res = await fetch(`/api/products/${productId}/duplicate`, { method: "POST" })
+      if (!res.ok) throw new Error("Failed to duplicate product")
+      toast.success("Product duplicated")
+      mutate()
+    } catch (err) {
+      toast.error("Failed to duplicate product")
+    }
+  }
+
   const handleStatusChange = async (productId: string, newStatus: "published" | "draft") => {
     try {
       const response = await fetch(`/api/products/${productId}`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       })
-
-      if (!response.ok) {
-        throw new Error("Failed to update product status")
-      }
-
+      if (!response.ok) throw new Error("Failed to update product status")
       toast.success(`Product status changed to ${newStatus}`)
       mutate()
     } catch (error) {
@@ -111,16 +119,9 @@ export function ProductsDataTable() {
 
   const handleDeleteProduct = async () => {
     if (!deleteProductId) return
-
     try {
-      const response = await fetch(`/api/products/${deleteProductId}`, {
-        method: "DELETE",
-      })
-
-      if (!response.ok) {
-        throw new Error("Failed to delete product")
-      }
-
+      const response = await fetch(`/api/products/${deleteProductId}`, { method: "DELETE" })
+      if (!response.ok) throw new Error("Failed to delete product")
       toast.success("The product has been deleted successfully")
       mutate()
       setDeleteProductId(null)
@@ -143,16 +144,11 @@ export function ProductsDataTable() {
           .join("")
           .slice(0, 2)
         return (
-          <div className="w-12 h-12 relative">
+          <div className="relative h-12 w-12">
             {image ? (
-              <Image
-                src={image}
-                alt={title}
-                fill
-                className="rounded-md object-cover"
-              />
+              <Image src={image} alt={title} fill className="rounded-md object-cover" />
             ) : (
-              <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-medium">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-200 font-medium text-gray-600">
                 {initials}
               </div>
             )}
@@ -185,12 +181,12 @@ export function ProductsDataTable() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="published">
-                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                <Badge variant="outline" className="border-green-200 bg-green-50 text-green-700">
                   Published
                 </Badge>
               </SelectItem>
               <SelectItem value="draft">
-                <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">
+                <Badge variant="outline" className="border-gray-200 bg-gray-50 text-gray-700">
                   Draft
                 </Badge>
               </SelectItem>
@@ -198,18 +194,15 @@ export function ProductsDataTable() {
           </Select>
         )
       },
-      filterFn: (row, id, value) => {
-        return value.includes(row.original.status)
-      },
+      filterFn: (row, id, value) => value.includes(row.original.status),
     },
     {
       accessorKey: "price",
       header: "Prices",
       cell: ({ row }) => {
         const product = row.original
-        // Choose the first country from regularPrice (assumes all countries are consistent)
         const country = Object.keys(product.regularPrice)[0] || "US"
-        
+
         if (product.productType === "simple") {
           const salePrice = product.salePrice?.[country] ?? null
           const regularPrice = product.regularPrice[country] ?? 0
@@ -218,46 +211,37 @@ export function ProductsDataTable() {
             <div className="text-left">
               {displayPrice ? `$${displayPrice.toFixed(2)}` : "-"}
               {salePrice !== null && (
-                <span className="ml-2 text-sm text-gray-500 line-through">
-                  ${regularPrice.toFixed(2)}
-                </span>
+                <span className="ml-2 text-sm text-gray-500 line-through">${regularPrice.toFixed(2)}</span>
               )}
             </div>
           )
-        } else {
-          // For variable products, find the highest price across variations
-          const variationPrices = product.variations.map((v) => {
-            const salePrice = v.prices[country]?.sale ?? null
-            const regularPrice = v.prices[country]?.regular ?? 0
-            return salePrice !== null ? salePrice : regularPrice
-          })
-          const maxPrice = variationPrices.length > 0 ? Math.max(...variationPrices) : 0
-          return (
-            <div className="text-left">
-              {maxPrice ? `$${maxPrice.toFixed(2)}` : "-"}
-            </div>
-          )
         }
+
+        /* variable */
+        const variationPrices = product.variations.map((v) => {
+          const salePrice = v.prices[country]?.sale ?? null
+          const regularPrice = v.prices[country]?.regular ?? 0
+          return salePrice !== null ? salePrice : regularPrice
+        })
+        const maxPrice = variationPrices.length ? Math.max(...variationPrices) : 0
+        return <div className="text-left">{maxPrice ? `$${maxPrice.toFixed(2)}` : "-"}</div>
       },
     },
     {
       accessorKey: "stockStatus",
       header: "Stock Status",
-      cell: ({ row }) => {
-        const stockStatus = row.original.stockStatus
-        return (
-          <Badge
-            variant="outline"
-            className={
-              stockStatus === "managed"
-                ? "bg-blue-50 text-blue-700 border-blue-200"
-                : "bg-gray-50 text-gray-700 border-gray-200"
-            }
-          >
-            {stockStatus === "managed" ? "Managed" : "Unmanaged"}
-          </Badge>
-        )
-      },
+      cell: ({ row }) => (
+        <Badge
+          variant="outline"
+          className={
+            row.original.stockStatus === "managed"
+              ? "border-blue-200 bg-blue-50 text-blue-700"
+              : "border-gray-200 bg-gray-50 text-gray-700"
+          }
+        >
+          {row.original.stockStatus === "managed" ? "Managed" : "Unmanaged"}
+        </Badge>
+      ),
     },
     {
       accessorKey: "categories",
@@ -266,14 +250,14 @@ export function ProductsDataTable() {
         const categories = row.original.categories
         return (
           <div className="flex flex-wrap gap-1">
-            {categories.length > 0 ? (
-              categories.slice(0, 2).map((category, index) => (
-                <Badge key={index} variant="secondary" className="text-xs">
-                  {category}
+            {categories.length ? (
+              categories.slice(0, 2).map((c, i) => (
+                <Badge key={i} variant="secondary" className="text-xs">
+                  {c}
                 </Badge>
               ))
             ) : (
-              <span className="text-muted-foreground text-xs">No categories</span>
+              <span className="text-xs text-muted-foreground">No categories</span>
             )}
             {categories.length > 2 && (
               <Badge variant="outline" className="text-xs">
@@ -288,13 +272,8 @@ export function ProductsDataTable() {
       accessorKey: "createdAt",
       header: "Created At",
       cell: ({ row }) => {
-        const dateStr = row.original.createdAt
-        const date = new Date(dateStr)
-        return (
-          <div className="text-sm">
-            {!isNaN(date.getTime()) ? date.toLocaleDateString() : "-"}
-          </div>
-        )
+        const d = new Date(row.original.createdAt)
+        return <div className="text-sm">{!isNaN(d.getTime()) ? d.toLocaleDateString() : "-"}</div>
       },
     },
     {
@@ -314,6 +293,10 @@ export function ProductsDataTable() {
               <DropdownMenuItem onClick={() => router.push(`/products/${product.id}/edit`)}>
                 <Edit className="mr-2 h-4 w-4" />
                 Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDuplicateProduct(product.id)}>
+                <Copy className="mr-2 h-4 w-4" />
+                Duplicate
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setDeleteProductId(product.id)} className="text-red-600">
@@ -338,12 +321,7 @@ export function ProductsDataTable() {
     getFilteredRowModel: getFilteredRowModel(),
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
-    state: {
-      sorting,
-      columnFilters,
-      columnVisibility,
-      rowSelection,
-    },
+    state: { sorting, columnFilters, columnVisibility, rowSelection },
   })
 
   return (

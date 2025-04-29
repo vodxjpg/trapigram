@@ -1,3 +1,6 @@
+/* -------------------------------------------------------------------------- */
+/*  /src/app/(dashboard)/warehouses/share-links/[shareLinkId]/page.tsx        */
+/* -------------------------------------------------------------------------- */
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -115,19 +118,17 @@ function normaliseUser(raw: any): User {
 const pvKey = (s:{productId:string;variationId:string|null}) =>
   `${s.productId}-${s.variationId ?? "null"}`;
 
-/** one option per productId, favouring the parent row *if it exists* */
 function uniqueParents(items: StockItem[]) {
   const map = new Map<string, StockItem>();
   for (const it of items) {
     const had = map.get(it.productId);
-    // if we already stored a variation and now see the parent, overwrite
     if (!had || had.variationId !== null) map.set(it.productId, it);
   }
   return [...map.values()];
 }
 
-/** strip “ - something” (once) from a title */
 const stripVariation = (t: string) => t.split(" - ")[0];
+
 /* -------------------------------------------------------------------------- */
 /*  Component                                                                 */
 /* -------------------------------------------------------------------------- */
@@ -238,6 +239,9 @@ export default function EditShareLinkPage() {
   const uniqBy = <T, K>(arr: T[], key: (t: T) => K) =>
     arr.filter((v, i, a) => a.findIndex((t) => key(t) === key(v)) === i);
 
+
+
+
   /** add every unique product/variation exactly once */
   const selectAllProducts = () => {
     const existing = form.getValues("products");
@@ -295,7 +299,8 @@ export default function EditShareLinkPage() {
   /* ---------------------------------------------------------------------- */
   /*  Derived structures                                                    */
   /* ---------------------------------------------------------------------- */
-  const groupedStock = stock.reduce((acc, it) => {
+  const uniqStock = uniqBy(stock, pvKey);                         // <-- NEW
+  const groupedStock = uniqStock.reduce((acc, it) => {
     const cat = it.categoryName || "Uncategorized";
     if (!acc[cat]) acc[cat] = [];
     acc[cat].push(it);
@@ -303,7 +308,7 @@ export default function EditShareLinkPage() {
   }, {} as Record<string, StockItem[]>);
 
   const stockByProduct = stock.reduce((acc, it) => {
-    const k = `${it.productId}-${it.variationId ?? "none"}`;
+    const k = pvKey(it);
     if (!acc[k]) acc[k] = {};
     acc[k][it.country] = it.quantity;
     return acc;
@@ -627,8 +632,8 @@ export default function EditShareLinkPage() {
                       const isVariable =
                         selectedProd?.productType === "variable";
 
-                      const variations = isVariable
-                        ? stock.filter(
+                        const variations = isVariable
+                        ? uniqStock.filter(
                             (s) =>
                               s.productId === selectedProdId && s.variationId,
                           )

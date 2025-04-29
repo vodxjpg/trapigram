@@ -12,6 +12,7 @@ import {
   Search,
   Trash2,
   Edit,
+  Copy,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,7 +51,7 @@ type Coupon = {
   description: string;
   discountType: "fixed" | "percentage";
   discountAmount: number;
-  expirationDate: string | null; // ISO string in UTC
+  expirationDate: string | null;
   limitPerUser: number;
   usageLimit: number;
   expendingLimit: number;
@@ -91,12 +92,7 @@ export function CouponsTable() {
       );
       if (!res.ok) throw new Error("Failed to fetch coupons");
       const data = await res.json();
-      setCoupons(
-        data.coupons.map((c: Coupon) => ({
-          ...c,
-          countries: c.countries ?? [],
-        })),
-      );
+      setCoupons(data.coupons.map((c: Coupon) => ({ ...c, countries: c.countries ?? [] })));
       setTotalPages(data.totalPages);
       setCurrentPage(data.currentPage);
     } catch (err) {
@@ -167,9 +163,20 @@ export function CouponsTable() {
     });
   };
 
+  const handleDuplicate = async (id: string) => {
+    try {
+      const res = await fetch(`/api/coupons/${id}/duplicate`, { method: "POST" });
+      if (!res.ok) throw new Error("Duplication failed");
+      toast.success("Coupon duplicated");
+      fetchCoupons();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to duplicate coupon");
+    }
+  };
+
   const handleEdit = (c: Coupon) => router.push(`/coupons/${c.id}`);
   const handleAdd = () => router.push("/coupons/new");
-
   /* ---------------------------------------------------------------------- */
   /* 6. Render                                                              */
   /* ---------------------------------------------------------------------- */
@@ -280,6 +287,10 @@ export function CouponsTable() {
                         <DropdownMenuItem onClick={() => handleEdit(c)}>
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleDuplicate(c.id)}>
+                          <Copy className="mr-2 h-4 w-4" />
+                          Duplicate
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => handleDelete(c.id)}

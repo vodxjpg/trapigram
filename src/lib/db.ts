@@ -311,7 +311,7 @@ interface DB {
 
   productVariations: {
     id: string;
-    product_id: string;
+    productId: string;
     attributes: Record<string, string>;
     sku: string;
     regularPrice: Record<string, number>;
@@ -364,6 +364,28 @@ interface DB {
     updatedAt: Date;
   };
 
+  sharedProductMapping: {
+    id: string;
+    shareLinkId: string;
+    sourceProductId: string;
+    targetProductId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  sharedVariationMapping: {
+    id: string;
+    shareLinkId: string;
+    sourceProductId: string;
+    targetProductId: string;
+    sourceVariationId: string;
+    targetVariationId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+
+
   paymentMethods: {
     id: string;
     name: string;
@@ -371,15 +393,6 @@ interface DB {
     apiKey: string;
     secretKey: string;
     active: boolean;
-    createdAt: Date;
-    updatedAt: Date;
-  };
-
-  sharedProductMapping: {
-    id: string;
-    shareLinkId: string;
-    sourceProductId: string;
-    targetProductId: string;
     createdAt: Date;
     updatedAt: Date;
   };

@@ -16,6 +16,11 @@ function generateId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).substring(2, 10)}`;
 }
 
+type ShareProfile = {
+  wholeProduct: boolean;
+  variationIds: Set<string>;
+};
+
 /* ────────────────────────────────────────────────────────────────────────── */
 /* POST                                                                      */
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -113,13 +118,20 @@ export async function POST(req: NextRequest) {
       .where("shareLinkId", "=", shareLinkId)
       .execute();
 
+    /* build per-product share profile */
+    const shareProfile = new Map<string, ShareProfile>();
+    for (const sp of sharedProducts) {
+      if (!shareProfile.has(sp.productId))
+        shareProfile.set(sp.productId, { wholeProduct: false, variationIds: new Set() });
+      const p = shareProfile.get(sp.productId)!;
+      if (sp.variationId === null) p.wholeProduct = true;
+      else                         p.variationIds.add(sp.variationId);
+    }
+
     const srcCountries    = JSON.parse(shareLink.countries)       as string[];
     const targetCountries = JSON.parse(targetWarehouse.countries) as string[];
-
-    /* country / cost sanity */
     for (const sp of sharedProducts) {
-      const cost = sp.cost as Record<string, number>;
-      for (const c of Object.keys(cost)) {
+      for (const c of Object.keys(sp.cost ?? {})) {
         if (!targetCountries.includes(c))
           return NextResponse.json({ error: `Target warehouse does not support ${c}` }, { status: 400 });
         if (!srcCountries.includes(c))
@@ -127,12 +139,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    /* -------------------------------------------------- maps ------------ */
-    const productIdMap   = new Map<string, string>(); // srcProdId ➜ tgtProdId
-    const variationIdMap = new Map<string, string>(); // srcVarId  ➜ tgtVarId
+    /* maps */
+    const productIdMap   = new Map<string, string>(); // src ➜ tgt
+    const variationIdMap = new Map<string, string>(); // src ➜ tgt
 
     /* ──────────────────────────────────────────────────────────────────── */
-    /* SYNC LOOP (per shared product)                                      */
+    /* SYNC LOOP (per shared product or variation)                         */
     /* ──────────────────────────────────────────────────────────────────── */
     for (const sp of sharedProducts) {
       /* ---------- ensure target product exists ------------------------ */
@@ -312,11 +324,18 @@ export async function POST(req: NextRequest) {
 
             /* ----------- variations copy (variable only) -------------- */
             if (srcProd.productType === "variable") {
-              const srcVars = await db
+              const profile = shareProfile.get(sp.productId)!;
+              let varQuery = db
                 .selectFrom("productVariations")
                 .selectAll()
-                .where("productId", "=", sp.productId)
-                .execute();
+                .where("productId", "=", sp.productId);
+
+              if (!profile.wholeProduct) {
+                /* only requested variationIds */
+                varQuery = varQuery.where("id", "in", [...profile.variationIds]);
+              }
+
+              const srcVars = await varQuery.execute();
 
               for (const v of srcVars) {
                 /* map attributes */
@@ -330,7 +349,7 @@ export async function POST(req: NextRequest) {
                   if (tgtAttr && tgtTerm) tgtAttrs[tgtAttr] = tgtTerm;
                 }
 
-                /* ensure uniqueness (may be created later by other mapping) */
+                /* ensure uniqueness */
                 const sameVar = await db
                   .selectFrom("productVariations")
                   .select("id")
@@ -413,20 +432,52 @@ export async function POST(req: NextRequest) {
 
         /* ---------- per-country cost patch --------------------------- */
         const cost = sp.cost as Record<string, number>;
-        const tgtProd = await db
-          .selectFrom("products")
-          .select(["cost"])
-          .where("id", "=", targetProductId)
-          .executeTakeFirst();
-        const currentCost = tgtProd?.cost && typeof tgtProd.cost === "string"
-          ? JSON.parse(tgtProd.cost)
-          : tgtProd?.cost || {};
-        const mergedCost = { ...currentCost, ...cost };
-        await db
-          .updateTable("products")
-          .set({ cost: mergedCost, updatedAt: new Date() })
-          .where("id", "=", targetProductId)
-          .execute();
+
+        if (sp.variationId === null) {
+          /* product-level override */
+          const tgt = await db
+            .selectFrom("products")
+            .select("cost")
+            .where("id", "=", targetProductId)
+            .executeTakeFirst();
+          const current =
+            tgt?.cost && typeof tgt.cost === "string" ? JSON.parse(tgt.cost) : tgt?.cost || {};
+          await db
+            .updateTable("products")
+            .set({ cost: { ...current, ...cost }, updatedAt: new Date() })
+            .where("id", "=", targetProductId)
+            .execute();
+        } else {
+          /* variation-specific override */
+          let targetVariationId = variationIdMap.get(sp.variationId);
+          if (!targetVariationId) {
+            const map = await db
+              .selectFrom("sharedVariationMapping")
+              .select("targetVariationId")
+              .where("shareLinkId", "=", shareLinkId)
+              .where("sourceVariationId", "=", sp.variationId)
+              .executeTakeFirst();
+            targetVariationId = map?.targetVariationId;
+          }
+          if (targetVariationId) {
+            const tgtVar = await db
+              .selectFrom("productVariations")
+              .select("cost")
+              .where("id", "=", targetVariationId)
+              .executeTakeFirst();
+            const current =
+              tgtVar?.cost && typeof tgtVar.cost === "string"
+                ? JSON.parse(tgtVar.cost)
+                : tgtVar?.cost || {};
+            await db
+              .updateTable("productVariations")
+              .set({ cost: { ...current, ...cost }, updatedAt: new Date() })
+              .where("id", "=", targetVariationId)
+              .execute();
+          } else {
+            console.warn(`[SYNC] no variation mapping for ${sp.variationId}`);
+          }
+        }
 
         /* ---------- STOCK ------------------------------------------- */
         const srcStockRows = await db
@@ -500,14 +551,11 @@ export async function POST(req: NextRequest) {
     }   /* end sync loop */
 
     /* -------------------------------------------------- response -------- */
-    const syncedProducts = Array.from(productIdMap, ([sourceProductId, targetProductId]) => ({
-      sourceProductId,
-      targetProductId,
+    const syncedProducts = Array.from(productIdMap, ([src, tgt]) => ({
+      sourceProductId: src,
+      targetProductId: tgt,
     }));
-    return NextResponse.json(
-      { message: "Warehouse synced successfully", syncedProducts },
-      { status: 200 },
-    );
+    return NextResponse.json({ message: "Warehouse synced successfully", syncedProducts }, { status: 200 });
   } catch (err) {
     console.error("[POST /api/warehouses/sync] error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -1,6 +1,7 @@
 /* -------------------------------------------------------------------------- */
 /*  /src/app/(dashboard)/warehouses/[id]/share/page.tsx                       */
 /* -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -83,11 +84,12 @@ const formSchema = z.object({
 type FormValues = z.infer<typeof formSchema>;
 
 /* -------------------------------------------------------------------------- */
-/*  Helper utilities (same as “edit” page)                                    */
+/*  Helper utilities                                                          */
 /* -------------------------------------------------------------------------- */
 const pvKey = (s: { productId: string; variationId: string | null }) =>
   `${s.productId}-${s.variationId ?? "null"}`;
 
+/** keep exactly one row per productId, favouring the parent row if present */
 function uniqueParents(items: StockItem[]) {
   const map = new Map<string, StockItem>();
   for (const it of items) {
@@ -180,6 +182,22 @@ export default function ShareWarehousePage() {
     }
   };
 
+  /* ------------------------------ stock-derived helpers ---------------- */
+  const uniqStock = uniqBy(stock, pvKey);                // ★ deduplicated list
+  const groupedStock = uniqStock.reduce((acc, it) => {
+    const cat = it.categoryName || "Uncategorized";
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(it);
+    return acc;
+  }, {} as Record<string, StockItem[]>);
+
+  const stockByProduct = stock.reduce((acc, it) => {
+    const k = pvKey(it);
+    acc[k] ??= {};
+    acc[k][it.country] = it.quantity;
+    return acc;
+  }, {} as Record<string, Record<string, number>>);
+
   /* ------------------------------ add / select-all products ------------ */
   const addProduct = () => {
     const idx = fields.length;
@@ -189,8 +207,6 @@ export default function ShareWarehousePage() {
 
   const selectAllProducts = () => {
     const existing = form.getValues("products");
-    const uniqStock = uniqBy(stock, pvKey);
-
     const toAdd = uniqStock.filter(
       (it) =>
         !existing.some(
@@ -242,91 +258,6 @@ export default function ShareWarehousePage() {
     form.clearErrors(`products.${idx}.cost`);
   };
 
-  /* ------------------------------ derived maps ------------------------- */
-  const groupedStock = stock.reduce((acc, it) => {
-    const cat = it.categoryName || "Uncategorized";
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(it);
-    return acc;
-  }, {} as Record<string, StockItem[]>);
-
-  const stockByProduct = stock.reduce((acc, it) => {
-    const k = `${it.productId}-${it.variationId ?? "none"}`;
-    acc[k] ??= {};
-    acc[k][it.country] = it.quantity;
-    return acc;
-  }, {} as Record<string, Record<string, number>>);
-
-  /* ------------------------------ submit ------------------------------- */
-  const onSubmit = async (values: FormValues) => {
-    try {
-      const errs: string[] = [];
-      values.products.forEach((p, i) => {
-        const sel = selectedCountries[i] ?? [];
-        if (!sel.length) {
-          errs.push(`Product ${i + 1}: select at least one country`);
-          form.setError(`products.${i}.cost`, {
-            type: "manual",
-            message: "At least one country must be selected.",
-          });
-          return;
-        }
-        const cleaned = p.cost
-          ? Object.fromEntries(Object.entries(p.cost).filter(([, v]) => v !== undefined))
-          : {};
-        const missing = sel.filter((c) => !(c in cleaned));
-        if (missing.length) {
-          errs.push(`Product ${i + 1}: costs required for ${missing.join(", ")}`);
-          form.setError(`products.${i}.cost`, {
-            type: "manual",
-            message: `Costs required for ${missing.join(", ")}.`,
-          });
-        }
-      });
-
-      if (errs.length) {
-        toast.error("Please fix validation errors.");
-        return;
-      }
-
-      const cleanedValues = {
-        ...values,
-        products: values.products.map((p) => ({
-          ...p,
-          cost: p.cost
-            ? Object.fromEntries(
-                Object.entries(p.cost).filter(([, v]) => v !== undefined),
-              )
-            : {},
-        })),
-      };
-
-      const res = await fetch(`/api/warehouses/${warehouseId}/share-links`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-internal-secret":
-            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
-        },
-        body: JSON.stringify(cleanedValues),
-      });
-      if (!res.ok) {
-        const e = await res.json();
-        throw new Error(`${res.status} – ${e.error || "Unknown error"}`);
-      }
-      const data = await res.json();
-      setShareUrl(data.url);
-      toast.success("Share link created!");
-    } catch (err) {
-      console.error(err);
-      toast.error(
-        `Failed to create share link: ${
-          err instanceof Error ? err.message : "Unknown"
-        }`,
-      );
-    }
-  };
-
   /* ------------------------------ JSX ---------------------------------- */
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -356,7 +287,6 @@ export default function ShareWarehousePage() {
               <AlertDescription>{stockError}</AlertDescription>
             </Alert>
           )}
-
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
               {/* Recipients */}
@@ -406,7 +336,6 @@ export default function ShareWarehousePage() {
                 />
               </div>
 
-              {/* Products */}
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <FormLabel>Products</FormLabel>
@@ -452,12 +381,12 @@ export default function ShareWarehousePage() {
                       const isVariable = selProd?.productType === "variable";
 
                       const variations = isVariable
-                        ? stock.filter(
+                        ? uniqStock.filter(
                             (s) => s.productId === selProdId && s.variationId,
                           )
                         : [];
 
-                      const stockKey = `${selProdId}-${selVarId ?? "none"}`;
+                      const stockKey = `${selProdId}-${selVarId ?? "null"}`;
                       const prodStock = stockByProduct[stockKey] || {};
 
                       const prodCountries = selectedCountries[idx] || countries;
