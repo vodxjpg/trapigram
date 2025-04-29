@@ -263,7 +263,7 @@ export function ReviewsTable() {
           </DialogDescription>
           <DialogFooter>
             <DialogClose asChild>
-              <Button>Close</Button>
+              <Button>Closed</Button>
             </DialogClose>
           </DialogFooter>
         </DialogContent>
