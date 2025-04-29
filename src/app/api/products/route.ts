@@ -1,3 +1,4 @@
+// src/app/api/products/route.ts
 import { type NextRequest, NextResponse } from "next/server"
 import { z } from "zod"
 import { db } from "@/lib/db"
@@ -5,7 +6,7 @@ import { auth } from "@/lib/auth"
 import { v4 as uuidv4 } from "uuid"
 
 /* ------------------------------------------------------------------ */
-/*  ZOD ‑ schema                                                      */
+/*  ZOD - schema                                                      */
 /* ------------------------------------------------------------------ */
 const priceObj = z.object({
   regular: z.number().min(0),
@@ -68,7 +69,7 @@ function splitPrices(pr: Record<string, { regular: number; sale: number | null }
 }
 
 /* ------------------------------------------------------------------ */
-/*  GET                                                               */
+/*  GET – fixed pagination                                            */
 /* ------------------------------------------------------------------ */
 export async function GET(req: NextRequest) {
   try {
@@ -92,132 +93,144 @@ export async function GET(req: NextRequest) {
     if (!tenant) return NextResponse.json({ error: "No tenant found for user" }, { status: 404 })
     const tenantId = tenant.id
 
-    let productsQuery = db
+    /* -------- STEP 1 – product IDs with proper limit/offset ----- */
+    let idQuery = db
       .selectFrom("products")
-      .select([
-        "products.id", "title", "description", "image", "sku", "status", "productType",
-        "regularPrice", "salePrice", "cost",
-        "allowBackorders", "manageStock", "stockStatus",
-        "products.createdAt", "products.updatedAt",
-      ])
-      .leftJoin("warehouseStock", "warehouseStock.productId", "products.id")
-      .where("products.organizationId", "=", organizationId)
-      .where("products.tenantId", "=", tenantId)
+      .select("id")
+      .where("organizationId", "=", organizationId)
+      .where("tenantId", "=", tenantId)
 
-    if (search) productsQuery = productsQuery.where("title", "ilike", `%${search}%`)
-    if (categoryId) productsQuery = productsQuery
-      .innerJoin("productCategory", "productCategory.productId", "products.id")
-      .where("productCategory.categoryId", "=", categoryId)
+    if (search) idQuery = idQuery.where("title", "ilike", `%${search}%`)
+    if (categoryId) idQuery = idQuery.where(
+      "id",
+      "in",
+      db
+        .selectFrom("productCategory")
+        .select("productId")
+        .where("categoryId", "=", categoryId),
+    )
 
-    const productRows = await productsQuery
-      .select([
-        "warehouseStock.warehouseId",
-        "warehouseStock.country",
-        "warehouseStock.quantity",
-        "warehouseStock.variationId",
-      ])
-      .limit(pageSize)
-      .offset((page - 1) * pageSize)
-      .execute()
+    const idRows = await idQuery.limit(pageSize).offset((page - 1) * pageSize).execute()
+    const productIds = idRows.map(r => r.id)
 
-    const productIds = [...new Set(productRows.map(p => p.id))]
-
-    const variations = productIds.length
-      ? await db
-          .selectFrom("productVariations")
-          .selectAll()
-          .where("productId", "in", productIds)
-          .execute()
-      : []
-
-    const productCategories = productIds.length
-      ? await db
-          .selectFrom("productCategory")
-          .innerJoin("productCategories", "productCategories.id", "productCategory.categoryId")
-          .select(["productCategory.productId", "productCategories.name"])
-          .where("productCategory.productId", "in", productIds)
-          .execute()
-      : []
-
-    const productsMap = new Map<string, any>()
-    for (const row of productRows) {
-      if (!productsMap.has(row.id)) {
-        productsMap.set(row.id, {
-          id: row.id,
-          title: row.title,
-          description: row.description,
-          image: row.image,
-          sku: row.sku,
-          status: row.status,
-          productType: row.productType,
-          regularPrice: typeof row.regularPrice === "string" ? JSON.parse(row.regularPrice) : row.regularPrice,
-          salePrice: typeof row.salePrice === "string" ? JSON.parse(row.salePrice) : row.salePrice,
-          cost: typeof row.cost === "string" ? JSON.parse(row.cost) : row.cost,
-          allowBackorders: row.allowBackorders,
-          manageStock: row.manageStock,
-          stockStatus: row.stockStatus,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-          stockData: {},
-          categories: productCategories.filter(pc => pc.productId === row.id).map(pc => pc.name),
-        })
-      }
-      if (row.warehouseId && !row.variationId) {
-        const stockData = productsMap.get(row.id).stockData
-        if (!stockData[row.warehouseId]) stockData[row.warehouseId] = {}
-        stockData[row.warehouseId][row.country] = row.quantity
-      }
+    /* return early if empty page */
+    if (!productIds.length) {
+      return NextResponse.json({
+        products: [],
+        pagination: { page, pageSize, total: 0, totalPages: 0 },
+      })
     }
 
-    const products = Array.from(productsMap.values()).map(p => {
-      const variationData = variations
-        .filter(v => v.productId === p.id)
-        .map(v => ({
-          id: v.id,
-          attributes: typeof v.attributes === "string" ? JSON.parse(v.attributes) : v.attributes,
-          sku: v.sku,
-          image: v.image,
-          prices: mergePriceMaps(
-            typeof v.regularPrice === "string" ? JSON.parse(v.regularPrice) : v.regularPrice,
-            typeof v.salePrice === "string" ? JSON.parse(v.salePrice) : v.salePrice
-          ),
-          cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
-          stock: productRows
-            .filter(r => r.variationId === v.id && r.warehouseId)
-            .reduce((acc, r) => {
-              if (!acc[r.warehouseId!]) acc[r.warehouseId!] = {}
-              acc[r.warehouseId!][r.country] = r.quantity
-              return acc
-            }, {} as Record<string, Record<string, number>>)
-        }))
-      
-      // Compute stockStatus for variable products
-      let stockStatus = p.stockStatus
-      if (p.productType === "variable" && p.manageStock) {
-        const hasVariationStock = variationData.some(v => Object.keys(v.stock).length > 0)
-        stockStatus = hasVariationStock ? "managed" : "unmanaged"
-      } else if (p.manageStock && Object.keys(p.stockData).length > 0) {
-        stockStatus = "managed"
-      } else {
-        stockStatus = "unmanaged"
+    /* -------- STEP 2 – core product rows ------------------------ */
+    const productRows = await db
+      .selectFrom("products")
+      .select([
+        "id", "title", "description", "image", "sku", "status", "productType",
+        "regularPrice", "salePrice", "cost",
+        "allowBackorders", "manageStock", "stockStatus",
+        "createdAt", "updatedAt",
+      ])
+      .where("id", "in", productIds)
+      .execute()
+
+    /* -------- STEP 3 – related data in bulk --------------------- */
+    const stockRows = await db
+      .selectFrom("warehouseStock")
+      .select(["productId", "variationId", "warehouseId", "country", "quantity"])
+      .where("productId", "in", productIds)
+      .execute()
+
+    const variationRows = await db
+      .selectFrom("productVariations")
+      .selectAll()
+      .where("productId", "in", productIds)
+      .execute()
+
+    const categoryRows = await db
+      .selectFrom("productCategory")
+      .innerJoin("productCategories", "productCategories.id", "productCategory.categoryId")
+      .select(["productCategory.productId", "productCategories.name"])
+      .where("productCategory.productId", "in", productIds)
+      .execute()
+
+    /* -------- STEP 4 – assemble final products ------------------ */
+    const products = productRows.map(p => {
+      const stockData = stockRows
+        .filter(s => s.productId === p.id && !s.variationId)
+        .reduce((acc, s) => {
+          if (!acc[s.warehouseId]) acc[s.warehouseId] = {}
+          acc[s.warehouseId][s.country] = s.quantity
+          return acc
+        }, {} as Record<string, Record<string, number>>)
+
+      const variations = p.productType === "variable"
+        ? variationRows
+            .filter(v => v.productId === p.id)
+            .map(v => ({
+              id: v.id,
+              attributes: typeof v.attributes === "string" ? JSON.parse(v.attributes) : v.attributes,
+              sku: v.sku,
+              image: v.image,
+              prices: mergePriceMaps(
+                typeof v.regularPrice === "string" ? JSON.parse(v.regularPrice) : v.regularPrice,
+                typeof v.salePrice    === "string" ? JSON.parse(v.salePrice)    : v.salePrice,
+              ),
+              cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
+              stock: stockRows
+                .filter(s => s.variationId === v.id)
+                .reduce((acc, s) => {
+                  if (!acc[s.warehouseId]) acc[s.warehouseId] = {}
+                  acc[s.warehouseId][s.country] = s.quantity
+                  return acc
+                }, {} as Record<string, Record<string, number>>)
+            }))
+        : []
+
+      /* recompute stockStatus */
+      let computedStatus = p.stockStatus
+      if (p.manageStock) {
+        if (p.productType === "variable") {
+          computedStatus = variations.some(v => Object.keys(v.stock).length) ? "managed" : "unmanaged"
+        } else {
+          computedStatus = Object.keys(stockData).length ? "managed" : "unmanaged"
+        }
       }
 
       return {
-        ...p,
-        stockStatus,
-        variations: variationData
+        id: p.id,
+        title: p.title,
+        description: p.description,
+        image: p.image,
+        sku: p.sku,
+        status: p.status,
+        productType: p.productType,
+        regularPrice: typeof p.regularPrice === "string" ? JSON.parse(p.regularPrice) : p.regularPrice,
+        salePrice:    typeof p.salePrice    === "string" ? JSON.parse(p.salePrice)    : p.salePrice,
+        cost:         typeof p.cost         === "string" ? JSON.parse(p.cost)         : p.cost,
+        allowBackorders: p.allowBackorders,
+        manageStock: p.manageStock,
+        stockStatus: computedStatus,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+        stockData,
+        categories: categoryRows.filter(c => c.productId === p.id).map(c => c.name),
+        attributes: [],   // not needed for list view
+        variations,
       }
     })
 
+    /* -------- STEP 5 – total count ------------------------------ */
     const totalRes = await db
       .selectFrom("products")
       .select(db.fn.count("id").as("total"))
       .where("organizationId", "=", organizationId)
       .where("tenantId", "=", tenantId)
       .$if(search, q => q.where("title", "ilike", `%${search}%`))
-      .$if(categoryId, q => q
-        .innerJoin("productCategory", "productCategory.productId", "products.id")
-        .where("productCategory.categoryId", "=", categoryId))
+      .$if(categoryId, q => q.where(
+        "id",
+        "in",
+        db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+      ))
       .executeTakeFirst()
     const total = Number(totalRes?.total || 0)
 
@@ -244,6 +257,7 @@ function mergePriceMaps(
     map[c] = { ...(map[c] || { regular: 0, sale: null }), sale: Number(v) }
   return map
 }
+
 
 /* ------------------------------------------------------------------ */
 /*  POST                                                              */
