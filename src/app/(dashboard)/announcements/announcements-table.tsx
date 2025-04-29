@@ -1,4 +1,3 @@
-// /home/zodx/Desktop/trapigram/src/app/(dashboard)/announcements/announcements-table.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -14,7 +13,7 @@ import {
   Trash2,
   Edit,
   ZoomIn,
-  Send,
+  Send as SendIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import "react-quill-new/dist/quill.snow.css";
@@ -43,6 +42,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+
 import {
   Dialog,
   DialogContent,
@@ -52,7 +52,16 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-import Swal from "sweetalert2";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 
 // Define the Announcement type.
 type Announcement = {
@@ -89,12 +98,17 @@ export function AnnouncementsTable() {
   const [contentModalOpen, setContentModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState("");
 
-  // Fetch announcements from the API endpoint.
+  // Which announcement is pending deletion/send?
+  const [toDelete, setToDelete] = useState<Announcement | null>(null);
+  const [toSend, setToSend] = useState<Announcement | null>(null);
+
   const fetchAnnouncements = async () => {
     setLoading(true);
     try {
       const response = await fetch(
-        `/api/announcements?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
+        `/api/announcements?page=${currentPage}&pageSize=${pageSize}&search=${encodeURIComponent(
+          searchQuery
+        )}`,
         {
           headers: {
             "x-internal-secret":
@@ -102,9 +116,7 @@ export function AnnouncementsTable() {
           },
         }
       );
-      if (!response.ok) {
-        throw new Error("Failed to fetch announcements");
-      }
+      if (!response.ok) throw new Error("Failed to fetch announcements");
       const data = await response.json();
       setAnnouncements(data.announcements);
       setTotalPages(data.totalPages);
@@ -117,7 +129,6 @@ export function AnnouncementsTable() {
     }
   };
 
-  // Fetch announcements when dependencies change.
   useEffect(() => {
     fetchAnnouncements();
   }, [currentPage, pageSize, searchQuery]);
@@ -150,54 +161,34 @@ export function AnnouncementsTable() {
     return 0;
   });
 
-  const handleDelete = async (id: string) => {
-    Swal.fire({
-      title: "Are you sure?",
-      text: "You won't be able to revert this!",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonColor: "#3085d6",
-      cancelButtonColor: "#d33",
-      confirmButtonText: "Yes, delete it!",
-    }).then(async (result) => {
-      if (result.isConfirmed) {
-        try {
-          const response = await fetch(`/api/announcements/${id}`, {
-            method: "DELETE",
-            headers: {
-              "x-internal-secret":
-                process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-            },
-          });
-          if (!response.ok) {
-            throw new Error("Failed to delete announcement");
-          } else {
-            toast.success("Announcement deleted successfully");
-            fetchAnnouncements();
-          }
-        } catch (error) {
-          console.error("Error deleting announcement:", error);
-          toast.error("Failed to delete announcement");
-        }
-      }
-    });
-  };
-
-  const handleEdit = (announcement: Announcement) => {
-    router.push(`/announcements/${announcement.id}`);
-  };
-
-  const handleSend = async (announcement: Announcement) => {
-    if (
-      !confirm(
-        "Are you sure you want to send this announcement? This will mark it as sent."
-      )
-    ) {
-      return;
+  // Trigger actual delete after confirmation
+  const confirmDelete = async () => {
+    if (!toDelete) return;
+    try {
+      const response = await fetch(`/api/announcements/${toDelete.id}`, {
+        method: "DELETE",
+        headers: {
+          "x-internal-secret":
+            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+        },
+      });
+      if (!response.ok) throw new Error("Failed to delete announcement");
+      toast.success("Announcement deleted successfully");
+      fetchAnnouncements();
+    } catch (error) {
+      console.error("Error deleting announcement:", error);
+      toast.error("Failed to delete announcement");
+    } finally {
+      setToDelete(null);
     }
+  };
+
+  // Trigger actual send after confirmation
+  const confirmSend = async () => {
+    if (!toSend) return;
     try {
       const response = await fetch(
-        `/api/announcements/send/${announcement.id}`,
+        `/api/announcements/send/${toSend.id}`,
         {
           method: "PATCH",
           headers: {
@@ -206,24 +197,15 @@ export function AnnouncementsTable() {
           },
         }
       );
-      if (!response.ok) {
-        throw new Error("Failed to send announcement");
-      }
+      if (!response.ok) throw new Error("Failed to send announcement");
       toast.success("Announcement sent successfully");
       fetchAnnouncements();
     } catch (error: any) {
       console.error("Error sending announcement:", error);
       toast.error(error.message || "Failed to send announcement");
+    } finally {
+      setToSend(null);
     }
-  };
-
-  const handleAdd = () => {
-    router.push(`/announcements/new`);
-  };
-
-  const handleOpenContentModal = (content: string) => {
-    setModalContent(content);
-    setContentModalOpen(true);
   };
 
   return (
@@ -243,7 +225,7 @@ export function AnnouncementsTable() {
           </div>
           <Button type="submit">Search</Button>
         </form>
-        <Button onClick={handleAdd}>
+        <Button onClick={() => router.push(`/announcements/new`)}>
           <Plus className="mr-2 h-4 w-4" />
           Add Announcement
         </Button>
@@ -265,33 +247,36 @@ export function AnnouncementsTable() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
+                <TableCell colSpan={6} className="h-24 text-center">
                   Loading...
                 </TableCell>
               </TableRow>
-            ) : announcements.length === 0 ? (
+            ) : sortedAnnouncements.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
+                <TableCell colSpan={6} className="h-24 text-center">
                   No announcements found.
                 </TableCell>
               </TableRow>
             ) : (
-              announcements.map((announcement) => (
+              sortedAnnouncements.map((announcement) => (
                 <TableRow key={announcement.id}>
                   <TableCell>{announcement.title}</TableCell>
                   <TableCell>
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() =>
-                        handleOpenContentModal(announcement.content)
-                      }
+                      onClick={() => {
+                        setModalContent(announcement.content);
+                        setContentModalOpen(true);
+                      }}
                     >
                       <ZoomIn className="h-4 w-4" />
                       <span className="sr-only">View Content</span>
                     </Button>
                   </TableCell>
-                  <TableCell>{fmtLocal(announcement.deliveryDate)}</TableCell>
+                  <TableCell>
+                    {fmtLocal(announcement.deliveryDate)}
+                  </TableCell>
                   <TableCell>
                     {announcement.sent ? (
                       <Badge variant="default">Yes</Badge>
@@ -301,7 +286,11 @@ export function AnnouncementsTable() {
                   </TableCell>
                   <TableCell>
                     {announcement.countries.map((country) => (
-                      <Badge key={country} variant="outline" className="mr-1">
+                      <Badge
+                        key={country}
+                        variant="outline"
+                        className="mr-1"
+                      >
                         {country}
                       </Badge>
                     ))}
@@ -316,20 +305,20 @@ export function AnnouncementsTable() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
-                          onClick={() => handleSend(announcement)}
+                          onClick={() => setToSend(announcement)}
                         >
-                          <Send className="mr-2 h-4 w-4" />
+                          <SendIcon className="mr-2 h-4 w-4" />
                           Send
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          onClick={() => handleEdit(announcement)}
+                          onClick={() => router.push(`/announcements/${announcement.id}`)}
                         >
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          onClick={() => handleDelete(announcement.id)}
                           className="text-destructive focus:text-destructive"
+                          onClick={() => setToDelete(announcement)}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete
@@ -354,13 +343,13 @@ export function AnnouncementsTable() {
             <p className="text-sm font-medium">Rows per page</p>
             <Select
               value={pageSize.toString()}
-              OnValueChange={(value) => {
+              onValueChange={(value) => {
                 setPageSize(Number(value));
                 setCurrentPage(1);
               }}
             >
               <SelectTrigger className="h-8 w-[70px]">
-                <SelectValue placeholder={pageSize} />
+                <SelectValue placeholder={pageSize.toString()} />
               </SelectTrigger>
               <SelectContent side="top">
                 {[5, 10, 20, 50, 100].map((size) => (
@@ -379,25 +368,22 @@ export function AnnouncementsTable() {
               disabled={currentPage === 1}
             >
               <ChevronsLeft className="h-4 w-4" />
-              <span className="sr-only">First page</span>
             </Button>
             <Button
               variant="outline"
               size="icon"
-              onClick={() => setCurrentPage(currentPage - 1)}
+              onClick={() => setCurrentPage((p) => p - 1)}
               disabled={currentPage === 1}
             >
               <ChevronLeft className="h-4 w-4" />
-              <span className="sr-only">Previous page</span>
             </Button>
             <Button
               variant="outline"
               size="icon"
-              onClick={() => setCurrentPage(currentPage + 1)}
+              onClick={() => setCurrentPage((p) => p + 1)}
               disabled={currentPage === totalPages}
             >
               <ChevronRight className="h-4 w-4" />
-              <span className="sr-only">Next page</span>
             </Button>
             <Button
               variant="outline"
@@ -406,29 +392,77 @@ export function AnnouncementsTable() {
               disabled={currentPage === totalPages}
             >
               <ChevronsRight className="h-4 w-4" />
-              <span className="sr-only">Last page</span>
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Modal for Viewing Announcement Content */}
+      {/* Dialog for viewing HTML content */}
       <Dialog open={contentModalOpen} onOpenChange={setContentModalOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Announcement Content</DialogTitle>
             <DialogDescription>
-              Review and copy the announcement content.
+              Review the announcement HTML below.
             </DialogDescription>
           </DialogHeader>
-          <div dangerouslySetInnerHTML={{ __html: modalContent }} />
+          <div
+            className="prose max-w-none"
+            dangerouslySetInnerHTML={{ __html: modalContent }}
+          />
           <DialogFooter>
             <DialogClose asChild>
-              <Button onClick={() => setContentModalOpen(false)}>Close</Button>
+              <Button>Close</Button>
             </DialogClose>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* AlertDialog for Delete */}
+      <AlertDialog
+        open={!!toDelete}
+        onOpenChange={(open) => !open && setToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Announcement?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete “{toDelete?.title}”? This
+              action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* AlertDialog for Send */}
+      <AlertDialog
+        open={!!toSend}
+        onOpenChange={(open) => !open && setToSend(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Send Announcement?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to send “{toSend?.title}”? This will mark
+              it as sent.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmSend}>
+              Send
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

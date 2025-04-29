@@ -1,3 +1,4 @@
+// src/components/CouponsTable.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -39,11 +40,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import Swal from "sweetalert2";
 
-/* ------------------------------------------------------------------------ */
-/* 1. Coupon type                                                           */
-/* ------------------------------------------------------------------------ */
+// ─── shadcn/ui AlertDialog ─────────────────────────────────────────────
+import {
+  AlertDialog,
+  AlertDialogTrigger,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+/* ────────────────────────────────────────────────────────────────────── */
+
 type Coupon = {
   id: string;
   name: string;
@@ -60,9 +71,6 @@ type Coupon = {
   visibility: boolean;
 };
 
-/* ------------------------------------------------------------------------ */
-/* 2. Helper – format ISO to local string                                   */
-/* ------------------------------------------------------------------------ */
 const fmtLocal = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString(undefined, {
@@ -81,20 +89,24 @@ export function CouponsTable() {
   const [searchQuery, setSearchQuery] = useState("");
   const [pageSize, setPageSize] = useState(10);
 
-  /* ---------------------------------------------------------------------- */
-  /* 3. Fetch                                                               */
-  /* ---------------------------------------------------------------------- */
+  // new: coupon selected for deletion
+  const [couponToDelete, setCouponToDelete] = useState<Coupon | null>(null);
+
   const fetchCoupons = async () => {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/coupons?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
+        `/api/coupons?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
       );
       if (!res.ok) throw new Error("Failed to fetch coupons");
       const data = await res.json();
-      setCoupons(data.coupons.map((c: Coupon) => ({ ...c, countries: c.countries ?? [] })));
+      setCoupons(
+        data.coupons.map((c: Coupon) => ({
+          ...c,
+          countries: c.countries ?? [],
+        }))
+      );
       setTotalPages(data.totalPages);
-      setCurrentPage(data.currentPage);
     } catch (err) {
       console.error(err);
       toast.error("Failed to load coupons");
@@ -107,12 +119,8 @@ export function CouponsTable() {
     fetchCoupons();
   }, [currentPage, pageSize, searchQuery]);
 
-  /* ---------------------------------------------------------------------- */
-  /* 4. Sorting                                                             */
-  /* ---------------------------------------------------------------------- */
   const [sortColumn, setSortColumn] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-
   const handleSort = (col: string) => {
     if (sortColumn === col) {
       setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -121,7 +129,6 @@ export function CouponsTable() {
       setSortDirection("asc");
     }
   };
-
   const sortedCoupons = [...coupons].sort((a, b) => {
     if (sortColumn === "name") {
       return sortDirection === "asc"
@@ -135,33 +142,6 @@ export function CouponsTable() {
     }
     return 0;
   });
-
-  /* ---------------------------------------------------------------------- */
-  /* 5. CRUD helpers                                                        */
-  /* ---------------------------------------------------------------------- */
-  const handleDelete = async (id: string) => {
-    Swal.fire({
-      title: "Are you sure?",
-      text: "You won't be able to revert this!",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonColor: "#3085d6",
-      cancelButtonColor: "#d33",
-      confirmButtonText: "Yes, delete it!",
-    }).then(async (result) => {
-      if (result.isConfirmed) {
-        try {
-          const res = await fetch(`/api/coupons/${id}`, { method: "DELETE" });
-          if (!res.ok) throw new Error("Failed to delete coupon");
-          toast.success("Coupon deleted successfully");
-          fetchCoupons();
-        } catch (err) {
-          console.error(err);
-          toast.error("Failed to delete coupon");
-        }
-      }
-    });
-  };
 
   const handleDuplicate = async (id: string) => {
     try {
@@ -177,9 +157,22 @@ export function CouponsTable() {
 
   const handleEdit = (c: Coupon) => router.push(`/coupons/${c.id}`);
   const handleAdd = () => router.push("/coupons/new");
-  /* ---------------------------------------------------------------------- */
-  /* 6. Render                                                              */
-  /* ---------------------------------------------------------------------- */
+
+  // called when user confirms in AlertDialog
+  const confirmDelete = async () => {
+    if (!couponToDelete) return;
+    try {
+      const res = await fetch(`/api/coupons/${couponToDelete.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete coupon");
+      toast.success("Coupon deleted successfully");
+      setCouponToDelete(null);
+      fetchCoupons();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to delete coupon");
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -255,14 +248,12 @@ export function CouponsTable() {
                   <TableCell>{c.name}</TableCell>
                   <TableCell>{c.code}</TableCell>
                   <TableCell>{c.description}</TableCell>
-
                   <TableCell>
-                    {c.discountType === "percentage" ? `${c.discountAmount}%` : c.discountAmount}
+                    {c.discountType === "percentage"
+                      ? `${c.discountAmount}%`
+                      : c.discountAmount}
                   </TableCell>
-
-                  {/* LOCAL timezone formatting here */}
                   <TableCell>{fmtLocal(c.expirationDate)}</TableCell>
-
                   <TableCell>{c.limitPerUser}</TableCell>
                   <TableCell>{c.usageLimit}</TableCell>
                   <TableCell>{c.expendingMinimum}</TableCell>
@@ -292,8 +283,9 @@ export function CouponsTable() {
                           <Copy className="mr-2 h-4 w-4" />
                           Duplicate
                         </DropdownMenuItem>
+                        {/* instead of direct delete, we set couponToDelete */}
                         <DropdownMenuItem
-                          onClick={() => handleDelete(c.id)}
+                          onClick={() => setCouponToDelete(c)}
                           className="text-destructive focus:text-destructive"
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
@@ -370,6 +362,33 @@ export function CouponsTable() {
           </div>
         </div>
       </div>
+
+      {/* ─── shadcn AlertDialog ─────────────────────────────────────────────── */}
+      <AlertDialog
+        open={!!couponToDelete}
+        onOpenChange={(open) => {
+          if (!open) setCouponToDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Coupon?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete &quot;{couponToDelete?.name}&quot;?
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {/* ────────────────────────────────────────────────────────────────────── */}
     </div>
   );
 }

@@ -1,15 +1,12 @@
 "use client";
 
-import type React from "react";
-
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Paperclip, Send, Tag } from "lucide-react";
-import Swal from "sweetalert2";
 import CreatableSelect from "react-select/creatable";
-
 import { toast } from "sonner";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +17,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogTrigger,
@@ -29,19 +34,18 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 
-/* ------------------------------------------------------------------ */
-/* 1. API payload types                                               */
-/* ------------------------------------------------------------------ */
 type TicketHeader = {
   id: string;
   title: string;
@@ -61,9 +65,6 @@ type TicketMessage = {
   createdAt: Date;
 };
 
-/* ------------------------------------------------------------------ */
-/* 2. Helper                                                          */
-/* ------------------------------------------------------------------ */
 const fmtLocal = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString(undefined, {
@@ -85,14 +86,14 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
   const [newMessage, setNewMessage] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
 
-  const [tagsOptions, setTagsOptions] = useState<
-    { value: string; label: string }[]
-  >([]);
+  const [tagsOptions, setTagsOptions] = useState<{ value: string; label: string }[]>([]);
   const [selectedTags, setSelectedTags] = useState<typeof tagsOptions>([]);
   const [tagsDialogOpen, setTagsDialogOpen] = useState(false);
-  const [tags, setTags] = useState([]);
+  const [tags, setTags] = useState<{ description: string }[]>([]);
 
-  /* fetch ticket + messages */
+  // NEW: state for showing the “Close Ticket?” dialog
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
@@ -103,26 +104,13 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
         if (!tRes.ok) throw new Error();
         const { ticket, messages } = await tRes.json();
         const { tagList, tags } = await tagsRes.json();
-        console.log(tags)
         setHeader(ticket);
         setMessages(messages);
         setStatus(ticket.status);
         setPriority(ticket.priority);
-        setTagsOptions(
-          tagList.map((t) => ({
-            value: t.description,
-            label: t.description,
-          }))
-        );
+        setTagsOptions(tagList.map((t: any) => ({ value: t.description, label: t.description })));
         setTags(tags);
-        if (Array.isArray(tags)) {
-          setSelectedTags(
-            tags.map((t) => ({
-              value: t.description,
-              label: t.description,
-            }))
-          );
-        }
+        setSelectedTags(tags.map((t: any) => ({ value: t.description, label: t.description })));
       } catch {
         toast.error("Failed to load ticket or tags");
       } finally {
@@ -131,21 +119,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     })();
   }, [id]);
 
-  /* -------- new status‐change handler -------- */
-  const handleStatusChange = async (newStatus: TicketHeader["status"]) => {
-    if (newStatus === "closed") {
-      const { isConfirmed } = await Swal.fire({
-        title: "Close Ticket?",
-        text: "Are you sure you want to close this ticket?",
-        icon: "warning",
-        showCancelButton: true,
-        confirmButtonText: "Yes, close it",
-      });
-      if (!isConfirmed) {
-        setStatus("in-progress");
-        return;
-      }
-    }
+  const updateStatus = async (newStatus: TicketHeader["status"]) => {
     setStatus(newStatus);
     try {
       const res = await fetch(`/api/tickets/${id}/status`, {
@@ -160,9 +134,16 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     }
   };
 
-  const handlePriorityChange = async (
-    newPriority: TicketHeader["priority"]
-  ) => {
+  const handleStatusChange = (newStatus: TicketHeader["status"]) => {
+    if (newStatus === "closed") {
+      // open confirmation dialog instead of Swal
+      setCloseDialogOpen(true);
+    } else {
+      updateStatus(newStatus);
+    }
+  };
+
+  const handlePriorityChange = async (newPriority: TicketHeader["priority"]) => {
     setPriority(newPriority);
     try {
       const res = await fetch(`/api/tickets/${id}/priority`, {
@@ -182,24 +163,20 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
       const res = await fetch(`/api/tickets/${id}/tags`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tags: selectedTags.map((t) => t.value),
-        }),
+        body: JSON.stringify({ tags: selectedTags.map((t) => t.value) }),
       });
       if (!res.ok) throw new Error();
       toast.success("Tags created");
       setTagsDialogOpen(false);
-
-      //Option B: or simply mirror back the selectedTags
-      setTags(selectedTags.map(t => ({ description: t.value })));
+      setTags(selectedTags.map((t) => ({ description: t.value })));
     } catch {
       toast.error("Failed to save tags");
     }
   };
 
-  /* attachment handler */
   const handleAttachmentChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     e.target.files && setAttachments(Array.from(e.target.files));
+
   const handleSendMessage = async () => {
     if (!newMessage.trim()) {
       toast.warning("Message cannot be empty");
@@ -207,13 +184,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     }
     try {
       const attachJson = attachments.length
-        ? JSON.stringify(
-            attachments.map((f) => ({
-              name: f.name,
-              url: "",
-              size: f.size,
-            }))
-          )
+        ? JSON.stringify(attachments.map((f) => ({ name: f.name, url: "", size: f.size })))
         : null;
       const res = await fetch(`/api/tickets/${id}/messages`, {
         method: "POST",
@@ -221,10 +192,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
           "Content-Type": "application/json",
           "x-is-internal": "true",
         },
-        body: JSON.stringify({
-          content: newMessage,
-          attachments: attachJson,
-        }),
+        body: JSON.stringify({ content: newMessage, attachments: attachJson }),
       });
       if (!res.ok) throw new Error();
       const created: TicketMessage = await res.json();
@@ -236,7 +204,6 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     }
   };
 
-  /* loading / not‑found guards */
   if (loading) return <p className="p-6">Loading…</p>;
   if (!header) return <p className="p-6">Ticket not found.</p>;
 
@@ -252,11 +219,10 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
 
       <Card>
         <CardHeader className="flex items-start justify-between">
-          {/* left side: title & info */}
           <div>
             <CardTitle className="text-lg font-semibold">
               {header.title}{" "}
-              {tags.map((t: any) => (
+              {tags.map((t) => (
                 <Badge key={t.description} variant="outline">
                   {t.description}
                 </Badge>
@@ -264,11 +230,12 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
             </CardTitle>
             <CardDescription>
               Created on {fmtLocal(header.createdAt)} by {header.firstName}. ID:{" "}
-              <Link href={`/clients/` + header.clientId + `/info/`}>{header.clientId}</Link>
+              <Link href={`/clients/${header.clientId}/info/`}>
+                {header.clientId}
+              </Link>
             </CardDescription>
           </div>
 
-          {/* right side: priority + status, side by side */}
           <div className="flex items-center gap-4">
             <Dialog open={tagsDialogOpen} onOpenChange={setTagsDialogOpen}>
               <DialogTrigger asChild>
@@ -296,20 +263,19 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+
             <Select
               value={priority}
               onValueChange={handlePriorityChange}
-              disabled={status === "closed" ? true : false}
+              disabled={status === "closed"}
             >
               <SelectTrigger className="w-[120px]">
                 <Badge
-                  className={
-                    {
-                      low: "bg-green-100 text-green-800",
-                      medium: "bg-yellow-100 text-yellow-800",
-                      high: "bg-red-100 text-red-800",
-                    }[priority]
-                  }
+                  className={{
+                    low: "bg-green-100 text-green-800",
+                    medium: "bg-yellow-100 text-yellow-800",
+                    high: "bg-red-100 text-red-800",
+                  }[priority]}
                   variant="outline"
                 >
                   {priority.charAt(0).toUpperCase() + priority.slice(1)}
@@ -325,36 +291,15 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
             <Select
               value={status}
               onValueChange={handleStatusChange}
-              disabled={status === "closed" ? true : false}
+              disabled={status === "closed"}
             >
               <SelectTrigger className="w-[150px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent side="bottom">
-                <SelectItem
-                  value="open"
-                  disabled={
-                    status === "closed" || status === "in-progress"
-                      ? true
-                      : false
-                  }
-                >
-                  Open
-                </SelectItem>
-                <SelectItem
-                  value="in-progress"
-                  disabled={
-                    status === "closed" || status === "open" ? true : false
-                  }
-                >
-                  In Progress
-                </SelectItem>
-                <SelectItem
-                  value="closed"
-                  disabled={status === "open" ? true : false}
-                >
-                  Closed
-                </SelectItem>
+                <SelectItem value="open">Open</SelectItem>
+                <SelectItem value="in-progress">In Progress</SelectItem>
+                <SelectItem value="closed">Closed</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -432,7 +377,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
             className="min-h-[100px]"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            disabled={status === "closed" ? true : false}
+            disabled={status === "closed"}
           />
 
           <div className="flex items-center justify-between w-full">
@@ -459,7 +404,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
 
             <Button
               onClick={handleSendMessage}
-              disabled={status === "closed" ? true : false}
+              disabled={status === "closed"}
             >
               <Send className="h-4 w-4 mr-2" />
               Send Response
@@ -467,6 +412,32 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
           </div>
         </CardFooter>
       </Card>
+
+      {/* Shadcn “Close Ticket?” confirmation */}
+      <AlertDialog
+        open={closeDialogOpen}
+        onOpenChange={(open) => !open && setCloseDialogOpen(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Close Ticket?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to close this ticket?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setCloseDialogOpen(false);
+                updateStatus("closed");
+              }}
+            >
+              Yes, close it
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -477,7 +448,6 @@ function PriorityBadge({ priority }: { priority: "low" | "medium" | "high" }) {
     medium: "bg-yellow-100 text-yellow-800 hover:bg-yellow-100",
     high: "bg-red-100 text-red-800 hover:bg-red-100",
   };
-
   return (
     <Badge className={variants[priority]} variant="outline">
       {priority.charAt(0).toUpperCase() + priority.slice(1)}

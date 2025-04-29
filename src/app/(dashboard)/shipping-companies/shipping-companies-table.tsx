@@ -39,7 +39,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import Swal from "sweetalert2";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 
 type ShippingMethod = {
   id: string;
@@ -59,18 +68,22 @@ export function ShippingMethodsTable() {
   const [pageSize, setPageSize] = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // fetch list
+  // Which method is pending deletion?
+  const [toDelete, setToDelete] = useState<ShippingMethod | null>(null);
+
   const fetchMethods = async () => {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/shipping-companies?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
+        `/api/shipping-companies?page=${currentPage}&pageSize=${pageSize}&search=${encodeURIComponent(
+          searchQuery
+        )}`
       );
       if (!res.ok) throw new Error("Failed to fetch shipping companies");
-      const data = await res.json();
-      setMethods(data.shippingMethods);
-      setTotalPages(data.totalPages);
-      setCurrentPage(data.currentPage);
+      const json = await res.json();
+      setMethods(json.shippingMethods);
+      setTotalPages(json.totalPages);
+      setCurrentPage(json.currentPage);
     } catch (err) {
       console.error(err);
       toast.error("Failed to load shipping companies");
@@ -89,24 +102,21 @@ export function ShippingMethodsTable() {
     fetchMethods();
   };
 
-  const handleDelete = async (id: string) => {
-    const result = await Swal.fire({
-      title: "Are you sure?",
-      text: "This will delete the method permanently.",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "Yes, delete it!",
-    });
-    if (!result.isConfirmed) return;
-
+  const handleDeleteConfirm = async () => {
+    if (!toDelete) return;
     try {
-      const res = await fetch(`/api/shipping-companies/${id}`, { method: "DELETE" });
+      const res = await fetch(
+        `/api/shipping-companies/${toDelete.id}`,
+        { method: "DELETE" }
+      );
       if (!res.ok) throw new Error("Delete failed");
       toast.success("Shipping method deleted");
       fetchMethods();
     } catch (err) {
       console.error(err);
       toast.error("Failed to delete");
+    } finally {
+      setToDelete(null);
     }
   };
 
@@ -187,8 +197,8 @@ export function ShippingMethodsTable() {
                           <Edit className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          onClick={() => handleDelete(m.id)}
                           className="text-destructive"
+                          onClick={() => setToDelete(m)}
                         >
                           <Trash2 className="mr-2 h-4 w-4" /> Delete
                         </DropdownMenuItem>
@@ -263,6 +273,31 @@ export function ShippingMethodsTable() {
           </div>
         </div>
       </div>
+
+      {/* AlertDialog for Delete Confirmation */}
+      <AlertDialog
+        open={!!toDelete}
+        onOpenChange={(open) => {
+          if (!open) setToDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Shipping Method?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to permanently delete “{toDelete?.name}”?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

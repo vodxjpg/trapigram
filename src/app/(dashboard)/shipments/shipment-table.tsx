@@ -38,7 +38,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import Swal from "sweetalert2";
+
+// shadcn AlertDialog imports
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 
 type CostGroup = {
   minOrderCost: number;
@@ -51,7 +62,7 @@ type Shipment = {
   title: string;
   description: string;
   countries: string[];
-  costs: string[];
+  costs: CostGroup[];
   createdAt: string;
   updatedAt: string;
 };
@@ -69,6 +80,9 @@ export function ShipmentsTable() {
   // sorting
   const [sortColumn, setSortColumn] = useState<"title">("title");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  // which shipment is pending deletion?
+  const [shipmentToDelete, setShipmentToDelete] = useState<Shipment | null>(null);
 
   const fetchShipments = async () => {
     setLoading(true);
@@ -110,7 +124,6 @@ export function ShipmentsTable() {
     }
   };
 
-  // only sorting by title for now
   const sorted = [...shipments].sort((a, b) => {
     if (sortColumn === "title") {
       return sortDirection === "asc"
@@ -120,19 +133,15 @@ export function ShipmentsTable() {
     return 0;
   });
 
-  const handleDelete = async (id: string) => {
-    const { isConfirmed } = await Swal.fire({
-      title: "Delete this shipment?",
-      text: "This action cannot be undone.",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "Yes, delete",
-    });
-    if (!isConfirmed) return;
+  const handleDeleteConfirmed = async () => {
+    if (!shipmentToDelete) return;
     try {
-      const res = await fetch(`/api/shipments/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/shipments/${shipmentToDelete.id}`, {
+        method: "DELETE",
+      });
       if (!res.ok) throw new Error("Delete failed");
       toast.success("Shipment deleted");
+      setShipmentToDelete(null);
       fetchShipments();
     } catch {
       toast.error("Failed to delete");
@@ -216,8 +225,8 @@ export function ShipmentsTable() {
                   <TableCell>
                     {s.costs.map((g, i) => (
                       <div key={i} className="text-sm mb-1">
-                        {g.minOrderCost.toFixed(2)}–{g.maxOrderCost.toFixed(2)}{" "}
-                        = {g.shipmentCost.toFixed(2)}
+                        {g.minOrderCost.toFixed(2)}–{g.maxOrderCost.toFixed(2)} ={" "}
+                        {g.shipmentCost.toFixed(2)}
                       </div>
                     ))}
                   </TableCell>
@@ -241,7 +250,7 @@ export function ShipmentsTable() {
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-destructive focus:text-destructive"
-                          onClick={() => handleDelete(s.id)}
+                          onClick={() => setShipmentToDelete(s)}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete
@@ -319,6 +328,30 @@ export function ShipmentsTable() {
           </div>
         </div>
       </div>
+
+      {/* AlertDialog for delete confirmation */}
+      <AlertDialog
+        open={!!shipmentToDelete}
+        onOpenChange={(open) => !open && setShipmentToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Shipment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete “{shipmentToDelete?.title}”? This
+              action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirmed}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
