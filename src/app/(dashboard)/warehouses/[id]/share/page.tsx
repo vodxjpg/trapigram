@@ -1,10 +1,8 @@
-/* -------------------------------------------------------------------------- */
-/*  /src/app/(dashboard)/warehouses/[id]/share/page.tsx                       */
-/* -------------------------------------------------------------------------- */
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useRouter, useParams } from "next/navigation";
+import React from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -20,14 +18,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Select from "react-select";
 import { Trash2, Plus, ArrowLeft, AlertCircle, X } from "lucide-react";
@@ -37,9 +28,6 @@ import ReactCountryFlag from "react-country-flag";
 
 countriesLib.registerLocale(enLocale);
 
-/* -------------------------------------------------------------------------- */
-/*  Types                                                                     */
-/* -------------------------------------------------------------------------- */
 type User = {
   id: string;
   email: string;
@@ -58,279 +46,249 @@ type StockItem = {
   categoryName: string;
 };
 
-/* -------------------------------------------------------------------------- */
-/*  Validation schema                                                         */
-/* -------------------------------------------------------------------------- */
-const costSchema = z
-  .record(z.string(), z.number().positive("Cost must be a positive number"))
-  .optional();
+// Update costSchema to only validate that costs, if provided, are positive
+const costSchema = z.record(z.string(), z.number().positive("Cost must be a positive number")).optional();
 
-const productSchema = z
-  .object({
-    productId: z.string().min(1, "Product is required"),
-    variationId: z.string().nullable(),
-    cost: costSchema,
-  })
-  .superRefine(() => {}); // dynamic validation handled in onSubmit
+// Update productSchema to include custom validation for countries and costs
+const productSchema = z.object({
+  productId: z.string().min(1, "Product is required"),
+  variationId: z.string().nullable(),
+  cost: costSchema,
+}).superRefine((data, ctx) => {
+  // This validation will be handled in the form using selectedCountries
+  // We'll check in the form's onSubmit to ensure costs are provided for selected countries
+});
 
 const formSchema = z.object({
-  recipientUserIds: z
-    .array(z.string())
-    .min(1, "Select at least one recipient"),
+  recipientUserIds: z.array(z.string()).min(1, "Select at least one recipient"),
   products: z.array(productSchema).min(1, "Select at least one product"),
 });
 
 type FormValues = z.infer<typeof formSchema>;
 
-/* -------------------------------------------------------------------------- */
-/*  Helper utilities (same as “edit” page)                                    */
-/* -------------------------------------------------------------------------- */
-const pvKey = (s: { productId: string; variationId: string | null }) =>
-  `${s.productId}-${s.variationId ?? "null"}`;
-
-function uniqueParents(items: StockItem[]) {
-  const map = new Map<string, StockItem>();
-  for (const it of items) {
-    const existing = map.get(it.productId);
-    if (!existing || existing.variationId !== null) map.set(it.productId, it);
-  }
-  return [...map.values()];
-}
-
-const stripVariation = (t: string) => t.split(" - ")[0];
-
-/* -------------------------------------------------------------------------- */
-/*  Component                                                                 */
-/* -------------------------------------------------------------------------- */
-export default function ShareWarehousePage() {
+export default function ShareWarehousePage({ params }: { params: { id: string } }) {
   const router = useRouter();
-  const { id: warehouseId } = useParams() as { id: string };
-
-  /* ------------------------------ local state --------------------------- */
   const [users, setUsers] = useState<User[]>([]);
   const [stock, setStock] = useState<StockItem[]>([]);
   const [countries, setCountries] = useState<string[]>([]);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [emailSearch, setEmailSearch] = useState("");
   const [stockError, setStockError] = useState<string | null>(null);
-  const [selectedCountries, setSelectedCountries] = useState<
-    Record<number, string[]>
-  >({});
+  const [selectedCountries, setSelectedCountries] = useState<Record<number, string[]>>({});
 
-  /* ------------------------------ react-hook-form ---------------------- */
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: { recipientUserIds: [], products: [] },
+    defaultValues: {
+      recipientUserIds: [],
+      products: [],
+    },
   });
+
   const { fields, append, remove } = useFieldArray({
     control: form.control,
     name: "products",
   });
 
-  /* ------------------------------ fetch stock -------------------------- */
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(`/api/warehouses/${warehouseId}/stock`, {
-          headers: {
-            "x-internal-secret":
-              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
-          },
-        });
-        if (!res.ok) throw new Error(`Failed: ${res.status}`);
-        const data = await res.json();
-        setStock(data.stock);
-        setCountries(data.countries);
-        setStockError(null);
-      } catch (err) {
-        console.error(err);
-        setStockError("Failed to load warehouse stock. Please try again.");
-        toast.error("Failed to load warehouse stock");
+    fetchStock();
+  }, [params.id]);
+
+  const fetchStock = async () => {
+    try {
+      const response = await fetch(`/api/warehouses/${params.id}/stock`, {
+        headers: {
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch stock: ${response.status}`);
       }
-    })();
-  }, [warehouseId]);
+      const data = await response.json();
+      setStock(data.stock);
+      setCountries(data.countries);
+      setStockError(null);
+    } catch (error) {
+      console.error("Error fetching stock:", error);
+      setStockError("Failed to load warehouse stock. Please try again.");
+      toast.error("Failed to load warehouse stock");
+    }
+  };
 
-  /* ------------------------------ generic helpers ---------------------- */
-  const uniqBy = <T, K>(arr: T[], key: (t: T) => K) =>
-    arr.filter((v, i, a) => a.findIndex((t) => key(t) === key(v)) === i);
-
-  /* ------------------------------ email search ------------------------- */
   const handleEmailSearch = async () => {
     if (!emailSearch) {
       setUsers([]);
       return;
     }
     try {
-      const resp = await fetch(
-        `/api/users/search?email=${encodeURIComponent(emailSearch)}`,
-        {
-          headers: {
-            "x-internal-secret":
-              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
-          },
+      const response = await fetch(`/api/users/search?email=${encodeURIComponent(emailSearch)}`, {
+        headers: {
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
         },
-      );
-      if (!resp.ok) throw new Error("Failed to fetch users");
-      const data = await resp.json();
+      });
+      if (!response.ok) throw new Error("Failed to fetch users");
+      const data = await response.json();
       setUsers(data.users);
-      if (!data.users?.length) toast.info("No users found with that email");
-    } catch (err) {
-      console.error(err);
+      if (data.users.length === 0) {
+        toast.info("No users found with that email");
+      }
+    } catch (error) {
+      console.error("Error fetching users:", error);
       toast.error("Failed to load users");
     }
   };
 
-  /* ------------------------------ add / select-all products ------------ */
-  const addProduct = () => {
-    const idx = fields.length;
-    append({ productId: "", variationId: null, cost: {} });
-    setSelectedCountries((p) => ({ ...p, [idx]: [...countries] }));
-  };
-
-  const selectAllProducts = () => {
-    const existing = form.getValues("products");
-    const uniqStock = uniqBy(stock, pvKey);
-
-    const toAdd = uniqStock.filter(
-      (it) =>
-        !existing.some(
-          (p) => p.productId === it.productId && p.variationId === it.variationId,
-        ),
-    );
-    if (!toAdd.length) {
-      toast.info("All products are already selected.");
-      return;
-    }
-
-    const newProds = toAdd.map((it) => ({
-      productId: it.productId,
-      variationId: it.variationId,
-      cost: Object.fromEntries(
-        countries.map((c) => [c, (it.cost[c] ?? 0) + 10]),
-      ),
-    }));
-
-    form.setValue("products", [...existing, ...newProds]);
-    setSelectedCountries((prev) => {
-      const next: Record<number, string[]> = { ...prev };
-      const start = Object.keys(prev).length;
-      newProds.forEach((_, i) => {
-        next[start + i] = [...countries];
-      });
-      return next;
-    });
-  };
-
-  /* ------------------------------ country helpers ---------------------- */
-  const removeCountry = (idx: number, c: string) => {
-    setSelectedCountries((prev) => {
-      const list = prev[idx] ?? [...countries];
-      return { ...prev, [idx]: list.filter((x) => x !== c) };
-    });
-    const cur = form.getValues(`products.${idx}.cost`) ?? {};
-    const nxt = { ...cur };
-    delete nxt[c];
-    form.setValue(`products.${idx}.cost`, nxt);
-    form.clearErrors(`products.${idx}.cost`);
-  };
-
-  const addCountry = (idx: number, c: string) => {
-    setSelectedCountries((prev) => {
-      const list = prev[idx] ?? [...countries];
-      return { ...prev, [idx]: [...list, c] };
-    });
-    form.clearErrors(`products.${idx}.cost`);
-  };
-
-  /* ------------------------------ derived maps ------------------------- */
-  const groupedStock = stock.reduce((acc, it) => {
-    const cat = it.categoryName || "Uncategorized";
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(it);
-    return acc;
-  }, {} as Record<string, StockItem[]>);
-
-  const stockByProduct = stock.reduce((acc, it) => {
-    const k = `${it.productId}-${it.variationId ?? "none"}`;
-    acc[k] ??= {};
-    acc[k][it.country] = it.quantity;
-    return acc;
-  }, {} as Record<string, Record<string, number>>);
-
-  /* ------------------------------ submit ------------------------------- */
   const onSubmit = async (values: FormValues) => {
     try {
-      const errs: string[] = [];
-      values.products.forEach((p, i) => {
-        const sel = selectedCountries[i] ?? [];
-        if (!sel.length) {
-          errs.push(`Product ${i + 1}: select at least one country`);
-          form.setError(`products.${i}.cost`, {
+      // Validate that each product has at least one cost for its selected countries
+      const validationErrors: string[] = [];
+      values.products.forEach((product, index) => {
+        const productCountries = selectedCountries[index] || [];
+        if (productCountries.length === 0) {
+          validationErrors.push(`Product ${index + 1}: At least one country must be selected.`);
+          form.setError(`products.${index}.cost`, {
             type: "manual",
             message: "At least one country must be selected.",
           });
           return;
         }
-        const cleaned = p.cost
-          ? Object.fromEntries(Object.entries(p.cost).filter(([, v]) => v !== undefined))
+
+        const cleanedCost = product.cost
+          ? Object.fromEntries(
+              Object.entries(product.cost).filter(([_, value]) => value !== undefined)
+            )
           : {};
-        const missing = sel.filter((c) => !(c in cleaned));
-        if (missing.length) {
-          errs.push(`Product ${i + 1}: costs required for ${missing.join(", ")}`);
-          form.setError(`products.${i}.cost`, {
+        const costCountries = Object.keys(cleanedCost);
+
+        if (costCountries.length === 0) {
+          validationErrors.push(`Product ${index + 1}: At least one country with a valid cost is required.`);
+          form.setError(`products.${index}.cost`, {
             type: "manual",
-            message: `Costs required for ${missing.join(", ")}.`,
+            message: "At least one country with a valid cost is required.",
+          });
+          return;
+        }
+
+        // Ensure all selected countries have a cost
+        const missingCostCountries = productCountries.filter(
+          (country) => !costCountries.includes(country)
+        );
+        if (missingCostCountries.length > 0) {
+          validationErrors.push(
+            `Product ${index + 1}: Costs are required for ${missingCostCountries.join(", ")}.`
+          );
+          form.setError(`products.${index}.cost`, {
+            type: "manual",
+            message: `Costs are required for ${missingCostCountries.join(", ")}.`,
           });
         }
       });
 
-      if (errs.length) {
-        toast.error("Please fix validation errors.");
+      if (validationErrors.length > 0) {
+        toast.error("Please fix the validation errors before submitting.");
         return;
       }
 
       const cleanedValues = {
         ...values,
-        products: values.products.map((p) => ({
-          ...p,
-          cost: p.cost
+        products: values.products.map((product, index) => ({
+          ...product,
+          cost: product.cost
             ? Object.fromEntries(
-                Object.entries(p.cost).filter(([, v]) => v !== undefined),
+                Object.entries(product.cost).filter(([_, value]) => value !== undefined)
               )
             : {},
         })),
       };
 
-      const res = await fetch(`/api/warehouses/${warehouseId}/share-links`, {
+      const response = await fetch(`/api/warehouses/${params.id}/share-links`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-internal-secret":
-            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
         },
         body: JSON.stringify(cleanedValues),
       });
-      if (!res.ok) {
-        const e = await res.json();
-        throw new Error(`${res.status} – ${e.error || "Unknown error"}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          `Failed to create share link: ${response.status} - ${errorData.error || "Unknown error"}`
+        );
       }
-      const data = await res.json();
+      const data = await response.json();
       setShareUrl(data.url);
-      toast.success("Share link created!");
-    } catch (err) {
-      console.error(err);
-      toast.error(
-        `Failed to create share link: ${
-          err instanceof Error ? err.message : "Unknown"
-        }`,
-      );
+      toast.success("Share link created successfully");
+    } catch (error) {
+      console.error("Error creating share link:", error);
+      toast.error(`Failed to create share link: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
-  /* ------------------------------ JSX ---------------------------------- */
+  const addProduct = () => {
+    const newIndex = fields.length;
+    append({ productId: "", variationId: null, cost: {} });
+    setSelectedCountries((prev) => ({
+      ...prev,
+      [newIndex]: [...countries],
+    }));
+  };
+
+  const selectAllProducts = () => {
+    const newProducts = stock.map((item) => ({
+      productId: item.productId,
+      variationId: item.variationId,
+      cost: Object.fromEntries(
+        countries.map((country) => [country, (item.cost[country] || 0) + 10])
+      ),
+    }));
+    form.setValue("products", newProducts);
+    setSelectedCountries(
+      newProducts.reduce((acc, _, index) => ({
+        ...acc,
+        [index]: [...countries],
+      }), {} as Record<number, string[]>)
+    );
+  };
+
+  const removeCountry = (productIndex: number, country: string) => {
+    setSelectedCountries((prev) => ({
+      ...prev,
+      [productIndex]: prev[productIndex].filter((c) => c !== country),
+    }));
+    const currentCost = form.getValues(`products.${productIndex}.cost`) || {};
+    const newCost = { ...currentCost };
+    delete newCost[country];
+    form.setValue(`products.${productIndex}.cost`, newCost);
+    // Clear any existing cost validation errors
+    form.clearErrors(`products.${productIndex}.cost`);
+  };
+
+  const addCountry = (productIndex: number, country: string) => {
+    setSelectedCountries((prev) => ({
+      ...prev,
+      [productIndex]: [...prev[productIndex], country],
+    }));
+    // Clear any existing cost validation errors
+    form.clearErrors(`products.${productIndex}.cost`);
+  };
+
+  const groupedStock = stock.reduce((acc, item) => {
+    const category = item.categoryName || "Uncategorized";
+    if (!acc[category]) acc[category] = [];
+    acc[category].push(item);
+    return acc;
+  }, {} as Record<string, StockItem[]>);
+
+  const stockByProduct = stock.reduce((acc, item) => {
+    const key = `${item.productId}-${item.variationId || "none"}`;
+    if (!acc[key]) {
+      acc[key] = {};
+    }
+    acc[key][item.country] = item.quantity;
+    return acc;
+  }, {} as Record<string, Record<string, number>>);
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
       <div className="flex items-center gap-4 mb-6">
         <Button variant="outline" onClick={() => router.push("/warehouses")}>
           <ArrowLeft className="h-4 w-4 mr-2" />
@@ -338,16 +296,13 @@ export default function ShareWarehousePage() {
         </Button>
         <h1 className="text-3xl font-bold">Create Share Link</h1>
       </div>
-
       <Card>
         <CardHeader>
           <CardTitle>Share Warehouse Products</CardTitle>
           <p className="text-muted-foreground">
-            Select recipients, products, and specific countries to share via a
-            private link.
+            Select recipients, products, and specific countries to share via a private link.
           </p>
         </CardHeader>
-
         <CardContent>
           {stockError && (
             <Alert variant="destructive" className="mb-6">
@@ -356,10 +311,8 @@ export default function ShareWarehousePage() {
               <AlertDescription>{stockError}</AlertDescription>
             </Alert>
           )}
-
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-              {/* Recipients */}
               <div className="space-y-4">
                 <FormField
                   control={form.control}
@@ -381,20 +334,18 @@ export default function ShareWarehousePage() {
                         <FormControl>
                           <Select
                             isMulti
-                            options={users.map((u) => ({
-                              value: u.id,
-                              label: u.name ? `${u.name} (${u.email})` : u.email,
+                            options={users.map((user) => ({
+                              value: user.id,
+                              label: user.name ? `${user.name} (${user.email})` : user.email,
                             }))}
                             value={users
-                              .filter((u) => field.value.includes(u.id))
-                              .map((u) => ({
-                                value: u.id,
-                                label: u.name
-                                  ? `${u.name} (${u.email})`
-                                  : u.email,
+                              .filter((user) => field.value.includes(user.id))
+                              .map((user) => ({
+                                value: user.id,
+                                label: user.name ? `${user.name} (${user.email})` : user.email,
                               }))}
-                            onChange={(sel) =>
-                              field.onChange(sel.map((o) => o.value))
+                            onChange={(selected) =>
+                              field.onChange(selected.map((option) => option.value))
                             }
                             placeholder="Select recipients"
                           />
@@ -405,8 +356,6 @@ export default function ShareWarehousePage() {
                   )}
                 />
               </div>
-
-              {/* Products */}
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <FormLabel>Products</FormLabel>
@@ -415,7 +364,7 @@ export default function ShareWarehousePage() {
                       type="button"
                       variant="outline"
                       onClick={selectAllProducts}
-                      disabled={!stock.length}
+                      disabled={stock.length === 0}
                     >
                       Select All Products
                     </Button>
@@ -423,14 +372,13 @@ export default function ShareWarehousePage() {
                       type="button"
                       variant="outline"
                       onClick={addProduct}
-                      disabled={!stock.length}
+                      disabled={stock.length === 0}
                     >
                       <Plus className="h-4 w-4 mr-2" />
                       Add Product
                     </Button>
                   </div>
                 </div>
-
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -440,40 +388,28 @@ export default function ShareWarehousePage() {
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
-
                   <TableBody>
-                    {fields.map((f, idx) => {
-                      const selProdId = form.watch(`products.${idx}.productId`);
-                      const selVarId = form.watch(
-                        `products.${idx}.variationId`,
-                      );
-
-                      const selProd = stock.find((s) => s.productId === selProdId);
-                      const isVariable = selProd?.productType === "variable";
-
+                    {fields.map((field, index) => {
+                      const selectedProductId = form.watch(`products.${index}.productId`);
+                      const selectedVariationId = form.watch(`products.${index}.variationId`);
+                      const selectedProduct = stock.find((s) => s.productId === selectedProductId);
+                      const isVariable = selectedProduct?.productType === "variable";
                       const variations = isVariable
-                        ? stock.filter(
-                            (s) => s.productId === selProdId && s.variationId,
-                          )
+                        ? stock.filter((s) => s.productId === selectedProductId && s.variationId)
                         : [];
-
-                      const stockKey = `${selProdId}-${selVarId ?? "none"}`;
-                      const prodStock = stockByProduct[stockKey] || {};
-
-                      const prodCountries = selectedCountries[idx] || countries;
+                      const stockKey = `${selectedProductId}-${selectedVariationId || "none"}`;
+                      const productStock = stockByProduct[stockKey] || {};
+                      const productCountries = selectedCountries[index] || countries;
                       const availableCountries = countries.filter(
-                        (c) => !prodCountries.includes(c),
+                        (c) => !productCountries.includes(c)
                       );
-
-                      const baseTitle = stripVariation(selProd?.title ?? "");
 
                       return (
-                        <TableRow key={f.id}>
-                          {/* Product */}
+                        <TableRow key={field.id}>
                           <TableCell>
                             <FormField
                               control={form.control}
-                              name={`products.${idx}.productId`}
+                              name={`products.${index}.productId`}
                               render={({ field }) => (
                                 <FormItem>
                                   <FormControl>
@@ -484,43 +420,38 @@ export default function ShareWarehousePage() {
                                           value: "",
                                           disabled: true,
                                         },
-                                        ...Object.entries(groupedStock).map(
-                                          ([cat, items]) => ({
-                                            label: cat,
-                                            options: uniqueParents(items).map(
-                                              (s) => ({
-                                                value: s.productId,
-                                                label: stripVariation(s.title),
-                                              }),
-                                            ),
-                                          }),
-                                        ),
+                                        ...Object.entries(groupedStock).map(([category, items]) => ({
+                                          label: category,
+                                          options: items
+                                            .filter(
+                                              (s, i, self) =>
+                                                self.findIndex((x) => x.productId === s.productId) === i
+                                            )
+                                            .map((s) => ({
+                                              value: s.productId,
+                                              label: s.title,
+                                            })),
+                                        })),
                                       ]}
                                       value={
                                         field.value
                                           ? {
                                               value: field.value,
-                                              label: baseTitle,
+                                              label: stock.find((s) => s.productId === field.value)?.title,
                                             }
                                           : null
                                       }
-                                      onChange={(opt) => {
-                                        field.onChange(opt?.value || "");
-                                        form.setValue(
-                                          `products.${idx}.variationId`,
-                                          null,
-                                        );
-                                        form.setValue(
-                                          `products.${idx}.cost`,
-                                          {},
-                                        );
-                                        setSelectedCountries((p) => ({
-                                          ...p,
-                                          [idx]: [...countries],
+                                      onChange={(option) => {
+                                        field.onChange(option?.value || "");
+                                        form.setValue(`products.${index}.variationId`, null);
+                                        form.setValue(`products.${index}.cost`, {});
+                                        setSelectedCountries((prev) => ({
+                                          ...prev,
+                                          [index]: [...countries],
                                         }));
                                       }}
                                       placeholder="Select product"
-                                      isDisabled={!stock.length}
+                                      isDisabled={stock.length === 0}
                                     />
                                   </FormControl>
                                   <FormMessage />
@@ -528,65 +459,38 @@ export default function ShareWarehousePage() {
                               )}
                             />
                           </TableCell>
-
-                          {/* Variation */}
                           <TableCell>
                             {isVariable && (
                               <FormField
                                 control={form.control}
-                                name={`products.${idx}.variationId`}
+                                name={`products.${index}.variationId`}
                                 render={({ field }) => (
                                   <FormItem>
                                     <FormControl>
                                       <Select
                                         options={variations.map((v) => ({
                                           value: v.variationId!,
-                                          label: v.title.includes(" - ")
-                                            ? v.title
-                                                .split(" - ")
-                                                .slice(1)
-                                                .join(" - ")
-                                                .trim()
-                                            : v.title,
+                                          label: v.title,
                                         }))}
                                         value={
                                           field.value
-                                            ? (() => {
-                                                const v = variations.find(
-                                                  (x) =>
-                                                    x.variationId ===
-                                                    field.value,
-                                                );
-                                                if (!v) return null;
-                                                const lbl = v.title.includes(
-                                                  " - ",
-                                                )
-                                                  ? v.title
-                                                      .split(" - ")
-                                                      .slice(1)
-                                                      .join(" - ")
-                                                      .trim()
-                                                  : v.title;
-                                                return {
-                                                  value: v.variationId!,
-                                                  label: lbl,
-                                                };
-                                              })()
+                                            ? {
+                                                value: field.value,
+                                                label: variations.find((v) => v.variationId === field.value)
+                                                  ?.title,
+                                              }
                                             : null
                                         }
-                                        onChange={(opt) => {
-                                          field.onChange(opt?.value || null);
-                                          form.setValue(
-                                            `products.${idx}.cost`,
-                                            {},
-                                          );
-                                          setSelectedCountries((p) => ({
-                                            ...p,
-                                            [idx]: [...countries],
+                                        onChange={(option) => {
+                                          field.onChange(option?.value || null);
+                                          form.setValue(`products.${index}.cost`, {});
+                                          setSelectedCountries((prev) => ({
+                                            ...prev,
+                                            [index]: [...countries],
                                           }));
                                         }}
                                         placeholder="Select variation"
-                                        isDisabled={!selProdId}
+                                        isDisabled={!selectedProductId}
                                       />
                                     </FormControl>
                                     <FormMessage />
@@ -595,72 +499,49 @@ export default function ShareWarehousePage() {
                               />
                             )}
                           </TableCell>
-
-                          {/* Costs */}
                           <TableCell>
                             <FormField
                               control={form.control}
-                              name={`products.${idx}.cost`}
+                              name={`products.${index}.cost`}
                               render={() => (
                                 <FormItem>
                                   <div className="space-y-2">
-                                    {prodCountries.map((c) => {
-                                      const baseCost = selProd?.cost[c] ?? 0;
-                                      const qty = prodStock[c] ?? 0;
+                                    {productCountries.map((country) => {
+                                      const baseCost = selectedProduct?.cost[country] || 0;
+                                      const stockQuantity = productStock[country] || 0;
                                       return (
-                                        <div
-                                          key={c}
-                                          className="flex items-center gap-2"
-                                        >
+                                        <div key={country} className="flex items-center gap-2">
                                           <div className="flex-1">
                                             <FormField
                                               control={form.control}
-                                              name={`products.${idx}.cost.${c}`}
+                                              name={`products.${index}.cost.${country}`}
                                               render={({ field }) => (
                                                 <FormItem>
                                                   <FormLabel className="flex items-center">
                                                     <ReactCountryFlag
-                                                      countryCode={c}
+                                                      countryCode={country}
                                                       svg
-                                                      style={{
-                                                        width: "1em",
-                                                        height: "1em",
-                                                        marginRight: "8px",
-                                                      }}
+                                                      style={{ width: "1em", height: "1em", marginRight: "8px" }}
                                                     />
-                                                    {countriesLib.getName(
-                                                      c,
-                                                      "en",
-                                                    ) || c}{" "}
-                                                    (Base {baseCost}, Stock{" "}
-                                                    {qty})
+                                                    {countriesLib.getName(country, "en") || country} (Base: {baseCost}, Stock: {stockQuantity})
                                                   </FormLabel>
                                                   <FormControl>
                                                     <Input
                                                       type="number"
                                                       min="0"
                                                       step="0.01"
-                                                      placeholder={`Cost for ${c}`}
-                                                      value={
-                                                        field.value !==
-                                                        undefined
-                                                          ? field.value
-                                                          : ""
-                                                      }
+                                                      placeholder={`Enter cost for ${country}`}
+                                                      value={field.value !== undefined ? field.value : ""}
                                                       onChange={(e) => {
                                                         field.onChange(
-                                                          e.target.value
-                                                            ? Number(
-                                                                e.target.value,
-                                                              )
-                                                            : undefined,
+                                                          e.target.value ? Number(e.target.value) : undefined
                                                         );
-                                                        if (e.target.value)
-                                                          form.clearErrors(
-                                                            `products.${idx}.cost`,
-                                                          );
+                                                        // Clear error when user starts typing
+                                                        if (e.target.value) {
+                                                          form.clearErrors(`products.${index}.cost`);
+                                                        }
                                                       }}
-                                                      disabled={!selProdId}
+                                                      disabled={!selectedProductId}
                                                     />
                                                   </FormControl>
                                                   <FormMessage />
@@ -672,37 +553,27 @@ export default function ShareWarehousePage() {
                                             type="button"
                                             variant="ghost"
                                             size="sm"
-                                            onClick={() =>
-                                              removeCountry(idx, c)
-                                            }
-                                            disabled={
-                                              prodCountries.length <= 1 &&
-                                              !availableCountries.length
-                                            }
+                                            onClick={() => removeCountry(index, country)}
+                                            disabled={productCountries.length <= 1 && !availableCountries.length}
                                           >
                                             <X className="h-4 w-4" />
                                           </Button>
                                         </div>
                                       );
                                     })}
-
                                     {availableCountries.length > 0 && (
                                       <FormItem>
                                         <FormLabel>Add Country</FormLabel>
                                         <Select
-                                          options={availableCountries.map(
-                                            (c) => ({
-                                              value: c,
-                                              label:
-                                                countriesLib.getName(c, "en") ??
-                                                c,
-                                            }),
-                                          )}
-                                          onChange={(opt) =>
-                                            opt && addCountry(idx, opt.value)
-                                          }
-                                          placeholder="Select a country"
-                                          isDisabled={!selProdId}
+                                          options={availableCountries.map((country) => ({
+                                            value: country,
+                                            label: countriesLib.getName(country, "en") || country,
+                                          }))}
+                                          onChange={(option) => {
+                                            if (option) addCountry(index, option.value);
+                                          }}
+                                          placeholder="Select a country to add"
+                                          isDisabled={!selectedProductId}
                                         />
                                       </FormItem>
                                     )}
@@ -712,19 +583,17 @@ export default function ShareWarehousePage() {
                               )}
                             />
                           </TableCell>
-
-                          {/* Actions */}
                           <TableCell className="text-right">
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
                               onClick={() => {
-                                remove(idx);
-                                setSelectedCountries((p) => {
-                                  const n = { ...p };
-                                  delete n[idx];
-                                  return n;
+                                remove(index);
+                                setSelectedCountries((prev) => {
+                                  const newState = { ...prev };
+                                  delete newState[index];
+                                  return newState;
                                 });
                               }}
                             >
@@ -737,8 +606,6 @@ export default function ShareWarehousePage() {
                   </TableBody>
                 </Table>
               </div>
-
-              {/* Share Link output */}
               {shareUrl && (
                 <Card>
                   <CardHeader>
@@ -751,7 +618,7 @@ export default function ShareWarehousePage() {
                         type="button"
                         onClick={() => {
                           navigator.clipboard.writeText(shareUrl);
-                          toast.success("Copied!");
+                          toast.success("Link copied to clipboard");
                         }}
                       >
                         Copy
@@ -760,16 +627,11 @@ export default function ShareWarehousePage() {
                   </CardContent>
                 </Card>
               )}
-
-              {/* Submit */}
               <div className="flex gap-4">
-                <Button type="submit" disabled={!!shareUrl || !stock.length}>
+                <Button type="submit" disabled={!!shareUrl || stock.length === 0}>
                   Create Share Link
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => router.push("/warehouses")}
-                >
+                <Button variant="outline" onClick={() => router.push("/warehouses")}>
                   Cancel
                 </Button>
               </div>

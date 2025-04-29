@@ -3,7 +3,7 @@ import { Pool } from "pg";
 import { Kysely, PostgresDialect } from "kysely";
 
 interface DB {
-  /* ── Better-Auth base tables (unchanged) ───────────────────────────── */
+  // Base Better Auth Tables
   user: {
     id: string;
     email: string;
@@ -16,6 +16,7 @@ interface DB {
     createdAt: Date | null;
     updatedAt: Date | null;
   };
+
   account: {
     id: string;
     userId: string;
@@ -31,6 +32,7 @@ interface DB {
     createdAt: Date | null;
     updatedAt: Date | null;
   };
+
   session: {
     id: string;
     userId: string;
@@ -42,6 +44,7 @@ interface DB {
     createdAt: Date | null;
     updatedAt: Date | null;
   };
+
   verification: {
     id: string;
     identifier: string;
@@ -51,7 +54,7 @@ interface DB {
     updatedAt: Date | null;
   };
 
-  /* ── Organization plugin tables (unchanged) ───────────────────────── */
+  // Better Auth Organization Plugin Tables
   organization: {
     id: string;
     name: string;
@@ -63,6 +66,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   clients: {
     id: string;
     userId: string | null;
@@ -79,6 +83,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   coupons: {
     id: string;
     organizationId: string;
@@ -98,6 +103,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   shipments: {
     id: string;
     organizationId: string;
@@ -108,6 +114,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   shippingMethods: {
     id: string;
     organizationId: string;
@@ -117,6 +124,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   reviews: {
     id: string;
     orderId: string;
@@ -126,6 +134,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   member: {
     id: string;
     userId: string;
@@ -133,6 +142,7 @@ interface DB {
     role: string;
     createdAt: Date;
   };
+
   invitation: {
     id: string;
     email: string;
@@ -143,6 +153,7 @@ interface DB {
     expiresAt: Date;
     createdAt: Date;
   };
+
   announcements: {
     id: string;
     organizationId: string;
@@ -154,6 +165,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   team: {
     id: string;
     name: string;
@@ -162,7 +174,7 @@ interface DB {
     updatedAt: Date;
   };
 
-  /* ── Custom-domain tables (unchanged except additions at bottom) ───── */
+  // Custom Tables
   tenant: {
     id: string;
     ownerUserId: string;
@@ -173,6 +185,7 @@ interface DB {
     updatedAt: Date;
     onboardingCompleted: number | null;
   };
+
   subscription: {
     id: string;
     userId: string;
@@ -183,6 +196,7 @@ interface DB {
     periodStart: Date | null;
     periodEnd: Date | null;
   };
+
   warehouse: {
     id: string;
     tenantId: string;
@@ -192,6 +206,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   tickets: {
     id: string;
     organizationId: string;
@@ -202,6 +217,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   ticketMessages: {
     id: string;
     ticketId: string;
@@ -211,6 +227,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   organizationPlatformKey: {
     id: string;
     organizationId: string;
@@ -219,6 +236,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   organizationSupportEmail: {
     id: string;
     organizationId: string;
@@ -229,7 +247,6 @@ interface DB {
     updatedAt: Date;
   };
 
-  /* ── Catalogue / stock tables (unchanged) ───────────────────────────── */
   productCategories: {
     id: string;
     name: string;
@@ -241,10 +258,12 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   productCategory: {
     productId: string;
     categoryId: string;
   };
+
   productAttributes: {
     id: string;
     name: string;
@@ -253,6 +272,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   productAttributeTerms: {
     id: string;
     attributeId: string;
@@ -262,11 +282,13 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   productAttributeValues: {
     productId: string;
     attributeId: string;
     termId: string;
   };
+
   products: {
     id: string;
     organizationId: string;
@@ -286,9 +308,10 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   productVariations: {
     id: string;
-    product_id: string; // NB: DB column snake-case; code references validated elsewhere
+    product_id: string;
     attributes: Record<string, string>;
     sku: string;
     regularPrice: Record<string, number>;
@@ -299,6 +322,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   warehouseStock: {
     id: string;
     warehouseId: string;
@@ -312,7 +336,6 @@ interface DB {
     updatedAt: Date;
   };
 
-  /* ── Sharing tables (unchanged + NEW) ──────────────────────────────── */
   warehouseShareLink: {
     id: string;
     warehouseId: string;
@@ -322,6 +345,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   warehouseShareRecipient: {
     id: string;
     shareLinkId: string;
@@ -329,6 +353,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
   sharedProduct: {
     id: string;
     shareLinkId: string;
@@ -338,28 +363,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
-  sharedProductMapping: {
-    id: string;
-    shareLinkId: string;
-    sourceProductId: string;
-    targetProductId: string;
-    createdAt: Date;
-    updatedAt: Date;
-  };
 
-  /* ── NEW – variation mapping table used by sync logic ──────────────── */
-  sharedVariationMapping: {
-    id: string;
-    shareLinkId: string;
-    sourceProductId: string;
-    targetProductId: string;
-    sourceVariationId: string;
-    targetVariationId: string;
-    createdAt: Date;
-    updatedAt: Date;
-  };
-
-  /* ── misc tables (unchanged) ───────────────────────────────────────── */
   paymentMethods: {
     id: string;
     name: string;
@@ -367,6 +371,15 @@ interface DB {
     apiKey: string;
     secretKey: string;
     active: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  sharedProductMapping: {
+    id: string;
+    shareLinkId: string;
+    sourceProductId: string;
+    targetProductId: string;
     createdAt: Date;
     updatedAt: Date;
   };

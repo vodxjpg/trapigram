@@ -1,4 +1,3 @@
-// /home/zodx/Desktop/trapigram/src/app/api/warehouses/[id]/stock/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -13,7 +12,7 @@ const stockUpdateSchema = z.array(
     variationId: z.string().nullable(),
     country: z.string(),
     quantity: z.number().min(0),
-  }),
+  })
 );
 
 // Helper to generate string-based IDs
@@ -21,29 +20,7 @@ function generateId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).substring(2, 10)}`;
 }
 
-/* ▶ NEW: tolerate JSON columns that arrive as objects */
-function safeParseJSON<T = any>(value: unknown): T {
-  if (value == null) return {} as T;
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(value) as T;
-    } catch {
-      return {} as T;
-    }
-  }
-  return value as T;
-}
-
-function attrLabel(attrs: Record<string, string>, termMap: Map<string, string>) {
-  return Object.values(attrs)
-    .map((tid) => termMap.get(tid) ?? tid)
-    .join(" / ");
-}
-
-export async function GET(
-  req: NextRequest,
-  context: { params: Promise<{ id: string }> },
-) {
+export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const session = await auth.api.getSession({ headers: req.headers });
     const internalSecret = req.headers.get("x-internal-secret");
@@ -73,10 +50,7 @@ export async function GET(
         .where("ownerUserId", "=", session.user.id)
         .executeTakeFirst();
       if (!tenant || tenant.id !== warehouse.tenantId) {
-        return NextResponse.json(
-          { error: "Unauthorized: You do not own this warehouse" },
-          { status: 403 },
-        );
+        return NextResponse.json({ error: "Unauthorized: You do not own this warehouse" }, { status: 403 });
       }
     }
 
@@ -98,10 +72,8 @@ export async function GET(
         "products.productType",
         "productCategories.id as categoryId",
         "productCategories.name as categoryName",
-        /* keep existing columns */
         "productVariations.cost as variationCost",
         "productVariations.sku as variationSku",
-        "productVariations.attributes as variationAttributes",
       ])
       .where("warehouseStock.warehouseId", "=", warehouseId)
       .where("warehouseStock.quantity", ">", 0)
@@ -109,66 +81,26 @@ export async function GET(
 
     const warehouseCountries = JSON.parse(warehouse.countries) as string[];
 
-    /* ------------------------------------------------------------------ */
-    /* build one termId → name map (safe JSON parse)                      */
-    /* ------------------------------------------------------------------ */
-    const termIds = new Set<string>();
-    stock.forEach((r) => {
-      if (r.variationAttributes) {
-        /* ▶ FIX: use safeParseJSON instead of JSON.parse */
-        const attrs = safeParseJSON<Record<string, string>>(r.variationAttributes);
-        Object.values(attrs).forEach((tid) => termIds.add(tid));
-      }
-    });
-
-    const termMap =
-      termIds.size > 0
-        ? new Map(
-            (
-              await db
-                .selectFrom("productAttributeTerms")
-                .select(["id", "name"])
-                .where("id", "in", [...termIds])
-                .execute()
-            ).map((t) => [t.id, t.name]),
-          )
-        : new Map();
-
     // Transform stock data
-    const stockItems = stock.map((item) => {
-      /* decide the variation label */
-      let niceVariationLabel = item.variationSku;
-      if (item.variationAttributes) {
-        /* ▶ FIX: safeParseJSON again */
-        const parsed = safeParseJSON<Record<string, string>>(item.variationAttributes);
-        const lbl = attrLabel(parsed, termMap);
-        if (lbl) niceVariationLabel = lbl;
-      }
+    const stockItems = stock.map((item) => ({
+      productId: item.productId,
+      variationId: item.variationId,
+      title: item.variationId ? `${item.title} - ${item.variationSku}` : item.title,
+      cost: item.variationId
+        ? typeof item.variationCost === "string"
+          ? JSON.parse(item.variationCost)
+          : item.variationCost
+        : typeof item.productCost === "string"
+        ? JSON.parse(item.productCost)
+        : item.productCost,
+      country: item.country,
+      quantity: item.quantity,
+      productType: item.productType,
+      categoryId: item.categoryId,
+      categoryName: item.categoryName || "Uncategorized",
+    }));
 
-      return {
-        productId: item.productId,
-        variationId: item.variationId,
-        /* NEW title logic */
-        title: item.variationId ? `${item.title} - ${niceVariationLabel}` : item.title,
-        cost: item.variationId
-          ? typeof item.variationCost === "string"
-            ? JSON.parse(item.variationCost)
-            : item.variationCost
-          : typeof item.productCost === "string"
-          ? JSON.parse(item.productCost)
-          : item.productCost,
-        country: item.country,
-        quantity: item.quantity,
-        productType: item.productType,
-        categoryId: item.categoryId,
-        categoryName: item.categoryName || "Uncategorized",
-      };
-    });
-
-    return NextResponse.json(
-      { stock: stockItems, countries: warehouseCountries },
-      { status: 200 },
-    );
+    return NextResponse.json({ stock: stockItems, countries: warehouseCountries }, { status: 200 });
   } catch (error) {
     console.error("[GET /api/warehouses/[id]/stock] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

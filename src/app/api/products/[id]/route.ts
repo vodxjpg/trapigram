@@ -21,6 +21,7 @@ function mergePriceMaps(
 
 /* ------------------------------------------------------------------ */
 /* helper – split map ➜ {regularPrice, salePrice} (JSONB ready)       */
+/* ------------------------------------------------------------------ */
 const priceObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
 const costMap = z.record(z.string(), z.number().min(0));
 
@@ -46,7 +47,7 @@ function generateId(prefix: string): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* Zod schema for PATCH                                               */
+/* Zod schema for PATCH                                              */
 /* ------------------------------------------------------------------ */
 const warehouseStockSchema = z.array(
   z.object({
@@ -55,17 +56,19 @@ const warehouseStockSchema = z.array(
     variationId: z.string().nullable(),
     country: z.string(),
     quantity: z.number().min(0),
-  }),
+  })
 );
 
-const variationPatchSchema = z.object({
-  id: z.string(),
-  attributes: z.record(z.string(), z.string()),
-  sku: z.string(),
-  image: z.string().nullable().optional(),
-  prices: z.record(z.string(), priceObj),
-  cost: costMap.optional(),
-});
+const variationPatchSchema = z.union([
+  z.object({
+    id: z.string(),
+    attributes: z.record(z.string(), z.string()),
+    sku: z.string(),
+    image: z.string().nullable().optional(),
+    prices: z.record(z.string(), priceObj),
+    cost: costMap.optional(),
+  }),
+]);
 
 const productUpdateSchema = z.object({
   title: z.string().min(1, "Title is required").optional(),
@@ -329,10 +332,12 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    /* -------- authentication / boilerplate (unchanged) ---------- */
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session)
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized: No session found" },
+        { status: 401 },
+      );
     const organizationId = session.session.activeOrganizationId;
     if (!organizationId)
       return NextResponse.json({ error: "No active organization" }, { status: 400 });
@@ -348,19 +353,26 @@ export async function PATCH(
 
     const { id } = await params;
 
-    /* ----- deny edits on recipient copies (unchanged) ----------- */
+    /* ---------- Check if this is a shared product (targetProductId) -- */
     const isSharedProduct = await db
       .selectFrom("sharedProductMapping")
-      .select("targetProductId")
+      .select(["targetProductId"])
       .where("targetProductId", "=", id)
       .executeTakeFirst();
-    if (isSharedProduct)
-      return NextResponse.json({ error: "Forbidden: Cannot edit a shared product" }, { status: 403 });
 
-    const body         = await req.json();
+    if (isSharedProduct) {
+      return NextResponse.json(
+        { error: "Forbidden: Cannot edit a shared product" },
+        { status: 403 }
+      );
+    }
+
+    const body = await req.json();
     const parsedUpdate = productUpdateSchema.parse(body);
 
-    /* -------- preliminary FK / uniqueness checks (unchanged) ---- */
+    /* -------------------------------------------------------------- */
+    /* sanity / FK checks                                           */
+    /* -------------------------------------------------------------- */
     const existingProduct = await db
       .selectFrom("products")
       .select("id")
@@ -384,114 +396,101 @@ export async function PATCH(
 
     if (parsedUpdate.categories?.length) {
       const validIds = (
-        await db.selectFrom("productCategories").select("id").where("organizationId", "=", organizationId).execute()
+        await db
+          .selectFrom("productCategories")
+          .select("id")
+          .where("organizationId", "=", organizationId)
+          .execute()
       ).map((c) => c.id);
       const bad = parsedUpdate.categories.filter((cid) => !validIds.includes(cid));
       if (bad.length)
-        return NextResponse.json({ error: `Invalid category IDs: ${bad.join(", ")}` }, { status: 400 });
+        return NextResponse.json(
+          { error: `Invalid category IDs: ${bad.join(", ")}` },
+          { status: 400 },
+        );
     }
 
-    /* -------- build products update payload -------------------- */
+    /* -------------------------------------------------------------- */
+    /* build update payload                                          */
+    /* -------------------------------------------------------------- */
     const updateCols: Record<string, any> = {
-      title:            parsedUpdate.title,
-      description:      parsedUpdate.description,
-      image:            parsedUpdate.image,
-      sku:              parsedUpdate.sku,
-      status:           parsedUpdate.status,
-      productType:      parsedUpdate.productType,
-      allowBackorders:  parsedUpdate.allowBackorders,
-      manageStock:      parsedUpdate.manageStock,
-      stockStatus:      parsedUpdate.manageStock ? "managed" : "unmanaged",
-      updatedAt:        new Date(),
+      title: parsedUpdate.title,
+      description: parsedUpdate.description,
+      image: parsedUpdate.image,
+      sku: parsedUpdate.sku,
+      status: parsedUpdate.status,
+      productType: parsedUpdate.productType,
+      allowBackorders: parsedUpdate.allowBackorders,
+      manageStock: parsedUpdate.manageStock,
+      stockStatus: parsedUpdate.manageStock ? "managed" : "unmanaged",
+      updatedAt: new Date(),
     };
 
+    /* ---------- pricing ----------------------------------------- */
     if (parsedUpdate.prices) {
       const { regularPrice, salePrice } = splitPrices(parsedUpdate.prices);
       updateCols.regularPrice = regularPrice;
-      updateCols.salePrice    = salePrice;
+      updateCols.salePrice = salePrice;
     }
+
     if (parsedUpdate.cost) updateCols.cost = parsedUpdate.cost;
 
     await db.updateTable("products").set(updateCols).where("id", "=", id).execute();
 
-    /* -------- categories (unchanged) ---------------------------- */
+    /* -------------------------------------------------------------- */
+    /* categories                                                  */
+    /* -------------------------------------------------------------- */
     if (parsedUpdate.categories) {
       await db.deleteFrom("productCategory").where("productId", "=", id).execute();
       for (const cid of parsedUpdate.categories)
-        await db.insertInto("productCategory").values({ productId: id, categoryId: cid }).execute();
+        await db
+          .insertInto("productCategory")
+          .values({ productId: id, categoryId: cid })
+          .execute();
     }
 
-    /* -------- attributes (unchanged) ---------------------------- */
+    /* -------------------------------------------------------------- */
+    /* attributes                                                  */
+    /* -------------------------------------------------------------- */
     if (parsedUpdate.attributes) {
-      await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
-      for (const a of parsedUpdate.attributes)
-        for (const termId of a.selectedTerms)
-          await db.insertInto("productAttributeValues").values({ productId: id, attributeId: a.id, termId }).execute();
-    }
-
-    /* ============================================================== */
-    /*  **NEW** safe upsert for variations (variable products)        */
-    /* ============================================================== */
-    if (parsedUpdate.productType === "variable" && parsedUpdate.variations) {
-      /* current variations in DB */
-      const existingVarRows = await db
-        .selectFrom("productVariations")
-        .select("id")
+      await db
+        .deleteFrom("productAttributeValues")
         .where("productId", "=", id)
         .execute();
-      const existingIds  = existingVarRows.map((v) => v.id);
-      const incomingIds  = parsedUpdate.variations.map((v) => v.id);
+      for (const a of parsedUpdate.attributes)
+        for (const termId of a.selectedTerms)
+          await db
+            .insertInto("productAttributeValues")
+            .values({ productId: id, attributeId: a.id, termId })
+            .execute();
+    }
 
-      /* ---- handle deletions ------------------------------------ */
-      const toDelete = existingIds.filter((vid) => !incomingIds.includes(vid));
-      if (toDelete.length) {
-        const stillReferenced = await db
-          .selectFrom("sharedProduct")
-          .select("variationId")
-          .where("variationId", "in", toDelete)
-          .execute();
-        const blockedIds = stillReferenced.map((r) => r.variationId);
+    /* -------------------------------------------------------------- */
+    /* variations (variable products)                               */
+    /* -------------------------------------------------------------- */
+    if (parsedUpdate.productType === "variable" && parsedUpdate.variations) {
+      await db.deleteFrom("productVariations").where("productId", "=", id).execute();
 
-        const deletable = toDelete.filter((vid) => !blockedIds.includes(vid));
-        if (deletable.length)
-          await db.deleteFrom("productVariations").where("id", "in", deletable).execute();
-
-        if (blockedIds.length) {
-          /* --- CHANGED: return a generic message without UUIDs --- */
-          return NextResponse.json(
-            {
-              error:
-                "Cannot delete variations because they are included in active warehouse share links. Remove them from those links first.",
-            },
-            { status: 409 },
-          );
-        }
-      }
-
-      /* ---- upsert incoming variations -------------------------- */
       for (const v of parsedUpdate.variations) {
         const { regularPrice, salePrice } = splitPrices(v.prices);
-        const payload = {
-          productId:   id,
-          attributes:  JSON.stringify(v.attributes),
-          sku:         v.sku,
-          image:       v.image ?? null,
-          regularPrice,
-          salePrice,
-          cost:        v.cost ?? {},
-          updatedAt:   new Date(),
-        };
-
-        if (existingIds.includes(v.id)) {
-          await db.updateTable("productVariations").set(payload).where("id", "=", v.id).execute();
-        } else {
-          await db
-            .insertInto("productVariations")
-            .values({ ...payload, id: v.id, createdAt: new Date() })
-            .execute();
-        }
+        await db
+          .insertInto("productVariations")
+          .values({
+            id: v.id,
+            productId: id,
+            attributes: JSON.stringify(v.attributes),
+            sku: v.sku,
+            image: v.image ?? null,
+            regularPrice,
+            salePrice,
+            cost: v.cost ?? {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .execute();
       }
     }
+
     /* -------------------------------------------------------------- */
     /* warehouseStock                                              */
     /* -------------------------------------------------------------- */

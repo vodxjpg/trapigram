@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useRouter, useParams } from "next/navigation";
+import React from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -17,14 +18,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Select from "react-select";
 import { Trash2, Plus, ArrowLeft, AlertCircle, X } from "lucide-react";
@@ -34,11 +28,7 @@ import ReactCountryFlag from "react-country-flag";
 
 countriesLib.registerLocale(enLocale);
 
-/* -------------------------------------------------------------------------- */
-/*  Type helpers                                                              */
-/* -------------------------------------------------------------------------- */
 type User = {
-  /** *Always* the real primary-key string we want to store in the form */
   userId: string;
   email: string;
   name: string | null;
@@ -77,12 +67,7 @@ type ShareLink = {
   createdAt: string;
 };
 
-/* -------------------------------------------------------------------------- */
-/*  Zod + form types                                                          */
-/* -------------------------------------------------------------------------- */
-const costSchema = z
-  .record(z.string(), z.number().positive("Cost must be a positive number"))
-  .optional();
+const costSchema = z.record(z.string(), z.number().positive("Cost must be a positive number")).optional();
 
 const productSchema = z.object({
   productId: z.string().min(1, "Product is required"),
@@ -97,53 +82,15 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
-/* -------------------------------------------------------------------------- */
-/*  Utility: normalise a raw user object from the API into <User> ----------- */
-/* -------------------------------------------------------------------------- */
-/* -------------------------------------------------------------------------- */
-function normaliseUser(raw: any): User {
-  return {
-    userId: raw.userId ?? raw.id ?? "",
-    email: raw.email,
-    name: raw.name ?? null,
-  };
-}
-
-/* -------------------------------------------------------------------------- */
-/*  ★ FIX #1: tiny helpers for uniqueness & parent titles                    */
-/* -------------------------------------------------------------------------- */
-const pvKey = (s:{productId:string;variationId:string|null}) =>
-  `${s.productId}-${s.variationId ?? "null"}`;
-
-/** one option per productId, favouring the parent row *if it exists* */
-function uniqueParents(items: StockItem[]) {
-  const map = new Map<string, StockItem>();
-  for (const it of items) {
-    const had = map.get(it.productId);
-    // if we already stored a variation and now see the parent, overwrite
-    if (!had || had.variationId !== null) map.set(it.productId, it);
-  }
-  return [...map.values()];
-}
-
-/** strip “ - something” (once) from a title */
-const stripVariation = (t: string) => t.split(" - ")[0];
-/* -------------------------------------------------------------------------- */
-/*  Component                                                                 */
-/* -------------------------------------------------------------------------- */
-export default function EditShareLinkPage() {
+export default function EditShareLinkPage({ params }: { params: { shareLinkId: string } }) {
   const router = useRouter();
-  const { shareLinkId } = useParams() as Record<string, string>;
-
   const [users, setUsers] = useState<User[]>([]);
   const [stock, setStock] = useState<StockItem[]>([]);
   const [countries, setCountries] = useState<string[]>([]);
   const [shareLink, setShareLink] = useState<ShareLink | null>(null);
   const [emailSearch, setEmailSearch] = useState("");
   const [stockError, setStockError] = useState<string | null>(null);
-  const [selectedCountries, setSelectedCountries] = useState<
-    Record<number, string[]>
-  >({});
+  const [selectedCountries, setSelectedCountries] = useState<Record<number, string[]>>({});
   const [loading, setLoading] = useState(true);
 
   const form = useForm<FormValues>({
@@ -159,37 +106,31 @@ export default function EditShareLinkPage() {
     name: "products",
   });
 
-  /* ---------------------------------------------------------------------- */
-  /*  Data fetch                                                             */
-  /* ---------------------------------------------------------------------- */
   useEffect(() => {
-    (async () => {
+    const fetchData = async () => {
       try {
-        /* ------------------------------------------------ share-link --- */
-        const shareRes = await fetch(
-          `/api/warehouses/share-links/${shareLinkId}`,
-        );
-        if (!shareRes.ok) throw new Error("Failed to load share link");
-        const shareData: ShareLink = await shareRes.json();
+        // Fetch share link details
+        const shareResponse = await fetch(`/api/warehouses/share-links/${params.shareLinkId}`);
+        if (!shareResponse.ok) {
+          throw new Error("Failed to load share link");
+        }
+        const shareData: ShareLink = await shareResponse.json();
         setShareLink(shareData);
         setCountries(shareData.countries);
 
-        /* ------------------------------------------------ stock -------- */
-        const stockRes = await fetch(
-          `/api/warehouses/${shareData.warehouseId}/stock`,
-          {
-            headers: {
-              "x-internal-secret": process.env
-                .NEXT_PUBLIC_INTERNAL_API_SECRET as string,
-            },
+        // Fetch warehouse stock
+        const stockResponse = await fetch(`/api/warehouses/${shareData.warehouseId}/stock`, {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
           },
-        );
-        if (!stockRes.ok)
-          throw new Error(`Failed to fetch stock: ${stockRes.status}`);
-        const stockData = await stockRes.json();
+        });
+        if (!stockResponse.ok) {
+          throw new Error(`Failed to fetch stock: ${stockResponse.status}`);
+        }
+        const stockData = await stockResponse.json();
         setStock(stockData.stock);
 
-        /* ------------------------------------------- form defaults ----- */
+        // Initialize form with share link data
         form.reset({
           recipientUserIds: shareData.recipients.map((r) => r.userId),
           products: shareData.products.map((p) => ({
@@ -199,140 +140,219 @@ export default function EditShareLinkPage() {
           })),
         });
 
-        /* ----------------------------------- selected countries -------- */
-        const initial: Record<number, string[]> = {};
-        shareData.products.forEach((p, i) => {
-          initial[i] =
-            Object.keys(p.cost).length > 0
-              ? Object.keys(p.cost)
-              : [...shareData.countries];
+        // Initialize selected countries
+        const initialSelectedCountries: Record<number, string[]> = {};
+        shareData.products.forEach((product, index) => {
+          initialSelectedCountries[index] = Object.keys(product.cost).length > 0 ? Object.keys(product.cost) : [...shareData.countries];
         });
-        setSelectedCountries(initial);
+        setSelectedCountries(initialSelectedCountries);
 
-        /* ------------- cache recipients so they appear in the select --- */
+        // Fetch recipient user details
         const userPromises = shareData.recipients.map((r) =>
           fetch(`/api/users/search?email=${encodeURIComponent(r.email)}`, {
             headers: {
-              "x-internal-secret": process.env
-                .NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+              "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
             },
-          }).then((res) => res.json()),
+          }).then((res) => res.json())
         );
-        const results = await Promise.all(userPromises);
-        setUsers(
-          results.flatMap((r) => (r.users ?? []).map(normaliseUser)),
-        );
-      } catch (e) {
-        console.error(e);
+        const userResults = await Promise.all(userPromises);
+        const allUsers = userResults.flatMap((result) => result.users || []);
+        setUsers(allUsers);
+      } catch (error) {
+        console.error("Error fetching data:", error);
         setStockError("Failed to load share link or stock. Please try again.");
         toast.error("Failed to load share link or stock");
       } finally {
         setLoading(false);
       }
-    })();
-  }, [shareLinkId, form]);
+    };
+    fetchData();
+  }, [params.shareLinkId, form]);
 
-  /* ---------------------------------------------------------------------- */
-  /*  Helpers                                                                */
-  /* ---------------------------------------------------------------------- */
-  const uniqBy = <T, K>(arr: T[], key: (t: T) => K) =>
-    arr.filter((v, i, a) => a.findIndex((t) => key(t) === key(v)) === i);
-
-  /** add every unique product/variation exactly once */
-  const selectAllProducts = () => {
-    const existing = form.getValues("products");
-    const uniqStock = uniqBy(stock, pvKey);
-
-    const toAdd = uniqStock.filter(
-      (it) =>
-        !existing.some(
-          (p) => p.productId === it.productId && p.variationId === it.variationId,
-        ),
-    );
-
-    if (!toAdd.length) {
-      toast.info("All products are already selected.");
+  const handleEmailSearch = async () => {
+    if (!emailSearch) {
+      setUsers([]);
       return;
     }
+    try {
+      const response = await fetch(`/api/users/search?email=${encodeURIComponent(emailSearch)}`, {
+        headers: {
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch users");
+      const data = await response.json();
+      setUsers(data.users);
+      if (data.users.length === 0) {
+        toast.info("No users found with that email");
+      }
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      toast.error("Failed to load users");
+    }
+  };
 
-    const newProducts = toAdd.map((item) => ({
+  const onSubmit = async (values: FormValues) => {
+    try {
+      const validationErrors: string[] = [];
+      values.products.forEach((product, index) => {
+        const productCountries = selectedCountries[index] || [];
+        if (productCountries.length === 0) {
+          validationErrors.push(`Product ${index + 1}: At least one country must be selected.`);
+          form.setError(`products.${index}.cost`, {
+            type: "manual",
+            message: "At least one country must be selected.",
+          });
+          return;
+        }
+
+        const cleanedCost = product.cost
+          ? Object.fromEntries(
+              Object.entries(product.cost).filter(([_, value]) => value !== undefined)
+            )
+          : {};
+        const costCountries = Object.keys(cleanedCost);
+
+        if (costCountries.length === 0) {
+          validationErrors.push(`Product ${index + 1}: At least one country with a valid cost is required.`);
+          form.setError(`products.${index}.cost`, {
+            type: "manual",
+            message: "At least one country with a valid cost is required.",
+          });
+          return;
+        }
+
+        const missingCostCountries = productCountries.filter(
+          (country) => !costCountries.includes(country)
+        );
+        if (missingCostCountries.length > 0) {
+          validationErrors.push(
+            `Product ${index + 1}: Costs are required for ${missingCostCountries.join(", ")}.`
+          );
+          form.setError(`products.${index}.cost`, {
+            type: "manual",
+            message: `Costs are required for ${missingCostCountries.join(", ")}.`,
+          });
+        }
+      });
+
+      if (validationErrors.length > 0) {
+        toast.error("Please fix the validation errors before submitting.");
+        return;
+      }
+
+      const cleanedValues = {
+        ...values,
+        products: values.products.map((product) => ({
+          ...product,
+          cost: product.cost
+            ? Object.fromEntries(
+                Object.entries(product.cost).filter(([_, value]) => value !== undefined)
+              )
+            : {},
+        })),
+      };
+
+      const response = await fetch(`/api/warehouses/share-links/${params.shareLinkId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(cleanedValues),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          `Failed to update share link: ${response.status} - ${errorData.error || "Unknown error"}`
+        );
+      }
+      toast.success("Share link updated successfully");
+      router.push("/warehouses/share-links");
+    } catch (error) {
+      console.error("Error updating share link:", error);
+      toast.error(`Failed to update share link: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  };
+
+  const addProduct = () => {
+    const newIndex = fields.length;
+    append({ productId: "", variationId: null, cost: {} });
+    setSelectedCountries((prev) => ({
+      ...prev,
+      [newIndex]: [...countries],
+    }));
+  };
+
+  const selectAllProducts = () => {
+    const newProducts = stock.map((item) => ({
       productId: item.productId,
       variationId: item.variationId,
       cost: Object.fromEntries(
-        countries.map((c) => [c, (item.cost[c] ?? 0) + 10]),
+        countries.map((country) => [country, (item.cost[country] || 0) + 10])
       ),
     }));
-
-    form.setValue("products", [...existing, ...newProducts]);
-
-    setSelectedCountries((prev) => {
-      const next: Record<number, string[]> = { ...prev };
-      const start = Object.keys(prev).length;
-      newProducts.forEach((_, i) => {
-        next[start + i] = [...countries];
-      });
-      return next;
-    });
+    form.setValue("products", newProducts);
+    setSelectedCountries(
+      newProducts.reduce((acc, _, index) => ({
+        ...acc,
+        [index]: [...countries],
+      }), {} as Record<number, string[]>)
+    );
   };
 
-  const removeCountry = (pIdx: number, c: string) => {
+  const removeCountry = (productIndex: number, country: string) => {
     setSelectedCountries((prev) => ({
       ...prev,
-      [pIdx]: prev[pIdx].filter((x) => x !== c),
+      [productIndex]: prev[productIndex].filter((c) => c !== country),
     }));
-    const cur = form.getValues(`products.${pIdx}.cost`) ?? {};
-    const nxt = { ...cur };
-    delete nxt[c];
-    form.setValue(`products.${pIdx}.cost`, nxt);
-    form.clearErrors(`products.${pIdx}.cost`);
+    const currentCost = form.getValues(`products.${productIndex}.cost`) || {};
+    const newCost = { ...currentCost };
+    delete newCost[country];
+    form.setValue(`products.${productIndex}.cost`, newCost);
+    form.clearErrors(`products.${productIndex}.cost`);
   };
 
-  const addCountry = (pIdx: number, c: string) => {
-    setSelectedCountries((p) => ({ ...p, [pIdx]: [...p[pIdx], c] }));
-    form.clearErrors(`products.${pIdx}.cost`);
+  const addCountry = (productIndex: number, country: string) => {
+    setSelectedCountries((prev) => ({
+      ...prev,
+      [productIndex]: [...prev[productIndex], country],
+    }));
+    form.clearErrors(`products.${productIndex}.cost`);
   };
 
-  /* ---------------------------------------------------------------------- */
-  /*  Derived structures                                                    */
-  /* ---------------------------------------------------------------------- */
-  const groupedStock = stock.reduce((acc, it) => {
-    const cat = it.categoryName || "Uncategorized";
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(it);
+  const groupedStock = stock.reduce((acc, item) => {
+    const category = item.categoryName || "Uncategorized";
+    if (!acc[category]) acc[category] = [];
+    acc[category].push(item);
     return acc;
   }, {} as Record<string, StockItem[]>);
 
-  const stockByProduct = stock.reduce((acc, it) => {
-    const k = `${it.productId}-${it.variationId ?? "none"}`;
-    if (!acc[k]) acc[k] = {};
-    acc[k][it.country] = it.quantity;
+  const stockByProduct = stock.reduce((acc, item) => {
+    const key = `${item.productId}-${item.variationId || "none"}`;
+    if (!acc[key]) {
+      acc[key] = {};
+    }
+    acc[key][item.country] = item.quantity;
     return acc;
   }, {} as Record<string, Record<string, number>>);
 
-  /* ---------------------------------------------------------------------- */
-  /*  Rendering                                                              */
-  /* ---------------------------------------------------------------------- */
-  if (loading) return <div className="p-6">Loading...</div>;
+  if (loading) {
+    return <div className="p-6">Loading...</div>;
+  }
 
   if (stockError || !shareLink) {
     return (
       <div className="p-6">
-        <Button
-          variant="outline"
-          onClick={() => router.push("/warehouses/share-links")}
-          className="mb-4"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" /> Back to Share Links
+        <Button variant="outline" onClick={() => router.push("/warehouses/share-links")} className="mb-4">
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back to Share Links
         </Button>
-
         <Card>
           <CardHeader>
             <CardTitle>Error</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-destructive">
-              {stockError || "Share link not found"}
-            </p>
+            <p className="text-destructive">{stockError || "Share link not found"}</p>
           </CardContent>
         </Card>
       </div>
@@ -341,33 +361,20 @@ export default function EditShareLinkPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      {/* ----------------------------------------------------------------- */}
-      {/*  Header                                                           */}
-      {/* ----------------------------------------------------------------- */}
       <div className="flex items-center gap-4 mb-6">
-        <Button
-          variant="outline"
-          onClick={() => router.push("/warehouses/share-links")}
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" /> Back to Share Links
+        <Button variant="outline" onClick={() => router.push("/warehouses/share-links")}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back to Share Links
         </Button>
-        <h1 className="text-3xl font-bold">
-          Edit Share Link for {shareLink.warehouseName}
-        </h1>
+        <h1 className="text-3xl font-bold">Edit Share Link for {shareLink.warehouseName}</h1>
       </div>
-
-      {/* ----------------------------------------------------------------- */}
-      {/*  Card                                                              */}
-      {/* ----------------------------------------------------------------- */}
       <Card>
         <CardHeader>
           <CardTitle>Update Share Link</CardTitle>
           <p className="text-muted-foreground">
-            Modify recipients, products, and specific countries for this share
-            link.
+            Modify recipients, products, and specific countries for this share link.
           </p>
         </CardHeader>
-
         <CardContent>
           {stockError && (
             <Alert variant="destructive" className="mb-6">
@@ -376,119 +383,8 @@ export default function EditShareLinkPage() {
               <AlertDescription>{stockError}</AlertDescription>
             </Alert>
           )}
-
-          {/* ---------------------------------------------------------------- */}
-          {/*  Form                                                            */}
-          {/* ---------------------------------------------------------------- */}
           <Form {...form}>
-            <form
-              onSubmit={form.handleSubmit(async (values) => {
-                /* (submit handler left unchanged for brevity) */
-                /* ------------------------------------------------------------- */
-                try {
-                  const validationErrors: string[] = [];
-
-                  values.products.forEach((product, idx) => {
-                    const prodCountries = selectedCountries[idx] || [];
-                    if (prodCountries.length === 0) {
-                      validationErrors.push(
-                        `Product ${idx + 1}: At least one country must be selected.`,
-                      );
-                      form.setError(`products.${idx}.cost`, {
-                        type: "manual",
-                        message: "At least one country must be selected.",
-                      });
-                      return;
-                    }
-
-                    const cleanedCost = product.cost
-                      ? Object.fromEntries(
-                          Object.entries(product.cost).filter(
-                            ([, v]) => v !== undefined,
-                          ),
-                        )
-                      : {};
-                    const costCountries = Object.keys(cleanedCost);
-
-                    if (costCountries.length === 0) {
-                      validationErrors.push(
-                        `Product ${
-                          idx + 1
-                        }: At least one country with a valid cost is required.`,
-                      );
-                      form.setError(`products.${idx}.cost`, {
-                        type: "manual",
-                        message:
-                          "At least one country with a valid cost is required.",
-                      });
-                      return;
-                    }
-
-                    const missing = prodCountries.filter(
-                      (c) => !costCountries.includes(c),
-                    );
-                    if (missing.length) {
-                      validationErrors.push(
-                        `Product ${
-                          idx + 1
-                        }: Costs are required for ${missing.join(", ")}`,
-                      );
-                      form.setError(`products.${idx}.cost`, {
-                        type: "manual",
-                        message: `Costs are required for ${missing.join(", ")}.`,
-                      });
-                    }
-                  });
-
-                  if (validationErrors.length) {
-                    toast.error(
-                      "Please fix the validation errors before submitting.",
-                    );
-                    return;
-                  }
-
-                  const cleanedValues = {
-                    ...values,
-                    products: values.products.map((p) => ({
-                      ...p,
-                      cost: p.cost
-                        ? Object.fromEntries(
-                            Object.entries(p.cost).filter(
-                              ([, v]) => v !== undefined,
-                            ),
-                          )
-                        : {},
-                    })),
-                  };
-
-                  const res = await fetch(
-                    `/api/warehouses/share-links/${shareLinkId}`, // ← was params.shareLinkId
-                    {
-                      method: "PUT",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify(cleanedValues),
-                    },
-                  );
-                  if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(
-                      `Failed: ${res.status} - ${err.error || "Unknown"}`,
-                    );
-                  }
-                  toast.success("Share link updated successfully");
-                  router.push("/warehouses/share-links");
-                } catch (err) {
-                  console.error(err);
-                  toast.error(
-                    `Failed to update share link: ${
-                      err instanceof Error ? err.message : "Unknown error"
-                    }`,
-                  );
-                }
-              })}
-              className="space-y-8"
-            >
-              {/* -------------------- Recipients --------------------------- */}
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
               <div className="space-y-4">
                 <FormField
                   control={form.control}
@@ -502,64 +398,26 @@ export default function EditShareLinkPage() {
                           value={emailSearch}
                           onChange={(e) => setEmailSearch(e.target.value)}
                         />
-                        <Button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              if (!emailSearch) {
-                                setUsers([]);
-                                return;
-                              }
-                              const resp = await fetch(
-                                `/api/users/search?email=${encodeURIComponent(
-                                  emailSearch,
-                                )}`,
-                                {
-                                  headers: {
-                                    "x-internal-secret": process.env
-                                      .NEXT_PUBLIC_INTERNAL_API_SECRET as string,
-                                  },
-                                },
-                              );
-                              if (!resp.ok)
-                                throw new Error("Failed to fetch users");
-                              const data = await resp.json();
-                              const norm = (data.users ?? []).map(normaliseUser);
-                              setUsers((prev) =>
-                                uniqBy([...prev, ...norm], (u) => u.userId),
-                              );
-                              if (!norm.length) toast.info("No users found");
-                            } catch (err) {
-                              console.error(err);
-                              toast.error("Failed to load users");
-                            }
-                          }}
-                        >
+                        <Button type="button" onClick={handleEmailSearch}>
                           Search
                         </Button>
                       </div>
-
                       {users.length > 0 && (
                         <FormControl>
                           <Select
                             isMulti
-                            options={users.map((u) => ({
-                              value: u.userId,
-                              label: u.name
-                                ? `${u.name} (${u.email})`
-                                : u.email,
+                            options={users.map((user) => ({
+                              value: user.id,
+                              label: user.name ? `${user.name} (${user.email})` : user.email,
                             }))}
                             value={users
-                              .filter((u) => field.value.includes(u.userId))
-                              .map((u) => ({
-                                value: u.userId,
-                                label: u.name
-                                  ? `${u.name} (${u.email})`
-                                  : u.email,
+                              .filter((user) => field.value.includes(user.id))
+                              .map((user) => ({
+                                value: user.id,
+                                label: user.name ? `${user.name} (${user.email})` : user.email,
                               }))}
-                            /* -------- recipients remove still works  */
-                            onChange={(sel) =>
-                              field.onChange(sel.map((o) => o.value))
+                            onChange={(selected) =>
+                              field.onChange(selected.map((option) => option.value))
                             }
                             placeholder="Select recipients"
                           />
@@ -570,7 +428,6 @@ export default function EditShareLinkPage() {
                   )}
                 />
               </div>
-
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <FormLabel>Products</FormLabel>
@@ -579,82 +436,52 @@ export default function EditShareLinkPage() {
                       type="button"
                       variant="outline"
                       onClick={selectAllProducts}
-                      disabled={!stock.length}
+                      disabled={stock.length === 0}
                     >
                       Select All Products
                     </Button>
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => {
-                        const idx = fields.length;
-                        append({ productId: "", variationId: null, cost: {} });
-                        setSelectedCountries((prev) => ({
-                          ...prev,
-                          [idx]: [...countries],
-                        }));
-                      }}
-                      disabled={!stock.length}
+                      onClick={addProduct}
+                      disabled={stock.length === 0}
                     >
-                      <Plus className="h-4 w-4 mr-2" /> Add Product
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Product
                     </Button>
                   </div>
                 </div>
-
-                {/* ---------------- Table -------------------------------- */}
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Product</TableHead>
                       <TableHead>Variation</TableHead>
-                      <TableHead>Costs &amp; Stock by Country</TableHead>
+                      <TableHead>Costs and Stock by Country</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
-
                   <TableBody>
-                    {fields.map((f, idx) => {
-                      const selectedProdId = form.watch(
-                        `products.${idx}.productId`,
-                      );
-                      const selectedVarId = form.watch(
-                        `products.${idx}.variationId`,
-                      );
-
-                      const selectedProd = stock.find(
-                        (s) => s.productId === selectedProdId,
-                      );
-                      const isVariable =
-                        selectedProd?.productType === "variable";
-
+                    {fields.map((field, index) => {
+                      const selectedProductId = form.watch(`products.${index}.productId`);
+                      const selectedVariationId = form.watch(`products.${index}.variationId`);
+                      const selectedProduct = stock.find((s) => s.productId === selectedProductId);
+                      const isVariable = selectedProduct?.productType === "variable";
                       const variations = isVariable
-                        ? stock.filter(
-                            (s) =>
-                              s.productId === selectedProdId && s.variationId,
-                          )
+                        ? stock.filter((s) => s.productId === selectedProductId && s.variationId)
                         : [];
-
-                      /* cost / stock helpers ------------------------------ */
-                      const stockKey = `${selectedProdId}-${
-                        selectedVarId ?? "none"
-                      }`;
-                      const prodStock = stockByProduct[stockKey] || {};
-
-                      const prodCountries =
-                        selectedCountries[idx] || countries;
+                      const stockKey = `${selectedProductId}-${selectedVariationId || "none"}`;
+                      const productStock = stockByProduct[stockKey] || {};
+                      const productCountries = selectedCountries[index] || countries;
                       const availableCountries = countries.filter(
-                        (c) => !prodCountries.includes(c),
+                        (c) => !productCountries.includes(c)
                       );
-
-                      const baseTitle = stripVariation(selectedProd?.title ?? "");
 
                       return (
-                        <TableRow key={f.id}>
-                          {/* ---------------- product select -------------- */}
+                        <TableRow key={field.id}>
                           <TableCell>
                             <FormField
                               control={form.control}
-                              name={`products.${idx}.productId`}
+                              name={`products.${index}.productId`}
                               render={({ field }) => (
                                 <FormItem>
                                   <FormControl>
@@ -665,43 +492,38 @@ export default function EditShareLinkPage() {
                                           value: "",
                                           disabled: true,
                                         },
-                                        ...Object.entries(groupedStock).map(
-                                          ([cat, items]) => ({
-                                            label: cat,
-                                            options: uniqueParents(items).map(
-                                              (s) => ({
-                                                value: s.productId,
-                                                label: stripVariation(s.title),
-                                              }),
-                                            ),
-                                          }),
-                                        ),
+                                        ...Object.entries(groupedStock).map(([category, items]) => ({
+                                          label: category,
+                                          options: items
+                                            .filter(
+                                              (s, i, self) =>
+                                                self.findIndex((x) => x.productId === s.productId) === i
+                                            )
+                                            .map((s) => ({
+                                              value: s.productId,
+                                              label: s.title,
+                                            })),
+                                        })),
                                       ]}
                                       value={
                                         field.value
                                           ? {
                                               value: field.value,
-                                              label: baseTitle,
+                                              label: stock.find((s) => s.productId === field.value)?.title,
                                             }
                                           : null
                                       }
-                                      onChange={(opt) => {
-                                        field.onChange(opt?.value || "");
-                                        form.setValue(
-                                          `products.${idx}.variationId`,
-                                          null,
-                                        );
-                                        form.setValue(
-                                          `products.${idx}.cost`,
-                                          {},
-                                        );
+                                      onChange={(option) => {
+                                        field.onChange(option?.value || "");
+                                        form.setValue(`products.${index}.variationId`, null);
+                                        form.setValue(`products.${index}.cost`, {});
                                         setSelectedCountries((prev) => ({
                                           ...prev,
-                                          [idx]: [...countries],
+                                          [index]: [...countries],
                                         }));
                                       }}
                                       placeholder="Select product"
-                                      isDisabled={!stock.length}
+                                      isDisabled={stock.length === 0}
                                     />
                                   </FormControl>
                                   <FormMessage />
@@ -709,69 +531,38 @@ export default function EditShareLinkPage() {
                               )}
                             />
                           </TableCell>
-
-                          {/* ---------------- variation select ------------ */}
                           <TableCell>
                             {isVariable && (
                               <FormField
                                 control={form.control}
-                                name={`products.${idx}.variationId`}
+                                name={`products.${index}.variationId`}
                                 render={({ field }) => (
                                   <FormItem>
                                     <FormControl>
                                       <Select
-                                        options={variations.map((v) => {
-                                          const label =
-                                            v.title.includes(" - ")
-                                              ? v.title
-                                                  .split(" - ")
-                                                  .slice(1)
-                                                  .join(" - ")
-                                                  .trim()
-                                              : v.title;
-                                          return {
-                                            value: v.variationId!,
-                                            label,
-                                          };
-                                        })}
+                                        options={variations.map((v) => ({
+                                          value: v.variationId!,
+                                          label: v.title,
+                                        }))}
                                         value={
                                           field.value
-                                            ? (() => {
-                                                const v = variations.find(
-                                                  (x) =>
-                                                    x.variationId ===
-                                                    field.value,
-                                                );
-                                                if (!v) return null;
-                                                const label = v.title.includes(
-                                                  " - ",
-                                                )
-                                                  ? v.title
-                                                      .split(" - ")
-                                                      .slice(1)
-                                                      .join(" - ")
-                                                      .trim()
-                                                  : v.title;
-                                                return {
-                                                  value: v.variationId!,
-                                                  label,
-                                                };
-                                              })()
+                                            ? {
+                                                value: field.value,
+                                                label: variations.find((v) => v.variationId === field.value)
+                                                  ?.title,
+                                              }
                                             : null
                                         }
-                                        onChange={(opt) => {
-                                          field.onChange(opt?.value || null);
-                                          form.setValue(
-                                            `products.${idx}.cost`,
-                                            {},
-                                          );
+                                        onChange={(option) => {
+                                          field.onChange(option?.value || null);
+                                          form.setValue(`products.${index}.cost`, {});
                                           setSelectedCountries((prev) => ({
                                             ...prev,
-                                            [idx]: [...countries],
+                                            [index]: [...countries],
                                           }));
                                         }}
                                         placeholder="Select variation"
-                                        isDisabled={!selectedProdId}
+                                        isDisabled={!selectedProductId}
                                       />
                                     </FormControl>
                                     <FormMessage />
@@ -780,73 +571,48 @@ export default function EditShareLinkPage() {
                               />
                             )}
                           </TableCell>
-
-                          {/* ---------------- cost / stock inputs -------- */}
                           <TableCell>
                             <FormField
                               control={form.control}
-                              name={`products.${idx}.cost`}
+                              name={`products.${index}.cost`}
                               render={() => (
                                 <FormItem>
                                   <div className="space-y-2">
-                                    {prodCountries.map((c) => {
-                                      const baseCost =
-                                        selectedProd?.cost[c] ?? 0;
-                                      const qty = prodStock[c] ?? 0;
+                                    {productCountries.map((country) => {
+                                      const baseCost = selectedProduct?.cost[country] || 0;
+                                      const stockQuantity = productStock[country] || 0;
                                       return (
-                                        <div
-                                          key={c}
-                                          className="flex items-center gap-2"
-                                        >
+                                        <div key={country} className="flex items-center gap-2">
                                           <div className="flex-1">
                                             <FormField
                                               control={form.control}
-                                              name={`products.${idx}.cost.${c}`}
+                                              name={`products.${index}.cost.${country}`}
                                               render={({ field }) => (
                                                 <FormItem>
                                                   <FormLabel className="flex items-center">
                                                     <ReactCountryFlag
-                                                      countryCode={c}
+                                                      countryCode={country}
                                                       svg
-                                                      style={{
-                                                        width: "1em",
-                                                        height: "1em",
-                                                        marginRight: "8px",
-                                                      }}
+                                                      style={{ width: "1em", height: "1em", marginRight: "8px" }}
                                                     />
-                                                    {countriesLib.getName(
-                                                      c,
-                                                      "en",
-                                                    ) || c}{" "}
-                                                    (Base {baseCost}, Stock{" "}
-                                                    {qty})
+                                                    {countriesLib.getName(country, "en") || country} (Base: {baseCost}, Stock: {stockQuantity})
                                                   </FormLabel>
                                                   <FormControl>
                                                     <Input
                                                       type="number"
                                                       min="0"
                                                       step="0.01"
-                                                      placeholder={`Cost for ${c}`}
-                                                      value={
-                                                        field.value !==
-                                                        undefined
-                                                          ? field.value
-                                                          : ""
-                                                      }
+                                                      placeholder={`Enter cost for ${country}`}
+                                                      value={field.value !== undefined ? field.value : ""}
                                                       onChange={(e) => {
                                                         field.onChange(
-                                                          e.target.value
-                                                            ? Number(
-                                                                e.target.value,
-                                                              )
-                                                            : undefined,
+                                                          e.target.value ? Number(e.target.value) : undefined
                                                         );
-                                                        if (e.target.value)
-                                                          form.clearErrors(
-                                                            `products.${idx}.cost`,
-                                                          );
+                                                        if (e.target.value) {
+                                                          form.clearErrors(`products.${index}.cost`);
+                                                        }
                                                       }}
-                                                      disabled={!selectedProdId}
+                                                      disabled={!selectedProductId}
                                                     />
                                                   </FormControl>
                                                   <FormMessage />
@@ -858,38 +624,27 @@ export default function EditShareLinkPage() {
                                             type="button"
                                             variant="ghost"
                                             size="sm"
-                                            onClick={() =>
-                                              removeCountry(idx, c)
-                                            }
-                                            disabled={
-                                              prodCountries.length <= 1 &&
-                                              !availableCountries.length
-                                            }
+                                            onClick={() => removeCountry(index, country)}
+                                            disabled={productCountries.length <= 1 && !availableCountries.length}
                                           >
                                             <X className="h-4 w-4" />
                                           </Button>
                                         </div>
                                       );
                                     })}
-
                                     {availableCountries.length > 0 && (
                                       <FormItem>
                                         <FormLabel>Add Country</FormLabel>
                                         <Select
-                                          options={availableCountries.map(
-                                            (c) => ({
-                                              value: c,
-                                              label:
-                                                countriesLib.getName(c, "en") ??
-                                                c,
-                                            }),
-                                          )}
-                                          onChange={(opt) => {
-                                            if (opt)
-                                              addCountry(idx, opt.value);
+                                          options={availableCountries.map((country) => ({
+                                            value: country,
+                                            label: countriesLib.getName(country, "en") || country,
+                                          }))}
+                                          onChange={(option) => {
+                                            if (option) addCountry(index, option.value);
                                           }}
-                                          placeholder="Select a country"
-                                          isDisabled={!selectedProdId}
+                                          placeholder="Select a country to add"
+                                          isDisabled={!selectedProductId}
                                         />
                                       </FormItem>
                                     )}
@@ -899,19 +654,17 @@ export default function EditShareLinkPage() {
                               )}
                             />
                           </TableCell>
-
-                          {/* ---------------- actions -------------------- */}
                           <TableCell className="text-right">
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
                               onClick={() => {
-                                remove(idx);
+                                remove(index);
                                 setSelectedCountries((prev) => {
-                                  const tmp = { ...prev };
-                                  delete tmp[idx];
-                                  return tmp;
+                                  const newState = { ...prev };
+                                  delete newState[index];
+                                  return newState;
                                 });
                               }}
                             >
@@ -924,16 +677,11 @@ export default function EditShareLinkPage() {
                   </TableBody>
                 </Table>
               </div>
-
-              {/* ---------------- submit / cancel ------------------------- */}
               <div className="flex gap-4">
-                <Button type="submit" disabled={!stock.length}>
+                <Button type="submit" disabled={stock.length === 0}>
                   Update Share Link
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => router.push("/warehouses/share-links")}
-                >
+                <Button variant="outline" onClick={() => router.push("/warehouses/share-links")}>
                   Cancel
                 </Button>
               </div>
