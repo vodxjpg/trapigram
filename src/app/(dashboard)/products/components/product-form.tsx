@@ -352,21 +352,25 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
       } else if (productType === "variable" && variations.length > 0) {
         for (const variation of variations) {
           warehouseStock.push(
-            ...transformStockToWarehouseStock(variation.stock || {}, productId || uuidv4(), variation.id)
+            ...transformStockToWarehouseStock(
+              variation.stock || {},
+              productId || uuidv4(),
+              variation.id,
+            ),
           )
         }
       }
 
       const payload = {
         ...values,
-        prices: productType === "simple" ? prices : undefined,
-        cost: productType === "simple" ? costs : undefined,
-        warehouseStock: warehouseStock.length > 0 ? warehouseStock : undefined,
+        prices:        productType === "simple" ? prices : undefined,
+        cost:          productType === "simple" ? costs  : undefined,
+        warehouseStock: warehouseStock.length ? warehouseStock : undefined,
         attributes,
-        variations: productType === "variable" ? variations : [],
+        variations:    productType === "variable" ? variations : [],
       }
 
-      const url = productId ? `/api/products/${productId}` : "/api/products"
+      const url    = productId ? `/api/products/${productId}` : "/api/products"
       const method = productId ? "PATCH" : "POST"
 
       const res = await fetch(url, {
@@ -375,19 +379,29 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
         body: JSON.stringify(payload),
       })
 
-      if (!res.ok) throw new Error()
-      const { product } = await res.json()
+      const data = await res.json().catch(() => ({}))
 
-      // --------------------------------------------------
-      //  SWR cache updates
-      // --------------------------------------------------
+      if (!res.ok) {
+        const msg =
+          typeof data?.error === "string"
+            ? data.error
+            : `Failed to ${productId ? "update" : "create"} product`
+        toast.error(msg)
+        return
+      }
+
+      const { product } = data
+
+      /* --------------------------------------------------
+         SWR cache updates
+      -------------------------------------------------- */
       if (productId) swrMutate(`/api/products/${productId}`, product, false)
       swrMutate((key: string) => key.startsWith("/api/products?"))
 
       toast.success(`Product ${productId ? "updated" : "created"} successfully`)
       router.push("/products")
       router.refresh()
-    } catch {
+    } catch (err) {
       toast.error(`Failed to ${productId ? "update" : "create"} product`)
     } finally {
       setIsSubmitting(false)
