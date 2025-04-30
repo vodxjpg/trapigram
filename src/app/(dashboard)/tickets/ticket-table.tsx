@@ -283,7 +283,7 @@ export function TicketsTable() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    {new Date(t.createdAt).toLocaleString(undefined, {
+                    {new Date(t.createdAt).toLocaleString("en-US", {
                       dateStyle: "medium",
                       timeStyle: "short",
                     })}

@@ -396,6 +396,50 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
+  carts: {
+    id: string;
+    clientId: string;
+    country: string;
+    couponCode: string | null;
+    shippingMethod: string;
+    cartHash: string;
+    cartUpdatedHash: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  cartProducts: {
+    id: string;
+    cartId: string;
+    productId: string;
+    quantity: number;
+    unitPrice: number;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  orders: {
+    id: string;
+    clientId: string;
+    cartId: string;
+    country: string;
+    status: string;
+    paymentMethod: string;
+    orderKey: string;
+    cartHash: string;
+    shippingTotal: number;
+    discountTotal: number;
+    totalAmount: number;
+    couponCode: string;
+    shippingService: string;
+    dateCreated: Date;
+    datePaid: Date;
+    dateCompleted: Date;
+    dateCancelled: Date;
+    createdAt: Date;
+    updatedAt: Date;
+  }
 }
 
 const pool = new Pool({
