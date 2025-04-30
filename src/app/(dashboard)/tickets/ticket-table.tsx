@@ -1,19 +1,19 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
+  Search,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  Search,
+  MoreVertical,
 } from "lucide-react";
-import { toast } from "sonner";
-
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -29,32 +29,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { toast } from "sonner";
 
-/* -------------------------------------------------------------------- */
-/* 1. Types & helper                                                    */
-/* -------------------------------------------------------------------- */
+// 🛠️ We import ReactSelect for the multi‐select UI
+import ReactSelect from "react-select";
+
 type Ticket = {
-  id: string | number;
+  id: string;
   title: string;
   priority: "low" | "medium" | "high";
   status: "open" | "in-progress" | "closed";
-  createdAt: string; // ISO UTC
+  createdAt: string;
 };
 
-const fmtLocal = (iso: string | null) =>
-  iso
-    ? new Date(iso).toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      })
-    : "—";
-
-/* -------------------------------------------------------------------- */
-/* 2. Component                                                         */
-/* -------------------------------------------------------------------- */
 export function TicketsTable() {
-  /* state */
+  const router = useRouter();
+
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  // map ticketId → array of tag descriptions
+  const [tagsMap, setTagsMap] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
 
   const [totalPages, setTotalPages] = useState(1);
@@ -62,7 +55,43 @@ export function TicketsTable() {
   const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState("");
 
-  /* fetch tickets from your new endpoint */
+  // 🆕 all available tags for filter dropdown
+  const [allTags, setAllTags] = useState<{ value: string; label: string }[]>(
+    []
+  );
+  // 🆕 which tags the user has selected to filter by
+  const [selectedTags, setSelectedTags] = useState<
+    { value: string; label: string }[]
+  >([]);
+  const [priorityFilter, setPriorityFilter] = useState<
+    "all" | "low" | "medium" | "high"
+  >("all");
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "open" | "in-progress" | "closed"
+  >("all");
+
+  // fetch the list of all tags once
+  useEffect(() => {
+    fetch("/api/tickets/tags")
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Failed to fetch tags");
+        return await res.json();
+      })
+      .then(({ tags }) => {
+        console.log(tags);
+        setAllTags(
+          tags.map((t: { description: string }) => ({
+            value: t.description,
+            label: t.description,
+          }))
+        );
+      })
+      .catch(() => {
+        toast.error("Could not load tag filters");
+      });
+  }, []);
+
+  // fetch tickets + their tags, whenever page/search changes
   const fetchTickets = async () => {
     setLoading(true);
     try {
@@ -71,29 +100,52 @@ export function TicketsTable() {
         pageSize: String(pageSize),
         search,
       });
-      const res = await fetch(`/api/tickets?${qs.toString()}`);
+      const res = await fetch(`/api/tickets?${qs}`);
       if (!res.ok) throw new Error();
       const { tickets, totalPages, currentPage: cur } = await res.json();
       setTickets(tickets);
       setTotalPages(totalPages);
       setCurrentPage(cur);
+
+      // then fetch each ticket's tags
+      const pairs = await Promise.all(
+        tickets.map(async (t: Ticket) => {
+          const r = await fetch(`/api/tickets/${t.id}/tags`);
+          if (!r.ok) throw new Error();
+          const { tags } = await r.json();
+          return [t.id, tags.map((tg: any) => tg.description)] as const;
+        })
+      );
+      setTagsMap(Object.fromEntries(pairs));
     } catch {
-      toast.error("Failed to load tickets");
+      toast.error("Failed to load tickets or tags");
     } finally {
       setLoading(false);
     }
   };
+
   useEffect(() => {
     fetchTickets();
   }, [currentPage, pageSize, search]);
 
-  /* ------------------------------------------------------------------ */
-  /* 3. Render                                                          */
-  /* ------------------------------------------------------------------ */
+  // filter tickets client‐side by selectedTags
+  const filtered = tickets.filter((t) => {
+    // priority filter
+    if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
+    // status filter
+    if (statusFilter !== "all" && t.status !== statusFilter) return false;
+    // tag filter
+    if (selectedTags.length) {
+      const myTags = tagsMap[t.id] || [];
+      if (!selectedTags.every((st) => myTags.includes(st.value))) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="space-y-4">
-      {/* header with search */}
-      <div className="flex flex-col sm:flex-row justify-between gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+        {/* search form stays on the left */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -114,14 +166,62 @@ export function TicketsTable() {
           </div>
           <Button type="submit">Search</Button>
         </form>
+
+        {/* all your filters grouped on the right */}
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          {/* tags multi-select */}
+          <div className="w-full sm:w-60">
+            <ReactSelect
+              isMulti
+              options={allTags}
+              value={selectedTags}
+              onChange={(v) => setSelectedTags(v as any)}
+              placeholder="Filter by tags…"
+            />
+          </div>
+
+          {/* priority filter */}
+          <Select
+            value={priorityFilter}
+            onValueChange={setPriorityFilter}
+            className="w-[120px]"
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Any Priority" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All priorities</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* status filter */}
+          <Select
+            value={statusFilter}
+            onValueChange={setStatusFilter}
+            className="w-[120px]"
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Any Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="open">Open</SelectItem>
+              <SelectItem value="in-progress">In Progress</SelectItem>
+              <SelectItem value="closed">Closed</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      {/* table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Title</TableHead>
+              <TableHead>Tags</TableHead>
               <TableHead>Priority</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created</TableHead>
@@ -131,27 +231,63 @@ export function TicketsTable() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
+                <TableCell colSpan={6} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
-            ) : tickets.length === 0 ? (
+            ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
-                  No tickets found.
+                <TableCell colSpan={6} className="h-24 text-center">
+                  No tickets match your filters.
                 </TableCell>
               </TableRow>
             ) : (
-              tickets.map((t) => (
+              filtered.map((t) => (
                 <TableRow key={t.id}>
-                  <TableCell className="font-medium">{t.title}</TableCell>
+                  <TableCell>{t.title}</TableCell>
                   <TableCell>
-                    <PriorityBadge priority={t.priority} />
+                    {(tagsMap[t.id] || []).map((desc) => (
+                      <Badge key={desc} variant="outline" className="mr-1">
+                        {desc}
+                      </Badge>
+                    ))}
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={t.status} />
+                    <Badge
+                      variant="outline"
+                      className={
+                        {
+                          low: "bg-green-100 text-green-800",
+                          medium: "bg-yellow-100 text-yellow-800",
+                          high: "bg-red-100 text-red-800",
+                        }[t.priority]
+                      }
+                    >
+                      {t.priority.charAt(0).toUpperCase() + t.priority.slice(1)}
+                    </Badge>
                   </TableCell>
-                  <TableCell>{fmtLocal(t.createdAt)}</TableCell>
+                  <TableCell>
+                    <Badge
+                      variant="outline"
+                      className={
+                        {
+                          open: "bg-blue-100 text-blue-800",
+                          "in-progress": "bg-purple-100 text-purple-800",
+                          closed: "bg-gray-100 text-gray-800",
+                        }[t.status]
+                      }
+                    >
+                      {t.status === "in-progress"
+                        ? "In Progress"
+                        : t.status.charAt(0).toUpperCase() + t.status.slice(1)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {new Date(t.createdAt).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </TableCell>
                   <TableCell className="text-right">
                     <Button asChild size="sm">
                       <Link href={`/tickets/${t.id}`}>View</Link>
@@ -179,7 +315,7 @@ export function TicketsTable() {
             }}
           >
             <SelectTrigger className="h-8 w-[70px]">
-              <SelectValue />
+              <SelectValue placeholder={pageSize} />
             </SelectTrigger>
             <SelectContent side="top">
               {[5, 10, 20, 50, 100].map((n) => (
@@ -224,34 +360,5 @@ export function TicketsTable() {
         </div>
       </div>
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* 4. Badge helpers                                                   */
-/* ------------------------------------------------------------------ */
-function PriorityBadge({ priority }: { priority: "low" | "medium" | "high" }) {
-  const variants = {
-    low: "bg-green-100 text-green-800 hover:bg-green-100",
-    medium: "bg-yellow-100 text-yellow-800 hover:bg-yellow-100",
-    high: "bg-red-100 text-red-800 hover:bg-red-100",
-  };
-  return (
-    <Badge className={variants[priority]} variant="outline">
-      {priority.charAt(0).toUpperCase() + priority.slice(1)}
-    </Badge>
-  );
-}
-
-function StatusBadge({ status }: { status: "open" | "in-progress" | "closed" }) {
-  const variants = {
-    open: "bg-blue-100 text-blue-800 hover:bg-blue-100",
-    "in-progress": "bg-purple-100 text-purple-800 hover:bg-purple-100",
-    closed: "bg-gray-100 text-gray-800 hover:bg-gray-100",
-  };
-  return (
-    <Badge className={variants[status]} variant="outline">
-      {status === "in-progress" ? "In Progress" : status.charAt(0).toUpperCase() + status.slice(1)}
-    </Badge>
   );
 }

@@ -81,6 +81,7 @@ export async function GET(req: NextRequest) {
     const totalPages = Math.ceil(totalRows / pageSize);
 
     const tickets = (await pool.query(query, vals)).rows;
+    console.log(tickets[0].id)
 
     return NextResponse.json({ tickets, totalPages, currentPage: page });
   } catch (err) {
