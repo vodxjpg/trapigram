@@ -108,18 +108,40 @@ interface DB {
     updatedAt: Date;
   };
 
+  /* ──────────────────────────────────────────────────────────────── */
   affiliateProducts: {
-    productId: string;
-    pointsPrice: Record<string, number>;
-    createdAt: Date;
-    updatedAt: Date;
+    id:              string;
+    organizationId:  string;
+    tenantId:        string;
+    title:           string;
+    description:     string | null;
+    image:           string | null;
+    sku:             string;
+    status:          "published" | "draft";
+    productType:     "simple" | "variable";
+    /* points – country ➜ integer (sale nullable, mirrors salePrice) */
+    regularPoints:   Record<string, number>;
+    salePoints:      Record<string, number> | null;
+    cost:            Record<string, number>;
+    allowBackorders: boolean;
+    manageStock:     boolean;
+    stockStatus:     "managed" | "unmanaged";
+    createdAt:       Date;
+    updatedAt:       Date;
   };
 
-  affiliateVariationPoints: {
-    variationId: string;
-    pointsPrice: Record<string, number>;
-    createdAt: Date;
-    updatedAt: Date;
+  affiliateProductVariations: {
+    id:             string;
+    productId:      string;                       /* ↺ affiliateProducts.id */
+    attributes:     Record<string, string>;
+    sku:            string;
+    regularPoints:  Record<string, number>;
+    salePoints:     Record<string, number> | null;
+    cost:           Record<string, number>;
+    image:          string | null;
+    stock:          Record<string, Record<string, number>> | null;
+    createdAt:      Date;
+    updatedAt:      Date;
   };
 
   coupons: {
@@ -364,7 +386,8 @@ interface DB {
   warehouseStock: {
     id: string;
     warehouseId: string;
-    productId: string;
+    productId: string | null;            // <‑‑ allow NULL
+    affiliateProductId: string | null;   // <‑‑ NEW
     variationId: string | null;
     country: string;
     quantity: number;

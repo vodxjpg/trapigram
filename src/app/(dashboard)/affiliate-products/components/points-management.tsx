@@ -1,12 +1,13 @@
-'use client'
+"use client"
 
-import { useState } from 'react'
-import { ChevronDown, ChevronUp } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useState } from "react"
+import { ChevronDown, ChevronUp } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
-interface PointsMap { [country: string]: number }
+interface CountryPoints { regular: number; sale: number | null }
+interface PointsMap { [country: string]: CountryPoints }
 
 interface Props {
   title:      string
@@ -17,7 +18,12 @@ interface Props {
 
 export function PointsManagement({ title, countries, pointsData = {}, onChange }: Props) {
   const [open, setOpen] = useState(true)
-  const update = (c: string, val: number) => onChange({ ...pointsData, [c]: val })
+
+  const update = (c: string, patch: Partial<CountryPoints>) =>
+    onChange({
+      ...pointsData,
+      [c]: { regular: 0, sale: null, ...(pointsData[c] || {}), ...patch },
+    })
 
   return (
     <Card>
@@ -35,7 +41,8 @@ export function PointsManagement({ title, countries, pointsData = {}, onChange }
             <TableHeader>
               <TableRow>
                 <TableHead>Country</TableHead>
-                <TableHead className="w-[140px] text-right">Points</TableHead>
+                <TableHead className="w-[130px] text-right">Regular</TableHead>
+                <TableHead className="w-[130px] text-right">Sale&nbsp;(opt.)</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -46,9 +53,24 @@ export function PointsManagement({ title, countries, pointsData = {}, onChange }
                     <Input
                       type="number"
                       min="0"
-                      value={pointsData[c] ?? 0}
+                      value={pointsData[c]?.regular ?? 0}
                       onChange={e =>
-                        update(c, Number.parseInt(e.target.value || '0', 10))
+                        update(c, { regular: Number.parseInt(e.target.value) || 0 })
+                      }
+                    />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={pointsData[c]?.sale ?? ""}
+                      onChange={e =>
+                        update(c, {
+                          sale:
+                            e.target.value.trim() === ""
+                              ? null
+                              : Number.parseInt(e.target.value) || 0,
+                        })
                       }
                     />
                   </TableCell>

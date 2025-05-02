@@ -1,34 +1,49 @@
-"use client"
+// src/app/(dashboard)/affiliate-products/components/affiliate-product-form.tsx
+"use client";
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import { z } from "zod"
-import { zodResolver } from "@hookform/resolvers/zod"
-import { useForm } from "react-hook-form"
-import { v4 as uuidv4 } from "uuid"
-import { Loader2 } from "lucide-react"
-import dynamic from "next/dynamic"
-import { mutate as swrMutate } from "swr"
-import Image from "next/image"
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
+import { v4 as uuidv4 } from "uuid";
+import Image from "next/image";
+import dynamic from "next/dynamic";
+import { Loader2 } from "lucide-react";
+import { mutate as swrMutate } from "swr";
+import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/button";
 import {
-  Form, FormControl, FormDescription, FormField, FormItem,
-  FormLabel, FormMessage,
-} from "@/components/ui/form"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { toast } from "sonner"
-import { PointsManagement } from "./points-management"
-import { StockManagement } from "@/app/(dashboard)/products/components/stock-management"
-import type { Warehouse } from "@/types/product"
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 
-/* rich‑text (same config) */
-const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false })
-import "react-quill-new/dist/quill.snow.css"
+import type { Warehouse, Variation } from "@/types/product";
+import { StockManagement } from "@/app/(dashboard)/products/components/stock-management";
+import { PointsManagement } from "./points-management";
+import { ProductAttributes } from "@/app/(dashboard)/products/components/product-attributes";
+import { ProductVariations } from "@/app/(dashboard)/products/components/product-variations";
+
+/* ──────────────────────────────────────────────────────────── */
+/* Rich‑text editor                                             */
+/* ──────────────────────────────────────────────────────────── */
+const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
+import "react-quill-new/dist/quill.snow.css";
 const quillModules = {
   toolbar: [
     [{ header: [1, 2, false] }],
@@ -37,7 +52,7 @@ const quillModules = {
     ["link", "image"],
     ["clean"],
   ],
-}
+};
 const quillFormats = [
   "header",
   "bold",
@@ -49,11 +64,21 @@ const quillFormats = [
   "indent",
   "link",
   "image",
-]
+];
 
-/* validation */
-const pointsMap = z.record(z.string(), z.number().min(0))
-const schema = z.object({
+/* ──────────────────────────────────────────────────────────── */
+/* Types & Zod                                                  */
+/* ──────────────────────────────────────────────────────────── */
+type CountryPts = { regular: number; sale: number | null };
+type PointsMap = Record<string, CountryPts>;
+type CostMap = Record<string, number>;
+type VariationExt = Variation & {
+  prices: PointsMap;              // <-- re‑use ‘prices’ as point‑map
+  cost:   CostMap;
+};
+
+const ptsObj   = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
+const productSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   image: z.string().nullable().optional(),
@@ -62,61 +87,76 @@ const schema = z.object({
   productType: z.enum(["simple", "variable"]),
   allowBackorders: z.boolean(),
   manageStock: z.boolean(),
-  pointsPrice: pointsMap,
-})
-type FormVals = z.infer<typeof schema>
+  pointsPrice: z.record(z.string(), ptsObj),
+});
+type FormVals = z.infer<typeof productSchema>;
 
-/* props */
+/* ──────────────────────────────────────────────────────────── */
+/* helpers                                                      */
+/* ──────────────────────────────────────────────────────────── */
+const blankPtsFor = (cc: string[]): PointsMap =>
+  cc.reduce<PointsMap>((acc, c) => {
+    acc[c] = { regular: 0, sale: null };
+    return acc;
+  }, {});
+
+/* ──────────────────────────────────────────────────────────── */
+/* component                                                    */
+/* ──────────────────────────────────────────────────────────── */
 interface Props {
-  productId?: string
-  initialData?: Partial<FormVals>
+  productId?: string;
+  initialData?: Partial<FormVals> & {
+    attributes?: any[];
+    variations?: VariationExt[];
+  };
 }
-
 export function AffiliateProductForm({ productId, initialData }: Props) {
-  const router = useRouter()
+  const router = useRouter();
 
-  /* dynamic org data */
-  const [countries, setCountries] = useState<string[]>([])
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
-  const [stockData, setStockData] = useState<Record<string, Record<string, number>>>({})
+  /* ───── dynamic org data ─────────────────────────────────── */
+  const [countries, setCountries]   = useState<string[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [stockData, setStockData]   = useState<Record<string, Record<string, number>>>(
+    {},
+  );
 
+  /* attributes & variations */
+  const [attributes, setAttributes] = useState(initialData?.attributes || []);
+  const [variations, setVariations] = useState<VariationExt[]>(
+    (initialData?.variations as VariationExt[]) || [],
+  );
+
+  /* fetch org countries + warehouses once -------------------- */
   useEffect(() => {
-    ;(async () => {
-      const res = await fetch("/api/organizations/countries")
-      const { countries } = await res.json()
-      const list = Array.isArray(countries) ? countries : JSON.parse(countries)
-      setCountries(list)
+    (async () => {
+      /* countries */
+      const cRes = await fetch("/api/organizations/countries");
+      const cJson = await cRes.json();
+      const cc: string[] = Array.isArray(cJson.countries)
+        ? cJson.countries
+        : JSON.parse(cJson.countries);
+      setCountries(cc);
 
-      const whRes = await fetch("/api/warehouses")
-      const { warehouses: wh } = await whRes.json()
-      setWarehouses(wh)
+      /* warehouses */
+      const wRes = await fetch("/api/warehouses");
+      const { warehouses: wh } = await wRes.json();
+      setWarehouses(wh);
 
-      /* initialise blank stock */
-      const blank: Record<string, Record<string, number>> = {}
+      /* blank stock object */
+      const blank: Record<string, Record<string, number>> = {};
       wh.forEach((w: Warehouse) => {
-        blank[w.id] = {}
-        w.countries.forEach((c: string) => (blank[w.id][c] = 0))
-      })
-      setStockData(blank)
-    })()
-  }, [])
+        blank[w.id] = {};
+        w.countries.forEach((c) => (blank[w.id][c] = 0));
+      });
+      setStockData(blank);
+    })();
+  }, []);
 
-  /* form */
+  /* ───── RHF ------------------------------------------------- */
   const form = useForm<FormVals>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(productSchema),
     defaultValues: initialData
-      ? {
-          ...initialData,
-          title: initialData.title ?? "",
-          description: initialData.description ?? "",
-          image: initialData.image ?? null,
-          sku: initialData.sku ?? "",
-          status: initialData.status ?? "draft",
-          productType: initialData.productType ?? "simple",
-          allowBackorders: initialData.allowBackorders ?? false,
-          manageStock: initialData.manageStock ?? false,
-          pointsPrice: initialData.pointsPrice ?? {},
-        }
+      ? (initialData as any)
       : {
           title: "",
           description: "",
@@ -126,89 +166,130 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
           productType: "simple",
           allowBackorders: false,
           manageStock: false,
-          pointsPrice: {},
+          pointsPrice: blankPtsFor(countries),
         },
-  })
+  });
 
+  /* inject blank map after countries load */
   useEffect(() => {
-    if (!initialData) return
-    form.reset({
-      ...initialData,
-      title: initialData.title ?? "",
-      description: initialData.description ?? "",
-      image: initialData.image ?? null,
-      sku: initialData.sku ?? "",
-      status: initialData.status ?? "draft",
-      productType: initialData.productType ?? "simple",
-      allowBackorders: initialData.allowBackorders ?? false,
-      manageStock: initialData.manageStock ?? false,
-      pointsPrice: initialData.pointsPrice ?? {},
-    })
-  }, [initialData, form])
+    if (!countries.length) return;
+    if (Object.keys(form.getValues("pointsPrice")).length) return;
+    form.setValue("pointsPrice", blankPtsFor(countries));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countries]);
 
-  const productType = form.watch("productType")
-  const manageStock = form.watch("manageStock")
-  const [imgPreview, setImgPreview] = useState<string | null>(initialData?.image ?? null)
-  const [submitting, setSubmitting] = useState(false)
+  const productType  = form.watch("productType");
+  const manageStock  = form.watch("manageStock");
+  const ptsPrice     = form.watch("pointsPrice");
 
-  /* image upload */
+  /* img preview / submit state */
+  const [imgPreview, setImgPreview] = useState<string | null>(initialData?.image ?? null);
+  const [submitting, setSubmitting] = useState(false);
+
+  /* ───── image upload --------------------------------------- */
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const fd = new FormData()
-    fd.append("file", file)
-    const res = await fetch("/api/upload", { method: "POST", body: fd })
-    const { filePath } = await res.json()
-    setImgPreview(filePath)
-    form.setValue("image", filePath)
-  }
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    const { filePath } = await fetch("/api/upload", { method: "POST", body: fd }).then((r) =>
+      r.json(),
+    );
+    setImgPreview(filePath);
+    form.setValue("image", filePath);
+  };
 
-  /* submit */
+  /* ───── stock transform helper ----------------------------- */
+  const stockRows = () => {
+    const rows: {
+      warehouseId: string;
+      affiliateProductId: string;
+      variationId: string | null;
+      country: string;
+      quantity: number;
+    }[] = [];
+    for (const [wId, byCountry] of Object.entries(stockData))
+      for (const [c, qty] of Object.entries(byCountry))
+        if (qty > 0)
+          rows.push({
+            warehouseId: wId,
+            affiliateProductId: productId || "TEMP",
+            variationId: null,
+            country: c,
+            quantity: qty,
+          });
+    return rows;
+  };
+
+  /* ───── submit --------------------------------------------- */
   const onSubmit = async (values: FormVals) => {
-    setSubmitting(true)
+    setSubmitting(true);
     try {
-      const url = productId ? `/api/affiliate-products/${productId}` : "/api/affiliate-products"
-      const method = productId ? "PATCH" : "POST"
-      const payload = { ...values }
-      if (productType === "simple") payload.pointsPrice = values.pointsPrice
+      /* payload build */
+      const payload: any = {
+        ...values,
+        attributes,
+        variations: productType === "variable" ? variations : undefined,
+        warehouseStock: manageStock ? stockRows() : undefined,
+      };
+
+      const url    = productId ? `/api/affiliate-products/${productId}` : "/api/affiliate-products";
+      const method = productId ? "PATCH" : "POST";
+
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      })
+      });
+
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        toast.error(data.error || "Failed to save")
-        return
+        /* pretty Zod errors → string */
+        const msg =
+          Array.isArray(data?.error)
+            ? data.error.map((e: any) => e.message).join(" • ")
+            : data.error || "Failed to save";
+        toast.error(msg);
+        return;
       }
-      swrMutate((k: string) => k.startsWith("/api/affiliate-products"))
-      toast.success(productId ? "Updated" : "Created")
-      router.push("/affiliate-products")
-      router.refresh()
+
+      swrMutate((k: string) => k.startsWith("/api/affiliate-products"));
+      toast.success(productId ? "Product updated" : "Product created");
+      router.push("/affiliate-products");
+      router.refresh();
     } finally {
-      setSubmitting(false)
+      setSubmitting(false);
     }
-  }   
-  /* UI --------------------------------------------------------- */
+  };
+
+  /* ───── UI -------------------------------------------------- */
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="general">General</TabsTrigger>
             <TabsTrigger value="points">Points</TabsTrigger>
             <TabsTrigger value="inventory">Inventory</TabsTrigger>
+            <TabsTrigger value="attributes">Attributes</TabsTrigger>
+            <TabsTrigger
+              value="variations"
+              disabled={form.watch("productType") !== "variable"}
+            >
+              Variations
+            </TabsTrigger>
           </TabsList>
 
-          {/* GENERAL TAB */}
+          {/* ── GENERAL ───────────────────────────────────────── */}
           <TabsContent value="general" className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>Basic Information</CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
+                {/* image + main fields */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* image */}
+                  {/* image column */}
                   <div className="space-y-4">
                     <FormLabel>Featured Image</FormLabel>
                     {imgPreview ? (
@@ -264,17 +345,14 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Product Type</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Type" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="simple">Simple</SelectItem>
-                              <SelectItem value="variable">Variable</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          <select
+                            className="w-full border rounded-md px-3 py-2"
+                            value={field.value}
+                            onChange={field.onChange}
+                          >
+                            <option value="simple">Simple</option>
+                            <option value="variable">Variable</option>
+                          </select>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -322,17 +400,17 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
             </Card>
           </TabsContent>
 
-          {/* POINTS TAB */}
+          {/* ── POINTS ────────────────────────────────────────── */}
           <TabsContent value="points" className="space-y-6">
             <PointsManagement
               title="Points per country"
               countries={countries}
-              pointsData={form.watch("pointsPrice")}
+              pointsData={ptsPrice}
               onChange={(map) => form.setValue("pointsPrice", map)}
             />
           </TabsContent>
 
-          {/* INVENTORY TAB */}
+          {/* ── INVENTORY ─────────────────────────────────────── */}
           <TabsContent value="inventory" className="space-y-6">
             <Card>
               <CardHeader>
@@ -386,10 +464,35 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* ── ATTRIBUTES ────────────────────────────────────── */}
+          <TabsContent value="attributes" className="space-y-6">
+            <ProductAttributes
+              attributes={attributes}
+              onAttributesChange={setAttributes}
+              productType={productType}
+            />
+          </TabsContent>
+
+          {/* ── VARIATIONS ────────────────────────────────────── */}
+          <TabsContent value="variations" className="space-y-6">
+            <ProductVariations
+              attributes={attributes.filter((a: any) => a.useForVariations)}
+              variations={variations as any}
+              onVariationsChange={setVariations as any}
+              warehouses={warehouses}
+              countries={countries}
+            />
+          </TabsContent>
         </Tabs>
 
+        {/* footer buttons */}
         <div className="flex justify-end gap-4">
-          <Button type="button" variant="outline" onClick={() => router.push("/affiliate-products")}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => router.push("/affiliate-products")}
+          >
             Cancel
           </Button>
           <Button type="submit" disabled={submitting}>
@@ -399,5 +502,5 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
         </div>
       </form>
     </Form>
-  )
+  );
 }

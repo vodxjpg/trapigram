@@ -64,90 +64,113 @@ export function AffiliateProductsDataTable() {
   }
 
   /* ------------------------------------------------------------------
-     columns
-  ------------------------------------------------------------------ */
-  const columns: ColumnDef<AffiliateProduct>[] = [
-    {
-      accessorKey: "image",
-      header: "Image",
-      cell: ({ row }) => {
-        const img = row.original.image
-        const title = row.original.title
-        const initials = title
-          .split(" ")
-          .slice(0, 2)
-          .map((w) => w.charAt(0).toUpperCase())
-          .join("")
-        return (
-          <div className="relative h-10 w-10">
-            {img ? (
-              <Image
-                src={img}
-                alt={title}
-                fill
-                className="object-cover rounded-md"
-              />
-            ) : (
-              <div className="h-10 w-10 flex items-center justify-center rounded-full bg-gray-200 text-xs text-gray-600">
-                {initials}
-              </div>
-            )}
-          </div>
-        )
-      },
+   columns
+------------------------------------------------------------------ */
+const columns: ColumnDef<AffiliateProduct>[] = [
+  /* ------------ Image ------------------------------------------------ */
+  {
+    accessorKey: "image",
+    header: "Image",
+    cell: ({ row }) => {
+      const { image, title } = row.original;
+      const initials = title
+        .split(" ")
+        .slice(0, 2)
+        .map((w) => w[0].toUpperCase())
+        .join("");
+      return (
+        <div className="relative h-10 w-10">
+          {image ? (
+            <Image
+              src={image}
+              alt={title}
+              fill
+              className="object-cover rounded-md"
+            />
+          ) : (
+            <div className="h-10 w-10 flex items-center justify-center rounded-full bg-gray-200 text-xs text-gray-600">
+              {initials}
+            </div>
+          )}
+        </div>
+      );
     },
-    { accessorKey: "title", header: "Title" },
-    { accessorKey: "sku", header: "SKU" },
-    {
-      accessorKey: "pointsPrice",
-      header: "Points",
-      cell: ({ row }) => {
-        const map = row.original.pointsPrice
-        const val = map[Object.keys(map)[0] as string] ?? 0
-        return <span>{val}</span>
-      },
+  },
+
+  /* ------------ basic fields ---------------------------------------- */
+  { accessorKey: "title", header: "Title" },
+  { accessorKey: "sku",   header: "SKU"  },
+
+  /* ------------ Points (show regular / sale of 1st country) ---------- */
+  {
+    accessorKey: "pointsPrice",
+    header: "Points",
+    cell: ({ row }) => {
+      const map = row.original.pointsPrice ?? {};
+      const firstCountry = Object.keys(map)[0];
+      if (!firstCountry) return "-";
+
+      const { regular, sale } = map[firstCountry];
+      return (
+        <span>
+          {sale != null ? (
+            <>
+              <s className="text-muted-foreground">{regular}</s>&nbsp;
+              <span className="font-medium text-red-600">{sale}</span>
+            </>
+          ) : (
+            regular
+          )}
+        </span>
+      );
     },
-    {
-      accessorKey: "productType",
-      header: "Type",
-      cell: ({ row }) => (
-        <Badge variant="secondary">{row.original.productType}</Badge>
-      ),
+  },
+
+  /* ------------ Type badge ------------------------------------------ */
+  {
+    accessorKey: "productType",
+    header: "Type",
+    cell: ({ row }) => (
+      <Badge variant="secondary">{row.original.productType}</Badge>
+    ),
+  },
+
+  /* ------------ Actions --------------------------------------------- */
+  {
+    id: "actions",
+    cell: ({ row }) => {
+      const product = row.original;
+      return (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="h-8 w-8 p-0">
+              <span className="sr-only">Open menu</span>
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+            <DropdownMenuItem
+              onClick={() => router.push(`/affiliate-products/${product.id}`)}
+            >
+              <Edit className="h-4 w-4 mr-2" />
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => setDeleteId(product.id)}
+              className="text-red-600"
+            >
+              <Trash className="h-4 w-4 mr-2" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      );
     },
-    {
-      id: "actions",
-      cell: ({ row }) => {
-        const product = row.original
-        return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-8 w-8 p-0">
-                <span className="sr-only">Open menu</span>
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Actions</DropdownMenuLabel>
-              <DropdownMenuItem
-                onClick={() => router.push(`/affiliate-products/${product.id}`)}
-              >
-                <Edit className="h-4 w-4 mr-2" />
-                Edit
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => setDeleteId(product.id)}
-                className="text-red-600"
-              >
-                <Trash className="h-4 w-4 mr-2" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )
-      },
-    },
-  ]
+  },
+];
+
 
   const table = useReactTable({
     data: products,
