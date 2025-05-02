@@ -1,9 +1,26 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/clients/clients-table.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Edit, MoreVertical, Search, Trash2 } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  DollarSign,
+  Edit,
+  MoreVertical,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -26,251 +43,309 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
-import { Card } from "@/components/ui/card";
 import ReactCountryFlag from "react-country-flag";
 import countriesLib from "i18n-iso-countries";
-import enLocale from "i18n-iso-countries/langs/en.json";
+import en from "i18n-iso-countries/langs/en.json";
+import { toast } from "sonner";
 
-countriesLib.registerLocale(enLocale);
+countriesLib.registerLocale(en);
 
+/* ───────────── Types ───────────── */
 type Client = {
   id: string;
-  userId: string | null;
   organizationId: string;
   username: string;
   firstName: string;
   lastName: string;
-  lastInteraction: string | null;
   email: string;
   phoneNumber: string;
-  levelId: string | null;
+  country: string | null;
   referredBy: string | null;
-  country: string | null; // New field
-  createdAt: string;
-  updatedAt: string;
+  points: number;
 };
 
+/* ───────────── Component ───────────── */
 export function ClientsTable() {
   const router = useRouter();
+
+  /* table state */
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalPages, setTotalPages] = useState(1);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
 
+  /* dialog state */
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<Client | null>(null);
+  const [delta, setDelta] = useState("");
+
+  /* ── debounce search ── */
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearchQuery(searchQuery);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+    const id = setTimeout(() => setDebounced(search), 400);
+    return () => clearTimeout(id);
+  }, [search]);
 
+  /* ── fetch clients ── */
   const fetchClients = async () => {
     setLoading(true);
     try {
-      const response = await fetch(
-        `/api/clients?page=${currentPage}&pageSize=${pageSize}&search=${debouncedSearchQuery}`,
-        {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-          },
-        }
+      const res = await fetch(
+        `/api/clients?page=${page}&pageSize=${pageSize}&search=${debounced}`,
+        { headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" } },
       );
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to fetch clients");
-      }
-      const data = await response.json();
-      setClients(data.clients);
-      setTotalPages(data.totalPages);
-      setCurrentPage(data.currentPage);
-    } catch (error: any) {
-      console.error("Error fetching clients:", error);
-      toast.error(error.message || "Failed to load clients");
+      if (!res.ok) throw new Error((await res.json()).error || "Fetch failed");
+      const { clients, totalPages, currentPage } = await res.json();
+      setClients(clients);
+      setTotalPages(totalPages);
+      setPage(currentPage);
+    } catch (e: any) {
+      toast.error(e.message);
     } finally {
       setLoading(false);
     }
   };
+  useEffect(() => void fetchClients(), [page, pageSize, debounced]);
 
-  useEffect(() => {
-    fetchClients();
-  }, [currentPage, pageSize, debouncedSearchQuery]);
+  /* ── delete ── */
+  const deleteClient = async (id: string) => {
+    if (!confirm("Delete this client?")) return;
+    await fetch(`/api/clients/${id}`, {
+      method: "DELETE",
+      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" },
+    }).then(fetchClients);
+  };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this client?")) return;
+  /* ── dialog helpers ── */
+  const openDialog = (client: Client) => {
+    setSelected(client);
+    setDelta("");
+    setOpen(true);
+  };
+
+  const saveAdjustment = async () => {
+    const val = Number(delta);
+    if (!selected || !Number.isFinite(val) || val === 0) {
+      toast.error("Enter a non‑zero integer");
+      return;
+    }
     try {
-      const response = await fetch(`/api/clients/${id}`, {
-        method: "DELETE",
+      const res = await fetch("/api/affiliate/points", {
+        method: "POST",
         headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+          "Content-Type": "application/json",
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
         },
+        body: JSON.stringify({
+          id: selected.id, // ← send client primary key
+          points: val,
+          action: val > 0 ? "MANUAL_ADD" : "MANUAL_SUBTRACT",
+          description: "Dashboard manual adjustment",
+        }),
       });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to delete client");
-      }
-      toast.success("Client deleted successfully");
+      if (!res.ok) throw new Error((await res.json()).error || "Update failed");
+      toast.success("Points updated");
+      setOpen(false);
       fetchClients();
-    } catch (error: any) {
-      console.error("Error deleting client:", error);
-      toast.error(error.message || "Failed to delete client");
+    } catch (e: any) {
+      toast.error(e.message);
     }
   };
 
+  /* ───────────── JSX ───────────── */
   return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between mb-4">
-        <div className="relative w-full max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search clients..."
-            className="pl-8"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-        <Select
-          value={pageSize.toString()}
-          onValueChange={(value) => {
-            setPageSize(Number(value));
-            setCurrentPage(1);
-          }}
-        >
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="10 per page" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="5">5 per page</SelectItem>
-            <SelectItem value="10">10 per page</SelectItem>
-            <SelectItem value="20">20 per page</SelectItem>
-            <SelectItem value="50">50 per page</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+    <>
+      {/* Adjust Points dialog */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adjust Points</DialogTitle>
+          </DialogHeader>
+          {selected && (
+            <>
+              <p>
+                <strong>{selected.username}</strong> current balance:&nbsp;
+                <span className="font-mono">{selected.points}</span>
+              </p>
+              <Input
+                type="number"
+                placeholder="Positive or negative integer"
+                value={delta}
+                onChange={(e) => setDelta(e.target.value)}
+              />
+              <DialogFooter>
+                <Button variant="secondary" onClick={() => setOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={saveAdjustment}>Save</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Username</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Phone</TableHead>
-              <TableHead>Country</TableHead> {/* New column */}
-              <TableHead>Referred By</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
+      {/* main card */}
+      <Card className="p-4">
+        {/* search + size */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="relative w-full max-w-sm">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search clients..."
+              className="pl-8"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <Select
+            value={pageSize.toString()}
+            onValueChange={(v) => {
+              setPageSize(Number(v));
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder="Rows" />
+            </SelectTrigger>
+            <SelectContent>
+              {["5", "10", "20", "50"].map((n) => (
+                <SelectItem key={n} value={n}>
+                  {n}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* table */}
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
-                  Loading clients...
-                </TableCell>
+                <TableHead>Username</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Phone</TableHead>
+                <TableHead>Country</TableHead>
+                <TableHead>Points</TableHead>
+                <TableHead>Ref.</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
-            ) : clients.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
-                  No clients found. Try adjusting your search.
-                </TableCell>
-              </TableRow>
-            ) : (
-              clients.map((client) => (
-                <TableRow key={client.id}>
-                  <TableCell>{client.username}</TableCell>
-                  <TableCell>{`${client.firstName} ${client.lastName}`}</TableCell>
-                  <TableCell>{client.email}</TableCell>
-                  <TableCell>{client.phoneNumber}</TableCell>
-                  <TableCell>
-                    {client.country ? (
-                      <div className="flex items-center">
-                        <ReactCountryFlag
-                          countryCode={client.country}
-                          svg
-                          style={{ width: "1em", height: "1em", marginRight: "8px" }}
-                        />
-                        {countriesLib.getName(client.country, "en") || client.country}
-                      </div>
-                    ) : (
-                      "-"
-                    )}
-                  </TableCell>
-                  <TableCell>{client.referredBy || "-"}</TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                          <span className="sr-only">Open menu</span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => router.push(`/clients/${client.id}`)}>
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleDelete(client.id)}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center">
+                    Loading…
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              ) : clients.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center">
+                    No clients
+                  </TableCell>
+                </TableRow>
+              ) : (
+                clients.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell>{c.username}</TableCell>
+                    <TableCell>{`${c.firstName} ${c.lastName}`}</TableCell>
+                    <TableCell>{c.email}</TableCell>
+                    <TableCell>{c.phoneNumber}</TableCell>
+                    <TableCell>
+                      {c.country ? (
+                        <div className="flex items-center">
+                          <ReactCountryFlag
+                            countryCode={c.country}
+                            svg
+                            style={{ width: "1em", height: "1em", marginRight: 6 }}
+                          />
+                          {countriesLib.getName(c.country, "en") ?? c.country}
+                        </div>
+                      ) : (
+                        "-"
+                      )}
+                    </TableCell>
+                    <TableCell>{c.points}</TableCell>
+                    <TableCell>{c.referredBy ?? "-"}</TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => openDialog(c)}>
+                            <DollarSign className="mr-2 h-4 w-4" />
+                            Adjust Points
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => router.push(`/clients/${c.id}`)}>
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => deleteClient(c.id)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
 
-      <div className="flex items-center justify-between mt-4">
-        <div className="text-sm text-muted-foreground">
-          Showing page {currentPage} of {totalPages}
+        {/* pagination */}
+        <div className="flex items-center justify-between mt-4">
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <div className="flex items-center space-x-2">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setPage(1)}
+              disabled={page === 1 || loading}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="h-4 w-4 -ml-2" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setPage((p) => p - 1)}
+              disabled={page === 1 || loading}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setPage((p) => p + 1)}
+              disabled={page === totalPages || loading}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setPage(totalPages)}
+              disabled={page === totalPages || loading}
+            >
+              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-4 w-4 -ml-2" />
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center space-x-2">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setCurrentPage(1)}
-            disabled={currentPage === 1 || loading}
-          >
-            <ChevronLeft className="h-4 w-4" />
-            <ChevronLeft className="h-4 w-4 -ml-2" />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setCurrentPage(currentPage - 1)}
-            disabled={currentPage === 1 || loading}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setCurrentPage(currentPage + 1)}
-            disabled={currentPage === totalPages || loading}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setCurrentPage(totalPages)}
-            disabled={currentPage === totalPages || loading}
-          >
-            <ChevronRight className="h-4 w-4" />
-            <ChevronRight className="h-4 w-4 -ml-2" />
-          </Button>
-        </div>
-      </div>
-    </Card>
+      </Card>
+    </>
   );
 }

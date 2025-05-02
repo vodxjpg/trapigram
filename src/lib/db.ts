@@ -84,6 +84,44 @@ interface DB {
     updatedAt: Date;
   };
 
+  affiliatePointLogs: {
+    id: string;
+    organizationId: string;
+    userId: string;
+    points: number;
+    action: string;
+    description: string | null;
+    sourceUserId: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  affiliateLevels: {
+    id: string;
+    organizationId: string;
+    name: string;
+    image: string | null;
+    levelUpMessage: string | null;
+    description: string | null;
+    requiredPoints: number;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  affiliateProducts: {
+    productId: string;
+    pointsPrice: Record<string, number>;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  affiliateVariationPoints: {
+    variationId: string;
+    pointsPrice: Record<string, number>;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
   coupons: {
     id: string;
     organizationId: string;
