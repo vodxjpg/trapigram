@@ -37,7 +37,8 @@ import type { Warehouse, Variation } from "@/types/product";
 import { StockManagement } from "@/app/(dashboard)/products/components/stock-management";
 import { PointsManagement } from "./points-management";
 import { ProductAttributes } from "@/app/(dashboard)/products/components/product-attributes";
-import { ProductVariations } from "@/app/(dashboard)/products/components/product-variations";
+import { AffiliateProductVariations } from "./affiliate-product-variations";
+import { CostManagement } from "@/app/(dashboard)/products/components/cost-management";
 
 /* ──────────────────────────────────────────────────────────── */
 /* Rich‑text editor                                             */
@@ -70,14 +71,15 @@ const quillFormats = [
 /* Types & Zod                                                  */
 /* ──────────────────────────────────────────────────────────── */
 type CountryPts = { regular: number; sale: number | null };
-type PointsMap = Record<string, CountryPts>;
-type CostMap = Record<string, number>;
+type PointsMap  = Record<string, CountryPts>;
+export type CostMap = Record<string, number>;
+
 type VariationExt = Variation & {
-  prices: PointsMap;              // <-- re‑use ‘prices’ as point‑map
-  cost:   CostMap;
+  prices: PointsMap;   // points per country
+  cost:   CostMap;     // cost per country
 };
 
-const ptsObj   = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
+const ptsObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
 const productSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
@@ -87,38 +89,40 @@ const productSchema = z.object({
   productType: z.enum(["simple", "variable"]),
   allowBackorders: z.boolean(),
   manageStock: z.boolean(),
-  pointsPrice: z.record(z.string(), ptsObj),
+  pointsPrice: z.record(z.string(), ptsObj),        // simple products only
+  cost:        z.record(z.string(), z.number().min(0)).optional(), // simple products only
 });
 type FormVals = z.infer<typeof productSchema>;
 
-/* ──────────────────────────────────────────────────────────── */
-/* helpers                                                      */
-/* ──────────────────────────────────────────────────────────── */
-const blankPtsFor = (cc: string[]): PointsMap =>
-  cc.reduce<PointsMap>((acc, c) => {
-    acc[c] = { regular: 0, sale: null };
-    return acc;
-  }, {});
+/* helpers */
+const blankPtsFor  = (cc: string[]): PointsMap => cc.reduce((a,c)=>(a[c]={regular:0,sale:null},a),{} as PointsMap);
+const blankCostFor = (cc: string[]): CostMap  => cc.reduce((a,c)=>(a[c]=0,a),{} as CostMap);
 
-/* ──────────────────────────────────────────────────────────── */
-/* component                                                    */
 /* ──────────────────────────────────────────────────────────── */
 interface Props {
   productId?: string;
   initialData?: Partial<FormVals> & {
     attributes?: any[];
     variations?: VariationExt[];
+    warehouseStock?: {
+      warehouseId: string;
+      variationId: string | null;
+      country: string;
+      quantity: number;
+    }[];
   };
 }
+
 export function AffiliateProductForm({ productId, initialData }: Props) {
   const router = useRouter();
 
-  /* ───── dynamic org data ─────────────────────────────────── */
-  const [countries, setCountries]   = useState<string[]>([]);
+  /* dynamic org data */
+  const [countries,  setCountries ] = useState<string[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [stockData, setStockData]   = useState<Record<string, Record<string, number>>>(
-    {},
-  );
+  const [stockData,  setStockData ] = useState<Record<string, Record<string, number>>>({});
+
+  /* simple‑level cost map */
+  const [costs, setCosts] = useState<CostMap>({});
 
   /* attributes & variations */
   const [attributes, setAttributes] = useState(initialData?.attributes || []);
@@ -126,150 +130,143 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
     (initialData?.variations as VariationExt[]) || [],
   );
 
-  /* fetch org countries + warehouses once -------------------- */
+  /* fetch countries + warehouses once */
   useEffect(() => {
     (async () => {
       /* countries */
       const cRes = await fetch("/api/organizations/countries");
-      const cJson = await cRes.json();
-      const cc: string[] = Array.isArray(cJson.countries)
-        ? cJson.countries
-        : JSON.parse(cJson.countries);
+      const { countries: raw } = await cRes.json();
+      const cc: string[] = Array.isArray(raw) ? raw : JSON.parse(raw);
       setCountries(cc);
+
+      /* cost map init */
+      if (initialData?.cost) {
+        setCosts(initialData.cost as CostMap);
+      } else {
+        setCosts(blankCostFor(cc));
+      }
 
       /* warehouses */
       const wRes = await fetch("/api/warehouses");
       const { warehouses: wh } = await wRes.json();
       setWarehouses(wh);
-
-      /* blank stock object */
-      const blank: Record<string, Record<string, number>> = {};
-      wh.forEach((w: Warehouse) => {
-        blank[w.id] = {};
-        w.countries.forEach((c) => (blank[w.id][c] = 0));
-      });
-      setStockData(blank);
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ───── RHF ------------------------------------------------- */
+  /* build blank stockData */
+  useEffect(() => {
+    if (!warehouses.length || !countries.length) return;
+    const obj: Record<string, Record<string, number>> = {};
+    warehouses.forEach(w=>{
+      obj[w.id]={};
+      w.countries.forEach(c=>obj[w.id][c]=0);
+    });
+
+    initialData?.warehouseStock?.forEach(row=>{
+      if (!obj[row.warehouseId]) obj[row.warehouseId]={};
+      obj[row.warehouseId][row.country]=row.quantity;
+    });
+    setStockData(obj);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [warehouses,countries]);
+
+  /* RHF */
   const form = useForm<FormVals>({
     resolver: zodResolver(productSchema),
-    defaultValues: initialData
-      ? (initialData as any)
-      : {
-          title: "",
-          description: "",
-          image: null,
-          sku: "",
-          status: "draft",
-          productType: "simple",
-          allowBackorders: false,
-          manageStock: false,
-          pointsPrice: blankPtsFor(countries),
-        },
+    defaultValues: initialData ? (initialData as any) : {
+      title:"",
+      description:"",
+      image:null,
+      sku:"",
+      status:"draft",
+      productType:"simple",
+      allowBackorders:false,
+      manageStock:false,
+      pointsPrice: blankPtsFor(countries),
+      cost:        blankCostFor(countries),
+    },
   });
 
-  /* inject blank map after countries load */
-  useEffect(() => {
-    if (!countries.length) return;
-    if (Object.keys(form.getValues("pointsPrice")).length) return;
+  /* ensure blank points map for new product after countries load */
+  useEffect(()=>{
+    if(!countries.length) return;
+    if(Object.keys(form.getValues("pointsPrice")).length) return;
     form.setValue("pointsPrice", blankPtsFor(countries));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [countries]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[countries]);
 
-  const productType  = form.watch("productType");
-  const manageStock  = form.watch("manageStock");
-  const ptsPrice     = form.watch("pointsPrice");
+  const productType = form.watch("productType");
+  const manageStock = form.watch("manageStock");
+  const ptsPrice    = form.watch("pointsPrice");
 
-  /* img preview / submit state */
-  const [imgPreview, setImgPreview] = useState<string | null>(initialData?.image ?? null);
-  const [submitting, setSubmitting] = useState(false);
+  /* image preview */
+  const [imgPreview,setImgPreview] = useState<string|null>(initialData?.image ?? null);
+  const [submitting,setSubmitting] = useState(false);
 
-  /* ───── image upload --------------------------------------- */
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const fd = new FormData();
-    fd.append("file", file);
-    const { filePath } = await fetch("/api/upload", { method: "POST", body: fd }).then((r) =>
-      r.json(),
-    );
+  const handleUpload = async (e:React.ChangeEvent<HTMLInputElement>)=>{
+    const file=e.target.files?.[0];
+    if(!file) return;
+    const fd=new FormData(); fd.append("file",file);
+    const { filePath } = await fetch("/api/upload",{method:"POST",body:fd}).then(r=>r.json());
     setImgPreview(filePath);
-    form.setValue("image", filePath);
+    form.setValue("image",filePath);
   };
 
-  /* ───── stock transform helper ----------------------------- */
-  const stockRows = () => {
-    const rows: {
-      warehouseId: string;
-      affiliateProductId: string;
-      variationId: string | null;
-      country: string;
-      quantity: number;
-    }[] = [];
-    for (const [wId, byCountry] of Object.entries(stockData))
-      for (const [c, qty] of Object.entries(byCountry))
-        if (qty > 0)
-          rows.push({
-            warehouseId: wId,
-            affiliateProductId: productId || "TEMP",
-            variationId: null,
-            country: c,
-            quantity: qty,
-          });
-    return rows;
+  /* transform stockData ➜ rows */
+  const stockRows = ()=>{
+    const arr:{warehouseId:string;affiliateProductId:string;variationId:string|null;country:string;quantity:number;}[]=[];
+    for(const [wId,byCountry] of Object.entries(stockData))
+      for(const [c,qty] of Object.entries(byCountry))
+        if(qty>0) arr.push({warehouseId:wId,affiliateProductId:productId||"TEMP",variationId:null,country:c,quantity:qty});
+    return arr;
   };
 
-  /* ───── submit --------------------------------------------- */
-  const onSubmit = async (values: FormVals) => {
+  /* submit */
+  const onSubmit = async (values:FormVals)=>{
     setSubmitting(true);
-    try {
-      /* payload build */
-      const payload: any = {
+    try{
+      const payload:any = {
         ...values,
         attributes,
-        variations: productType === "variable" ? variations : undefined,
         warehouseStock: manageStock ? stockRows() : undefined,
+        cost: productType==="simple" ? costs : undefined,
+        pointsPrice: productType==="simple" ? values.pointsPrice : undefined,
+        variations: productType==="variable" ? variations : undefined,
       };
 
       const url    = productId ? `/api/affiliate-products/${productId}` : "/api/affiliate-products";
       const method = productId ? "PATCH" : "POST";
 
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        /* pretty Zod errors → string */
-        const msg =
-          Array.isArray(data?.error)
-            ? data.error.map((e: any) => e.message).join(" • ")
-            : data.error || "Failed to save";
-        toast.error(msg);
-        return;
+      const res  = await fetch(url,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok){
+        const msg = Array.isArray(data?.error)
+          ? data.error.map((e:any)=>e.message).join(" • ")
+          : data.error || "Failed to save";
+        toast.error(msg); return;
       }
 
-      swrMutate((k: string) => k.startsWith("/api/affiliate-products"));
-      toast.success(productId ? "Product updated" : "Product created");
-      router.push("/affiliate-products");
-      router.refresh();
-    } finally {
-      setSubmitting(false);
-    }
+      swrMutate(k=>k.startsWith("/api/affiliate-products"));
+      toast.success(productId?"Product updated":"Product created");
+      router.push("/affiliate-products"); router.refresh();
+    }finally{ setSubmitting(false); }
   };
 
-  /* ───── UI -------------------------------------------------- */
+  /* UI */
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+        <TabsList
+          className={`grid w-full ${
+            form.watch("productType") === "variable" ? "grid-cols-4" : "grid-cols-5"
+          }`}
+        >
             <TabsTrigger value="general">General</TabsTrigger>
-            <TabsTrigger value="points">Points</TabsTrigger>
+            {form.watch("productType") === "simple" && (
+              <TabsTrigger value="points">Points</TabsTrigger>
+            )}
             <TabsTrigger value="inventory">Inventory</TabsTrigger>
             <TabsTrigger value="attributes">Attributes</TabsTrigger>
             <TabsTrigger
@@ -400,15 +397,24 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
             </Card>
           </TabsContent>
 
-          {/* ── POINTS ────────────────────────────────────────── */}
-          <TabsContent value="points" className="space-y-6">
-            <PointsManagement
-              title="Points per country"
-              countries={countries}
-              pointsData={ptsPrice}
-              onChange={(map) => form.setValue("pointsPrice", map)}
-            />
-          </TabsContent>
+         {/* POINTS & COST (simple products only) */}
+         {productType==="simple" && (
+            <TabsContent value="points" className="space-y-6">
+              <PointsManagement
+                title="Points per country"
+                countries={countries}
+                pointsData={ptsPrice}
+                onChange={m=>form.setValue("pointsPrice",m)}
+              />
+              <CostManagement
+                title="Cost per country"
+                countries={countries}
+                costData={costs}
+                onChange={setCosts}
+              />
+            </TabsContent>
+          )}
+
 
           {/* ── INVENTORY ─────────────────────────────────────── */}
           <TabsContent value="inventory" className="space-y-6">
@@ -476,7 +482,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
 
           {/* ── VARIATIONS ────────────────────────────────────── */}
           <TabsContent value="variations" className="space-y-6">
-            <ProductVariations
+            <AffiliateProductVariations
               attributes={attributes.filter((a: any) => a.useForVariations)}
               variations={variations as any}
               onVariationsChange={setVariations as any}

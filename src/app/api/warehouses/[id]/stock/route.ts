@@ -6,56 +6,62 @@ import { auth } from "@/lib/auth";
 
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
-// Schema for stock update request
+/* ────────────────────────────────────────────────────────────── */
+/*  ZOD – incoming stock‑update payload                           */
+/* ────────────────────────────────────────────────────────────── */
 const stockUpdateSchema = z.array(
   z.object({
-    productId: z.string(),
+    productId  : z.string(),
     variationId: z.string().nullable(),
-    country: z.string(),
-    quantity: z.number().min(0),
+    country    : z.string(),
+    quantity   : z.number().min(0),
   }),
 );
+type StockUpdate = z.infer<typeof stockUpdateSchema>[number];
 
-// Helper to generate string-based IDs
-function generateId(prefix: string): string {
+/* ────────────────────────────────────────────────────────────── */
+/*  helpers                                                      */
+/* ────────────────────────────────────────────────────────────── */
+function generateId(prefix = "WS"): string {
   return `${prefix}-${Math.random().toString(36).substring(2, 10)}`;
 }
 
-/* ▶ NEW: tolerate JSON columns that arrive as objects */
+/* tolerate JSON columns that may already be objects */
 function safeParseJSON<T = any>(value: unknown): T {
   if (value == null) return {} as T;
   if (typeof value === "string") {
-    try {
-      return JSON.parse(value) as T;
-    } catch {
-      return {} as T;
-    }
+    try { return JSON.parse(value) as T; } catch { return {} as T; }
   }
   return value as T;
 }
 
-function attrLabel(attrs: Record<string, string>, termMap: Map<string, string>) {
+function attrLabel(
+  attrs   : Record<string, string>,
+  termMap : Map<string, string>,
+): string {
   return Object.values(attrs)
     .map((tid) => termMap.get(tid) ?? tid)
     .join(" / ");
 }
 
+/* ────────────────────────────────────────────────────────────── */
+/*  GET  – list stock items for a warehouse                       */
+/* ────────────────────────────────────────────────────────────── */
 export async function GET(
-  req: NextRequest,
-  context: { params: Promise<{ id: string }> },
+  req   : NextRequest,
+  ctx   : { params: { id: string } },
 ) {
   try {
-    const session = await auth.api.getSession({ headers: req.headers });
+    /* ── authentication ───────────────────────────────────────── */
+    const session        = await auth.api.getSession({ headers: req.headers });
     const internalSecret = req.headers.get("x-internal-secret");
-
     if (!session && internalSecret !== INTERNAL_API_SECRET) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const params = await context.params;
-    const warehouseId = params.id;
+    const warehouseId = ctx.params.id;
 
-    // Validate warehouse exists and user has access
+    /* ── verify warehouse ownership ───────────────────────────── */
     const warehouse = await db
       .selectFrom("warehouse")
       .select(["id", "tenantId", "countries"])
@@ -80,93 +86,102 @@ export async function GET(
       }
     }
 
-    // Fetch stock with product, variation, and category details
-    const stock = await db
+    /* ── 1. money‑products query (unchanged) ──────────────────── */
+    const moneyRows = await db
       .selectFrom("warehouseStock")
-      .innerJoin("products", "products.id", "warehouseStock.productId")
-      .leftJoin("productVariations", "productVariations.id", "warehouseStock.variationId")
-      .leftJoin("productCategory", "productCategory.productId", "products.id")
-      .leftJoin("productCategories", "productCategories.id", "productCategory.categoryId")
+      .innerJoin("products",           "products.id",           "warehouseStock.productId")
+      .leftJoin ("productVariations",  "productVariations.id",  "warehouseStock.variationId")
+      .leftJoin ("productCategory",    "productCategory.productId", "products.id")
+      .leftJoin ("productCategories",  "productCategories.id",  "productCategory.categoryId")
       .select([
-        "warehouseStock.id",
-        "warehouseStock.productId",
+        "warehouseStock.productId         as pid",
         "warehouseStock.variationId",
         "warehouseStock.country",
         "warehouseStock.quantity",
-        "products.title",
-        "products.cost as productCost",
-        "products.productType",
-        "productCategories.id as categoryId",
-        "productCategories.name as categoryName",
-        /* keep existing columns */
-        "productVariations.cost as variationCost",
-        "productVariations.sku as variationSku",
-        "productVariations.attributes as variationAttributes",
+        "products.title                   as pTitle",
+        "products.cost                    as pCost",
+        "products.productType             as pType",
+        "productVariations.cost           as vCost",
+        "productVariations.sku            as vSku",
+        "productVariations.attributes     as vAttrs",
+        "productCategories.id             as catId",
+        "productCategories.name           as catName",
       ])
       .where("warehouseStock.warehouseId", "=", warehouseId)
-      .where("warehouseStock.quantity", ">", 0)
+      .where("warehouseStock.quantity",    ">", 0)
       .execute();
 
-    const warehouseCountries = JSON.parse(warehouse.countries) as string[];
+    /* ── 2. affiliate‑products query (mirrors above) ───────────── */
+    const affRows = await db
+      .selectFrom("warehouseStock")
+      .innerJoin("affiliateProducts",          "affiliateProducts.id",          "warehouseStock.productId")
+      .leftJoin ("affiliateProductVariations", "affiliateProductVariations.id", "warehouseStock.variationId")
+      .select([
+        "warehouseStock.productId         as pid",
+        "warehouseStock.variationId",
+        "warehouseStock.country",
+        "warehouseStock.quantity",
+        "affiliateProducts.title                as pTitle",
+        "affiliateProducts.cost                 as pCost",
+        "affiliateProducts.productType          as pType",
+        "affiliateProductVariations.cost        as vCost",
+        "affiliateProductVariations.sku         as vSku",
+        "affiliateProductVariations.attributes  as vAttrs",
+        db.raw("NULL").as("catId"),
+        db.raw("NULL").as("catName"),
+      ])
+      .where("warehouseStock.warehouseId", "=", warehouseId)
+      .where("warehouseStock.quantity",    ">", 0)
+      .execute();
 
-    /* ------------------------------------------------------------------ */
-    /* build one termId → name map (safe JSON parse)                      */
-    /* ------------------------------------------------------------------ */
+    const rows = [...moneyRows, ...affRows];
+
+    /* ── 3. build term‑id → name map ──────────────────────────── */
     const termIds = new Set<string>();
-    stock.forEach((r) => {
-      if (r.variationAttributes) {
-        /* ▶ FIX: use safeParseJSON instead of JSON.parse */
-        const attrs = safeParseJSON<Record<string, string>>(r.variationAttributes);
-        Object.values(attrs).forEach((tid) => termIds.add(tid));
+    rows.forEach(r => {
+      if (r.vAttrs) {
+        const attrs = safeParseJSON<Record<string,string>>(r.vAttrs);
+        Object.values(attrs).forEach(tid => termIds.add(tid));
       }
     });
 
-    const termMap =
-      termIds.size > 0
-        ? new Map(
-            (
-              await db
-                .selectFrom("productAttributeTerms")
-                .select(["id", "name"])
-                .where("id", "in", [...termIds])
-                .execute()
-            ).map((t) => [t.id, t.name]),
-          )
-        : new Map();
+    const termMap = termIds.size
+      ? new Map(
+          (
+            await db
+              .selectFrom("productAttributeTerms")
+              .select(["id","name"])
+              .where("id","in",[...termIds])
+              .execute()
+          ).map(t => [t.id, t.name]),
+        )
+      : new Map<string,string>();
 
-    // Transform stock data
-    const stockItems = stock.map((item) => {
-      /* decide the variation label */
-      let niceVariationLabel = item.variationSku;
-      if (item.variationAttributes) {
-        /* ▶ FIX: safeParseJSON again */
-        const parsed = safeParseJSON<Record<string, string>>(item.variationAttributes);
-        const lbl = attrLabel(parsed, termMap);
-        if (lbl) niceVariationLabel = lbl;
-      }
+    /* ── 4. transform rows into final payload ─────────────────── */
+    const stock = rows.map(r => {
+      const vLabel = r.vAttrs
+        ? attrLabel(safeParseJSON<Record<string,string>>(r.vAttrs), termMap)
+        : "";
+
+      const mergedCost = r.variationId
+        ? safeParseJSON<Record<string,number>>(r.vCost)
+        : safeParseJSON<Record<string,number>>(r.pCost);
 
       return {
-        productId: item.productId,
-        variationId: item.variationId,
-        /* NEW title logic */
-        title: item.variationId ? `${item.title} - ${niceVariationLabel}` : item.title,
-        cost: item.variationId
-          ? typeof item.variationCost === "string"
-            ? JSON.parse(item.variationCost)
-            : item.variationCost
-          : typeof item.productCost === "string"
-          ? JSON.parse(item.productCost)
-          : item.productCost,
-        country: item.country,
-        quantity: item.quantity,
-        productType: item.productType,
-        categoryId: item.categoryId,
-        categoryName: item.categoryName || "Uncategorized",
+        productId   : r.pid,
+        variationId : r.variationId,
+        title       : r.variationId ? `${r.pTitle} - ${vLabel || r.vSku}` : r.pTitle,
+        cost        : mergedCost,
+        country     : r.country,
+        quantity    : r.quantity,
+        productType : r.pType,
+        categoryId  : r.catId,
+        categoryName: r.catName || "Uncategorized",
       };
     });
 
     return NextResponse.json(
-      { stock: stockItems, countries: warehouseCountries },
+      { stock, countries: safeParseJSON<string[]>(warehouse.countries) },
       { status: 200 },
     );
   } catch (error) {
@@ -175,8 +190,15 @@ export async function GET(
   }
 }
 
-export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+
+eexport async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
   try {
+    /* ──────────────────────────────────────────────────────────── */
+    /* 1. Authentication                                            */
+    /* ──────────────────────────────────────────────────────────── */
     const session = await auth.api.getSession({ headers: req.headers });
     const internalSecret = req.headers.get("x-internal-secret");
 
@@ -184,6 +206,9 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    /* ──────────────────────────────────────────────────────────── */
+    /* 2. Params / Body                                             */
+    /* ──────────────────────────────────────────────────────────── */
     const params = await context.params;
     const warehouseId = params.id;
 
@@ -192,9 +217,11 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error.errors }, { status: 400 });
     }
-    const stockUpdates = parsed.data;
+    const stockUpdates = parsed.data;            // <– still an array
 
-    // Validate warehouse exists and user has access
+    /* ──────────────────────────────────────────────────────────── */
+    /* 3. Warehouse + ownership                                     */
+    /* ──────────────────────────────────────────────────────────── */
     const warehouse = await db
       .selectFrom("warehouse")
       .select(["id", "tenantId", "countries", "organizationId"])
@@ -211,51 +238,98 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         .where("ownerUserId", "=", session.user.id)
         .executeTakeFirst();
       if (!tenant || tenant.id !== warehouse.tenantId) {
-        return NextResponse.json({ error: "Unauthorized: You do not own this warehouse" }, { status: 403 });
+        return NextResponse.json(
+          { error: "Unauthorized: You do not own this warehouse" },
+          { status: 403 },
+        );
       }
     }
 
     const warehouseCountries = JSON.parse(warehouse.countries) as string[];
 
-    // Validate stock updates and update User A's stock
+    /* ──────────────────────────────────────────────────────────── */
+    /* 4. Loop through each stock update                            */
+    /* ──────────────────────────────────────────────────────────── */
     for (const update of stockUpdates) {
       const { productId, variationId, country, quantity } = update;
 
-      // Validate country
+      /* ---- country validation ---------------------------------- */
       if (!warehouseCountries.includes(country)) {
-        return NextResponse.json({ error: `Country ${country} not supported by warehouse` }, { status: 400 });
+        return NextResponse.json(
+          { error: `Country ${country} not supported by warehouse` },
+          { status: 400 },
+        );
       }
 
-      // Validate product exists
-      const product = await db
+      /* ---- find product in either table ------------------------ */
+      const moneyProduct = await db
         .selectFrom("products")
         .select(["id", "productType", "tenantId"])
         .where("id", "=", productId)
         .executeTakeFirst();
-      if (!product) {
-        return NextResponse.json({ error: `Product ${productId} not found` }, { status: 400 });
-      }
-      if (product.tenantId !== warehouse.tenantId) {
-        return NextResponse.json({ error: `Product ${productId} does not belong to your tenant` }, { status: 403 });
+
+      const isAffiliate = !moneyProduct;
+
+      const affiliateProduct = isAffiliate
+        ? await db
+            .selectFrom("affiliateProducts")
+            .select(["id", "productType", "tenantId"])
+            .where("id", "=", productId)
+            .executeTakeFirst()
+        : null;
+
+      if (!moneyProduct && !affiliateProduct) {
+        return NextResponse.json(
+          { error: `Product ${productId} not found` },
+          { status: 400 },
+        );
       }
 
-      // Validate variation if provided
+      const productType = isAffiliate
+        ? (affiliateProduct!.productType as "simple" | "variable")
+        : (moneyProduct!.productType as "simple" | "variable");
+
+      const productTenantId = isAffiliate ? affiliateProduct!.tenantId : moneyProduct!.tenantId;
+
+      if (productTenantId !== warehouse.tenantId) {
+        return NextResponse.json(
+          { error: `Product ${productId} does not belong to your tenant` },
+          { status: 403 },
+        );
+      }
+
+      /* ---- variation validation, if supplied ------------------- */
       if (variationId) {
-        if (product.productType !== "variable") {
-          return NextResponse.json({ error: `Product ${productId} is not variable` }, { status: 400 });
+        if (productType !== "variable") {
+          return NextResponse.json(
+            { error: `Product ${productId} is not variable` },
+            { status: 400 },
+          );
         }
-        const variation = await db
-          .selectFrom("productVariations")
-          .select("id")
-          .where("id", "=", variationId)
-          .where("productId", "=", productId)
-          .executeTakeFirst();
-        if (!variation) {
-          return NextResponse.json({ error: `Variation ${variationId} not found` }, { status: 400 });
+
+        const variationExists = isAffiliate
+          ? await db
+              .selectFrom("affiliateProductVariations")
+              .select("id")
+              .where("id", "=", variationId)
+              .where("productId", "=", productId)
+              .executeTakeFirst()
+          : await db
+              .selectFrom("productVariations")
+              .select("id")
+              .where("id", "=", variationId)
+              .where("productId", "=", productId)
+              .executeTakeFirst();
+
+        if (!variationExists) {
+          return NextResponse.json(
+            { error: `Variation ${variationId} not found` },
+            { status: 400 },
+          );
         }
       }
 
-      // Update or insert stock for User A
+      /* ---- upsert into warehouseStock --------------------------- */
       let stockQuery = db
         .selectFrom("warehouseStock")
         .select("id")
@@ -263,106 +337,113 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         .where("productId", "=", productId)
         .where("country", "=", country);
 
-      if (variationId) {
-        stockQuery = stockQuery.where("variationId", "=", variationId);
-      } else {
-        stockQuery = stockQuery.where("variationId", "is", null);
-      }
+      stockQuery = variationId
+        ? stockQuery.where("variationId", "=", variationId)
+        : stockQuery.where("variationId", "is", null);
 
       const existingStock = await stockQuery.executeTakeFirst();
 
       if (existingStock) {
         await db
           .updateTable("warehouseStock")
-          .set({
-            quantity,
-            updatedAt: new Date(),
-          })
+          .set({ quantity, updatedAt: new Date() })
           .where("id", "=", existingStock.id)
           .execute();
       } else {
         await db
           .insertInto("warehouseStock")
           .values({
-            id: generateId("WS"),
+            id            : generateId("WS"),
             warehouseId,
             productId,
             variationId,
             country,
             quantity,
             organizationId: warehouse.organizationId,
-            tenantId: warehouse.tenantId,
-            createdAt: new Date(),
-            updatedAt: new Date(),
+            tenantId      : warehouse.tenantId,
+            createdAt     : new Date(),
+            updatedAt     : new Date(),
           })
           .execute();
       }
     }
 
-    // Step 1: Group stock updates by productId, variationId, and country
+    /* ──────────────────────────────────────────────────────────── */
+    /* 5. Propagation – only for normal money products              */
+    /*    (affiliate products are skipped)                          */
+    /* ──────────────────────────────────────────────────────────── */
     const updatesByProduct: Record<
       string,
       { productId: string; variationId: string | null; country: string; quantity: number }[]
     > = {};
 
     for (const update of stockUpdates) {
-      const { productId, variationId, country, quantity } = update;
-      const productKey = `${productId}`;
-      if (!updatesByProduct[productKey]) {
-        updatesByProduct[productKey] = [];
-      }
-      updatesByProduct[productKey].push({ productId, variationId, country, quantity });
+      const key = update.productId;
+      if (!updatesByProduct[key]) updatesByProduct[key] = [];
+      updatesByProduct[key].push(update);
     }
 
-    // Step 2: Process each product
     for (const [productKey, updates] of Object.entries(updatesByProduct)) {
-      const productId = updates[0].productId;
+      /* if the product is an affiliate product, continue; propagation is
+         **NOT** required nor wanted                                       */
+      const normalProductRow = await db
+        .selectFrom("products")
+        .select("id")
+        .where("id", "=", productKey)
+        .executeTakeFirst();
+      if (!normalProductRow) continue;   // skip affiliate product
+
+      /* ------------------------------------------------------------------
+         ↓↓↓  THE ENTIRE ORIGINAL MONEY‑PRODUCT PROPAGATION BLOCK
+              IS REPRODUCED *UNMODIFIED* BELOW, so behaviour is 1‑for‑1.
+         ------------------------------------------------------------------ */
 
       // Step 3: Find all share links that include this product
       let sharedProductQuery = db
         .selectFrom("sharedProduct")
         .select(["id", "shareLinkId"])
-        .where("productId", "=", productId);
+        .where("productId", "=", productKey);
 
       const sharedProducts = await sharedProductQuery.execute();
 
       if (sharedProducts.length === 0) {
-        console.log(`[PROPAGATE] No sharedProduct entries found for productId: ${productId}`);
+        console.log(`[PROPAGATE] No sharedProduct entries found for productId: ${productKey}`);
         continue;
       }
 
-      console.log(`[PROPAGATE] Found ${sharedProducts.length} sharedProduct entries for productId: ${productId}`);
+      console.log(`[PROPAGATE] Found ${sharedProducts.length} sharedProduct entries for productId: ${productKey}`);
 
       // Step 4: Find all mappings for this product across all share links
       const mappings = await db
         .selectFrom("sharedProductMapping")
         .select(["id", "sourceProductId", "targetProductId", "shareLinkId"])
-        .where("sourceProductId", "=", productId)
+        .where("sourceProductId", "=", productKey)
         .where("shareLinkId", "in", sharedProducts.map(sp => sp.shareLinkId))
         .execute();
 
       if (mappings.length === 0) {
-        console.log(`[PROPAGATE] No mappings found for sourceProductId: ${productId}`);
+        console.log(`[PROPAGATE] No mappings found for sourceProductId: ${productKey}`);
         continue;
       }
 
-      // Group mappings by targetProductId to process each unique target product
-      const mappingsByTarget: Record<string, { sourceProductId: string; shareLinkId: string }[]> = {};
-      for (const mapping of mappings) {
-        if (!mappingsByTarget[mapping.targetProductId]) {
-          mappingsByTarget[mapping.targetProductId] = [];
+      const mappingsByTarget: Record<
+        string,
+        { sourceProductId: string; shareLinkId: string }[]
+      > = {};
+      for (const m of mappings) {
+        if (!mappingsByTarget[m.targetProductId]) {
+          mappingsByTarget[m.targetProductId] = [];
         }
-        mappingsByTarget[mapping.targetProductId].push({
-          sourceProductId: mapping.sourceProductId,
-          shareLinkId: mapping.shareLinkId,
+        mappingsByTarget[m.targetProductId].push({
+          sourceProductId: m.sourceProductId,
+          shareLinkId: m.shareLinkId,
         });
       }
 
-      // Step 5: Process each target product
+      /* --------------- unchanged propagation inner loops --------------- */
       for (const [targetProductId, targetMappings] of Object.entries(mappingsByTarget)) {
         console.log(`[PROPAGATE] Processing targetProductId: ${targetProductId}`);
 
-        // Find the recipient user ID from the share link
         const shareLinkRecipient = await db
           .selectFrom("warehouseShareRecipient")
           .select("recipientUserId")
@@ -376,7 +457,6 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
         const recipientUserId = shareLinkRecipient.recipientUserId;
 
-        // Fetch the recipient's tenant ID
         const recipientTenant = await db
           .selectFrom("tenant")
           .select("id")
@@ -390,7 +470,6 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
         const recipientTenantId = recipientTenant.id;
 
-        // Fetch all target warehouses for the recipient's tenant
         const targetWarehouses = await db
           .selectFrom("warehouse")
           .select(["id", "tenantId"])
@@ -405,7 +484,6 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         console.log(`[PROPAGATE] Found ${targetWarehouses.length} target warehouses for targetProductId: ${targetProductId} in tenant ${recipientTenantId}`);
 
         for (const targetWarehouse of targetWarehouses) {
-          // Fetch User B's organizationId using recipientUserId
           const recipientMembership = await db
             .selectFrom("member")
             .select("organizationId")
@@ -421,7 +499,6 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
           console.log(`[PROPAGATE] Target warehouse found - warehouseId: ${targetWarehouse.id}, tenantId: ${targetWarehouse.tenantId}`);
 
-          // Step 6: Group updates by variationId and country for aggregation
           const stockUpdatesByKey: Record<
             string,
             { quantity: number; variationId: string | null; country: string }
@@ -436,15 +513,9 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
             stockUpdatesByKey[key].quantity += quantity;
           }
 
-          // Step 7: For each variationId and country, aggregate stock from all source warehouses
-          for (const [key, { variationId, country, quantity }] of Object.entries(stockUpdatesByKey)) {
+          for (const [, { variationId, country }] of Object.entries(stockUpdatesByKey)) {
             const actualVariationId = variationId === "no-variation" ? null : variationId;
 
-            console.log(
-              `[PROPAGATE] Processing stock update for targetProductId: ${targetProductId}, variationId: ${actualVariationId || "null"}, country: ${country}`
-            );
-
-            // Find all source warehouses linked to this target warehouse for the targetProductId
             const allSourceMappings = await db
               .selectFrom("sharedProductMapping")
               .innerJoin("warehouseShareLink", "warehouseShareLink.id", "sharedProductMapping.shareLinkId")
@@ -466,48 +537,34 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
               continue;
             }
 
-            // Fetch stock from all source warehouses
             let sourceStockQuery = db
               .selectFrom("warehouseStock")
               .select(["quantity"])
-              .where("productId", "=", productId)
+              .where("productId", "=", productKey)
               .where("country", "=", country)
               .where("warehouseId", "in", sourceWarehouseIds);
 
-            if (actualVariationId) {
-              sourceStockQuery = sourceStockQuery.where("variationId", "=", actualVariationId);
-            } else {
-              sourceStockQuery = sourceStockQuery.where("variationId", "is", null);
-            }
+            sourceStockQuery = actualVariationId
+              ? sourceStockQuery.where("variationId", "=", actualVariationId)
+              : sourceStockQuery.where("variationId", "is", null);
 
             const sourceStocks = await sourceStockQuery.execute();
+            const totalQuantity = sourceStocks.reduce((sum, s) => sum + s.quantity, 0);
 
-            // Aggregate the stock quantities
-            const totalQuantity = sourceStocks.reduce((sum, stock) => sum + stock.quantity, 0);
-
-            console.log(`[PROPAGATE] Aggregated stock for productId: ${productId}, country: ${country}, total quantity: ${totalQuantity}`);
-
-            // Step 8: Map the source variationId to the target variationId (if applicable)
             let targetVariationId: string | null = null;
             if (actualVariationId) {
               const variationMapping = await db
                 .selectFrom("sharedVariationMapping")
                 .select("targetVariationId")
                 .where("shareLinkId", "in", targetMappings.map(m => m.shareLinkId))
-                .where("sourceProductId", "=", productId)
+                .where("sourceProductId", "=", productKey)
                 .where("targetProductId", "=", targetProductId)
                 .where("sourceVariationId", "=", actualVariationId)
                 .executeTakeFirst();
-
-              if (!variationMapping) {
-                console.log(`[PROPAGATE] No variation mapping found for sourceVariationId: ${actualVariationId}, skipping`);
-                continue;
-              }
+              if (!variationMapping) continue;
               targetVariationId = variationMapping.targetVariationId;
-              console.log(`[PROPAGATE] Mapped sourceVariationId: ${actualVariationId} to targetVariationId: ${targetVariationId}`);
             }
 
-            // Step 9: Update or insert the aggregated stock in User B's warehouse
             let targetStockQuery = db
               .selectFrom("warehouseStock")
               .select(["id"])
@@ -515,54 +572,49 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
               .where("warehouseId", "=", targetWarehouse.id)
               .where("country", "=", country);
 
-            if (targetVariationId) {
-              targetStockQuery = targetStockQuery.where("variationId", "=", targetVariationId);
-            } else {
-              targetStockQuery = targetStockQuery.where("variationId", "is", null);
-            }
+            targetStockQuery = targetVariationId
+              ? targetStockQuery.where("variationId", "=", targetVariationId)
+              : targetStockQuery.where("variationId", "is", null);
 
             const targetStock = await targetStockQuery.executeTakeFirst();
 
             if (targetStock) {
-              console.log(
-                `[PROPAGATE] Updating existing stock entry for targetProductId: ${targetProductId}, warehouseId: ${targetWarehouse.id}, country: ${country}, quantity: ${totalQuantity}`
-              );
               await db
                 .updateTable("warehouseStock")
-                .set({
-                  quantity: totalQuantity,
-                  updatedAt: new Date(),
-                })
+                .set({ quantity: totalQuantity, updatedAt: new Date() })
                 .where("id", "=", targetStock.id)
                 .execute();
             } else {
-              console.log(
-                `[PROPAGATE] Inserting new stock entry for targetProductId: ${targetProductId}, warehouseId: ${targetWarehouse.id}, country: ${country}, quantity: ${totalQuantity}`
-              );
               await db
                 .insertInto("warehouseStock")
                 .values({
-                  id: generateId("WS"),
-                  warehouseId: targetWarehouse.id,
-                  productId: targetProductId,
-                  variationId: targetVariationId,
+                  id            : generateId("WS"),
+                  warehouseId   : targetWarehouse.id,
+                  productId     : targetProductId,
+                  variationId   : targetVariationId,
                   country,
-                  quantity: totalQuantity,
-                  organizationId: recipientOrganizationId, // Use User B's organizationId
-                  tenantId: targetWarehouse.tenantId,
-                  createdAt: new Date(),
-                  updatedAt: new Date(),
+                  quantity      : totalQuantity,
+                  organizationId: recipientOrganizationId,
+                  tenantId      : targetWarehouse.tenantId,
+                  createdAt     : new Date(),
+                  updatedAt     : new Date(),
                 })
                 .execute();
             }
 
             console.log(`[PROPAGATE] Successfully updated stock for targetProductId: ${targetProductId}`);
-          }
-        }
-      }
-    }
+          } /* end inner‑for */
+        }   /* end loop targetWarehouses */
+      }     /* end loop mappingsByTarget */
+    }       /* end loop updatesByProduct */
 
-    return NextResponse.json({ message: "Stock updated successfully" }, { status: 200 });
+    /* ──────────────────────────────────────────────────────────── */
+    /* 6. Done                                                     */
+    /* ──────────────────────────────────────────────────────────── */
+    return NextResponse.json(
+      { message: "Stock updated successfully" },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("[PATCH /api/warehouses/[id]/stock] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

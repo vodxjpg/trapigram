@@ -389,6 +389,7 @@ interface DB {
     productId: string | null;            // <‑‑ allow NULL
     affiliateProductId: string | null;   // <‑‑ NEW
     variationId: string | null;
+    affiliateVariationId: string | null;
     country: string;
     quantity: number;
     organizationId: string;
