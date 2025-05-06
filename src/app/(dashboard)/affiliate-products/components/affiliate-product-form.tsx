@@ -39,6 +39,9 @@ import { PointsManagement } from "./points-management";
 import { ProductAttributes } from "@/app/(dashboard)/products/components/product-attributes";
 import { AffiliateProductVariations } from "./affiliate-product-variations";
 import { CostManagement } from "@/app/(dashboard)/products/components/cost-management";
+import { LevelPointsManagement } from "./level-points-management";
+import { LevelRequirementSelect } from "./level-requirement-select";
+
 
 /* ──────────────────────────────────────────────────────────── */
 /* Rich‑text editor                                             */
@@ -72,12 +75,10 @@ const quillFormats = [
 /* ──────────────────────────────────────────────────────────── */
 type CountryPts = { regular: number; sale: number | null };
 type PointsMap  = Record<string, CountryPts>;
+import { PointsByLvl } from "@/hooks/affiliatePoints";
 export type CostMap = Record<string, number>;
 
-type VariationExt = Variation & {
-  prices: PointsMap;   // points per country
-  cost:   CostMap;     // cost per country
-};
+type VariationExt = Variation & { prices: PointsByLvl; cost: CostMap };
 
 const ptsObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
 const productSchema = z.object({
@@ -89,14 +90,25 @@ const productSchema = z.object({
   productType: z.enum(["simple", "variable"]),
   allowBackorders: z.boolean(),
   manageStock: z.boolean(),
-  pointsPrice: z.record(z.string(), ptsObj),        // simple products only
+  pointsPrice: z.record(z.string(), z.record(z.string(), ptsObj)),
   cost:        z.record(z.string(), z.number().min(0)).optional(), // simple products only
+  minLevelId:  z.string().uuid().nullable().optional(),
 });
 type FormVals = z.infer<typeof productSchema>;
 
 /* helpers */
-const blankPtsFor  = (cc: string[]): PointsMap => cc.reduce((a,c)=>(a[c]={regular:0,sale:null},a),{} as PointsMap);
-const blankCostFor = (cc: string[]): CostMap  => cc.reduce((a,c)=>(a[c]=0,a),{} as CostMap);
+const blankPtsFor = (countries: string[], lvls: {id:string}[]): PointsByLvl => {
+  const base = countries.reduce(
+    (o, c) => ((o[c] = { regular: 0, sale: null }), o),
+    {} as Record<string, CountryPts>
+  );
+  const out: PointsByLvl = { default: { ...base } };
+  lvls.forEach(l => (out[l.id] = { ...base }));
+  return out;
+};
+const blankCostFor = (cc: string[]): CostMap =>
+  cc.reduce((a,c)=>(a[c]=0,a),{} as CostMap);
+
 
 /* ──────────────────────────────────────────────────────────── */
 interface Props {
@@ -115,20 +127,14 @@ interface Props {
 
 export function AffiliateProductForm({ productId, initialData }: Props) {
   const router = useRouter();
-
-  /* dynamic org data */
-  const [countries,  setCountries ] = useState<string[]>([]);
+  const [countries, setCountries] = useState<string[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [stockData,  setStockData ] = useState<Record<string, Record<string, number>>>({});
-
-  /* simple‑level cost map */
+  const [stockData, setStockData] = useState<Record<string, Record<string, number>>>({});
   const [costs, setCosts] = useState<CostMap>({});
-
-  /* attributes & variations */
+  const [minLevel, setMinLevel] = useState<string|null>(initialData?.minLevelId ?? null);
+  const [levels, setLevels] = useState<{id:string;name:string}[]>([]);
   const [attributes, setAttributes] = useState(initialData?.attributes || []);
-  const [variations, setVariations] = useState<VariationExt[]>(
-    (initialData?.variations as VariationExt[]) || [],
-  );
+  const [variations, setVariations] = useState<VariationExt[]>(initialData?.variations || []);
 
   /* fetch countries + warehouses once */
   useEffect(() => {
@@ -183,23 +189,37 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
       productType:"simple",
       allowBackorders:false,
       manageStock:false,
-      pointsPrice: blankPtsFor(countries),
+      pointsPrice: blankPtsFor(countries, levels),
       cost:        blankCostFor(countries),
+      minLevelId:  null,
     },
   });
 
   /* ensure blank points map for new product after countries load */
-  useEffect(()=>{
-    if(!countries.length) return;
-    if(Object.keys(form.getValues("pointsPrice")).length) return;
-    form.setValue("pointsPrice", blankPtsFor(countries));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[countries]);
+  useEffect(() => {
+    if (!countries.length || !levels.length) return;
+    const curr = form.getValues("pointsPrice");
+    if (!Object.keys(curr).length) {
+      form.setValue("pointsPrice", blankPtsFor(countries, levels));
+    }
+  }, [countries, levels]);
 
   const productType = form.watch("productType");
   const manageStock = form.watch("manageStock");
   const ptsPrice    = form.watch("pointsPrice");
-
+  useEffect(() => {
+    // define and immediately call an async loader
+    (async function loadLevels() {
+      try {
+        const res = await fetch("/api/affiliate/levels");
+        if (!res.ok) throw new Error("Failed to fetch levels");
+        const { levels: lv } = await res.json();
+        setLevels(lv);
+      } catch (err) {
+        console.error("Could not load affiliate levels", err);
+      }
+    })();
+  }, []);
   /* image preview */
   const [imgPreview,setImgPreview] = useState<string|null>(initialData?.image ?? null);
   const [submitting,setSubmitting] = useState(false);
@@ -223,22 +243,21 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
   };
 
   /* submit */
-  const onSubmit = async (values:FormVals)=>{
+  const onSubmit = async (values: FormVals) => {
     setSubmitting(true);
-    try{
-      const payload:any = {
+    try {
+      const payload: any = {
         ...values,
         attributes,
         warehouseStock: manageStock ? stockRows() : undefined,
-        cost: productType==="simple" ? costs : undefined,
-        pointsPrice: productType==="simple" ? values.pointsPrice : undefined,
-        variations: productType==="variable" ? variations : undefined,
+        cost:         productType === "simple" ? costs : undefined,
+        minLevelId: minLevel,
+        pointsPrice:  productType === "simple" ? values.pointsPrice : undefined,
+        variations:   productType === "variable" ? variations : undefined,
       };
-
       const url    = productId ? `/api/affiliate-products/${productId}` : "/api/affiliate-products";
       const method = productId ? "PATCH" : "POST";
-
-      const res  = await fetch(url,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const res = await fetch(url, { method, headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload) });
       const data = await res.json().catch(()=>({}));
       if(!res.ok){
         const msg = Array.isArray(data?.error)
@@ -372,6 +391,10 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
                     />
                   </div>
                 </div>
+                 {productType === "simple" && (
+                   <LevelRequirementSelect value={minLevel} onChange={setMinLevel} />
+                 )}
+
 
                 <FormField
                   control={form.control}
@@ -400,12 +423,13 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
          {/* POINTS & COST (simple products only) */}
          {productType==="simple" && (
             <TabsContent value="points" className="space-y-6">
-              <PointsManagement
-                title="Points per country"
-                countries={countries}
-                pointsData={ptsPrice}
-                onChange={m=>form.setValue("pointsPrice",m)}
-              />
+             <LevelPointsManagement
+  title="Points per country / level"
+  countries={countries}
+  levels={levels}
+  value={ptsPrice}
+  onChange={m => form.setValue("pointsPrice", m)}
+/>  
               <CostManagement
                 title="Cost per country"
                 countries={countries}
@@ -488,6 +512,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
               onVariationsChange={setVariations as any}
               warehouses={warehouses}
               countries={countries}
+              levels={levels}
             />
           </TabsContent>
         </Tabs>

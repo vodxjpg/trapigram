@@ -18,21 +18,31 @@ const levelSchema = z.object({
 
 /* ── resolve org helper unchanged ── */
 async function orgId(req: NextRequest): Promise<string | NextResponse> {
-  const apiKey = req.headers.get("x-api-key");
-  const secret = req.headers.get("x-internal-secret");
+  const apiKey  = req.headers.get("x-api-key");
+  const secret  = req.headers.get("x-internal-secret");
   const explicit = new URL(req.url).searchParams.get("organizationId");
+
   if (apiKey) {
     const { valid, error } = await auth.api.verifyApiKey({ body: { key: apiKey } });
     if (!valid) return NextResponse.json({ error: error?.message }, { status: 401 });
     return explicit ?? NextResponse.json({ error: "organizationId required" }, { status: 400 });
   }
+
   if (secret === INTERNAL_API_SECRET) {
     const s = await auth.api.getSession({ headers: req.headers });
     if (!s) return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
     return explicit || s.session.activeOrganizationId;
-  }
-  return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  };
+  /* 3️⃣ 💡  Dashboard/browser calls – new */
+  const session = await auth.api.getSession({ headers: req.headers });
+  if (!session)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session.session.activeOrganizationId)
+    return NextResponse.json({ error: "No active organization" }, { status: 400 });
+
+  return explicit || session.session.activeOrganizationId;
 }
+
 
 /* GET list */
 export async function GET(req: NextRequest) {

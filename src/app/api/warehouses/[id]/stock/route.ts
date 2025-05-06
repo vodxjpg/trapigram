@@ -1,13 +1,14 @@
-// /home/zodx/Desktop/trapigram/src/app/api/warehouses/[id]/stock/route.ts
+// src/app/api/warehouses/[id]/stock/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { sql } from "kysely";
 import { auth } from "@/lib/auth";
 
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 /* ────────────────────────────────────────────────────────────── */
-/*  ZOD – incoming stock‑update payload                           */
+/*  ZOD – incoming stock-update payload                           */
 /* ────────────────────────────────────────────────────────────── */
 const stockUpdateSchema = z.array(
   z.object({
@@ -48,8 +49,8 @@ function attrLabel(
 /*  GET  – list stock items for a warehouse                       */
 /* ────────────────────────────────────────────────────────────── */
 export async function GET(
-  req   : NextRequest,
-  ctx   : { params: { id: string } },
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
 ) {
   try {
     /* ── authentication ───────────────────────────────────────── */
@@ -59,7 +60,7 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const warehouseId = ctx.params.id;
+     const { id: warehouseId } = await ctx.params;
 
     /* ── verify warehouse ownership ───────────────────────────── */
     const warehouse = await db
@@ -86,7 +87,7 @@ export async function GET(
       }
     }
 
-    /* ── 1. money‑products query (unchanged) ──────────────────── */
+    /* ── 1. money-products query (unchanged) ──────────────────── */
     const moneyRows = await db
       .selectFrom("warehouseStock")
       .innerJoin("products",           "products.id",           "warehouseStock.productId")
@@ -111,7 +112,7 @@ export async function GET(
       .where("warehouseStock.quantity",    ">", 0)
       .execute();
 
-    /* ── 2. affiliate‑products query (mirrors above) ───────────── */
+    /* ── 2. affiliate-products query (uses sql for NULL) ─────── */
     const affRows = await db
       .selectFrom("warehouseStock")
       .innerJoin("affiliateProducts",          "affiliateProducts.id",          "warehouseStock.productId")
@@ -127,8 +128,8 @@ export async function GET(
         "affiliateProductVariations.cost        as vCost",
         "affiliateProductVariations.sku         as vSku",
         "affiliateProductVariations.attributes  as vAttrs",
-        db.raw("NULL").as("catId"),
-        db.raw("NULL").as("catName"),
+        sql`NULL`.as("catId"),
+        sql`NULL`.as("catName"),
       ])
       .where("warehouseStock.warehouseId", "=", warehouseId)
       .where("warehouseStock.quantity",    ">", 0)
@@ -136,7 +137,7 @@ export async function GET(
 
     const rows = [...moneyRows, ...affRows];
 
-    /* ── 3. build term‑id → name map ──────────────────────────── */
+    /* ── 3. build term-id → name map ──────────────────────────── */
     const termIds = new Set<string>();
     rows.forEach(r => {
       if (r.vAttrs) {
@@ -191,7 +192,8 @@ export async function GET(
 }
 
 
-eexport async function PATCH(
+
+export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {

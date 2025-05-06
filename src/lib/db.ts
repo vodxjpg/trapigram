@@ -119,9 +119,10 @@ interface DB {
     sku:             string;
     status:          "published" | "draft";
     productType:     "simple" | "variable";
+    minLevelId: string | null;
     /* points – country ➜ integer (sale nullable, mirrors salePrice) */
-    regularPoints:   Record<string, number>;
-    salePoints:      Record<string, number> | null;
+    regularPoints: Record<string, Record<string, number>>;   // ⬅︎ changed
+    salePoints   : Record<string, Record<string, number>> | null;
     cost:            Record<string, number>;
     allowBackorders: boolean;
     manageStock:     boolean;
@@ -135,8 +136,9 @@ interface DB {
     productId:      string;                       /* ↺ affiliateProducts.id */
     attributes:     Record<string, string>;
     sku:            string;
-    regularPoints:  Record<string, number>;
-    salePoints:     Record<string, number> | null;
+    minLevelId: string | null;
+    regularPoints: Record<string, Record<string, number>>;   // ⬅︎ changed
+    salePoints   : Record<string, Record<string, number>> | null;
     cost:           Record<string, number>;
     image:          string | null;
     stock:          Record<string, Record<string, number>> | null;

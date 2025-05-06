@@ -6,12 +6,14 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
-
+import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints"; // ⬅︎ add
 /* ──────────────────────────────────────────────────────────────── */
 /*  Shared helpers / Zod                                            */
 /* ──────────────────────────────────────────────────────────────── */
-const ptsObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
-const pointsMap = z.record(z.string(), ptsObj);
+const ptsObj       = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
+const countryMap   = z.record(z.string(), ptsObj);          // country ➜ points
+const pointsByLvl  = z.record(z.string(), countryMap);      // levelId ➜ country map
+
 const stockMap = z.record(z.string(), z.record(z.string(), z.number().min(0)));
 const costMap = z.record(z.string(), z.number().min(0));
 
@@ -44,10 +46,11 @@ const variationPatch = z
     attributes: z.record(z.string(), z.string()),
     sku: z.string(),
     image: z.string().nullable().optional(),
-    pointsPrice: pointsMap.optional(), // alias support below
-    prices: pointsMap.optional(),
+    pointsPrice: pointsByLvl.optional(), // alias support below
+    prices: pointsByLvl.optional(),
     stock: stockMap.optional(),
     cost : costMap.optional(),
+    minLevelId: z.string().uuid().nullable().optional(),
   })
   .transform((v) => ({ ...v, pointsPrice: v.pointsPrice ?? v.prices! }));
 
@@ -66,9 +69,10 @@ const patchSchema = z.object({
   productType: z.enum(["simple", "variable"]).optional(),
   allowBackorders: z.boolean().optional(),
   manageStock: z.boolean().optional(),
-  pointsPrice: pointsMap.optional(),
+  pointsPrice: pointsByLvl.optional(),
   cost: costMap.optional(), 
   attributes: z.array(attrInput).optional(),
+  minLevelId: z.string().uuid().nullable().optional(),
   warehouseStock: z
     .array(
       z.object({
@@ -171,23 +175,30 @@ export async function GET(
   }));
 
   const mappedVariations = variations.map(v => {
-    const prices = mergePoints(v.regularPoints as any, v.salePoints as any);
+    // rebuild the full level→country→{regular,sale} map:
+    const pointsPrice = mergePointsByLevel(
+      v.regularPoints as Record<string, Record<string, number>>,
+      v.salePoints   as Record<string, Record<string, number>> | null
+    );
+  
     return {
       id: v.id,
       attributes: v.attributes,
       sku: v.sku,
       image: v.image,
-      prices,
-      pointsPrice: prices,
-      cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost ?? {},   // ← NEW
-      stock: variationStock[v.id] || {},
+      // this becomes an object keyed by level IDs
+      prices:     pointsPrice,
+      pointsPrice, 
+      cost:       typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost ?? {},
+      minLevelId: v.minLevelId ?? null,
+      stock:      variationStock[v.id] || {},
     };
   });
 
   return NextResponse.json({
     product: {
       ...product,
-      pointsPrice: mergePoints(product.regularPoints as any, product.salePoints as any),
+      pointsPrice: mergePointsByLevel(product.regularPoints, product.salePoints),
       cost: typeof product.cost === "string" ? JSON.parse(product.cost) : product.cost ?? {}, // ← NEW
       warehouseStock: stockRows.filter((r) => !r.affiliateVariationId),
       variations: mappedVariations,
@@ -241,11 +252,12 @@ export async function PATCH(
       if (body.allowBackorders !== undefined) core.allowBackorders = body.allowBackorders;
       if (body.manageStock !== undefined) core.manageStock = body.manageStock;
       if (body.pointsPrice) {
-        const sp = splitPoints(body.pointsPrice);
+        const sp = splitPointsByLevel(body.pointsPrice);
         core.regularPoints = sp.regularPoints;
         core.salePoints = sp.salePoints;
       }
-      if (body.cost) core.cost = body.cost; 
+      if (body.cost) core.cost = body.cost;
+      if (body.minLevelId !== undefined) core.minLevelId = body.minLevelId;
       if (Object.keys(core).length) {
         core.updatedAt = new Date();
         await trx
@@ -275,26 +287,40 @@ export async function PATCH(
           .where("productId", "=", productId)
           .execute();
         const existingIds = existingRows.map((r) => r.id);
+    
+        // delete any removed variations …
         const incomingIds = body.variations.map((v) => v.id);
-
         const toDelete = existingIds.filter((id) => !incomingIds.includes(id));
-        if (toDelete.length)
-          await trx.deleteFrom("affiliateProductVariations").where("id", "in", toDelete).execute();
-
+        if (toDelete.length) {
+          await trx
+            .deleteFrom("affiliateProductVariations")
+            .where("id", "in", toDelete)
+            .execute();
+        }
+    
         for (const v of body.variations) {
-          const pts = splitPoints(v.prices ?? v.pointsPrice);
+          // 💡 again use splitPointsByLevel on the nested map:
+          const srcMap = v.prices ?? v.pointsPrice;
+          const { regularPoints, salePoints } = splitPointsByLevel(srcMap);
+    
           const payload = {
             productId,
             attributes: JSON.stringify(v.attributes),
             sku: v.sku,
             image: v.image ?? null,
-            regularPoints: pts.regularPoints,
-            salePoints: pts.salePoints,
+            regularPoints,
+            salePoints,
             cost: v.cost ?? {},
+            minLevelId: v.minLevelId ?? null,
             updatedAt: new Date(),
           };
+    
           if (existingIds.includes(v.id)) {
-            await trx.updateTable("affiliateProductVariations").set(payload).where("id", "=", v.id).execute();
+            await trx
+              .updateTable("affiliateProductVariations")
+              .set(payload)
+              .where("id", "=", v.id)
+              .execute();
           } else {
             await trx
               .insertInto("affiliateProductVariations")

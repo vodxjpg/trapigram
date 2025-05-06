@@ -3,12 +3,14 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
+import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints"; // ⬅︎ add
 
 /* ──────────────────────────────────────────────────────────────── */
 /*  Zod helpers                                                     */
 /* ──────────────────────────────────────────────────────────────── */
-const ptsObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
-const pointsMap = z.record(z.string(), ptsObj);
+const ptsObj       = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
+const countryMap   = z.record(z.string(), ptsObj);          // country ➜ points
+const pointsByLvl  = z.record(z.string(), countryMap);      // levelId ➜ country map
 const costMap   = z.record(z.string(), z.number().min(0));
 
 /* stock map used inside each variation */
@@ -21,10 +23,11 @@ const variationSchema = z
     attributes: z.record(z.string(), z.string()),
     sku: z.string().min(1),
     image: z.string().nullable().optional(),
-    pointsPrice: pointsMap.optional(), // new name (alias below)
-    prices: pointsMap.optional(),
+    pointsPrice: pointsByLvl.optional(), // new name (alias below)
+    prices: pointsByLvl.optional(),
     stock: stockMap.optional(),
-    cost:   costMap.optional(), 
+    cost:   costMap.optional(),
+    minLevelId: z.string().uuid().nullable().optional(),
   })
   .transform((v) => ({ ...v, pointsPrice: v.pointsPrice ?? v.prices! }));
 
@@ -55,11 +58,12 @@ const productSchema = z.object({
   productType: z.enum(["simple", "variable"]),
   allowBackorders: z.boolean(),
   manageStock: z.boolean(),
-  pointsPrice: pointsMap,
+  pointsPrice: pointsByLvl,
   cost:        costMap.optional(),
   attributes: z.array(attributeInput).optional(),
   variations: z.array(variationSchema).optional(),
   warehouseStock: warehouseStockSchema.optional(),
+  minLevelId: z.string().uuid().nullable().optional(),
 });
 
 /* ──────────────────────────────────────────────────────────────── */
@@ -141,7 +145,7 @@ export async function GET(req: NextRequest) {
       sku: r.sku,
       status: r.status,
       productType: r.productType,
-      pointsPrice: mergePoints(r.regularPoints as any, r.salePoints as any),
+      pointsPrice: mergePointsByLevel(r.regularPoints as any, r.salePoints as any),
       createdAt: r.createdAt,
     }));
 
@@ -197,7 +201,7 @@ export async function POST(req: NextRequest) {
 
   /* insert core product */
   const productId = uuidv4();
-  const { regularPoints, salePoints } = splitPoints(body.pointsPrice);
+  const { regularPoints, salePoints } = splitPointsByLevel(body.pointsPrice);
 
   await db
   .insertInto("affiliateProducts")
@@ -217,8 +221,10 @@ export async function POST(req: NextRequest) {
     allowBackorders: body.allowBackorders,
     manageStock: body.manageStock,
     stockStatus: body.manageStock ? "managed" : "unmanaged",
+    minLevelId: body.minLevelId ?? null,
     createdAt: new Date(),
     updatedAt: new Date(),
+    
   })
   .execute();
 
@@ -243,8 +249,8 @@ export async function POST(req: NextRequest) {
 
   if (body.productType === "variable" && body.variations?.length) {
     for (const v of body.variations) {
-      const srcMap = v.prices ?? v.pointsPrice;      // <-- new
-      const { regularPoints, salePoints } = splitPoints(srcMap);
+      const srcMap = v.prices ?? v.pointsPrice;
+      const { regularPoints, salePoints } = splitPointsByLevel(srcMap);
       await db
         .insertInto("affiliateProductVariations")
         .values({
@@ -256,6 +262,7 @@ export async function POST(req: NextRequest) {
           regularPoints,
           salePoints,
           cost: body.cost ?? {},
+          minLevelId: body.minLevelId ?? null,
           createdAt: new Date(),
           updatedAt: new Date(),
         })

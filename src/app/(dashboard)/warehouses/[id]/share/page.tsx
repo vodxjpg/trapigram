@@ -258,6 +258,44 @@ export default function ShareWarehousePage() {
     form.clearErrors(`products.${idx}.cost`);
   };
 
+   // ────────────────────────────────────────────────────────────────
+  const onSubmit = async (values: FormValues) => {
+    try {
+      // — optional dynamic validation that uses live stock data —
+      for (const [i, p] of values.products.entries()) {
+        const selCountries = Object.keys(p.cost ?? {});
+        if (!selCountries.length) {
+          form.setError(`products.${i}.cost`, {
+            type: "manual",
+            message: "Add at least one country cost",
+          });
+          throw new Error("validation‑failed");
+        }
+      }
+
+      // — call your API to create the share link —
+      const res = await fetch(`/api/warehouses/${warehouseId}/share-links`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": process.env
+            .NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+        },
+        body: JSON.stringify(values),
+      });
+
+      if (!res.ok) throw new Error(`Failed: ${res.status}`);
+      const { shareUrl } = await res.json();
+      setShareUrl(shareUrl);
+      toast.success("Share link created!");
+    } catch (err) {
+      if ((err as any).message !== "validation‑failed") {
+        console.error(err);
+        toast.error("Failed to create share link");
+      }
+    }
+  };
+
   /* ------------------------------ JSX ---------------------------------- */
   return (
     <div className="p-6 max-w-7xl mx-auto">
