@@ -52,6 +52,7 @@ type StockItem = {
   variationId: string | null;
   title: string;
   cost: Record<string, number>;
+  status: string;
   country: string;
   quantity: number;
   productType: "simple" | "variable";
@@ -135,6 +136,7 @@ const stripVariation = (t: string) => t.split(" - ")[0];
 export default function EditShareLinkPage() {
   const router = useRouter();
   const { shareLinkId } = useParams() as Record<string, string>;
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
 
   const [users, setUsers] = useState<User[]>([]);
   const [stock, setStock] = useState<StockItem[]>([]);
@@ -247,17 +249,21 @@ export default function EditShareLinkPage() {
     const existing = form.getValues("products");
     const uniqStock = uniqBy(stock, pvKey);
 
-    const toAdd = uniqStock.filter(
-      (it) =>
-        !existing.some(
-          (p) => p.productId === it.productId && p.variationId === it.variationId,
-        ),
-    );
+    const toAdd = uniqStock
+      .filter((it) => it.status !== "draft")
+      .filter(
+        (it) =>
+          !existing.some(
+            (p) =>
+              p.productId === it.productId &&
+              p.variationId === it.variationId
+          ),
+      );
 
-    if (!toAdd.length) {
-      toast.info("All products are already selected.");
-      return;
-    }
+  if (!toAdd.length) {
+    toast.info("No more non-draft products to select.");
+    return;
+  }
 
     const newProducts = toAdd.map((item) => ({
       productId: item.productId,
@@ -296,17 +302,40 @@ export default function EditShareLinkPage() {
     form.clearErrors(`products.${pIdx}.cost`);
   };
 
+  // add near the top of the component
+const handleEmailSearchEdit = async () => {
+  if (!emailSearch) {
+    setUsers([]);
+    return;
+  }
+  try {
+    const resp = await fetch(
+      `/api/users/search?email=${encodeURIComponent(emailSearch)}`,
+      { headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! } }
+    );
+    if (!resp.ok) throw new Error("Failed to fetch users");
+    const data = await resp.json();
+    const norm = (data.users ?? []).map(normaliseUser);
+    setUsers((prev) => uniqBy([...prev, ...norm], (u) => u.userId));
+    if (!norm.length) toast.info("No users found");
+  } catch {
+    toast.error("Failed to load users");
+  }
+};
+
+
   /* ---------------------------------------------------------------------- */
   /*  Derived structures                                                    */
   /* ---------------------------------------------------------------------- */
-  const uniqStock = uniqBy(stock, pvKey);                         // <-- NEW
-  const groupedStock = uniqStock.reduce((acc, it) => {
-    const cat = it.categoryName || "Uncategorized";
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(it);
-    return acc;
-  }, {} as Record<string, StockItem[]>);
-
+    // only non-draft items
+    const nonDraft = stock.filter((s) => s.status !== "draft");
+    const uniqStock = uniqBy(nonDraft, pvKey);
+    const groupedStock = uniqStock.reduce<Record<string, StockItem[]>>((acc, it) => {
+      const cat = it.categoryName || "Uncategorized";
+      ;(acc[cat] ??= []).push(it);
+      return acc;
+    }, {});
+  
   const stockByProduct = stock.reduce((acc, it) => {
     const k = pvKey(it);
     if (!acc[k]) acc[k] = {};
@@ -454,34 +483,45 @@ export default function EditShareLinkPage() {
 
                   const cleanedValues = {
                     ...values,
-                    products: values.products.map((p) => ({
-                      ...p,
-                      cost: p.cost
-                        ? Object.fromEntries(
-                            Object.entries(p.cost).filter(
-                              ([, v]) => v !== undefined,
-                            ),
-                          )
-                        : {},
-                    })),
+                    products: values.products
+                      // only keep those whose stock entry wasn’t draft
+                      .filter((p) => {
+                        const rec = stock.find(
+                          (s) =>
+                            s.productId === p.productId &&
+                            s.variationId === p.variationId
+                        );
+                        return rec && rec.status !== "draft";
+                      })
+                      .map((p) => ({
+                        ...p,
+                        cost: p.cost
+                          ? Object.fromEntries(
+                              Object.entries(p.cost).filter(([, v]) => v !== undefined)
+                            )
+                          : {},
+                      })),
                   };
 
                   const res = await fetch(
-                    `/api/warehouses/share-links/${shareLinkId}`, // ← was params.shareLinkId
-                    {
-                      method: "PUT",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify(cleanedValues),
-                    },
-                  );
-                  if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(
-                      `Failed: ${res.status} - ${err.error || "Unknown"}`,
-                    );
-                  }
-                  toast.success("Share link updated successfully");
-                  router.push("/warehouses/share-links");
+                                      `/api/warehouses/share-links/${shareLinkId}`,
+                                      {
+                                        method: "PUT",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify(cleanedValues),
+                                      }
+                                    );
+                                    const body = await res.json();
+if (!res.ok) {
+  toast.error(body.error || `Failed to update share link`);
+  return;
+}
+                 // ── grab the new token and show it ───────────────────────
+                 const token = body.token;
+                 const url = `${window.location.origin}/share/${token}`;
+                 setShareUrl(url);
+                 toast.success("Share link updated!");
+                 // don’t redirect—you want them to copy.
                 } catch (err) {
                   console.error(err);
                   toast.error(
@@ -502,46 +542,20 @@ export default function EditShareLinkPage() {
                     <FormItem>
                       <FormLabel>Recipients</FormLabel>
                       <div className="flex gap-2">
-                        <Input
-                          placeholder="Search user by email"
-                          value={emailSearch}
-                          onChange={(e) => setEmailSearch(e.target.value)}
-                        />
-                        <Button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              if (!emailSearch) {
-                                setUsers([]);
-                                return;
-                              }
-                              const resp = await fetch(
-                                `/api/users/search?email=${encodeURIComponent(
-                                  emailSearch,
-                                )}`,
-                                {
-                                  headers: {
-                                    "x-internal-secret": process.env
-                                      .NEXT_PUBLIC_INTERNAL_API_SECRET as string,
-                                  },
-                                },
-                              );
-                              if (!resp.ok)
-                                throw new Error("Failed to fetch users");
-                              const data = await resp.json();
-                              const norm = (data.users ?? []).map(normaliseUser);
-                              setUsers((prev) =>
-                                uniqBy([...prev, ...norm], (u) => u.userId),
-                              );
-                              if (!norm.length) toast.info("No users found");
-                            } catch (err) {
-                              console.error(err);
-                              toast.error("Failed to load users");
-                            }
-                          }}
-                        >
-                          Search
-                        </Button>
+                      <Input
+                       placeholder="Search user by email"
+                       value={emailSearch}
+                       onChange={(e) => setEmailSearch(e.target.value)}
+                       onKeyDown={(e) => {
+                         if (e.key === "Enter") {
+                           e.preventDefault();
+                           handleEmailSearchEdit();
+                         }
+                       }}
+                     />
+                     <Button type="button" onClick={handleEmailSearchEdit}>
+                       Search
+                     </Button>
                       </div>
 
                       {users.length > 0 && (
@@ -632,12 +646,14 @@ export default function EditShareLinkPage() {
                       const isVariable =
                         selectedProd?.productType === "variable";
 
-                        const variations = isVariable
-                        ? uniqStock.filter(
-                            (s) =>
-                              s.productId === selectedProdId && s.variationId,
-                          )
-                        : [];
+                           const variations = isVariable
+                          ? uniqStock.filter(
+                              (s) =>
+                                s.productId === selectedProdId &&   // <-- use selectedProdId
+                                s.variationId != null &&
+                                s.status !== "draft"
+                            )
+                          : [];
 
                       /* cost / stock helpers ------------------------------ */
                       const stockKey = `${selectedProdId}-${
@@ -670,17 +686,13 @@ export default function EditShareLinkPage() {
                                           value: "",
                                           disabled: true,
                                         },
-                                        ...Object.entries(groupedStock).map(
-                                          ([cat, items]) => ({
-                                            label: cat,
-                                            options: uniqueParents(items).map(
-                                              (s) => ({
-                                                value: s.productId,
-                                                label: stripVariation(s.title),
-                                              }),
-                                            ),
-                                          }),
-                                        ),
+                                        ...Object.entries(groupedStock).map(([cat, items]) => ({
+                                          label: cat,
+                                          options: uniqueParents(items /* already non-draft */ ).map((s) => ({
+                                            value: s.productId,
+                                            label: stripVariation(s.title),
+                                          })),
+                                        })),
                                       ]}
                                       value={
                                         field.value
@@ -942,8 +954,28 @@ export default function EditShareLinkPage() {
                   Cancel
                 </Button>
               </div>
-            </form>
-          </Form>
+              </form>
+
+             {/* show the new URL *after* the inner <form> closes */}
+             {shareUrl && (
+               <Card className="mt-6">
+                 <CardHeader>
+                   <CardTitle>Your Share URL</CardTitle>
+                 </CardHeader>
+                 <CardContent className="flex items-center gap-2">
+                   <Input value={shareUrl} readOnly />
+                   <Button
+                     onClick={() => {
+                       navigator.clipboard.writeText(shareUrl);
+                       toast.success("Copied!");
+                     }}
+                   >
+                     Copy
+                   </Button>
+                 </CardContent>
+               </Card>
+             )}
+           </Form>
         </CardContent>
       </Card>
     </div>

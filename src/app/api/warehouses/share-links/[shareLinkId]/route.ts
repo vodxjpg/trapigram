@@ -498,7 +498,19 @@ export async function PUT(
         .execute();
     }
 
-    return NextResponse.json({ message: "Share link updated successfully" }, { status: 200 });
+    const row = await db
+    .selectFrom("warehouseShareLink")
+    .select("token")
+    .where("id", "=", shareLinkId)
+    .executeTakeFirst();
+
+  return NextResponse.json(
+    {
+      message: "Share link updated successfully",
+      token: row?.token
+    },
+    { status: 200 }
+  );
   } catch (error) {
     console.error("[PUT /api/warehouses/share-links/[shareLinkId]] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

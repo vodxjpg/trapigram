@@ -51,6 +51,7 @@ type StockItem = {
   productId: string;
   variationId: string | null;
   title: string;
+  status: string;
   cost: Record<string, number>;
   country: string;
   quantity: number;
@@ -183,13 +184,13 @@ export default function ShareWarehousePage() {
   };
 
   /* ------------------------------ stock-derived helpers ---------------- */
-  const uniqStock = uniqBy(stock, pvKey);                // ★ deduplicated list
-  const groupedStock = uniqStock.reduce((acc, it) => {
+  const nonDraft = stock.filter((s) => s.status !== "draft");
+  const uniqStock = uniqBy(nonDraft, pvKey);
+  const groupedStock = uniqStock.reduce<Record<string, StockItem[]>>((acc, it) => {
     const cat = it.categoryName || "Uncategorized";
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(it);
+    ;(acc[cat] ??= []).push(it);
     return acc;
-  }, {} as Record<string, StockItem[]>);
+  }, {});
 
   const stockByProduct = stock.reduce((acc, it) => {
     const k = pvKey(it);
@@ -207,14 +208,19 @@ export default function ShareWarehousePage() {
 
   const selectAllProducts = () => {
     const existing = form.getValues("products");
-    const toAdd = uniqStock.filter(
+    const toAdd = uniqStock
+    .filter(it => it.status !== "draft")
+    .filter(
       (it) =>
         !existing.some(
-          (p) => p.productId === it.productId && p.variationId === it.variationId,
-        ),
+          (p) =>
+            p.productId === it.productId &&
+            p.variationId === it.variationId
+        )
     );
+
     if (!toAdd.length) {
-      toast.info("All products are already selected.");
+      toast.info("No more non-draft products to select.");
       return;
     }
 
@@ -284,9 +290,12 @@ export default function ShareWarehousePage() {
         body: JSON.stringify(values),
       });
 
-      if (!res.ok) throw new Error(`Failed: ${res.status}`);
-      const { shareUrl } = await res.json();
-      setShareUrl(shareUrl);
+      if (!res.ok) {
+        // show the server-side message
+        toast.error(body.error || "Failed to create share link");
+        return;
+      }
+      setShareUrl(body.url);
       toast.success("Share link created!");
     } catch (err) {
       if ((err as any).message !== "validation‑failed") {
@@ -336,11 +345,17 @@ export default function ShareWarehousePage() {
                     <FormItem>
                       <FormLabel>Recipients</FormLabel>
                       <div className="flex gap-2">
-                        <Input
-                          placeholder="Search user by email"
-                          value={emailSearch}
-                          onChange={(e) => setEmailSearch(e.target.value)}
-                        />
+                      <Input
+                         placeholder="Search user by email"
+                         value={emailSearch}
+                         onChange={(e) => setEmailSearch(e.target.value)}
+                         onKeyDown={(e) => {
+                           if (e.key === "Enter") {
+                             e.preventDefault();
+                             handleEmailSearch();
+                           }
+                         }}
+                       />
                         <Button type="button" onClick={handleEmailSearch}>
                           Search
                         </Button>
@@ -420,7 +435,10 @@ export default function ShareWarehousePage() {
 
                       const variations = isVariable
                         ? uniqStock.filter(
-                            (s) => s.productId === selProdId && s.variationId,
+                            (s) =>
+                              s.productId === selProdId &&
+                              s.variationId &&
+                              s.status !== "draft"
                           )
                         : [];
 
@@ -451,17 +469,13 @@ export default function ShareWarehousePage() {
                                           value: "",
                                           disabled: true,
                                         },
-                                        ...Object.entries(groupedStock).map(
-                                          ([cat, items]) => ({
-                                            label: cat,
-                                            options: uniqueParents(items).map(
-                                              (s) => ({
-                                                value: s.productId,
-                                                label: stripVariation(s.title),
-                                              }),
-                                            ),
-                                          }),
-                                        ),
+                                        ...Object.entries(groupedStock).map(([cat, items]) => ({
+                                          label: cat,
+                                          options: uniqueParents(items /* already non-draft */ ).map((s) => ({
+                                            value: s.productId,
+                                            label: stripVariation(s.title),
+                                          })),
+                                        })),
                                       ]}
                                       value={
                                         field.value
