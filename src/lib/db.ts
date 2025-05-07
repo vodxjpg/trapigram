@@ -469,6 +469,7 @@ interface DB {
     shippingMethod: string;
     cartHash: string;
     cartUpdatedHash: string;
+    status: boolean;
     createdAt: Date;
     updatedAt: Date;
   }

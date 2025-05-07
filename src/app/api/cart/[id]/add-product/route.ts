@@ -8,8 +8,6 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 const cartProductSchema = z.object({
-    id: z.string(),
-    cartId: z.string(),
     productId: z.string(),
     quantity: z.number(),
     unitPrice: z.number(),
@@ -49,25 +47,74 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     try {
         const { id } = await params;
         const body = await req.json();
-        const data = cartProductSchema.parse(body); // throws if invalid
-
         const cartProductId = uuidv4();
 
-        const insert = `
+        const productCartQuery = `
+        SELECT * FROM "cartProducts"
+        WHERE "productId" = '${body.productId}' AND "cartId" = '${id}'
+      `;
+
+        const resultProductCart = await pool.query(productCartQuery);
+        console.log(resultProductCart.rows[0])
+
+        if (resultProductCart.rows.length > 0) {
+            const newQuantity = resultProductCart.rows[0].quantity + body.quantity
+            const updateProductCart = `
+            UPDATE "cartProducts"
+            SET quantity = '${newQuantity}'
+            WHERE "productId" = '${body.productId}' AND "id" = '${resultProductCart.rows[0].id}'
+            `
+
+            const resultUpdateCart = await pool.query(updateProductCart);
+            console.log(resultUpdateCart)
+
+            const productQuery = `
+        SELECT * FROM products
+        WHERE id = '${body.productId}'
+      `;
+
+            const resultProduct = await pool.query(productQuery);
+
+            const cartItem = {
+                product: resultProduct.rows[0],
+                quantity: newQuantity
+            }
+            console.log(cartItem)
+            return NextResponse.json(cartItem, { status: 201 });
+        } else {
+            const productQuery = `
+        SELECT * FROM products
+        WHERE id = '${body.productId}'
+      `;
+
+            const resultProduct = await pool.query(productQuery);
+            body.unitPrice = body.price
+            const data = cartProductSchema.parse(body); // throws if invalid        
+
+            const insert = `
         INSERT INTO "cartProducts" (id, "cartId", "productId", quantity, "unitPrice", "createdAt", "updatedAt")
         VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
         RETURNING *
       `;
-        const vals = [
-            cartProductId,
-            id,
-            data.productId,
-            data.quantity,
-            data.unitPrice,
-        ];
+            const vals = [
+                cartProductId,
+                id,
+                data.productId,
+                data.quantity,
+                data.unitPrice,
+            ];
 
-        const result = await pool.query(insert, vals);
-        return NextResponse.json(result.rows[0], { status: 201 });
+            await pool.query(insert, vals);
+
+            const cartItem = {
+                product: resultProduct.rows[0],
+                quantity: data.quantity
+            }
+            console.log(cartItem)
+            return NextResponse.json(cartItem, { status: 201 });
+        }
+
+
     } catch (err: any) {
         console.error("[POST /api/cart/:id/add-product]", err);
         if (err instanceof z.ZodError)

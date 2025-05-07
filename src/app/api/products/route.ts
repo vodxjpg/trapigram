@@ -10,7 +10,7 @@ import { v4 as uuidv4 } from "uuid"
 /* ------------------------------------------------------------------ */
 const priceObj = z.object({
   regular: z.number().min(0),
-  sale:    z.number().nullable(),
+  sale: z.number().nullable(),
 })
 
 const costMap = z.record(z.string(), z.number().min(0))
@@ -29,7 +29,7 @@ const variationSchema = z.object({
   sku: z.string(),
   image: z.string().nullable().optional(),
   prices: z.record(z.string(), priceObj),
-  cost:   costMap.optional(), 
+  cost: costMap.optional(),
 })
 
 const productSchema = z.object({
@@ -41,7 +41,7 @@ const productSchema = z.object({
   productType: z.enum(["simple", "variable"]),
   categories: z.array(z.string()).optional(),
   prices: z.record(z.string(), priceObj),
-  cost:   costMap.optional(), 
+  cost: costMap.optional(),
   allowBackorders: z.boolean().default(false),
   manageStock: z.boolean().default(false),
   warehouseStock: warehouseStockSchema.optional(),
@@ -80,9 +80,9 @@ export async function GET(req: NextRequest) {
     if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 })
 
     const { searchParams } = new URL(req.url)
-    const page     = parseInt(searchParams.get("page")     || "1")
+    const page = parseInt(searchParams.get("page") || "1")
     const pageSize = parseInt(searchParams.get("pageSize") || "10")
-    const search   = searchParams.get("search")     || ""
+    const search = searchParams.get("search") || ""
     const categoryId = searchParams.get("categoryId") || ""
 
     const tenant = await db
@@ -132,6 +132,7 @@ export async function GET(req: NextRequest) {
       ])
       .where("id", "in", productIds)
       .execute()
+    
 
     /* -------- STEP 3 – related data in bulk --------------------- */
     const stockRows = await db
@@ -165,25 +166,25 @@ export async function GET(req: NextRequest) {
 
       const variations = p.productType === "variable"
         ? variationRows
-            .filter(v => v.productId === p.id)
-            .map(v => ({
-              id: v.id,
-              attributes: typeof v.attributes === "string" ? JSON.parse(v.attributes) : v.attributes,
-              sku: v.sku,
-              image: v.image,
-              prices: mergePriceMaps(
-                typeof v.regularPrice === "string" ? JSON.parse(v.regularPrice) : v.regularPrice,
-                typeof v.salePrice    === "string" ? JSON.parse(v.salePrice)    : v.salePrice,
-              ),
-              cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
-              stock: stockRows
-                .filter(s => s.variationId === v.id)
-                .reduce((acc, s) => {
-                  if (!acc[s.warehouseId]) acc[s.warehouseId] = {}
-                  acc[s.warehouseId][s.country] = s.quantity
-                  return acc
-                }, {} as Record<string, Record<string, number>>)
-            }))
+          .filter(v => v.productId === p.id)
+          .map(v => ({
+            id: v.id,
+            attributes: typeof v.attributes === "string" ? JSON.parse(v.attributes) : v.attributes,
+            sku: v.sku,
+            image: v.image,
+            prices: mergePriceMaps(
+              typeof v.regularPrice === "string" ? JSON.parse(v.regularPrice) : v.regularPrice,
+              typeof v.salePrice === "string" ? JSON.parse(v.salePrice) : v.salePrice,
+            ),
+            cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
+            stock: stockRows
+              .filter(s => s.variationId === v.id)
+              .reduce((acc, s) => {
+                if (!acc[s.warehouseId]) acc[s.warehouseId] = {}
+                acc[s.warehouseId][s.country] = s.quantity
+                return acc
+              }, {} as Record<string, Record<string, number>>)
+          }))
         : []
 
       /* recompute stockStatus */
@@ -205,8 +206,8 @@ export async function GET(req: NextRequest) {
         status: p.status,
         productType: p.productType,
         regularPrice: typeof p.regularPrice === "string" ? JSON.parse(p.regularPrice) : p.regularPrice,
-        salePrice:    typeof p.salePrice    === "string" ? JSON.parse(p.salePrice)    : p.salePrice,
-        cost:         typeof p.cost         === "string" ? JSON.parse(p.cost)         : p.cost,
+        salePrice: typeof p.salePrice === "string" ? JSON.parse(p.salePrice) : p.salePrice,
+        cost: typeof p.cost === "string" ? JSON.parse(p.cost) : p.cost,
         allowBackorders: p.allowBackorders,
         manageStock: p.manageStock,
         stockStatus: computedStatus,

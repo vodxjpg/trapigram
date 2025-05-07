@@ -2,15 +2,32 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
 import { auth } from "@/lib/auth";
+import { v4 as uuidv4 } from "uuid";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
-const cartProductSchema = z.object({
-    code: z.string(),
+const orderSchema = z.object({
+    id: z.string(),
+    clientId: z.string(),
+    cartId: z.string(),
+    country: z.string(),
+    status: z.string(),
+    paymentMethod: z.string(),
+    orderKey: z.string(),
+    cartHash: z.string(),
+    shippinTotal: z.number(),
+    discountTotal: z.number().optional(),
+    totalAmount: z.number(),
+    couponCode: z.string().optional(),
+    shippingService: z.string(),
+    dateCreated: z.date(),
+    datePaid: z.date().optional(),
+    dateCompleted: z.date().optional(),
+    dateCancelled: z.date().optional(),
 });
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest) {
     /* --- 3.1  Auth (same block as above) ----------------------------------- */
     const apiKey = req.headers.get("x-api-key");
     const internalSecret = req.headers.get("x-internal-secret");
@@ -42,49 +59,40 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     /* --- 3.2  Validate & insert ------------------------------------------- */
     try {
-
-        const { id } = await params;
         const body = await req.json();
-        const data = cartProductSchema.parse(body); // throws if invalid        
+        const data = orderSchema.parse(body); // throws if invalid
 
-        const coupon = `
-        SELECT * FROM coupons 
-        WHERE code = '${data.code}' AND "organizationId" = '${organizationId}'
+        const orderId = uuidv4();
+
+        const insert = `
+        INSERT INTO orders (id, "clientId", "cartId", country, status, "paymentMethod", "orderKey", "cartHash", "shippinTotal", "discountTotal", "totalAmount", "couponCode", "shippingService", "dateCreated", "datePaid", "dateCompleted", "dateCancelled", "createdAt", "updatedAt")
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW(),NOW())
+        RETURNING *
       `;
+        const vals = [
+            orderId,
+            data.clientId,
+            data.cartId,
+            data.country,
+            data.status,
+            data.paymentMethod,
+            data.orderKey,
+            data.cartHash,
+            data.shippinTotal,
+            data.discountTotal,
+            data.totalAmount,
+            data.couponCode,
+            data.shippinTotal,
+            data.dateCreated,
+            data.datePaid,
+            data.dateCompleted,
+            data.dateCancelled
+        ];
 
-        const countryCoupon = await pool.query(coupon);        
-        const couponCountry = JSON.parse(countryCoupon.rows[0].countries);
-
-        const cart = `
-        SELECT country FROM carts 
-        WHERE id = '${id}'
-      `;
-
-        const countryCart = await pool.query(cart);
-        const cartCountry = countryCart.rows[0].country;
-
-        if (couponCountry.includes(cartCountry)) {
-            const insert = `
-            UPDATE carts 
-            SET "couponCode" = $1, "updatedAt" = NOW()
-            WHERE id = $2
-            RETURNING *
-        `;
-            const vals = [
-                data.code,
-                id
-            ];
-
-            await pool.query(insert, vals);
-            const discount = {
-                discountType: countryCoupon.rows[0].discountType, discountAmount: countryCoupon.rows[0].discountAmount
-            }
-            return NextResponse.json(discount, { status: 201 });
-        }else {
-            //Error 
-        }
+        const result = await pool.query(insert, vals);
+        return NextResponse.json(result.rows[0], { status: 201 });
     } catch (err: any) {
-        console.error("[PATCH /api/cart/:id/update-product]", err);
+        console.error("[POST /api/cart/:id/add-product]", err);
         if (err instanceof z.ZodError)
             return NextResponse.json({ error: err.errors }, { status: 400 });
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });

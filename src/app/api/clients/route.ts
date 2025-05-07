@@ -51,6 +51,7 @@ async function resolveOrg(req: NextRequest): Promise<string | NextResponse> {
 /* ---------------------- GET /api/clients ---------------------- */
 export async function GET(req: NextRequest) {
   const org = await resolveOrg(req);
+  console.log(org+"---")
   if (org instanceof NextResponse) return org;
   const organizationId = org;
 
