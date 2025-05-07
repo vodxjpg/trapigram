@@ -349,10 +349,11 @@ export async function POST(req: NextRequest) {
     /* insert warehouseStock entries */
     if (parsedProduct.warehouseStock?.length) {
       for (const entry of parsedProduct.warehouseStock) {
+        /* after */
         await db.insertInto("warehouseStock").values({
           id: uuidv4(),
           warehouseId: entry.warehouseId,
-          productId: entry.productId,
+          productId,                        // ← use the local const `productId`
           variationId: entry.variationId,
           country: entry.country,
           quantity: entry.quantity,

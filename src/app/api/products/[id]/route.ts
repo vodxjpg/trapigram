@@ -876,79 +876,129 @@
     }
   }
 
-  /* ================================================================== */
-  /* DELETE                                                            */
-  /* ================================================================== */
-  export async function DELETE(
-    req: NextRequest,
-    { params }: { params: Promise<{ id: string }> },
-  ) {
-    try {
-      const session = await auth.api.getSession({ headers: req.headers });
-      if (!session) {
-        return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
-      }
-      const organizationId = session.session.activeOrganizationId;
-      if (!organizationId) {
-        return NextResponse.json({ error: "No active organization" }, { status: 400 });
-      }
-      const { id } = await params;
-      const existingProduct = await db
-        .selectFrom("products")
-        .select("id")
-        .where("id", "=", id)
-        .where("organizationId", "=", organizationId)
-        .executeTakeFirst();
-      if (!existingProduct) {
-        return NextResponse.json({ error: "Product not found" }, { status: 404 });
-      }
-       await db.deleteFrom("productCategory").where("productId", "=", id).execute();
-       await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
-       await db.deleteFrom("productVariations").where("productId", "=", id).execute();
-      // 1) clean up all the “shared” records that reference this as the source
-      const sharedLinks = await db
-        .selectFrom("sharedProduct")
-        .select("shareLinkId")
+/* ================================================================== */
+/* DELETE                                                            */
+/* ================================================================== */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    // 1) Auth & ownership
+    const session = await auth.api.getSession({ headers: req.headers });
+    if (!session)
+      return NextResponse.json(
+        { error: "Unauthorized: No session found" },
+        { status: 401 },
+      );
+    const organizationId = session.session.activeOrganizationId;
+    if (!organizationId)
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 400 },
+      );
+
+    const { id } = await params;
+    const existing = await db
+      .selectFrom("products")
+      .select("id")
+      .where("id", "=", id)
+      .where("organizationId", "=", organizationId)
+      .executeTakeFirst();
+    if (!existing)
+      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+
+    // 2) Gather variation IDs for this product
+    const varRows = await db
+      .selectFrom("productVariations")
+      .select("id")
+      .where("productId", "=", id)
+      .execute();
+    const variationIds = varRows.map((r) => r.id);
+
+    // 3) Gather any B-side (shared) copies before deleting mappings
+    const mappingRows = await db
+      .selectFrom("sharedProductMapping")
+      .select("targetProductId")
+      .where("sourceProductId", "=", id)
+      .execute();
+    const targetProductIds = mappingRows.map((r) => r.targetProductId);
+
+    // 4) Delete any sharedProduct entries pointing at this product or its variations
+    if (variationIds.length > 0) {
+      // both productId and variationId conditions
+      await db
+        .deleteFrom("sharedProduct")
+        .where((eb) =>
+          eb.or([
+            eb("productId", "=", id),
+            eb("variationId", "in", variationIds),
+          ]),
+        )
+        .execute();
+    } else {
+      // only productId condition
+      await db
+        .deleteFrom("sharedProduct")
         .where("productId", "=", id)
         .execute();
-      if (sharedLinks.length) {
-        const linkIds = sharedLinks.map((r) => r.shareLinkId);
-      
-        // a) delete any sharedProductMapping / sharedVariationMapping rows
-          // 1) grab all B-side copies BEFORE we nuke the mappings:
-          const mappings = await db
-            .selectFrom("sharedProductMapping")
-            .select("targetProductId")
-            .where("sourceProductId", "=", id)
-            .execute();
-          const targetIds = mappings.map((r) => r.targetProductId);
-      
-        // b) delete the sharedProduct entries themselves
-        await db
-          .deleteFrom("sharedProduct")
-          .where("productId", "=", id)
-          .execute();
-      
-        
-          // now delete each copy in B’s tenants (using the list we fetched above):
-          for (const targetProductId of targetIds) {
-          await db.deleteFrom("warehouseStock").where("productId", "=", targetProductId).execute();
-          await db.deleteFrom("productVariations").where("productId", "=", targetProductId).execute();
-          await db.deleteFrom("productCategory").where("productId", "=", targetProductId).execute();
-          await db.deleteFrom("productAttributeValues").where("productId", "=", targetProductId).execute();
-          await db.deleteFrom("products").where("id", "=", targetProductId).execute();
-        }
-      }
-      
-      // … now delete your own product’s rows …
-      await db.deleteFrom("productCategory").where("productId", "=", id).execute();
-      await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
-      await db.deleteFrom("productVariations").where("productId", "=", id).execute();
-      await db.deleteFrom("products").where("id", "=", id).execute();
-      return NextResponse.json({ message: "Product deleted successfully" });
-    } catch (error) {
-      const { id } = await params;
-      console.error(`[PRODUCT_DELETE_${id}]`, error);
-      return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
+
+    // 5) Delete the mapping tables
+    // sharedVariationMapping needs the same guard
+    if (variationIds.length > 0) {
+      await db
+        .deleteFrom("sharedVariationMapping")
+        .where((eb) =>
+          eb.or([
+            eb("sourceProductId", "=", id),
+            eb("sourceVariationId", "in", variationIds),
+          ]),
+        )
+        .execute();
+    } else {
+      await db
+        .deleteFrom("sharedVariationMapping")
+        .where("sourceProductId", "=", id)
+        .execute();
+    }
+
+    // sharedProductMapping only needs the sourceProductId
+    await db
+      .deleteFrom("sharedProductMapping")
+      .where("sourceProductId", "=", id)
+      .execute();
+
+    // 6) Delete each B-side copy (stock, variations, categories, attributes, product)
+    for (const tgt of targetProductIds) {
+      await db.deleteFrom("warehouseStock").where("productId", "=", tgt).execute();
+      await db.deleteFrom("productVariations").where("productId", "=", tgt).execute();
+      await db.deleteFrom("productCategory").where("productId", "=", tgt).execute();
+      await db
+        .deleteFrom("productAttributeValues")
+        .where("productId", "=", tgt)
+        .execute();
+      await db.deleteFrom("products").where("id", "=", tgt).execute();
+    }
+
+    // 7) Finally delete this product’s own data
+    await db.deleteFrom("warehouseStock").where("productId", "=", id).execute();
+    await db.deleteFrom("productVariations").where("productId", "=", id).execute();
+    await db.deleteFrom("productCategory").where("productId", "=", id).execute();
+    await db
+      .deleteFrom("productAttributeValues")
+      .where("productId", "=", id)
+      .execute();
+    await db.deleteFrom("products").where("id", "=", id).execute();
+
+    return NextResponse.json({ message: "Product deleted successfully" });
+  } catch (error) {
+    const { id } = await params;
+    console.error(`[PRODUCT_DELETE_${id}]`, error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
+}
+
