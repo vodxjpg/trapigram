@@ -4,6 +4,7 @@ import { z } from "zod"
 import { db } from "@/lib/db"
 import { auth } from "@/lib/auth"
 import { v4 as uuidv4 } from "uuid"
+import { getContext } from "@/lib/context";
 
 /* ------------------------------------------------------------------ */
 /*  ZOD - schema                                                      */
@@ -73,25 +74,15 @@ function splitPrices(pr: Record<string, { regular: number; sale: number | null }
 /* ------------------------------------------------------------------ */
 export async function GET(req: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: req.headers })
-    if (!session) return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 })
-    const organizationId = session.session.activeOrganizationId
-    const userId = session.user.id
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 })
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId, tenantId, userId } = ctx;
 
     const { searchParams } = new URL(req.url)
     const page     = parseInt(searchParams.get("page")     || "1")
     const pageSize = parseInt(searchParams.get("pageSize") || "10")
     const search   = searchParams.get("search")     || ""
     const categoryId = searchParams.get("categoryId") || ""
-
-    const tenant = await db
-      .selectFrom("tenant")
-      .select(["id"])
-      .where("ownerUserId", "=", userId)
-      .executeTakeFirst()
-    if (!tenant) return NextResponse.json({ error: "No tenant found for user" }, { status: 404 })
-    const tenantId = tenant.id
 
     /* -------- STEP 1 – product IDs with proper limit/offset ----- */
     let idQuery = db
