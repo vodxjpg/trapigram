@@ -188,11 +188,11 @@ export async function POST(req: NextRequest) {
             if (!srcProd)
               return NextResponse.json({ error: `Source product ${sp.productId} not found` }, { status: 404 });
 
-            // generate new SKU by swapping the ORG- prefix for SHD-
-            const suffix = srcProd.sku.includes('-')
-              ? srcProd.sku.split('-').slice(1).join('-')
-              : srcProd.sku;
-            let newSku = `SHD-${suffix}`;
+                      // generate new SKU by replacing ORG- with SHD- (leave other SKUs intact)
+                      const suffix = srcProd.sku.startsWith("ORG-")
+                        ? srcProd.sku.slice("ORG-".length)
+                        : srcProd.sku;
+                      let newSku = `SHD-${suffix}`;
             // ensure uniqueness if collision
             while (
               await db.selectFrom("products").select("id").where("sku", "=", newSku).executeTakeFirst()
@@ -367,11 +367,11 @@ export async function POST(req: NextRequest) {
                 variationIdMap.set(v.id, targetVariationId);
 
                 if (!sameVar) {
-                  // generate new variation SKU by swapping ORG- for SHD-
-                  const varSuffix = v.sku.includes('-')
-                    ? v.sku.split('-').slice(1).join('-')
-                    : v.sku;
-                  let newVarSku = `SHD-${varSuffix}`;
+                  // generate new variation SKU by replacing ORG- with SHD-
+                const varSuffix = v.sku.startsWith("ORG-")
+                  ? v.sku.slice("ORG-".length)
+                  : v.sku;
+                let newVarSku = `SHD-${varSuffix}`;
                   while (
                     await db
                       .selectFrom("productVariations")
