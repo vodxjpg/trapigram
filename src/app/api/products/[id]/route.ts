@@ -1,4 +1,5 @@
-  import { type NextRequest, NextResponse } from "next/server";
+  import type { NextRequest } from "next/server";
+  import     { NextResponse } from "next/server";
   import { z } from "zod";
   import { db } from "@/lib/db";
   import { auth } from "@/lib/auth";
@@ -345,7 +346,7 @@
         .where("targetProductId", "=", id)
         .executeTakeFirst();
 
-      /* -------- parse + validate incoming payload ------------ */
+      /* -------- parse  validate incoming payload ------------ */
       const body = await req.json();
       let parsedUpdate;
       try {
@@ -363,11 +364,12 @@
   if (isSharedProduct) {
     // figure out what the user tried to change
     const attempted = Object.keys(parsedUpdate);
-    const allowed   = ["title", "description", "status", "prices", "variations"];
+    const allowed   = ["title", "description", "status", "prices", "variations", "categories"];
     const skipped   = attempted.filter((k) => !allowed.includes(k));
 
     // apply each allowed change
-    const { title, description, status, prices, variations } = parsedUpdate;
+    const { title, description, prices, variations } = parsedUpdate;
+    const { categories } = parsedUpdate;
 
     if (title) {
       await db
@@ -381,14 +383,6 @@
       await db
         .updateTable("products")
         .set({ description, updatedAt: new Date() })
-        .where("id", "=", id)
-        .execute();
-    }
-
-    if (status) {
-      await db
-        .updateTable("products")
-        .set({ status, updatedAt: new Date() })
         .where("id", "=", id)
         .execute();
     }
@@ -422,10 +416,26 @@
       }
     }
 
+     // now handle categories on shared product
+     if (categories) {
+       // remove all existing categories for this shared item
+       await db
+         .deleteFrom("productCategory")
+         .where("productId", "=", id)
+         .execute();
+       // insert the new ones
+       for (const cid of categories) {
+         await db
+           .insertInto("productCategory")
+           .values({ productId: id, categoryId: cid })
+           .execute();
+       }
+     }
+
     // build the user message
     let message = "Shared product updated successfully.";
     if (skipped.length) {
-      message += ` Note: the following field${skipped.length > 1 ? "s were" : " was"} skipped because shared products cannot be edited: ${skipped.join(", ")}.`;
+      message = ` Note: the following field${skipped.length > 1 ? "s were" : " was"} skipped because shared products cannot be edited: ${skipped.join(", ")}.`;
     }
 
     return NextResponse.json({ message }, { status: 200 });
@@ -718,7 +728,7 @@
                     country: stock.country,
                   };
                 }
-                stockByKey[key].quantity += stock.quantity;
+                stockByKey[key].quantity = stock.quantity;
               }
 
               console.log(`[DEBUG_STOCK_UPDATE] Aggregated stock for productId: ${id} by variationId and country:`, stockByKey);
@@ -826,6 +836,34 @@
         }
       }
 
+       /* -------------------------------------------------------------- */
+    /* **NEW** product-change propagation to shared copies           */
+    /* -------------------------------------------------------------- */
+    // Only propagate if this is a source product (User A)
+    const sharedEntries = await db
+      .selectFrom("sharedProduct")
+      .select("shareLinkId")
+      .where("productId", "=", id)
+      .execute();
+    if (sharedEntries.length) {
+      const mappings = await db
+        .selectFrom("sharedProductMapping")
+        .select(["sourceProductId", "targetProductId", "shareLinkId"])
+        .where("sourceProductId", "=", id)
+        .where("shareLinkId", "in", sharedEntries.map(s => s.shareLinkId))
+        .execute();
+      for (const map of mappings) {
+        // 1) propagate status
+        if (parsedUpdate.status) {
+          await db
+            .updateTable("products")
+            .set({ status: parsedUpdate.status, updatedAt: new Date() })
+            .where("id", "=", map.targetProductId)
+            .execute();
+        }
+      }
+    }
+
       return NextResponse.json({
         product: { id, ...parsedUpdate, updatedAt: new Date().toISOString() },
       });
@@ -864,6 +902,45 @@
       if (!existingProduct) {
         return NextResponse.json({ error: "Product not found" }, { status: 404 });
       }
+       await db.deleteFrom("productCategory").where("productId", "=", id).execute();
+       await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
+       await db.deleteFrom("productVariations").where("productId", "=", id).execute();
+      // 1) clean up all the “shared” records that reference this as the source
+      const sharedLinks = await db
+        .selectFrom("sharedProduct")
+        .select("shareLinkId")
+        .where("productId", "=", id)
+        .execute();
+      if (sharedLinks.length) {
+        const linkIds = sharedLinks.map((r) => r.shareLinkId);
+      
+        // a) delete any sharedProductMapping / sharedVariationMapping rows
+          // 1) grab all B-side copies BEFORE we nuke the mappings:
+          const mappings = await db
+            .selectFrom("sharedProductMapping")
+            .select("targetProductId")
+            .where("sourceProductId", "=", id)
+            .execute();
+          const targetIds = mappings.map((r) => r.targetProductId);
+      
+        // b) delete the sharedProduct entries themselves
+        await db
+          .deleteFrom("sharedProduct")
+          .where("productId", "=", id)
+          .execute();
+      
+        
+          // now delete each copy in B’s tenants (using the list we fetched above):
+          for (const targetProductId of targetIds) {
+          await db.deleteFrom("warehouseStock").where("productId", "=", targetProductId).execute();
+          await db.deleteFrom("productVariations").where("productId", "=", targetProductId).execute();
+          await db.deleteFrom("productCategory").where("productId", "=", targetProductId).execute();
+          await db.deleteFrom("productAttributeValues").where("productId", "=", targetProductId).execute();
+          await db.deleteFrom("products").where("id", "=", targetProductId).execute();
+        }
+      }
+      
+      // … now delete your own product’s rows …
       await db.deleteFrom("productCategory").where("productId", "=", id).execute();
       await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
       await db.deleteFrom("productVariations").where("productId", "=", id).execute();

@@ -254,32 +254,9 @@ function mergePriceMaps(
 /*  POST                                                              */
 /* ------------------------------------------------------------------ */
 export async function POST(req: NextRequest) {
-  const apiKey = req.headers.get("x-api-key")
-  const internalSecret = req.headers.get("x-internal-secret")
-  let organizationId!: string
-  let userId!: string
-
-  /* ----------  auth boilerplate  --------------------------------- */
-  if (apiKey) {
-    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } })
-    if (!valid || !key) return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 })
-    const session = await auth.api.getSession({ headers: req.headers })
-    organizationId = session?.session.activeOrganizationId || ""
-    userId = session?.user?.id || ""
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 })
-  } else if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
-    const s = await auth.api.getSession({ headers: req.headers })
-    if (!s) return NextResponse.json({ error: "Unauthorized session" }, { status: 401 })
-    organizationId = s.session.activeOrganizationId
-    userId = s.user.id
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 })
-  } else {
-    const s = await auth.api.getSession({ headers: req.headers })
-    if (!s) return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 403 })
-    organizationId = s.session.activeOrganizationId
-    userId = s.user.id
-    if (!organizationId) return NextResponse.json({ error: "No active organization in session" }, { status: 400 })
-  }
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId, tenantId, userId } = ctx;
 
   /* ----------  main logic  --------------------------------------- */
   try {
