@@ -348,17 +348,99 @@ export async function PATCH(
 
     const { id } = await params;
 
-    /* ----- deny edits on recipient copies (unchanged) ----------- */
+    /* -------- detect shared copy (original var name) ----------- */
     const isSharedProduct = await db
       .selectFrom("sharedProductMapping")
       .select("targetProductId")
       .where("targetProductId", "=", id)
       .executeTakeFirst();
-    if (isSharedProduct)
-      return NextResponse.json({ error: "Forbidden: Cannot edit a shared product" }, { status: 403 });
 
-    const body         = await req.json();
-    const parsedUpdate = productUpdateSchema.parse(body);
+    /* -------- parse + validate incoming payload ------------ */
+    const body = await req.json();
+    let parsedUpdate;
+    try {
+      parsedUpdate = productUpdateSchema.parse(body);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return NextResponse.json({ error: err.errors }, { status: 400 });
+      }
+      throw err;
+    }
+
+    /* ---- if shared, allow only prices & variation prices ------- */
+    // inside your PATCH handler, replace the old `if (isSharedProduct)` block with this:
+
+if (isSharedProduct) {
+  // figure out what the user tried to change
+  const attempted = Object.keys(parsedUpdate);
+  const allowed   = ["title", "description", "status", "prices", "variations"];
+  const skipped   = attempted.filter((k) => !allowed.includes(k));
+
+  // apply each allowed change
+  const { title, description, status, prices, variations } = parsedUpdate;
+
+  if (title) {
+    await db
+      .updateTable("products")
+      .set({ title, updatedAt: new Date() })
+      .where("id", "=", id)
+      .execute();
+  }
+
+  if (description !== undefined) {
+    await db
+      .updateTable("products")
+      .set({ description, updatedAt: new Date() })
+      .where("id", "=", id)
+      .execute();
+  }
+
+  if (status) {
+    await db
+      .updateTable("products")
+      .set({ status, updatedAt: new Date() })
+      .where("id", "=", id)
+      .execute();
+  }
+
+  if (prices) {
+    const { regularPrice, salePrice } = splitPrices(prices);
+    await db
+      .updateTable("products")
+      .set({ regularPrice, salePrice, updatedAt: new Date() })
+      .where("id", "=", id)
+      .execute();
+  }
+
+  if (variations) {
+    // only update existing variations
+    const existingVarRows = await db
+      .selectFrom("productVariations")
+      .select("id")
+      .where("productId", "=", id)
+      .execute();
+    const existingIds = new Set(existingVarRows.map((v) => v.id));
+
+    for (const v of variations) {
+      if (!existingIds.has(v.id)) continue;
+      const { regularPrice, salePrice } = splitPrices(v.prices);
+      await db
+        .updateTable("productVariations")
+        .set({ regularPrice, salePrice, updatedAt: new Date() })
+        .where("id", "=", v.id)
+        .execute();
+    }
+  }
+
+  // build the user message
+  let message = "Shared product updated successfully.";
+  if (skipped.length) {
+    message += ` Note: the following field${skipped.length > 1 ? "s were" : " was"} skipped because shared products cannot be edited: ${skipped.join(", ")}.`;
+  }
+
+  return NextResponse.json({ message }, { status: 200 });
+}
+
 
     /* -------- preliminary FK / uniqueness checks (unchanged) ---- */
     const existingProduct = await db
@@ -457,7 +539,6 @@ export async function PATCH(
           await db.deleteFrom("productVariations").where("id", "in", deletable).execute();
 
         if (blockedIds.length) {
-          /* --- CHANGED: return a generic message without UUIDs --- */
           return NextResponse.json(
             {
               error:

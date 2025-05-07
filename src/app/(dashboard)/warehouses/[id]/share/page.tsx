@@ -290,11 +290,14 @@ export default function ShareWarehousePage() {
         body: JSON.stringify(values),
       });
 
+      const body = await res.json();
+
       if (!res.ok) {
         // show the server-side message
         toast.error(body.error || "Failed to create share link");
         return;
       }
+  
       setShareUrl(body.url);
       toast.success("Share link created!");
     } catch (err) {

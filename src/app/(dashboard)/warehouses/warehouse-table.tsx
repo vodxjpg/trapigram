@@ -43,7 +43,6 @@ export function WarehouseTable() {
   const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [syncToken, setSyncToken] = useState("");
-  const [syncLoading, setSyncLoading] = useState(false);
 
   const fetchWarehouses = async () => {
     setLoading(true);
@@ -52,7 +51,7 @@ export function WarehouseTable() {
       if (!response.ok) throw new Error("Failed to fetch warehouses");
       const data = await response.json();
       setWarehouses(data.warehouses);
-    } catch (error) {
+    } catch {
       toast.error("Failed to load warehouses");
     } finally {
       setLoading(false);
@@ -70,7 +69,7 @@ export function WarehouseTable() {
       if (!response.ok) throw new Error("Failed to delete warehouse");
       toast.success("Warehouse deleted successfully");
       fetchWarehouses();
-    } catch (error) {
+    } catch {
       toast.error("Failed to delete warehouse");
     }
   };
@@ -91,29 +90,26 @@ export function WarehouseTable() {
     if (refreshData) fetchWarehouses();
   };
 
-  const handleSyncWarehouse = async () => {
-    setSyncLoading(true);
+  const handleSyncWarehouse = () => {
+    // Extract token from either raw token or full URL
+    let token = syncToken.trim();
     try {
-      const res = await fetch("/api/share-links/by-token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: syncToken }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Invalid invitation code");
+      const parsed = new URL(token);
+      const segments = parsed.pathname.split("/").filter(Boolean);
+      if (segments.length) {
+        token = segments[segments.length - 1];
       }
-
-      const { shareLink } = await res.json();
-
-      setDialogOpen(false);
-      router.push(`/share/${shareLink.token}`);
-    } catch (error: any) {
-      toast.error(error.message || "Failed to sync warehouse");
-    } finally {
-      setSyncLoading(false);
+    } catch {
+      // not a URL, assume raw token
     }
+
+    if (!token) {
+      toast.error("Please enter a valid invitation code or link");
+      return;
+    }
+
+    setDialogOpen(false);
+    router.push(`/share/${token}`);
   };
 
   return (
@@ -222,13 +218,13 @@ export function WarehouseTable() {
             <DialogTitle>Sync Warehouse</DialogTitle>
           </DialogHeader>
           <Input
-            placeholder="Enter invitation code"
+            placeholder="Enter invitation code or full URL"
             value={syncToken}
             onChange={(e) => setSyncToken(e.target.value)}
           />
           <DialogFooter>
-            <Button onClick={handleSyncWarehouse} disabled={syncLoading}>
-              {syncLoading ? "Syncing..." : "Sync Warehouse"}
+            <Button onClick={handleSyncWarehouse}>
+              Sync Warehouse
             </Button>
           </DialogFooter>
         </DialogContent>
