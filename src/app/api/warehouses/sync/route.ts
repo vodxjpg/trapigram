@@ -188,16 +188,22 @@ export async function POST(req: NextRequest) {
             if (!srcProd)
               return NextResponse.json({ error: `Source product ${sp.productId} not found` }, { status: 404 });
 
-            /* unique SKU */
-            let newSku = srcProd.sku;
+                      // generate new SKU by replacing ORG- with SHD- (leave other SKUs intact)
+                      const suffix = srcProd.sku.startsWith("ORG-")
+                        ? srcProd.sku.slice("ORG-".length)
+                        : srcProd.sku;
+                      let newSku = `SHD-${suffix}`;
+            // ensure uniqueness if collision
             while (
               await db.selectFrom("products").select("id").where("sku", "=", newSku).executeTakeFirst()
-            )
-              newSku = `SKU-${Math.random().toString(36).substring(2, 10)}`;
+            ) {
+              newSku = `SHD-${suffix}-${Math.random().toString(36).substring(2, 4)}`;
+            }
 
             await db.insertInto("products").values({
               id:              targetProductId,
-              organizationId,  tenantId: targetWarehouse.tenantId,
+              organizationId,
+              tenantId:        targetWarehouse.tenantId,
               title:           srcProd.title,
               sku:             newSku,
               status:          srcProd.status,
@@ -231,19 +237,19 @@ export async function POST(req: NextRequest) {
               if (!tgtCat) {
                 tgtCat = { id: generateId("CAT") };
                 await db.insertInto("productCategories").values({
-                  id: tgtCat.id,
-                  name: cat.name,
-                  slug: cat.slug,
-                  image: null,
-                  order: 0,
+                  id:          tgtCat.id,
+                  name:        cat.name,
+                  slug:        cat.slug,
+                  image:       null,
+                  order:       0,
                   organizationId,
-                  parentId: null,
-                  createdAt: new Date(),
-                  updatedAt: new Date(),
+                  parentId:    null,
+                  createdAt:   new Date(),
+                  updatedAt:   new Date(),
                 }).execute();
               }
               await db.insertInto("productCategory").values({
-                productId: targetProductId,
+                productId:  targetProductId,
                 categoryId: tgtCat.id,
               }).execute();
             }
@@ -278,12 +284,12 @@ export async function POST(req: NextRequest) {
                 if (!tgtAttr) {
                   tgtAttr = { id: generateId("ATTR") };
                   await db.insertInto("productAttributes").values({
-                    id: tgtAttr.id,
-                    name: row.attrSlug,
-                    slug: row.attrSlug,
+                    id:          tgtAttr.id,
+                    name:        row.attrSlug,
+                    slug:        row.attrSlug,
                     organizationId,
-                    createdAt: new Date(),
-                    updatedAt: new Date(),
+                    createdAt:   new Date(),
+                    updatedAt:   new Date(),
                   }).execute();
                 }
                 attrMap.set(row.attributeId, tgtAttr.id);
@@ -302,13 +308,13 @@ export async function POST(req: NextRequest) {
                 if (!tgtTerm) {
                   tgtTerm = { id: generateId("TERM") };
                   await db.insertInto("productAttributeTerms").values({
-                    id: tgtTerm.id,
+                    id:          tgtTerm.id,
                     attributeId: tgtAttrId,
-                    name: row.termName,
-                    slug: row.termSlug,
+                    name:        row.termName,
+                    slug:        row.termSlug,
                     organizationId,
-                    createdAt: new Date(),
-                    updatedAt: new Date(),
+                    createdAt:   new Date(),
+                    updatedAt:   new Date(),
                   }).execute();
                 }
                 termMap.set(row.termId, tgtTerm.id);
@@ -361,15 +367,20 @@ export async function POST(req: NextRequest) {
                 variationIdMap.set(v.id, targetVariationId);
 
                 if (!sameVar) {
-                  let newVarSku = v.sku;
+                  // generate new variation SKU by replacing ORG- with SHD-
+                const varSuffix = v.sku.startsWith("ORG-")
+                  ? v.sku.slice("ORG-".length)
+                  : v.sku;
+                let newVarSku = `SHD-${varSuffix}`;
                   while (
                     await db
                       .selectFrom("productVariations")
                       .select("id")
                       .where("sku", "=", newVarSku)
                       .executeTakeFirst()
-                  )
-                    newVarSku = `VAR-${Math.random().toString(36).substring(2, 10)}`;
+                  ) {
+                    newVarSku = `SHD-${varSuffix}-${Math.random().toString(36).substring(2, 4)}`;
+                  }
 
                   await db.insertInto("productVariations").values({
                     id:          targetVariationId,
@@ -394,14 +405,14 @@ export async function POST(req: NextRequest) {
                   .executeTakeFirst();
                 if (!hasGlobalMap) {
                   await db.insertInto("sharedVariationMapping").values({
-                    id: generateId("SVM"),
-                    shareLinkId,               // current link
-                    sourceProductId: sp.productId,
+                    id:               generateId("SVM"),
+                    shareLinkId,
+                    sourceProductId:  sp.productId,
                     targetProductId,
                     sourceVariationId: v.id,
                     targetVariationId,
-                    createdAt: new Date(),
-                    updatedAt: new Date(),
+                    createdAt:        new Date(),
+                    updatedAt:        new Date(),
                   }).execute();
                 }
               }
@@ -534,16 +545,16 @@ export async function POST(req: NextRequest) {
               .execute();
           } else {
             await db.insertInto("warehouseStock").values({
-              id: generateId("WS"),
-              warehouseId:   targetWarehouse.id,
-              productId:     targetProductId,
-              variationId:   tgtVarId,
-              country:       row.country,
-              quantity:      totalQty,
+              id:             generateId("WS"),
+              warehouseId:    targetWarehouse.id,
+              productId:      targetProductId,
+              variationId:    tgtVarId,
+              country:        row.country,
+              quantity:       totalQty,
               organizationId,
-              tenantId:      targetWarehouse.tenantId,
-              createdAt:     new Date(),
-              updatedAt:     new Date(),
+              tenantId:       targetWarehouse.tenantId,
+              createdAt:      new Date(),
+              updatedAt:      new Date(),
             }).execute();
           }
         } /* end stock rows */

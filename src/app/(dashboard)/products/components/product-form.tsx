@@ -10,7 +10,7 @@ import Image from "next/image"
 import { Loader2, Upload, X } from "lucide-react"
 import dynamic from "next/dynamic"
 import { mutate as swrMutate } from "swr"
-
+import useSWR from "swr"
 // Dynamically import ReactQuill to avoid SSR errors
 const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false })
 import "react-quill-new/dist/quill.snow.css"
@@ -69,6 +69,7 @@ type ProductFormValues = z.infer<typeof productSchema>
 interface ProductFormProps {
   productId?: string
   initialData?: Product
+  shared?: boolean
 }
 
 // --------------------------------------------------
@@ -100,7 +101,7 @@ const quillFormats = [
 // --------------------------------------------------
 //  component
 // --------------------------------------------------
-export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
+export function ProductForm({ productId, initialData, shared = false,}: ProductFormProps = {}) {
   const router = useRouter()
 
   // --------------------------------------------------
@@ -118,6 +119,15 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
   const [orgCountries, setOrgCountries] = useState<string[]>([])
   const [prices, setPrices] = useState<PriceMap>({})
   const [costs, setCosts] = useState<CostMap>({})
+  const { data: raw } = useSWR(
+    productId ? `/api/products/${productId}` : null,
+    async (url: string) => {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error("Failed to load")
+      return res.json()
+    }
+  )
+  const isShared = raw?.shared === true
 
   // --------------------------------------------------
   //  parse initial stock for simple products
@@ -426,9 +436,23 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
             <Card>
               <CardHeader>
                 <CardTitle>Basic Information</CardTitle>
-                <CardDescription>Enter the basic details of your product</CardDescription>
+                <CardDescription>
+                  Enter the basic details of your product
+                </CardDescription>
+                {shared  && (
+                <div className="rounded-md bg-yellow-50 p-4 mt-4">
+                  <p className="text-sm text-yellow-700">
+                    <strong>Note:</strong> This is a shared product. You can only edit{" "}
+                    <em>Title</em>, <em>Description</em>, <em>Status</em>,{" "}
+                    <em>Prices</em>.
+                  </p>
+                </div>
+              )}
               </CardHeader>
+              
               <CardContent className="space-y-6">
+                
+             
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Left Column: Image, Status, Categories */}
                   <div className="space-y-6">
@@ -669,6 +693,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                 <CardDescription>Configure prices per country and stock management</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                
                 {productType === "simple" && (
                   <>
                     <PriceManagement
@@ -742,6 +767,7 @@ export function ProductForm({ productId, initialData }: ProductFormProps = {}) {
                 <CardDescription>Add attributes like color, size, etc.</CardDescription>
               </CardHeader>
               <CardContent>
+            
                 {productType === "variable" && (
                   <div className="rounded-lg border p-4 bg-blue-50 mb-4">
                     <p className="text-sm text-blue-700">

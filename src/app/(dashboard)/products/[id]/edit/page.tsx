@@ -7,11 +7,23 @@ import { ProductForm } from "../../components/product-form"
 import { PageHeader } from "@/components/page-header"
 import { useProduct } from "@/hooks/use-products"
 import { Skeleton } from "@/components/ui/skeleton"
+import useSWR from "swr"
 
 export default function EditProductPage() {
   const router = useRouter()
   const params = useParams() as { id: string }
-  const { product, isLoading } = useProduct(params.id)
+  // fetch the full { product, shared } JSON
+  const { data, error } = useSWR(
+     `/api/products/${params.id}`,
+     async (url: string) => {
+       const res = await fetch(url)
+       if (!res.ok) throw new Error("Failed to load product")
+       return res.json() as Promise<{ product: Product; shared: boolean }>
+     }
+   )
+   const isLoading = !data && !error
+   const product = data?.product
+   const shared  = data?.shared
 
   return (
     <div className="container mx-auto py-6 space-y-6">
@@ -31,7 +43,11 @@ export default function EditProductPage() {
           <Skeleton className="h-12 w-full" />
         </div>
       ) : (
-        <ProductForm productId={params.id} initialData={product} />
+        <ProductForm
+        productId={params.id}
+        initialData={product}
+        shared={shared}
+      />
       )}
     </div>
   )

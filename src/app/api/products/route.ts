@@ -4,6 +4,7 @@ import { z } from "zod"
 import { db } from "@/lib/db"
 import { auth } from "@/lib/auth"
 import { v4 as uuidv4 } from "uuid"
+import { getContext } from "@/lib/context";
 
 /* ------------------------------------------------------------------ */
 /*  ZOD - schema                                                      */
@@ -73,25 +74,15 @@ function splitPrices(pr: Record<string, { regular: number; sale: number | null }
 /* ------------------------------------------------------------------ */
 export async function GET(req: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: req.headers })
-    if (!session) return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 })
-    const organizationId = session.session.activeOrganizationId
-    const userId = session.user.id
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 })
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId, tenantId, userId } = ctx;
 
     const { searchParams } = new URL(req.url)
     const page = parseInt(searchParams.get("page") || "1")
     const pageSize = parseInt(searchParams.get("pageSize") || "10")
     const search = searchParams.get("search") || ""
     const categoryId = searchParams.get("categoryId") || ""
-
-    const tenant = await db
-      .selectFrom("tenant")
-      .select(["id"])
-      .where("ownerUserId", "=", userId)
-      .executeTakeFirst()
-    if (!tenant) return NextResponse.json({ error: "No tenant found for user" }, { status: 404 })
-    const tenantId = tenant.id
 
     /* -------- STEP 1 – product IDs with proper limit/offset ----- */
     let idQuery = db
@@ -264,32 +255,9 @@ function mergePriceMaps(
 /*  POST                                                              */
 /* ------------------------------------------------------------------ */
 export async function POST(req: NextRequest) {
-  const apiKey = req.headers.get("x-api-key")
-  const internalSecret = req.headers.get("x-internal-secret")
-  let organizationId!: string
-  let userId!: string
-
-  /* ----------  auth boilerplate  --------------------------------- */
-  if (apiKey) {
-    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } })
-    if (!valid || !key) return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 })
-    const session = await auth.api.getSession({ headers: req.headers })
-    organizationId = session?.session.activeOrganizationId || ""
-    userId = session?.user?.id || ""
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 })
-  } else if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
-    const s = await auth.api.getSession({ headers: req.headers })
-    if (!s) return NextResponse.json({ error: "Unauthorized session" }, { status: 401 })
-    organizationId = s.session.activeOrganizationId
-    userId = s.user.id
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 })
-  } else {
-    const s = await auth.api.getSession({ headers: req.headers })
-    if (!s) return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 403 })
-    organizationId = s.session.activeOrganizationId
-    userId = s.user.id
-    if (!organizationId) return NextResponse.json({ error: "No active organization in session" }, { status: 400 })
-  }
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId, tenantId, userId } = ctx;
 
   /* ----------  main logic  --------------------------------------- */
   try {
@@ -382,10 +350,11 @@ export async function POST(req: NextRequest) {
     /* insert warehouseStock entries */
     if (parsedProduct.warehouseStock?.length) {
       for (const entry of parsedProduct.warehouseStock) {
+        /* after */
         await db.insertInto("warehouseStock").values({
           id: uuidv4(),
           warehouseId: entry.warehouseId,
-          productId: entry.productId,
+          productId,                        // ← use the local const `productId`
           variationId: entry.variationId,
           country: entry.country,
           quantity: entry.quantity,
