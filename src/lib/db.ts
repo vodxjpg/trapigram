@@ -154,6 +154,7 @@ interface DB {
     description: string;
     discountType: string;
     discountAmount: number;
+    startDate: Date;
     expirationDate: Date;
     limitPerUser: number;
     usagePerUser: number;

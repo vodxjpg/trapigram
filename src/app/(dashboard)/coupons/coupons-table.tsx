@@ -44,7 +44,6 @@ import { toast } from "sonner";
 // ─── shadcn/ui AlertDialog ─────────────────────────────────────────────
 import {
   AlertDialog,
-  AlertDialogTrigger,
   AlertDialogContent,
   AlertDialogHeader,
   AlertDialogTitle,
@@ -62,6 +61,7 @@ type Coupon = {
   description: string;
   discountType: "fixed" | "percentage";
   discountAmount: number;
+  startDate: string;
   expirationDate: string | null;
   limitPerUser: number;
   usageLimit: number;
@@ -212,6 +212,7 @@ export function CouponsTable() {
               <TableHead>Code</TableHead>
               <TableHead>Description</TableHead>
               <TableHead>Discount</TableHead>
+              <TableHead>Start Date</TableHead>
               <TableHead>Expiration Date</TableHead>
               <TableHead>Limit Per User</TableHead>
               <TableHead
@@ -253,6 +254,7 @@ export function CouponsTable() {
                       ? `${c.discountAmount}%`
                       : c.discountAmount}
                   </TableCell>
+                  <TableCell>{fmtLocal(c.startDate)}</TableCell>
                   <TableCell>{fmtLocal(c.expirationDate)}</TableCell>
                   <TableCell>{c.limitPerUser}</TableCell>
                   <TableCell>{c.usageLimit}</TableCell>

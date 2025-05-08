@@ -32,7 +32,19 @@ const allCountries = getCountries().map((c) => ({
   code: c,
   name: countriesLib.getName(c, "en") || c,
 }));
+
 const pad = (n: number) => n.toString().padStart(2, "0");
+
+// Returns local YYYY-MM-DDTHH:MM:SS for “now”
+const nowLocal = () => {
+  const d = new Date();
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+};
+
+// Returns local YYYY-MM-DDTHH:MM:SS for “now + 1s” (for expiration min)
 const nowPlus1sLocal = () => {
   const d = new Date(Date.now() + 1000);
   return (
@@ -40,7 +52,8 @@ const nowPlus1sLocal = () => {
     `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
   );
 };
-/* Convert UTC ISO -> local “YYYY‑MM‑DDTHH:MM:SS” for the input */
+
+// Convert ISO → local input string
 const isoToLocalInput = (iso: string) => {
   const d = new Date(iso);
   return (
@@ -64,13 +77,15 @@ const schema = z.object({
   countries: z.array(z.string().length(2)).min(1, "At least one country is required"),
   visibility: z.boolean().default(true),
   hasExpiration: z.boolean().default(false),
+  startDate: z
+    .string()
+    .refine((v) => !!v, { message: "Start date is required" }),
   expirationDate: z
     .string()
     .nullable()
-    .refine(
-      (v) => !v || new Date(v) > new Date(),
-      { message: "Expiration must be in the future" },
-    )
+    .refine((v) => !v || new Date(v) > new Date(), {
+      message: "Expiration must be in the future",
+    })
     .optional(),
   limitPerUser: z.coerce.number().int().min(0).default(0),
 });
@@ -83,9 +98,10 @@ type Props = { couponData?: Values | null; isEditing?: boolean };
 export function CouponForm({ couponData, isEditing = false }: Props) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
-  const minDateTimeLocal = useMemo(nowPlus1sLocal, []);
+  const minStartLocal = useMemo(nowLocal, []);
+  const minExpireLocal = useMemo(nowPlus1sLocal, []);
 
-  /* ---------------------------- form ------------------------------------- */
+  /* ---------------------------- form setup -------------------------------- */
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -100,6 +116,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
       countries: [],
       visibility: true,
       hasExpiration: false,
+      startDate: minStartLocal,          // ← new default
       expirationDate: null,
       limitPerUser: 0,
     },
@@ -108,26 +125,25 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
   /* ---------------------------- countries -------------------------------- */
   const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]);
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/organizations/countries", {
-          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
-        });
+    fetch("/api/organizations/countries", {
+      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
+    })
+      .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch organization countries");
-        const data = await res.json();
+        return res.json();
+      })
+      .then((data) => {
         const list: string[] = Array.isArray(data.countries)
           ? data.countries
           : JSON.parse(data.countries || "[]");
         setCountryOptions(
-          list.map((c: string) => ({
+          list.map((c) => ({
             value: c,
             label: allCountries.find((co) => co.code === c)?.name || c,
-          })),
+          }))
         );
-      } catch (err: any) {
-        toast.error(err.message || "Failed to load organization countries");
-      }
-    })();
+      })
+      .catch((err) => toast.error(err.message || "Failed to load organization countries"));
   }, []);
 
   /* ---------------------------- preload edit ----------------------------- */
@@ -140,12 +156,15 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
       form.reset({
         ...couponData,
         countries,
-        hasExpiration: Boolean(couponData.expirationDate), // <<< ensures switch ON/OFF
+        hasExpiration: Boolean(couponData.expirationDate),
+        startDate: couponData.startDate
+          ? isoToLocalInput(couponData.startDate)
+          : minStartLocal,
       });
     }
-  }, [couponData, isEditing, form]);
+  }, [couponData, isEditing, form, minStartLocal]);
 
-  /* ---------------------------- keep switch in sync ---------------------- */
+  /* ---------------------------- sync switch ------------------------------- */
   const expVal = form.watch("expirationDate");
   useEffect(() => {
     const on = Boolean(expVal);
@@ -158,11 +177,19 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
   const onSubmit = async (vals: Values) => {
     setSubmitting(true);
     try {
-      const url = isEditing ? `/api/coupons/${couponData?.id}` : "/api/coupons";
+      const url = isEditing && couponData?.code
+        ? `/api/coupons/${couponData.code}`
+        : "/api/coupons";
+      const payload = {
+        ...vals,
+        // ensure ISO strings
+        startDate: new Date(vals.startDate).toISOString(),
+        expirationDate: vals.expirationDate ? new Date(vals.expirationDate).toISOString() : null,
+      };
       const res = await fetch(url, {
         method: isEditing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(vals),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error((await res.json()).error || "Request failed");
       toast.success(isEditing ? "Coupon updated" : "Coupon created");
@@ -181,9 +208,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
       <CardContent className="pt-6">
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            {/* ------------------------------------------------------------------ */}
-            {/* Name & Code                                                        */}
-            {/* ------------------------------------------------------------------ */}
+            {/* Name & Code */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[
                 { name: "name", label: "Name *", placeholder: "Coupon Name" },
@@ -206,9 +231,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
               ))}
             </div>
 
-            {/* ------------------------------------------------------------------ */}
-            {/* Description & Countries                                            */}
-            {/* ------------------------------------------------------------------ */}
+            {/* Description & Countries */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <FormField
                 control={form.control}
@@ -236,7 +259,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                         placeholder="Select country(s)"
                         value={countryOptions.filter((o) => field.value.includes(o.value))}
                         onChange={(opts: any) => field.onChange(opts.map((o: any) => o.value))}
-                        formatOptionLabel={(o: { value: string; label: string }) => (
+                        formatOptionLabel={(o: any) => (
                           <div className="flex items-center gap-2">
                             <ReactCountryFlag countryCode={o.value} svg style={{ width: 20 }} />
                             <span>{o.label}</span>
@@ -250,9 +273,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
               />
             </div>
 
-            {/* ------------------------------------------------------------------ */}
-            {/* Discount                                                           */}
-            {/* ------------------------------------------------------------------ */}
+            {/* Discount Type & Amount */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
               <FormField
                 control={form.control}
@@ -291,9 +312,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
               />
             </div>
 
-            {/* ------------------------------------------------------------------ */}
-            {/* Numeric limits                                                     */}
-            {/* ------------------------------------------------------------------ */}
+            {/* Numeric Limits */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {[
                 { name: "usageLimit", label: "Usage Limit" },
@@ -318,11 +337,24 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
               ))}
             </div>
 
-            {/* ------------------------------------------------------------------ */}
-            {/* Expiration & Visibility                                            */}
-            {/* ------------------------------------------------------------------ */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Has Expiration */}
+            {/* Has Expiration & Visibility */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">              
+              <FormField
+                control={form.control}
+                name="visibility"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Visibility</FormLabel>
+                    <FormControl>
+                      <div className="flex items-center gap-2">
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        <span>{field.value ? "Visible" : "Hidden"}</span>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <FormField
                 control={form.control}
                 name="hasExpiration"
@@ -350,53 +382,58 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                   </FormItem>
                 )}
               />
-
-              {/* Visibility */}
-              <FormField
-                control={form.control}
-                name="visibility"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Visibility</FormLabel>
-                    <FormControl>
-                      <div className="flex items-center gap-2">
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
-                        <span>{field.value ? "Visible" : "Hidden"}</span>
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
             </div>
 
-            {/* Date‑time input */}
-            {form.watch("hasExpiration") && (
+            {/* Start Date & Expiration Date */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Start Date */}
               <FormField
                 control={form.control}
-                name="expirationDate"
+                name="startDate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Expiration Date &amp; Time</FormLabel>
+                    <FormLabel>Start Date &amp; Time</FormLabel>
                     <FormControl>
                       <Input
                         type="datetime-local"
                         step={1}
-                        min={minDateTimeLocal}
-                        value={field.value ? isoToLocalInput(field.value) : ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          field.onChange(val ? new Date(val).toISOString() : null);
-                        }}
+                        min={minStartLocal}
+                        value={field.value}
+                        onChange={(e) => field.onChange(e.target.value)}
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-            )}
 
-            {/* Submit */}
+              {/* Expiration Date */}
+              {form.watch("hasExpiration") && (
+                <FormField
+                  control={form.control}
+                  name="expirationDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Expiration Date &amp; Time</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="datetime-local"
+                          step={1}
+                          min={minExpireLocal}
+                          value={field.value ? isoToLocalInput(field.value) : ""}
+                          onChange={(e) =>
+                            field.onChange(e.target.value ? new Date(e.target.value).toISOString() : null)
+                          }
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+            </div>
+
+            {/* Submit Buttons */}
             <div className="flex justify-center gap-4 mt-6">
               <Button type="button" variant="outline" onClick={() => router.push("/coupons")}>
                 Cancel

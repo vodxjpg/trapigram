@@ -26,6 +26,7 @@ const couponSchema = z.object({
   countries: z.array(z.string()).min(1, { message: "At least one country is required." }),
   visibility: z.boolean(),
   expirationDate: z.string().nullable().optional(),
+  startDate: z.string().nullable().optional(),
   limitPerUser: z.coerce
     .number()
     .int()
@@ -93,7 +94,7 @@ export async function GET(req: NextRequest) {
 
   // Updated SELECT query to include "expendingMinimum"
   let query = `
-    SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "expirationDate", 
+    SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "startDate", "expirationDate", 
       "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
     FROM coupons
     WHERE "organizationId" = $1
@@ -180,6 +181,7 @@ export async function POST(req: NextRequest) {
       description,
       discountType,
       discountAmount,
+      startDate,
       expirationDate,
       limitPerUser,
       usageLimit,
@@ -192,8 +194,8 @@ export async function POST(req: NextRequest) {
     const couponId = uuidv4();
 
     const insertQuery = `
-      INSERT INTO coupons(id, "organizationId", name, code, description, "discountType", "discountAmount", "expirationDate", "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt")
-      VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+      INSERT INTO coupons(id, "organizationId", name, code, description, "discountType", "discountAmount", "startDate", "expirationDate", "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt")
+      VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
       RETURNING *
     `;
     const values = [
@@ -204,6 +206,7 @@ export async function POST(req: NextRequest) {
       description,
       discountType,
       discountAmount,
+      startDate,
       expirationDate,
       limitPerUser,
       usageLimit,

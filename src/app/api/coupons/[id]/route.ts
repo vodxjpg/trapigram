@@ -79,7 +79,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params;
     const query = `
-      SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "expirationDate", 
+      SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "expirationDate", "startDate",
       "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
       FROM coupons
       WHERE id = $1 AND "organizationId" = $2
