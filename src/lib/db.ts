@@ -84,6 +84,16 @@ interface DB {
     updatedAt: Date;
   };
 
+  clientAddresses: {
+    id: string;
+    clientId: string;
+    address: string;
+    postalCode: string;
+    phone: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
   affiliatePointLogs: {
     id: string;
     organizationId: string;
@@ -449,8 +459,6 @@ interface DB {
     updatedAt: Date;
   };
 
-
-
   paymentMethods: {
     id: string;
     name: string;
@@ -499,6 +507,7 @@ interface DB {
     totalAmount: number;
     couponCode: string;
     shippingService: string;
+    address: string;
     dateCreated: Date;
     datePaid: Date;
     dateCompleted: Date;

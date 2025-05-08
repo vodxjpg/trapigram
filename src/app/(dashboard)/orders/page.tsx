@@ -11,6 +11,7 @@ import {
   Check,
   Tag,
   DollarSign,
+  Truck,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -38,7 +39,7 @@ interface Product {
   title: string;
   sku: string;
   description: string;
-  regularPrice: Record<string, number>; // e.g. { CL: 10, VE: 8 }
+  regularPrice: Record<string, number>;
   price: number;
   image: string;
   stockData: Record<string, { [countryCode: string]: number }>;
@@ -55,22 +56,61 @@ interface PaymentMethod {
   details: string;
 }
 
-const PAYMENT_METHODS: PaymentMethod[] = [
-  { id: "1", name: "Credit Card", details: "Visa, Mastercard, American Express" },
-  { id: "2", name: "Bank Transfer", details: "Direct bank transfer" },
-  { id: "3", name: "PayPal", details: "Online payment system" },
-];
+interface ShippingMethod {
+  id: string;
+  title: string;
+  description: string;
+  costs: Array<{
+    minOrderCost: number;
+    maxOrderCost: number;
+    shipmentCost: number;
+  }>;
+}
+
+interface Address {
+  id: string;
+  clientId: string;
+  address: string;
+  postalCode: string;
+  phone: string;
+}
+
+interface ShippingCompany {
+  id: string;
+  name: string;
+}
 
 export default function CreateOrderPage() {
-  // Clients
+  // — Clients
   const [clients, setClients] = useState<{ id: string; username: string; country: string }[]>([]);
   const [clientsLoading, setClientsLoading] = useState(true);
 
-  // Products
+  // — Products
   const [products, setProducts] = useState<Product[]>([]);
   const [productsLoading, setProductsLoading] = useState(true);
 
-  // Order state
+  // — Shipping
+  const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
+  const [shippingLoading, setShippingLoading] = useState(true);
+  const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
+  const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
+  const [shippingCost, setShippingCost] = useState(0);
+
+  // — Payment methods (fetched)
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
+  const [appliedPaymentMethods, setAppliedPaymentMethods] = useState<PaymentMethod[]>([]);
+
+  // — Addresses
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState("");
+  const [newAddress, setNewAddress] = useState("");
+  const [newPostalCode, setNewPostalCode] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+
+  // — Order
   const [selectedClient, setSelectedClient] = useState("");
   const [clientCountry, setClientCountry] = useState("");
   const [orderGenerated, setOrderGenerated] = useState(false);
@@ -81,52 +121,75 @@ export default function CreateOrderPage() {
   const [couponApplied, setCouponApplied] = useState(false);
   const [discountType, setDiscountType] = useState<"percentage" | "fixed">("fixed");
   const [discount, setDiscount] = useState(0);
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
-  const [appliedPaymentMethods, setAppliedPaymentMethods] = useState<PaymentMethod[]>([]);
   const [cartId, setCartId] = useState("");
-  const [cartQtyMap, setCartQtyMap] = useState<Record<string, number>>({});
 
-  // Load clients once
+  // — Load clients once
   useEffect(() => {
-    async function loadClients() {
-      setClientsLoading(true);
-      try {
-        const res = await fetch("/api/clients/", {
-          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" },
-        });
+    setClientsLoading(true);
+    fetch("/api/clients/", {
+      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+    })
+      .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch clients");
-        const { clients } = await res.json();
-        setClients(clients);
-      } catch (err: any) {
-        toast.error(err.message || "Could not load clients");
-      } finally {
-        setClientsLoading(false);
-      }
-    }
-    loadClients();
+        return res.json();
+      })
+      .then(({ clients }) => setClients(clients))
+      .catch((err) => toast.error(err.message))
+      .finally(() => setClientsLoading(false));
   }, []);
 
-  // Load products once
-  async function loadProducts() {
-    setProductsLoading(true);
-    try {
-      const res = await fetch("/api/products/", {
-        headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" },
-      });
-      if (!res.ok) throw new Error("Failed to fetch products");
-      const { products } = await res.json();
-      setProducts(products);
-    } catch (err: any) {
-      toast.error(err.message || "Could not load products");
-    } finally {
-      setProductsLoading(false);
-    }
-  }
+  // — Load products once
   useEffect(() => {
-    loadProducts();
+    setProductsLoading(true);
+    fetch("/api/products/", {
+      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch products");
+        return res.json();
+      })
+      .then(({ products }) => setProducts(products))
+      .catch((err) => toast.error(err.message))
+      .finally(() => setProductsLoading(false));
   }, []);
 
-  // Compute totals
+  // — Fetch addresses & payment methods whenever a client is selected
+  useEffect(() => {
+    if (!selectedClient) return;
+
+    // Addresses
+    fetch(`/api/clients/${selectedClient}/address`, {
+      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load addresses");
+        return res.json();
+      })
+      .then((data: { addresses: Address[] }) => {
+        setAddresses(data.addresses);
+        if (data.addresses.length && !selectedAddressId) {
+          setSelectedAddressId(data.addresses[0].id);
+        }
+      })
+      .catch((err) => toast.error(err.message));
+
+    // Payment methods
+    setPaymentLoading(true);
+    fetch("/api/payment-methods", {
+      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch payment methods");
+        return res.json();
+      })
+      .then((data: { paymentMethods: PaymentMethod[] }) => {
+        setPaymentMethods(data.methods);
+      })
+      .catch((err) => toast.error(err.message))
+      .finally(() => setPaymentLoading(false));
+  }, [selectedClient, selectedAddressId]);
+
+  // — Compute subtotal, discount, total
   const subtotal = orderItems.reduce((sum, item) => {
     const price = item.product.regularPrice[clientCountry] ?? item.product.price;
     return sum + price * item.quantity;
@@ -134,7 +197,22 @@ export default function CreateOrderPage() {
   const discountAmount = discountType === "percentage" ? (subtotal * discount) / 100 : discount;
   const total = subtotal - discountAmount;
 
-  // Generate cart + capture clientCountry
+  // — Shipping cost whenever total or method changes
+  useEffect(() => {
+    if (!selectedShippingMethod) {
+      setShippingCost(0);
+      return;
+    }
+    const method = shippingMethods.find((m) => m.id === selectedShippingMethod);
+    if (!method) return;
+    const tier = method.costs.find(
+      ({ minOrderCost, maxOrderCost }) =>
+        total >= minOrderCost && (maxOrderCost === 0 || total <= maxOrderCost)
+    );
+    setShippingCost(tier ? tier.shipmentCost : 0);
+  }, [total, selectedShippingMethod, shippingMethods]);
+
+  // — Generate cart & load shipping data
   const generateOrder = async () => {
     if (!selectedClient) return;
     try {
@@ -146,77 +224,81 @@ export default function CreateOrderPage() {
       if (!res.ok) throw new Error("Failed to create cart");
       const { id } = await res.json();
       setCartId(id);
+
       const client = clients.find((c) => c.id === selectedClient);
       if (client) setClientCountry(client.country);
+
+      setShippingLoading(true);
+      try {
+        const shipRes = await fetch("/api/shipments", {
+          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+        });
+        if (!shipRes.ok) throw new Error("Failed to fetch shipping methods");
+        const methods: { shipments: ShippingMethod[] } = await shipRes.json();
+        console.log(methods)
+        setShippingMethods(methods.shipments);
+        const compRes = await fetch("/api/shipping-companies", {
+          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+        });
+        if (!compRes.ok) throw new Error("Failed to fetch shipping companies");
+        const comps: { companies: ShippingCompany[] } = await compRes.json();
+        setShippingCompanies(comps.shippingMethods);
+      } catch (err: any) {
+        toast.error(err.message);
+      } finally {
+        setShippingLoading(false);
+      }
+
       toast.success("Cart created!");
       setOrderGenerated(true);
     } catch (err: any) {
-      toast.error(err.message || "Could not generate order");
+      toast.error(err.message);
     }
   };
 
-  // Filter products by country stock > 0
-  const countryProducts = products.filter((p) => {
-    const totalStock = Object.values(p.stockData).reduce(
-      (sum, e) => sum + (e[clientCountry] || 0),
-      0
-    );
-    return totalStock > 0;
-  });
-
-  // Add or update product in order
+  // — Add or update product
   const addProduct = async () => {
-    if (!selectedProduct || !cartId) {
-      !cartId && toast.error("Generate your cart first!");
+    if (!selectedProduct) return;
+    if (!cartId) {
+      toast.error("Cart hasn’t been created yet!");
       return;
     }
-    const product = products.find((p) => p.id === selectedProduct);
-    if (!product) return;
-    const price = product.regularPrice[clientCountry] ?? product.price;
-
+  
     try {
-      // send to server
       const res = await fetch(`/api/cart/${cartId}/add-product`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId: selectedProduct, quantity, price }),
+        body: JSON.stringify({
+          productId: selectedProduct,
+          quantity,
+        }),
       });
-      if (!res.ok) throw new Error("Failed to add product");
-      const { product: added, quantity: qtyAdded } = await res.json();
-
-      setOrderItems((prev) => {
-        const idx = prev.findIndex((it) => it.product.id === added.id);
-        if (idx >= 0) {
-          // already in list → update qty
-          const updated = [...prev];
-          updated[idx] = {
-            product: added,
-            quantity: qtyAdded,
-          };
-          return updated;
-        } else {
-          // new entry
-          return [...prev, { product: added, quantity: qtyAdded }];
-        }
-      });
-
-      await loadProducts();
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.message || "Failed to add product");
+      }
+      const data = await res.json();
+      setOrderItems((prev) => [
+        ...prev,
+        { product: data.product, quantity: data.quantity },
+      ]);
       setSelectedProduct("");
       setQuantity(1);
       toast.success("Product added to cart!");
-    } catch (err: any) {
-      toast.error(err.message || "Could not add product");
+    } catch (error: any) {
+      console.error("addProduct error:", error);
+      toast.error(error.message || "Could not add product");
     }
   };
 
-  // Remove an item completely
-  const removeItem = (idx: number) =>
-    setOrderItems((prev) => prev.filter((_, i) => i !== idx));
+  // — Remove item
+  const removeItem = (i: number) =>
+    setOrderItems((prev) => prev.filter((_, idx) => idx !== i));
 
-  // Apply coupon
+  // — Apply coupon
   const applyCoupon = async () => {
     if (!couponCode || !cartId) {
-      toast.error("Generate your cart first and enter a coupon");
+      toast.error("Generate cart first and enter a coupon");
       return;
     }
     try {
@@ -226,26 +308,58 @@ export default function CreateOrderPage() {
         body: JSON.stringify({ code: couponCode }),
       });
       if (!res.ok) throw new Error("Failed to apply coupon");
-      const { discountAmount: amt, discountType: type } = await res.json();
+      const { discountAmount: amt, discountType: dt } = await res.json();
       setDiscount(amt);
-      setDiscountType(type);
+      setDiscountType(dt);
       setCouponApplied(true);
       toast.success("Coupon applied!");
     } catch (err: any) {
-      toast.error(err.message || "Could not apply coupon");
+      toast.error(err.message);
     }
   };
 
-  // Payment methods
+  // — Add payment method to order
   const addPaymentMethod = () => {
-    const m = PAYMENT_METHODS.find((m) => m.id === selectedPaymentMethod);
+    const m = paymentMethods.find((m) => m.id === selectedPaymentMethod);
     if (m) setAppliedPaymentMethods((p) => [...p, m]);
     setSelectedPaymentMethod("");
   };
   const removePaymentMethod = (i: number) =>
     setAppliedPaymentMethods((p) => p.filter((_, idx) => idx !== i));
 
-  // Cancel / Create
+  // — Add a new address
+  const addAddress = async () => {
+    if (!newAddress || !newPostalCode || !newPhone) {
+      return toast.error("All address fields are required");
+    }
+    try {
+      const res = await fetch(`/api/clients/${selectedClient}/address`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+        },
+        body: JSON.stringify({
+          clientId: selectedClient,
+          address: newAddress,
+          postalCode: newPostalCode,
+          phone: newPhone,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save address");
+      const created: Address = await res.json();
+      setAddresses((prev) => [...prev, created]);
+      setSelectedAddressId(created.id);
+      setNewAddress("");
+      setNewPostalCode("");
+      setNewPhone("");
+      toast.success("Address added");
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
+  // — Cancel / Create
   const cancelOrder = () => {
     setSelectedClient("");
     setOrderGenerated(false);
@@ -256,11 +370,23 @@ export default function CreateOrderPage() {
     setSelectedPaymentMethod("");
     setAppliedPaymentMethods([]);
     setClientCountry("");
+    setSelectedShippingMethod("");
+    setSelectedShippingCompany("");
+    setShippingCost(0);
   };
   const createOrder = () => {
     alert("Order created successfully!");
     cancelOrder();
   };
+
+  // — Filter products by stock in clientCountry
+  const countryProducts = products.filter((p) => {
+    const totalStock = Object.values(p.stockData).reduce(
+      (sum, e) => sum + (e[clientCountry] || 0),
+      0
+    );
+    return totalStock > 0;
+  });
 
   return (
     <div className="container mx-auto py-6">
@@ -277,13 +403,13 @@ export default function CreateOrderPage() {
             </CardHeader>
             <CardContent className="flex flex-col sm:flex-row gap-4">
               <div className="flex-1">
-                <Label htmlFor="client">Select Client</Label>
+                <Label>Select Client</Label>
                 <Select
                   value={selectedClient}
                   onValueChange={setSelectedClient}
                   disabled={orderGenerated || clientsLoading}
                 >
-                  <SelectTrigger id="client">
+                  <SelectTrigger>
                     <SelectValue
                       placeholder={clientsLoading ? "Loading…" : "Select a client"}
                     />
@@ -316,11 +442,11 @@ export default function CreateOrderPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Already added */}
               {orderItems.length > 0 && (
                 <div className="space-y-4 mb-4">
                   {orderItems.map(({ product, quantity }, idx) => {
-                    const price = product.regularPrice[clientCountry] ?? product.price;
+                    const price =
+                      product.regularPrice[clientCountry] ?? product.price;
                     return (
                       <div
                         key={idx}
@@ -336,21 +462,31 @@ export default function CreateOrderPage() {
                         <div className="flex-1">
                           <div className="flex justify-between">
                             <h3 className="font-medium">{product.title}</h3>
-                            <Button variant="ghost" size="icon" onClick={() => removeItem(idx)}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => removeItem(idx)}
+                            >
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
-                          <p className="text-sm text-muted-foreground">SKU: {product.sku}</p>
+                          <p className="text-sm text-muted-foreground">
+                            SKU: {product.sku}
+                          </p>
                           <div
                             className="text-sm"
                             dangerouslySetInnerHTML={{ __html: product.description }}
                           />
                           <div className="flex justify-between mt-2">
                             <div>
-                              <span className="font-medium">Unit Price: ${price.toFixed(2)}</span>{" "}
+                              <span className="font-medium">
+                                Unit Price: ${price.toFixed(2)}
+                              </span>{" "}
                               × <span className="font-medium">{quantity}</span>
                             </div>
-                            <span className="font-medium">${(price * quantity).toFixed(2)}</span>
+                            <span className="font-medium">
+                              ${(price * quantity).toFixed(2)}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -359,16 +495,15 @@ export default function CreateOrderPage() {
                 </div>
               )}
 
-              {/* Select new product + qty */}
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
-                  <Label htmlFor="product">Select Product</Label>
+                  <Label>Select Product</Label>
                   <Select
                     value={selectedProduct}
                     onValueChange={setSelectedProduct}
                     disabled={productsLoading}
                   >
-                    <SelectTrigger id="product">
+                    <SelectTrigger>
                       <SelectValue
                         placeholder={productsLoading ? "Loading…" : "Select a product"}
                       />
@@ -387,13 +522,14 @@ export default function CreateOrderPage() {
                 </div>
 
                 <div className="w-24">
-                  <Label htmlFor="quantity">Quantity</Label>
+                  <Label>Quantity</Label>
                   <Input
-                    id="quantity"
                     type="number"
                     min={1}
                     value={quantity}
-                    onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                    onChange={(e) =>
+                      setQuantity(Math.max(1, parseInt(e.target.value) || 1))
+                    }
                   />
                 </div>
 
@@ -415,9 +551,8 @@ export default function CreateOrderPage() {
             </CardHeader>
             <CardContent className="flex flex-col sm:flex-row gap-4">
               <div className="flex-1">
-                <Label htmlFor="coupon">Coupon Code</Label>
+                <Label>Coupon Code</Label>
                 <Input
-                  id="coupon"
                   value={couponCode}
                   onChange={(e) => setCouponCode(e.target.value)}
                   disabled={couponApplied}
@@ -425,7 +560,11 @@ export default function CreateOrderPage() {
                 />
               </div>
               <div className="flex items-end">
-                <Button onClick={applyCoupon} disabled={!couponCode || couponApplied} variant={couponApplied ? "outline" : "default"}>
+                <Button
+                  onClick={applyCoupon}
+                  disabled={!couponCode || couponApplied}
+                  variant={couponApplied ? "outline" : "default"}
+                >
                   {couponApplied ? (
                     <>
                       <Check className="h-4 w-4 mr-2" /> Applied
@@ -434,6 +573,145 @@ export default function CreateOrderPage() {
                     "Apply Coupon"
                   )}
                 </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Addresses Section */}
+          {orderGenerated && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Truck className="h-5 w-5" /> Shipping Address
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {addresses.length > 0 && (
+                  <>
+                    <div className="space-y-2">
+                      {addresses.map((addr) => (
+                        <label
+                          key={addr.id}
+                          className="flex items-start gap-3 cursor-pointer"
+                        >
+                          <input
+                            type="radio"
+                            name="address"
+                            className="mt-1"
+                            value={addr.id}
+                            checked={selectedAddressId === addr.id}
+                            onChange={() => setSelectedAddressId(addr.id)}
+                          />
+                          <div>
+                            <p className="font-medium">{addr.address}</p>
+                            <p className="text-sm text-muted-foreground">
+                              Postal Code: {addr.postalCode} • Phone: {addr.phone}
+                            </p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                    <Separator />
+                  </>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <Label>Address</Label>
+                    <Input
+                      value={newAddress}
+                      onChange={(e) => setNewAddress(e.target.value)}
+                      placeholder="123 Main St."
+                    />
+                  </div>
+                  <div>
+                    <Label>Postal Code</Label>
+                    <Input
+                      value={newPostalCode}
+                      onChange={(e) => setNewPostalCode(e.target.value)}
+                      placeholder="90210"
+                    />
+                  </div>
+                  <div>
+                    <Label>Phone</Label>
+                    <Input
+                      value={newPhone}
+                      onChange={(e) => setNewPhone(e.target.value)}
+                      placeholder="+1 555-1234"
+                    />
+                  </div>
+                </div>
+                <Button
+                  onClick={addAddress}
+                  disabled={!newAddress || !newPostalCode || !newPhone}
+                >
+                  Add Address
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Shipping Section */}
+          <Card className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Truck className="h-5 w-5" /> Shipping
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Method */}
+                <div>
+                  <Label>Method</Label>
+                  <Select
+                    value={selectedShippingMethod}
+                    onValueChange={setSelectedShippingMethod}
+                    disabled={!orderGenerated || shippingLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={shippingLoading ? "Loading…" : "Select method"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {shippingMethods.map((m) => {
+                        const tier = m.costs.find(
+                          ({ minOrderCost, maxOrderCost }) =>
+                            total >= minOrderCost &&
+                            (maxOrderCost === 0 || total <= maxOrderCost)
+                        );
+                        const cost = tier ? tier.shipmentCost : 0;
+                        return (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.title} — {m.description} — ${cost.toFixed(2)}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Company */}
+                <div>
+                  <Label>Company</Label>
+                  <Select
+                    value={selectedShippingCompany}
+                    onValueChange={setSelectedShippingCompany}
+                    disabled={!orderGenerated || shippingLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={shippingLoading ? "Loading…" : "Select company"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {shippingCompanies.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -447,25 +725,39 @@ export default function CreateOrderPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {appliedPaymentMethods.map((m, idx) => (
-                <div key={idx} className="flex justify-between items-center p-4 border rounded-lg">
+                <div
+                  key={idx}
+                  className="flex justify-between items-center p-4 border rounded-lg"
+                >
                   <div>
                     <h3 className="font-medium">{m.name}</h3>
                     <p className="text-sm text-muted-foreground">{m.details}</p>
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => removePaymentMethod(idx)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removePaymentMethod(idx)}
+                  >
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
               ))}
+
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
-                  <Label htmlFor="payment">Select Payment Method</Label>
-                  <Select value={selectedPaymentMethod} onValueChange={setSelectedPaymentMethod}>
-                    <SelectTrigger id="payment">
-                      <SelectValue placeholder="Select payment method" />
+                  <Label>Select Payment Method</Label>
+                  <Select
+                    value={selectedPaymentMethod}
+                    onValueChange={setSelectedPaymentMethod}
+                    disabled={!orderGenerated || paymentLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={paymentLoading ? "Loading…" : "Select method"}
+                      />
                     </SelectTrigger>
                     <SelectContent>
-                      {PAYMENT_METHODS.map((m) => (
+                      {paymentMethods.map((m) => (
                         <SelectItem key={m.id} value={m.id}>
                           {m.name}
                         </SelectItem>
@@ -474,7 +766,10 @@ export default function CreateOrderPage() {
                   </Select>
                 </div>
                 <div className="flex items-end">
-                  <Button onClick={addPaymentMethod} disabled={!selectedPaymentMethod}>
+                  <Button
+                    onClick={addPaymentMethod}
+                    disabled={!selectedPaymentMethod}
+                  >
                     <Plus className="h-4 w-4 mr-2" /> Add Payment
                   </Button>
                 </div>
@@ -511,15 +806,22 @@ export default function CreateOrderPage() {
                   {couponApplied && discountAmount > 0 && (
                     <div className="flex justify-between text-green-600">
                       <span>
-                        Discount{discountType === "percentage" ? ` (${discount}%)` : ""}:
+                        Discount
+                        {discountType === "percentage" ? ` (${discount}%)` : ""}:
                       </span>
-                      <span className="font-medium">–${discountAmount.toFixed(2)}</span>
+                      <span className="font-medium">
+                        –${discountAmount.toFixed(2)}
+                      </span>
                     </div>
                   )}
+                  <div className="flex justify-between">
+                    <span>Shipping:</span>
+                    <span className="font-medium">${shippingCost.toFixed(2)}</span>
+                  </div>
                   <Separator />
                   <div className="flex justify-between text-lg font-bold">
                     <span>Total:</span>
-                    <span>${total.toFixed(2)}</span>
+                    <span>${(total + shippingCost).toFixed(2)}</span>
                   </div>
                 </div>
               ) : (
@@ -531,12 +833,23 @@ export default function CreateOrderPage() {
             <CardFooter className="flex flex-col gap-3">
               <Button
                 onClick={createOrder}
-                disabled={!orderGenerated || orderItems.length === 0 || appliedPaymentMethods.length === 0}
+                disabled={
+                  !orderGenerated ||
+                  orderItems.length === 0 ||
+                  appliedPaymentMethods.length === 0 ||
+                  !selectedShippingMethod ||
+                  !selectedShippingCompany
+                }
                 className="w-full"
               >
                 Create Order
               </Button>
-              <Button variant="outline" onClick={cancelOrder} disabled={!orderGenerated} className="w-full">
+              <Button
+                variant="outline"
+                onClick={cancelOrder}
+                disabled={!orderGenerated}
+                className="w-full"
+              >
                 Cancel Order
               </Button>
             </CardFooter>

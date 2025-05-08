@@ -69,7 +69,6 @@ export async function POST(req: NextRequest) {
         `
 
         const resultCart = await pool.query(activeCart);
-        console.log(resultCart.rows)
 
         if (resultCart.rows[0].status === true) {
             const cart = resultCart.rows[0];
