@@ -7,7 +7,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 const cartProductSchema = z.object({
-    productId: z.number(),
+    productId: z.string(),
 });
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

@@ -82,7 +82,9 @@ interface ShippingCompany {
 
 export default function CreateOrderPage() {
   // — Clients
-  const [clients, setClients] = useState<{ id: string; username: string; country: string }[]>([]);
+  const [clients, setClients] = useState<
+    { id: string; username: string; country: string }[]
+  >([]);
   const [clientsLoading, setClientsLoading] = useState(true);
 
   // — Products
@@ -91,7 +93,9 @@ export default function CreateOrderPage() {
 
   // — Shipping
   const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
+    []
+  );
   const [shippingLoading, setShippingLoading] = useState(true);
   const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
@@ -101,7 +105,6 @@ export default function CreateOrderPage() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
-  const [appliedPaymentMethods, setAppliedPaymentMethods] = useState<PaymentMethod[]>([]);
 
   // — Addresses
   const [addresses, setAddresses] = useState<Address[]>([]);
@@ -119,7 +122,9 @@ export default function CreateOrderPage() {
   const [quantity, setQuantity] = useState(1);
   const [couponCode, setCouponCode] = useState("");
   const [couponApplied, setCouponApplied] = useState(false);
-  const [discountType, setDiscountType] = useState<"percentage" | "fixed">("fixed");
+  const [discountType, setDiscountType] = useState<"percentage" | "fixed">(
+    "fixed"
+  );
   const [discount, setDiscount] = useState(0);
   const [cartId, setCartId] = useState("");
 
@@ -127,7 +132,9 @@ export default function CreateOrderPage() {
   useEffect(() => {
     setClientsLoading(true);
     fetch("/api/clients/", {
-      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+      },
     })
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch clients");
@@ -142,7 +149,9 @@ export default function CreateOrderPage() {
   useEffect(() => {
     setProductsLoading(true);
     fetch("/api/products/", {
-      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+      },
     })
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch products");
@@ -159,7 +168,9 @@ export default function CreateOrderPage() {
 
     // Addresses
     fetch(`/api/clients/${selectedClient}/address`, {
-      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+      },
     })
       .then((res) => {
         if (!res.ok) throw new Error("Failed to load addresses");
@@ -176,7 +187,9 @@ export default function CreateOrderPage() {
     // Payment methods
     setPaymentLoading(true);
     fetch("/api/payment-methods", {
-      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+      },
     })
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch payment methods");
@@ -191,10 +204,12 @@ export default function CreateOrderPage() {
 
   // — Compute subtotal, discount, total
   const subtotal = orderItems.reduce((sum, item) => {
-    const price = item.product.regularPrice[clientCountry] ?? item.product.price;
+    const price =
+      item.product.regularPrice[clientCountry] ?? item.product.price;
     return sum + price * item.quantity;
   }, 0);
-  const discountAmount = discountType === "percentage" ? (subtotal * discount) / 100 : discount;
+  const discountAmount =
+    discountType === "percentage" ? (subtotal * discount) / 100 : discount;
   const total = subtotal - discountAmount;
 
   // — Shipping cost whenever total or method changes
@@ -231,14 +246,18 @@ export default function CreateOrderPage() {
       setShippingLoading(true);
       try {
         const shipRes = await fetch("/api/shipments", {
-          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
         });
         if (!shipRes.ok) throw new Error("Failed to fetch shipping methods");
         const methods: { shipments: ShippingMethod[] } = await shipRes.json();
-        console.log(methods)
+        console.log(methods);
         setShippingMethods(methods.shipments);
         const compRes = await fetch("/api/shipping-companies", {
-          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
         });
         if (!compRes.ok) throw new Error("Failed to fetch shipping companies");
         const comps: { companies: ShippingCompany[] } = await compRes.json();
@@ -263,7 +282,11 @@ export default function CreateOrderPage() {
       toast.error("Cart hasn’t been created yet!");
       return;
     }
-  
+
+    const product = products.find((p) => p.id === selectedProduct);
+    if (!product) return;
+    const unitPrice = product.regularPrice[clientCountry] ?? product.price;
+
     try {
       const res = await fetch(`/api/cart/${cartId}/add-product`, {
         method: "POST",
@@ -271,17 +294,23 @@ export default function CreateOrderPage() {
         body: JSON.stringify({
           productId: selectedProduct,
           quantity,
+          price: unitPrice,
         }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => null);
         throw new Error(err?.message || "Failed to add product");
       }
-      const data = await res.json();
-      setOrderItems((prev) => [
-        ...prev,
-        { product: data.product, quantity: data.quantity },
-      ]);
+      const { product: added, quantity: qty } = await res.json();
+      setOrderItems((prev) => {
+        const idx = prev.findIndex((it) => it.product.id === added.id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = { product: added, quantity: qty };
+          return updated;
+        }
+        return [...prev, { product: added, quantity: qty }];
+      });
       setSelectedProduct("");
       setQuantity(1);
       toast.success("Product added to cart!");
@@ -292,8 +321,34 @@ export default function CreateOrderPage() {
   };
 
   // — Remove item
-  const removeItem = (i: number) =>
-    setOrderItems((prev) => prev.filter((_, idx) => idx !== i));
+  // inside your component, alongside addProduct…
+
+  const removeProduct = async (productId: string, idx: number) => {
+    if (!cartId) {
+      toast.error("No cart created yet!");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/cart/${cartId}/remove-product`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+        },
+        body: JSON.stringify({ productId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.message || "Failed to remove product");
+      }
+      // on success, remove from UI
+      setOrderItems((prev) => prev.filter((_, i) => i !== idx));
+      toast.success("Product removed from cart");
+    } catch (error: any) {
+      console.error("removeProduct error:", error);
+      toast.error(error.message || "Could not remove product");
+    }
+  };
 
   // — Apply coupon
   const applyCoupon = async () => {
@@ -368,15 +423,79 @@ export default function CreateOrderPage() {
     setCouponApplied(false);
     setDiscount(0);
     setSelectedPaymentMethod("");
-    setAppliedPaymentMethods([]);
     setClientCountry("");
     setSelectedShippingMethod("");
     setSelectedShippingCompany("");
     setShippingCost(0);
   };
-  const createOrder = () => {
-    alert("Order created successfully!");
-    cancelOrder();
+  // inside your CreateOrderPage component
+
+  const createOrder = async () => {
+    if (!orderGenerated) {
+      toast.error("Generate your cart first!");
+      return;
+    }
+    // pull out the selected payment method title
+    const payment = paymentMethods.find(
+      (m) => m.id === selectedPaymentMethod
+    )?.name;
+    if (!payment) {
+      toast.error("Select a payment method");
+      return;
+    }
+
+    // pull out the selected shipping company name
+    const shippingCompanyName = shippingCompanies.find(
+      (c) => c.id === selectedShippingCompany
+    )?.name;
+    if (!shippingCompanyName) {
+      toast.error("Select a shipping company");
+      return;
+    }
+
+    // pull out the selected address object
+    const addr = addresses.find((a) => a.id === selectedAddressId);
+    if (!addr) {
+      toast.error("Select a shipping address");
+      return;
+    }
+
+    // final totals
+    const shippingAmount = shippingCost;
+    const discountAmount =
+      discountType === "percentage" ? (subtotal * discount) / 100 : discount;
+    const totalAmount = subtotal - discountAmount + shippingAmount;
+
+    const payload = {
+      clientId: selectedClient,
+      cartId,
+      country: clientCountry,
+      paymentMethod: payment,
+      shippingAmount,
+      discountAmount,
+      totalAmount,
+      couponCode: couponCode || null,
+      shippingCompany: shippingCompanyName,
+      address: addr.address,
+    };
+
+    try {
+      const res = await fetch("/api/order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.message || "Failed to create order");
+      }
+      toast.success("Order created successfully!");
+      // reset everything
+      cancelOrder();
+    } catch (err: any) {
+      console.error("createOrder error:", err);
+      toast.error(err.message || "Could not create order");
+    }
   };
 
   // — Filter products by stock in clientCountry
@@ -411,7 +530,9 @@ export default function CreateOrderPage() {
                 >
                   <SelectTrigger>
                     <SelectValue
-                      placeholder={clientsLoading ? "Loading…" : "Select a client"}
+                      placeholder={
+                        clientsLoading ? "Loading…" : "Select a client"
+                      }
                     />
                   </SelectTrigger>
                   <SelectContent>
@@ -435,7 +556,9 @@ export default function CreateOrderPage() {
           </Card>
 
           {/* Product Selection */}
-          <Card className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}>
+          <Card
+            className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
+          >
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Package className="h-5 w-5" /> Product Selection
@@ -465,7 +588,7 @@ export default function CreateOrderPage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => removeItem(idx)}
+                              onClick={() => removeProduct(product.id, idx)}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
@@ -475,7 +598,9 @@ export default function CreateOrderPage() {
                           </p>
                           <div
                             className="text-sm"
-                            dangerouslySetInnerHTML={{ __html: product.description }}
+                            dangerouslySetInnerHTML={{
+                              __html: product.description,
+                            }}
                           />
                           <div className="flex justify-between mt-2">
                             <div>
@@ -505,7 +630,9 @@ export default function CreateOrderPage() {
                   >
                     <SelectTrigger>
                       <SelectValue
-                        placeholder={productsLoading ? "Loading…" : "Select a product"}
+                        placeholder={
+                          productsLoading ? "Loading…" : "Select a product"
+                        }
                       />
                     </SelectTrigger>
                     <SelectContent>
@@ -543,7 +670,9 @@ export default function CreateOrderPage() {
           </Card>
 
           {/* Discount Coupon */}
-          <Card className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}>
+          <Card
+            className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
+          >
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Tag className="h-5 w-5" /> Discount Coupon
@@ -605,7 +734,8 @@ export default function CreateOrderPage() {
                           <div>
                             <p className="font-medium">{addr.address}</p>
                             <p className="text-sm text-muted-foreground">
-                              Postal Code: {addr.postalCode} • Phone: {addr.phone}
+                              Postal Code: {addr.postalCode} • Phone:{" "}
+                              {addr.phone}
                             </p>
                           </div>
                         </label>
@@ -652,7 +782,9 @@ export default function CreateOrderPage() {
           )}
 
           {/* Shipping Section */}
-          <Card className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}>
+          <Card
+            className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
+          >
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Truck className="h-5 w-5" /> Shipping
@@ -670,7 +802,9 @@ export default function CreateOrderPage() {
                   >
                     <SelectTrigger>
                       <SelectValue
-                        placeholder={shippingLoading ? "Loading…" : "Select method"}
+                        placeholder={
+                          shippingLoading ? "Loading…" : "Select method"
+                        }
                       />
                     </SelectTrigger>
                     <SelectContent>
@@ -700,7 +834,9 @@ export default function CreateOrderPage() {
                   >
                     <SelectTrigger>
                       <SelectValue
-                        placeholder={shippingLoading ? "Loading…" : "Select company"}
+                        placeholder={
+                          shippingLoading ? "Loading…" : "Select company"
+                        }
                       />
                     </SelectTrigger>
                     <SelectContent>
@@ -717,63 +853,32 @@ export default function CreateOrderPage() {
           </Card>
 
           {/* Payment Methods */}
-          <Card className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}>
+          <Card
+            className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
+          >
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <CreditCard className="h-5 w-5" /> Payment Methods
+                <CreditCard className="h-5 w-5" /> Payment Method
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {appliedPaymentMethods.map((m, idx) => (
-                <div
-                  key={idx}
-                  className="flex justify-between items-center p-4 border rounded-lg"
-                >
-                  <div>
-                    <h3 className="font-medium">{m.name}</h3>
-                    <p className="text-sm text-muted-foreground">{m.details}</p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removePaymentMethod(idx)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  <Label>Select Payment Method</Label>
-                  <Select
-                    value={selectedPaymentMethod}
-                    onValueChange={setSelectedPaymentMethod}
-                    disabled={!orderGenerated || paymentLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue
-                        placeholder={paymentLoading ? "Loading…" : "Select method"}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {paymentMethods.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-end">
-                  <Button
-                    onClick={addPaymentMethod}
-                    disabled={!selectedPaymentMethod}
-                  >
-                    <Plus className="h-4 w-4 mr-2" /> Add Payment
-                  </Button>
-                </div>
-              </div>
+            <CardContent>
+              <Label htmlFor="payment">Select Payment Method</Label>
+              <Select
+                value={selectedPaymentMethod}
+                onValueChange={setSelectedPaymentMethod}
+                disabled={!orderGenerated}
+              >
+                <SelectTrigger id="payment">
+                  <SelectValue placeholder="Select a payment method" />
+                </SelectTrigger>
+                <SelectContent>
+                  {paymentMethods.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </CardContent>
           </Card>
         </div>
@@ -807,7 +912,8 @@ export default function CreateOrderPage() {
                     <div className="flex justify-between text-green-600">
                       <span>
                         Discount
-                        {discountType === "percentage" ? ` (${discount}%)` : ""}:
+                        {discountType === "percentage" ? ` (${discount}%)` : ""}
+                        :
                       </span>
                       <span className="font-medium">
                         –${discountAmount.toFixed(2)}
@@ -816,7 +922,9 @@ export default function CreateOrderPage() {
                   )}
                   <div className="flex justify-between">
                     <span>Shipping:</span>
-                    <span className="font-medium">${shippingCost.toFixed(2)}</span>
+                    <span className="font-medium">
+                      ${shippingCost.toFixed(2)}
+                    </span>
                   </div>
                   <Separator />
                   <div className="flex justify-between text-lg font-bold">
@@ -836,7 +944,7 @@ export default function CreateOrderPage() {
                 disabled={
                   !orderGenerated ||
                   orderItems.length === 0 ||
-                  appliedPaymentMethods.length === 0 ||
+                  !selectedPaymentMethod ||
                   !selectedShippingMethod ||
                   !selectedShippingCompany
                 }

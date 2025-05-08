@@ -55,7 +55,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       `;
 
         const resultProductCart = await pool.query(productCartQuery);
-        console.log(resultProductCart.rows[0])
+        console.log(resultProductCart)
+        
 
         if (resultProductCart.rows.length > 0) {
             const newQuantity = resultProductCart.rows[0].quantity + body.quantity
@@ -66,7 +67,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             `
 
             const resultUpdateCart = await pool.query(updateProductCart);
-            console.log(resultUpdateCart)
 
             const productQuery = `
         SELECT * FROM products
@@ -79,7 +79,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 product: resultProduct.rows[0],
                 quantity: newQuantity
             }
-            console.log(cartItem)
             return NextResponse.json(cartItem, { status: 201 });
         } else {
             const productQuery = `

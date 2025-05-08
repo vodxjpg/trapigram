@@ -91,7 +91,6 @@ export async function GET(
        WHERE "clientId" = $1`,
             [clientId]
         );
-        console.log(result.rows)
         return NextResponse.json({ addresses: result.rows });
     } catch (error: any) {
         console.error("[GET /api/clients/[id]/address] error:", error);
