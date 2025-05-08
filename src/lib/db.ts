@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/lib/db.ts
+// src/lib/db.ts
 import { Pool } from "pg";
 import { Kysely, PostgresDialect } from "kysely";
 
@@ -138,7 +138,7 @@ interface DB {
     manageStock:     boolean;
     stockStatus:     "managed" | "unmanaged";
     createdAt:       Date;
-    updatedAt:       Date;
+    updatedAt: Date;
   };
 
   affiliateProductVariations: {
@@ -399,8 +399,8 @@ interface DB {
   warehouseStock: {
     id: string;
     warehouseId: string;
-    productId: string | null;            // <‑‑ allow NULL
-    affiliateProductId: string | null;   // <‑‑ NEW
+    productId: string | null;            // <-- allow NULL
+    affiliateProductId: string | null;   // <-- NEW
     variationId: string | null;
     affiliateVariationId: string | null;
     country: string;
@@ -425,6 +425,7 @@ interface DB {
     id: string;
     shareLinkId: string;
     recipientUserId: string;
+    targetWarehouseId: string | null;     // ← newly added
     createdAt: Date;
     updatedAt: Date;
   };

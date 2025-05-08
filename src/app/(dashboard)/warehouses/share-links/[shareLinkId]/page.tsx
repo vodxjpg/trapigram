@@ -192,26 +192,36 @@ export default function EditShareLinkPage() {
         const stockData = await stockRes.json();
         setStock(stockData.stock);
 
-        /* ------------------------------------------- form defaults ----- */
-        form.reset({
-          recipientUserIds: shareData.recipients.map((r) => r.userId),
-          products: shareData.products.map((p) => ({
-            productId: p.productId,
-            variationId: p.variationId,
-            cost: p.cost,
-          })),
-        });
+      /* ------------------------------------------- form defaults ----- */
+       form.reset({
+           recipientUserIds: shareData.recipients.map((r) => r.userId),
+           products:
+             shareData.products.length > 0
+               ? shareData.products.map((p) => ({
+                   productId: p.productId,
+                   variationId: p.variationId,
+                   cost: p.cost,
+                 }))
+               : [   // <-- if you’ve deleted _every_ product, start with one empty row
+                   { productId: "", variationId: null, cost: {} },
+                 ],
+         });
+  
 
         /* ----------------------------------- selected countries -------- */
         const initial: Record<number, string[]> = {};
-        shareData.products.forEach((p, i) => {
-          initial[i] =
-            Object.keys(p.cost).length > 0
-              ? Object.keys(p.cost)
-              : [...shareData.countries];
-        });
+        if (shareData.products.length > 0) {
+          shareData.products.forEach((p, i) => {
+            initial[i] =
+              Object.keys(p.cost).length > 0
+                ? Object.keys(p.cost)
+                : [...shareData.countries];
+          });
+        } else {
+          // for our one “blank” row, allow all countries
+          initial[0] = [...shareData.countries];
+        }
         setSelectedCountries(initial);
-
         /* ------------- cache recipients so they appear in the select --- */
         const userPromises = shareData.recipients.map((r) =>
           fetch(`/api/users/search?email=${encodeURIComponent(r.email)}`, {
@@ -656,9 +666,7 @@ if (!res.ok) {
                           : [];
 
                       /* cost / stock helpers ------------------------------ */
-                      const stockKey = `${selectedProdId}-${
-                        selectedVarId ?? "none"
-                      }`;
+                      const stockKey = pvKey({ productId: selectedProdId, variationId: selectedVarId });
                       const prodStock = stockByProduct[stockKey] || {};
 
                       const prodCountries =

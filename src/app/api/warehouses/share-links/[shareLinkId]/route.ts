@@ -110,14 +110,14 @@ export async function GET(
     const termMap =
       vAttrIds.size > 0
         ? new Map(
-            (
-              await db
-                .selectFrom("productAttributeTerms")
-                .select(["id", "name"])
-                .where("id", "in", [...vAttrIds])
-                .execute()
-            ).map((t) => [t.id, t.name]),
-          )
+          (
+            await db
+              .selectFrom("productAttributeTerms")
+              .select(["id", "name"])
+              .where("id", "in", [...vAttrIds])
+              .execute()
+          ).map((t) => [t.id, t.name]),
+        )
         : new Map();
 
     const formattedProducts = products.map((p) => {
@@ -162,10 +162,8 @@ export async function GET(
   }
 }
 
-
 /* ──────────────────────────────────────────────────────────────────────── */
-/*  PUT                                                                    */
-/* ──────────────────────────────────────────────────────────────────────── */
+// src/app/api/warehouses/share-links/[shareLinkId]/route.ts
 export async function PUT(
   req: NextRequest,
   context: { params: Promise<{ shareLinkId: string }> },
@@ -177,7 +175,7 @@ export async function PUT(
     const userId = session.user.id;
     const { shareLinkId } = await context.params;
 
-    const body   = await req.json();
+    const body = await req.json();
     const parsed = updateSchema.safeParse(body);
     if (!parsed.success)
       return NextResponse.json({ error: parsed.error.errors }, { status: 400 });
@@ -197,7 +195,7 @@ export async function PUT(
         { error: "Share link not found, inactive, or you are not the creator" },
         { status: 404 },
       );
-    const warehouseId       = shareLink.warehouseId;
+    const warehouseId = shareLink.warehouseId;
     const warehouseCountries = JSON.parse(shareLink.countries) as string[];
 
     /* ── entire original logic preserved ─────────────────────────────── */
@@ -274,9 +272,8 @@ export async function PUT(
       if (!stock.some((s) => s.quantity > 0)) {
         return NextResponse.json(
           {
-            error: `No stock available for product ${productId}${
-              variationId ? ` variation ${variationId}` : ""
-            }`,
+            error: `No stock available for product ${productId}${variationId ? ` variation ${variationId}` : ""
+              }`,
           },
           { status: 400 }
         );
@@ -307,9 +304,8 @@ export async function PUT(
           if (!stock.some((s) => s.country === country && s.quantity > 0)) {
             return NextResponse.json(
               {
-                error: `No stock available for ${country} for product ${productId}${
-                  variationId ? ` variation ${variationId}` : ""
-                }`,
+                error: `No stock available for ${country} for product ${productId}${variationId ? ` variation ${variationId}` : ""
+                  }`,
               },
               { status: 400 }
             );
@@ -411,12 +407,81 @@ export async function PUT(
       }
     }
 
+    //
+    // ── BEGIN CLEANUP FOR PRODUCTS NO LONGER SHARED ──
+    //
+    // 1) figure out all warehouses that B has already synced into:
+    const linkWarehouseRows = await db
+      .selectFrom("warehouseShareRecipient")
+      .innerJoin("warehouseShareLink", "warehouseShareRecipient.shareLinkId", "warehouseShareLink.id")
+      .select("warehouseShareLink.warehouseId")
+      .where("warehouseShareRecipient.shareLinkId", "=", shareLinkId)
+      .execute();
+    const linkedWarehouseIds = linkWarehouseRows.map(r => r.warehouseId);
+
+    // 2) load every existing mapping for this link:
+    const previousMaps = await db
+      .selectFrom("sharedProductMapping")
+      .select(["id", "sourceProductId", "targetProductId"])
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+
+    // 3) determine which sourceProductIds were removed:
+    const stillShared = new Set(products.map(p => p.productId));
+    const toRemove = previousMaps.filter(m => !stillShared.has(m.sourceProductId));
+
+    // 4) delete in FK-safe order:
+    for (const m of toRemove) {
+      // a) sharedVariationMapping entries:
+      await db
+        .deleteFrom("sharedVariationMapping")
+        .where("shareLinkId", "=", shareLinkId)
+        .where("sourceProductId", "=", m.sourceProductId)
+        .execute();
+
+      // b) sharedProductMapping row:
+      await db
+        .deleteFrom("sharedProductMapping")
+        .where("id", "=", m.id)
+        .execute();
+
+      // c) any warehouseStock copies in all linked warehouses:
+      await db
+        .deleteFrom("warehouseStock")
+        .where("warehouseId", "in", linkedWarehouseIds)
+        .where("productId", "=", m.targetProductId)
+        .execute();
+
+      // d) any copied variations:
+      await db
+        .deleteFrom("productVariations")
+        .where("productId", "=", m.targetProductId)
+        .execute();
+
+      // e) finally the product record:
+      await db
+        .deleteFrom("products")
+        .where("id", "=", m.targetProductId)
+        .execute();
+    }
+    //
+    // ── END CLEANUP BLOCK ──
+
+    // ── PRESERVE EXISTING targetWarehouseId ──
+    const existing = await db
+      .selectFrom("warehouseShareRecipient")
+      .select(["recipientUserId", "targetWarehouseId"])
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    const targetMap = new Map(existing.map(r => [r.recipientUserId, r.targetWarehouseId]));
+
     // Update share link (recipients and products)
     await db.deleteFrom("warehouseShareRecipient").where("shareLinkId", "=", shareLinkId).execute();
     const recipientRows = recipientUserIds.map((uid) => ({
       id: generateId("WSR"),
       shareLinkId,
       recipientUserId: uid,
+      targetWarehouseId: targetMap.get(uid) ?? null,
       createdAt: new Date(),
       updatedAt: new Date(),
     }));
@@ -498,24 +563,68 @@ export async function PUT(
         .execute();
     }
 
-    const row = await db
-    .selectFrom("warehouseShareLink")
-    .select("token")
-    .where("id", "=", shareLinkId)
-    .executeTakeFirst();
+    // ── BEGIN PROPAGATION FOR NEWLY ADDED PRODUCTS ──
+    const oldMappings = await db
+      .selectFrom("sharedProductMapping")
+      .select("sourceProductId")
+      .where("shareLinkId", "=", shareLinkId)
+      .execute();
+    const previouslyShared = new Set(oldMappings.map(m => m.sourceProductId));
 
-  return NextResponse.json(
-    {
-      message: "Share link updated successfully",
-      token: row?.token
-    },
-    { status: 200 }
-  );
+    const toAdd = products.map(p => p.productId).filter(pid => !previouslyShared.has(pid));
+    console.log("[PROPAGATION] toAdd =", toAdd);
+
+    if (toAdd.length) {
+      const whRows = await db
+        .selectFrom("warehouseShareRecipient")
+        .select("targetWarehouseId")
+        .where("shareLinkId", "=", shareLinkId)
+        .where("targetWarehouseId", "is not", null)
+        .execute();
+      const targetWarehouseIds = whRows.map(r => r.targetWarehouseId!);
+      console.log("[PROPAGATION] will sync into warehouses", targetWarehouseIds);
+
+      for (const targetWarehouseId of targetWarehouseIds) {
+        try {
+          const res = await fetch(
+            `${req.nextUrl.origin}/api/warehouses/sync`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                // forward your own cookie so sync sees *you* as the recipient (not ideal)
+                "cookie": req.headers.get("cookie")!,
+              },
+              body: JSON.stringify({ shareLinkId, warehouseId: targetWarehouseId }),
+            }
+          );
+          console.log(`[PROPAGATION] sync(${targetWarehouseId}) →`, res.status, await res.text());
+        } catch (e) {
+          console.error("[PROPAGATION] sync error:", e);
+        }
+      }
+    }
+    // ── END PROPAGATION BLOCK ──
+
+    const row = await db
+      .selectFrom("warehouseShareLink")
+      .select("token")
+      .where("id", "=", shareLinkId)
+      .executeTakeFirst();
+
+    return NextResponse.json(
+      {
+        message: "Share link updated successfully",
+        token: row?.token
+      },
+      { status: 200 }
+    );
   } catch (error) {
     console.error("[PUT /api/warehouses/share-links/[shareLinkId]] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
 
 export async function DELETE(
   req: NextRequest,

@@ -46,24 +46,36 @@ export async function POST(req: NextRequest) {
       .select([
         "warehouseShareLink.id",
         "warehouseShareLink.warehouseId",
+        "warehouseShareLink.creatorUserId",
         "warehouseShareLink.status",
         "warehouse.countries",
       ])
       .where("warehouseShareLink.id", "=", shareLinkId)
       .where("warehouseShareLink.status", "=", "active")
       .executeTakeFirst();
+
     if (!shareLink)
       return NextResponse.json({ error: "Share link not found or inactive" }, { status: 404 });
 
-    /* recipient? */
-    const recipient = await db
-      .selectFrom("warehouseShareRecipient")
-      .select("id")
+    /* Only enforce recipient-check for non-owners */
+    if (userId !== shareLink.creatorUserId) {
+      const recipient = await db
+        .selectFrom("warehouseShareRecipient")
+        .select("id")
+        .where("shareLinkId", "=", shareLinkId)
+        .where("recipientUserId", "=", userId)
+        .executeTakeFirst();
+      if (!recipient)
+        return NextResponse.json({ error: "You are not a recipient of this share link" }, { status: 403 });
+    }
+
+    // record recipient's target warehouse (harmless no-op if owner)
+    await db
+      .updateTable("warehouseShareRecipient")
+      .set({ targetWarehouseId: warehouseId, updatedAt: new Date() })
       .where("shareLinkId", "=", shareLinkId)
       .where("recipientUserId", "=", userId)
-      .executeTakeFirst();
-    if (!recipient)
-      return NextResponse.json({ error: "You are not a recipient of this share link" }, { status: 403 });
+      .execute();
 
     /* -------------------------------------------------- target warehouse-- */
     const targetWarehouse = await db
@@ -74,14 +86,16 @@ export async function POST(req: NextRequest) {
     if (!targetWarehouse)
       return NextResponse.json({ error: "Target warehouse not found" }, { status: 404 });
 
-    /* ownership check */
-    const tenant = await db
-      .selectFrom("tenant")
-      .select("id")
-      .where("ownerUserId", "=", userId)
-      .executeTakeFirst();
-    if (!tenant || tenant.id !== targetWarehouse.tenantId)
-      return NextResponse.json({ error: "Unauthorized: You do not own this warehouse" }, { status: 403 });
+    /* Only enforce ownership for non-owners */
+    if (userId !== shareLink.creatorUserId) {
+      const tenant = await db
+        .selectFrom("tenant")
+        .select("id")
+        .where("ownerUserId", "=", userId)
+        .executeTakeFirst();
+      if (!tenant || tenant.id !== targetWarehouse.tenantId)
+        return NextResponse.json({ error: "Unauthorized: You do not own this warehouse" }, { status: 403 });
+    }
 
     /* resolve organisation id */
     let warehouseOrgs: string[] = [];
@@ -140,8 +154,8 @@ export async function POST(req: NextRequest) {
     }
 
     /* maps */
-    const productIdMap   = new Map<string, string>(); // src ➜ tgt
-    const variationIdMap = new Map<string, string>(); // src ➜ tgt
+    const productIdMap   = new Map<string, string>(); // src → tgt
+    const variationIdMap = new Map<string, string>(); // src → tgt
 
     /* ──────────────────────────────────────────────────────────────────── */
     /* SYNC LOOP (per shared product or variation)                         */
@@ -273,7 +287,7 @@ export async function POST(req: NextRequest) {
             const termMap = new Map<string, string>(); // srcTermId ➜ tgtTermId
 
             for (const row of srcAttrRows) {
-              /* attribute */
+              /* attribute */  
               if (!attrMap.has(row.attributeId)) {
                 let tgtAttr = await db
                   .selectFrom("productAttributes")
@@ -321,13 +335,12 @@ export async function POST(req: NextRequest) {
 
                 /* link product to term */
                 await db.insertInto("productAttributeValues").values({
-                  productId:  targetProductId,
+                  productId:   targetProductId,
                   attributeId: tgtAttrId,
                   termId:      tgtTerm.id,
                 }).execute();
               }
             }
-
             /* ----------- variations copy (variable only) -------------- */
             if (srcProd.productType === "variable") {
               const profile = shareProfile.get(sp.productId)!;
@@ -492,39 +505,42 @@ export async function POST(req: NextRequest) {
 
         /* ---------- STOCK ------------------------------------------- */
         const srcStockRows = await db
+        .selectFrom("warehouseStock")
+        .select(["warehouseId", "country", "quantity", "variationId"])
+        .where("productId", "=", sp.productId)
+        .where("warehouseId", "=", shareLink.warehouseId)
+        .execute();
+
+      // Collect all source warehouse IDs (include the original one to avoid empty IN)
+      const linkWarehouses = await db
+        .selectFrom("warehouseShareRecipient")
+        .innerJoin("warehouseShareLink", "warehouseShareLink.id", "warehouseShareRecipient.shareLinkId")
+        .select("warehouseShareLink.warehouseId")
+        .where("warehouseShareRecipient.recipientUserId", "=", userId)
+        .execute();
+      const srcWarehouseIds = linkWarehouses.map(w => w.warehouseId);
+      if (!srcWarehouseIds.includes(shareLink.warehouseId)) {
+        srcWarehouseIds.push(shareLink.warehouseId);
+      }
+
+      for (const row of srcStockRows) {
+        const srcVarId = row.variationId;
+        if (srcVarId && !variationIdMap.has(srcVarId)) continue; // unmapped variation
+
+        const tgtVarId = srcVarId ? variationIdMap.get(srcVarId)! : null;
+
+        let qtyQuery = db
           .selectFrom("warehouseStock")
-          .select(["warehouseId", "country", "quantity", "variationId"])
+          .select("quantity")
           .where("productId", "=", sp.productId)
-          .where("warehouseId", "=", shareLink.warehouseId)
-          .execute();
+          .where("country", "=", row.country)
+          .where("warehouseId", "in", srcWarehouseIds);
 
-        for (const row of srcStockRows) {
-          const srcVarId = row.variationId;
-          if (srcVarId && !variationIdMap.has(srcVarId)) continue; // unmapped variation
+        if (srcVarId) qtyQuery = qtyQuery.where("variationId", "=", srcVarId);
+        else          qtyQuery = qtyQuery.where("variationId", "is", null);
 
-          const tgtVarId = srcVarId ? variationIdMap.get(srcVarId)! : null;
-
-          /* aggregate across ALL source warehouses shared with this user */
-          const linkWarehouses = await db
-            .selectFrom("warehouseShareRecipient")
-            .innerJoin("warehouseShareLink", "warehouseShareLink.id", "warehouseShareRecipient.shareLinkId")
-            .select("warehouseShareLink.warehouseId")
-            .where("warehouseShareRecipient.recipientUserId", "=", userId)
-            .execute();
-          const srcWarehouseIds = linkWarehouses.map(w => w.warehouseId);
-
-          let qtyQuery = db
-            .selectFrom("warehouseStock")
-            .select("quantity")
-            .where("productId", "=", sp.productId)
-            .where("country", "=", row.country)
-            .where("warehouseId", "in", srcWarehouseIds);
-
-          if (srcVarId) qtyQuery = qtyQuery.where("variationId", "=", srcVarId);
-          else          qtyQuery = qtyQuery.where("variationId", "is", null);
-
-          const qtyRows     = await qtyQuery.execute();
-          const totalQty    = qtyRows.reduce((sum, q) => sum + q.quantity, 0);
+        const qtyRows  = await qtyQuery.execute();
+        const totalQty = qtyRows.reduce((sum, q) => sum + q.quantity, 0);
 
           /* upsert into target warehouse */
           let stockQ = db
@@ -554,7 +570,7 @@ export async function POST(req: NextRequest) {
               organizationId,
               tenantId:       targetWarehouse.tenantId,
               createdAt:      new Date(),
-              updatedAt:      new Date(),
+              updatedAt: new Date(),
             }).execute();
           }
         } /* end stock rows */
