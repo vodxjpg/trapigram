@@ -1,4 +1,3 @@
-// src/app/(dashboard)/discount-rules/discount-rule-form.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -118,13 +117,9 @@ export function DiscountRuleForm({
       .catch((err) => toast.error(err.message));
   }, []);
 
-  // Reset only after both data & country options are ready
+  // Reset as soon as we have discountRuleData
   useEffect(() => {
-    if (
-      isEditing &&
-      discountRuleData &&
-      countryOptions.length > 0
-    ) {
+    if (isEditing && discountRuleData) {
       form.reset({
         name: discountRuleData.name,
         countries: discountRuleData.countries.map((c) =>
@@ -134,12 +129,7 @@ export function DiscountRuleForm({
         steps: discountRuleData.steps,
       });
     }
-  }, [
-    isEditing,
-    discountRuleData,
-    countryOptions,
-    form,
-  ]);
+  }, [isEditing, discountRuleData, form]);
 
   // --- Categories (new) ---
   const [categoryOptions, setCategoryOptions] = useState<
@@ -179,7 +169,6 @@ export function DiscountRuleForm({
       )
     )
       .then((all) => {
-        // Flatten into productItems
         const items: { productId: string | null; variationId: string | null }[] =
           [];
         all.forEach((batch: any) => {
@@ -196,7 +185,6 @@ export function DiscountRuleForm({
             }
           });
         });
-        // merge with existing, dedupe
         const existing = form.getValues("products");
         const map = new Map<string, { productId: string | null; variationId: string | null }>();
         existing.concat(items).forEach((it) => {
@@ -313,6 +301,18 @@ export function DiscountRuleForm({
                       )}
                     />
                   </FormControl>
+                  <div className="mt-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        field.onChange(countryOptions.map((o) => o.value))
+                      }
+                    >
+                      Select All
+                    </Button>
+                  </div>
                   <FormMessage />
                 </FormItem>
               )}
@@ -346,6 +346,11 @@ export function DiscountRuleForm({
                     <Select
                       isMulti
                       options={productOptions}
+                      getOptionValue={(o) =>
+                        `${o.value.productId ?? ""}-${o.value.variationId ??
+                          ""}`
+                      }
+                      getOptionLabel={(o) => o.label}
                       value={productOptions.filter((o) =>
                         field.value.some(
                           (v) =>

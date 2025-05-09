@@ -34,9 +34,7 @@ export async function GET(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  // Await the params promise
-  const ps = await params;
-  const { id } = paramsSchema.parse(ps);
+  const { id } = paramsSchema.parse(await params);
 
   const rule = await db
     .selectFrom("discountRules")
@@ -48,7 +46,9 @@ export async function GET(
 
   // Safe parse for countries
   let countries: string[];
-  if (typeof rule.countries === "string") {
+  if (Array.isArray(rule.countries)) {
+    countries = rule.countries;
+  } else if (typeof rule.countries === "string") {
     const raw = rule.countries.trim();
     if (raw.startsWith("[")) {
       try {
@@ -94,10 +94,7 @@ export async function PATCH(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  // Await the params promise
-  const ps = await params;
-  const { id } = paramsSchema.parse(ps);
-
+  const { id } = paramsSchema.parse(await params);
   const body = patchSchema.parse(await req.json());
   const now = new Date();
 
@@ -164,9 +161,7 @@ export async function DELETE(
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  // Await the params promise
-  const ps = await params;
-  const { id } = paramsSchema.parse(ps);
+  const { id } = paramsSchema.parse(await params);
 
   await db
     .deleteFrom("discountRuleProducts")

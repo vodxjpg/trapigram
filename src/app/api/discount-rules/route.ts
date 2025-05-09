@@ -40,7 +40,9 @@ export async function GET(req: NextRequest) {
     rules.map(async (r) => {
       // Safe parse for countries
       let countries: string[];
-      if (typeof r.countries === "string") {
+      if (Array.isArray(r.countries)) {
+        countries = r.countries;
+      } else if (typeof r.countries === "string") {
         const raw = r.countries.trim();
         if (raw.startsWith("[")) {
           try {

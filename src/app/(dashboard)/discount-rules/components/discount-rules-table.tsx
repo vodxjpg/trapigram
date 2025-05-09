@@ -1,4 +1,4 @@
-// src/app/(dashboard)/discount-rules/discount-rules-table.tsx
+// src/app/(dashboard)/discount-rules/components/discount-rules-table.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -77,7 +77,6 @@ export function DiscountRulesTable() {
       if (!res.ok) throw new Error("Failed to fetch");
       const { discountRules } = await res.json();
       setRules(discountRules);
-      // assume API returns totalPages in header or body
       setTotalPages(1);
     } catch {
       toast.error("Failed to load discount rules");
@@ -135,21 +134,19 @@ export function DiscountRulesTable() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Countries</TableHead>
-              <TableHead>Steps</TableHead>
-              <TableHead>Products/Variations</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
+                <TableCell colSpan={3} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : rules.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
+                <TableCell colSpan={3} className="h-24 text-center">
                   No discount rules.
                 </TableCell>
               </TableRow>
@@ -163,16 +160,6 @@ export function DiscountRulesTable() {
                         {c}
                       </Badge>
                     ))}
-                  </TableCell>
-                  <TableCell>
-                    {r.steps.map((s) => `${s.fromUnits}-${s.toUnits}: $${s.discountAmount}`).join("; ")}
-                  </TableCell>
-                  <TableCell>
-                    {r.products
-                      .map((p) =>
-                        p.variationId ? `Var(${p.variationId})` : `Prod(${p.productId})`
-                      )
-                      .join(", ")}
                   </TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
