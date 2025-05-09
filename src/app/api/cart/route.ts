@@ -65,47 +65,63 @@ export async function POST(req: NextRequest) {
 
         const activeCart = `
         SELECT * FROM carts
-        WHERE "clientId" = '${clientId}'
+        WHERE "clientId" = '${clientId}' AND status = true
         `
 
         const resultCart = await pool.query(activeCart);
+        const cart = resultCart.rows[0];
 
-        if (resultCart.rows.length > 0) {
-            if (resultCart.rows[0].status === true) {
-                const cart = resultCart.rows[0];
-                return NextResponse.json(cart, { status: 201 });
-            }            
-        } 
-        
-        if(resultCart.rows.length === 0 || resultCart.rows[0].status === false){
+        if (cart) {
+            const cartProducts = `SELECT 
+                    p.id,
+                    p.title,
+                    p.description,
+                    p.image,
+                    p.sku,
+                    cp.quantity,
+                    cp."unitPrice"
+                    FROM products AS p
+                    INNER JOIN "cartProducts" AS cp
+                    ON p.id = cp."productId"
+                    WHERE cp."cartId" = '${cart.id}';
+                  `
+
+            const resultCartProducts = await pool.query(cartProducts);
+            return NextResponse.json({ newCart: cart, resultCartProducts }, { status: 201 });
+        }
+
+        if (!cart) {
+            // case: no items in the cart
             const clientQuery = `
             SELECT * FROM clients
             WHERE id = '${clientId}'
           `;
-    
-                const resultClient = await pool.query(clientQuery);
-                const country = resultClient.rows[0].country
-                const status = true
-    
-                const cartId = uuidv4();
-    
-                const insertQuery = `
+
+            const resultClient = await pool.query(clientQuery);
+            const country = resultClient.rows[0].country
+            const status = true
+
+            const cartId = uuidv4();
+
+            const insertQuery = `
             INSERT INTO carts(id, "clientId", country, status, "createdAt", "updatedAt")
             VALUES($1, $2, $3, $4, NOW(), NOW())
             RETURNING *
           `;
-                const values = [
-                    cartId,
-                    clientId,
-                    country,
-                    status
-                ];
-    
-                const result = await pool.query(insertQuery, values);
-                const cart = result.rows[0];
-    
-                return NextResponse.json(cart, { status: 201 });            
-        }     
+            const values = [
+                cartId,
+                clientId,
+                country,
+                status
+            ];
+
+            const result = await pool.query(insertQuery, values);
+            const newCart = result.rows[0];
+            const resultCartProducts: string[] = []
+
+            return NextResponse.json({ newCart, resultCartProducts }, { status: 201 });
+        }
+
     } catch (error: any) {
         console.error("[POST /api/cart] error:", error);
         if (error instanceof z.ZodError) {

@@ -237,8 +237,30 @@ export default function CreateOrderPage() {
         body: JSON.stringify({ clientId: selectedClient }),
       });
       if (!res.ok) throw new Error("Failed to create cart");
-      const { id } = await res.json();
-      setCartId(id);
+      const data = await res.json();
+      const { newCart, resultCartProducts } = data;
+      console.log(resultCartProducts.rows)
+      setCartId(newCart.id);
+      // if the API returned a `rows` array, seed our orderItems from it
+      if (Array.isArray(resultCartProducts.rows)) {
+        setOrderItems(
+          resultCartProducts.rows.map((r: any) => ({
+            product: {
+              id: r.id,
+              title: r.title,
+              sku: r.sku,
+              description: r.description,
+              image: r.image,
+              // UI falls back to `product.price` if regularPrice is empty,
+              // so we only need to set `price` here:
+              price: r.unitPrice,
+              regularPrice: {},
+              stockData: {},
+            },
+            quantity: r.quantity,
+          }))
+        );
+      }
 
       const client = clients.find((c) => c.id === selectedClient);
       if (client) setClientCountry(client.country);
@@ -276,49 +298,57 @@ export default function CreateOrderPage() {
   };
 
   // — Add or update product
-  const addProduct = async () => {
-    if (!selectedProduct) return;
-    if (!cartId) {
-      toast.error("Cart hasn’t been created yet!");
-      return;
+// — Add or update product
+const addProduct = async () => {
+  if (!selectedProduct) return;
+  if (!cartId) {
+    toast.error("Cart hasn’t been created yet!");
+    return;
+  }
+
+  const product = products.find((p) => p.id === selectedProduct);
+  if (!product) return;
+  const unitPrice = product.regularPrice[clientCountry] ?? product.price;
+
+  try {
+    const res = await fetch(`/api/cart/${cartId}/add-product`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        productId: selectedProduct,
+        quantity,
+        price: unitPrice,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.message || "Failed to add product");
     }
+    const { product: added, quantity: qty } = await res.json();
 
-    const product = products.find((p) => p.id === selectedProduct);
-    if (!product) return;
-    const unitPrice = product.regularPrice[clientCountry] ?? product.price;
-
-    try {
-      const res = await fetch(`/api/cart/${cartId}/add-product`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          productId: selectedProduct,
-          quantity,
-          price: unitPrice,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        throw new Error(err?.message || "Failed to add product");
+    setOrderItems((prev) => {
+      console.log(prev)
+      // if we already have that product in the cart, update its line
+      if (prev.some((it) => it.product.id === added.id)) {
+        return prev.map((it) =>
+          it.product.id === added.id
+            ? { product: added, quantity: qty }
+            : it
+        );
       }
-      const { product: added, quantity: qty } = await res.json();
-      setOrderItems((prev) => {
-        const idx = prev.findIndex((it) => it.product.id === added.id);
-        if (idx >= 0) {
-          const updated = [...prev];
-          updated[idx] = { product: added, quantity: qty };
-          return updated;
-        }
-        return [...prev, { product: added, quantity: qty }];
-      });
-      setSelectedProduct("");
-      setQuantity(1);
-      toast.success("Product added to cart!");
-    } catch (error: any) {
-      console.error("addProduct error:", error);
-      toast.error(error.message || "Could not add product");
-    }
-  };
+      // otherwise append as new
+      return [...prev, { product: added, quantity: qty }];
+    });
+
+    setSelectedProduct("");
+    setQuantity(1);
+    toast.success("Product added to cart!");
+  } catch (error: any) {
+    console.error("addProduct error:", error);
+    toast.error(error.message || "Could not add product");
+  }
+};
+
 
   // — Remove item
   // inside your component, alongside addProduct…
@@ -365,7 +395,7 @@ export default function CreateOrderPage() {
       if (!res.ok) throw new Error("Failed to apply coupon");
       const data = await res.json();
       const { discountAmount: amt, discountType: dt, cc } = data;
-  
+
       if (cc === null) {
         // coupon invalid: clear the input and don’t apply
         setCouponCode("");
@@ -615,7 +645,7 @@ export default function CreateOrderPage() {
                           <div className="flex justify-between mt-2">
                             <div>
                               <span className="font-medium">
-                                Unit Price: ${price.toFixed(2)}
+                                Unit Price: ${price}
                               </span>{" "}
                               × <span className="font-medium">{quantity}</span>
                             </div>
