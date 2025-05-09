@@ -177,8 +177,9 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
   const onSubmit = async (vals: Values) => {
     setSubmitting(true);
     try {
-      const url = isEditing && couponData?.code
-        ? `/api/coupons/${couponData.code}`
+      console.log(couponData)
+      const url = isEditing && couponData?.id
+        ? `/api/coupons/${couponData.id}`
         : "/api/coupons";
       const payload = {
         ...vals,
@@ -397,7 +398,6 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                       <Input
                         type="datetime-local"
                         step={1}
-                        min={minStartLocal}
                         value={field.value}
                         onChange={(e) => field.onChange(e.target.value)}
                       />

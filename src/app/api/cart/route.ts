@@ -74,38 +74,38 @@ export async function POST(req: NextRequest) {
             if (resultCart.rows[0].status === true) {
                 const cart = resultCart.rows[0];
                 return NextResponse.json(cart, { status: 201 });
-            }
-            if(resultCart.rows.length === 0 || resultCart.rows[0].status === false){
-                const clientQuery = `
-                SELECT * FROM clients
-                WHERE id = '${clientId}'
-              `;
+            }            
+        } 
         
-                    const resultClient = await pool.query(clientQuery);
-                    console.log(resultClient)
-                    const country = resultClient.rows[0].country
-                    const status = true
-        
-                    const cartId = uuidv4();
-        
-                    const insertQuery = `
-                INSERT INTO carts(id, "clientId", country, status, "createdAt", "updatedAt")
-                VALUES($1, $2, $3, $4, NOW(), NOW())
-                RETURNING *
-              `;
-                    const values = [
-                        cartId,
-                        clientId,
-                        country,
-                        status
-                    ];
-        
-                    const result = await pool.query(insertQuery, values);
-                    const cart = result.rows[0];
-        
-                    return NextResponse.json(cart, { status: 201 });            
-            }
-        }         
+        if(resultCart.rows.length === 0 || resultCart.rows[0].status === false){
+            const clientQuery = `
+            SELECT * FROM clients
+            WHERE id = '${clientId}'
+          `;
+    
+                const resultClient = await pool.query(clientQuery);
+                const country = resultClient.rows[0].country
+                const status = true
+    
+                const cartId = uuidv4();
+    
+                const insertQuery = `
+            INSERT INTO carts(id, "clientId", country, status, "createdAt", "updatedAt")
+            VALUES($1, $2, $3, $4, NOW(), NOW())
+            RETURNING *
+          `;
+                const values = [
+                    cartId,
+                    clientId,
+                    country,
+                    status
+                ];
+    
+                const result = await pool.query(insertQuery, values);
+                const cart = result.rows[0];
+    
+                return NextResponse.json(cart, { status: 201 });            
+        }     
     } catch (error: any) {
         console.error("[POST /api/cart] error:", error);
         if (error instanceof z.ZodError) {

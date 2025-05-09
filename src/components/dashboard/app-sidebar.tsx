@@ -22,7 +22,7 @@ import {
   IconBolt,
   IconCreditCardPay,
   IconPackageImport,
-  IconBuildingStore
+  IconBuildingStore,
 } from "@tabler/icons-react";
 
 import { NavOrganizations } from "@/components/dashboard/nav-organizations";
@@ -92,6 +92,7 @@ const data = {
       url: "/orders",
       icon: IconReport,
       items: [
+        { title: "Create orders", url: "/orders/create" },
         { title: "View orders", url: "/orders" },
         { title: "View reviews", url: "/reviews/" },
       ],
@@ -162,9 +163,7 @@ const data = {
 };
 
 // Combine navMain and navClouds in the desired order
-const unifiedNav: NavItem[] = [
-  ...data.navMain,
-];
+const unifiedNav: NavItem[] = [...data.navMain];
 
 const organizationsData = [
   { id: 1, name: "Acme Inc", avatar: "/images/org-acme.png" },

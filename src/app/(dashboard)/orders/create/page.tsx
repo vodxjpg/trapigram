@@ -363,13 +363,23 @@ export default function CreateOrderPage() {
         body: JSON.stringify({ code: couponCode }),
       });
       if (!res.ok) throw new Error("Failed to apply coupon");
-      const { discountAmount: amt, discountType: dt } = await res.json();
-      setDiscount(amt);
-      setDiscountType(dt);
-      setCouponApplied(true);
-      toast.success("Coupon applied!");
+      const data = await res.json();
+      const { discountAmount: amt, discountType: dt, cc } = data;
+  
+      if (cc === null) {
+        // coupon invalid: clear the input and don’t apply
+        setCouponCode("");
+        setCouponApplied(false);
+        toast.error("Coupon can't be applied!");
+      } else {
+        // coupon valid: keep it, apply discount
+        setDiscount(amt);
+        setDiscountType(dt);
+        setCouponApplied(true);
+        toast.success("Coupon applied!");
+      }
     } catch (err: any) {
-      toast.error(err.message);
+      toast.error(err.message || "Could not apply coupon");
     }
   };
 

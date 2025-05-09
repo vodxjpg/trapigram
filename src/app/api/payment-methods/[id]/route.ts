@@ -118,9 +118,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     const { id } = params;
     const body = await req.json();
-    console.log(body)
     const parsed = paymentUpdateSchema.parse(body);
-    console.log(parsed)
 
     // build dynamic update
     const updates: string[] = [];

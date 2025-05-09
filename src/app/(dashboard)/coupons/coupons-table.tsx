@@ -155,7 +155,10 @@ export function CouponsTable() {
     }
   };
 
-  const handleEdit = (c: Coupon) => router.push(`/coupons/${c.id}`);
+  const handleEdit = (c: Coupon) => {
+    console.log(c)
+    router.push(`/coupons/${c.id}`)
+  };
   const handleAdd = () => router.push("/coupons/new");
 
   // called when user confirms in AlertDialog

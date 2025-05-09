@@ -52,7 +52,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         WHERE code = '${data.code}' AND "organizationId" = '${organizationId}'
       `;
 
-        const countryCoupon = await pool.query(coupon);        
+        const countryCoupon = await pool.query(coupon);
         const couponCountry = JSON.parse(countryCoupon.rows[0].countries);
 
         const cart = `
@@ -80,8 +80,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
                 discountType: countryCoupon.rows[0].discountType, discountAmount: countryCoupon.rows[0].discountAmount
             }
             return NextResponse.json(discount, { status: 201 });
-        }else {
-            //Error 
+        }
+        
+        if (!couponCountry.includes(cartCountry)) {
+            const setCoupon = `
+            UPDATE carts 
+            SET "couponCode" = NULL, "updatedAt" = NOW()
+            WHERE id = '${id}'
+            RETURNING *
+        `;
+
+            const removed = await pool.query(setCoupon);
+            const discount = {
+                cc: removed.rows[0].couponCode
+            }
+            return NextResponse.json(discount, { status: 201 });
         }
     } catch (err: any) {
         console.error("[PATCH /api/cart/:id/update-product]", err);
