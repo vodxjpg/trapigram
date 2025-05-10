@@ -1,4 +1,3 @@
-// src/app/(dashboard)/affiliate-levels/levels-table.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -115,7 +114,7 @@ export function LevelsTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => router.push(`/affiliate-levels/${l.id}`)}>
+                        <DropdownMenuItem onClick={() => router.push(`/affiliates/levels/${l.id}`)}>
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>

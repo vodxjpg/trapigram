@@ -16,7 +16,7 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
 export function useAffiliateProducts() {
   const { data, error, isLoading, mutate } = useSWR<{ products: AffiliateProduct[] }>(
-    "/api/affiliate-products?limit=100",
+    "/api/affiliate/products?limit=100",
     fetcher,
   )
   return {

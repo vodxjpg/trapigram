@@ -1,4 +1,3 @@
-// src/app/(dashboard)/affiliate-levels/page.tsx
 import Link from "next/link";
 import { ArrowLeft, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,7 +21,7 @@ export default function AffiliateLevelsPage() {
           </p>
         </div>
         <div className="ml-auto">
-          <Link href="/affiliate-levels/new">
+          <Link href="/affiliates/levels/new">
             <Button>
               <Plus className="mr-2 h-4 w-4" />
               Add Level

@@ -1,5 +1,5 @@
 // ==================================================================
-//  src/app/api/affiliate-products/[id]/route.ts  – FULL REWRITE
+//  src/app/api/affiliate/products/[id]/route.ts  – FULL REWRITE
 // ==================================================================
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";

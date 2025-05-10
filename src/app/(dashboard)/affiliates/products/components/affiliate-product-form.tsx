@@ -255,7 +255,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
         pointsPrice:  productType === "simple" ? values.pointsPrice : undefined,
         variations:   productType === "variable" ? variations : undefined,
       };
-      const url    = productId ? `/api/affiliate-products/${productId}` : "/api/affiliate-products";
+      const url    = productId ? `/api/affiliate/products/${productId}` : "/api/affiliate/products";
       const method = productId ? "PATCH" : "POST";
       const res = await fetch(url, { method, headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload) });
       const data = await res.json().catch(()=>({}));
@@ -266,9 +266,9 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
         toast.error(msg); return;
       }
 
-      swrMutate(k=>k.startsWith("/api/affiliate-products"));
+      swrMutate(k=>k.startsWith("/api/affiliate/products"));
       toast.success(productId?"Product updated":"Product created");
-      router.push("/affiliate-products"); router.refresh();
+      router.push("/affiliates/products"); router.refresh();
     }finally{ setSubmitting(false); }
   };
 
@@ -522,7 +522,7 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push("/affiliate-products")}
+            onClick={() => router.push("/affiliates/products")}
           >
             Cancel
           </Button>

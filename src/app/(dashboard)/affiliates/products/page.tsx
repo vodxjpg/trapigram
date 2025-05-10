@@ -17,7 +17,7 @@ export default function AffiliateProductsPage() {
         title="Affiliate Products"
         description="Products sold for points"
         actions={
-          <Button onClick={() => router.push("/affiliate-products/new")}>
+          <Button onClick={() => router.push("/affiliates/products/new")}>
             <Plus className="h-4 w-4 mr-2" />
             New Affiliate Product
           </Button>

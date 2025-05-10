@@ -94,14 +94,33 @@ interface DB {
     updatedAt: Date;
   }
 
+  affiliateSettings: {
+    organizationId: string;
+    pointsPerReferral: number;
+    pointsPerReview: number;
+    spendingNeeded: string;      // matches NUMERIC in SQL (ts → string)
+    pointsPerSpending: number;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
   affiliatePointLogs: {
     id: string;
     organizationId: string;
-    userId: string;
+    clientId: string;           // ← renamed
     points: number;
     action: string;
     description: string | null;
-    sourceUserId: string | null;
+    sourceClientId: string | null; // ← renamed
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  affiliatePointBalances: {      // ← NEW
+    clientId: string;
+    organizationId: string;
+    pointsCurrent: number;
+    pointsSpent: number;
     createdAt: Date;
     updatedAt: Date;
   };

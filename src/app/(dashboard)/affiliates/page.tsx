@@ -2,31 +2,42 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { Button } from "@/components/ui/button";
-import { LogsTable } from "./logs-table";
+import { ClientsTable } from "../clients/clients-table";
 
 export const metadata = {
-  title: "Affiliate Logs",
+  title: "Affiliates",
 };
 
-export default function AffiliateLogsPage() {
+export default function AffiliatesDashboardPage() {
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-6 space-y-6 px-3">
+      {/* heading */}
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Affiliate Logs</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Affiliates</h1>
         <p className="text-muted-foreground">
-          All point‑earning and adjustment events for your clients
+          Manage client balances, levels and programme settings
         </p>
       </div>
-      {/* ── new button ── */}
-      <div className="text-right">
-        <Link className="text-right" href="/affiliate-levels">
-            <Button className="text-right" >Affiliate Levels</Button>
+
+      {/* top navigation */}
+      <div className="flex flex-wrap gap-2 justify-end">
+        <Link href="/affiliates/levels">
+          <Button className="text-white bg-black" variant="secondary">Affiliate Levels</Button>
+        </Link>
+        <Link href="/affiliates/logs">
+          <Button className="text-white bg-black" variant="secondary">Affiliate Logs</Button>
+        </Link>
+        <Link href="/affiliates/products">
+          <Button className="text-white bg-black" variant="secondary">Affiliate Products</Button>
+        </Link>
+        <Link href="/affiliates/settings">
+          <Button className="text-white bg-black" variant="secondary">Affiliate Settings</Button>
         </Link>
       </div>
 
-      <Suspense fallback={<p className="text-sm">Loading logs…</p>}>
-        {/* client component */}
-        <LogsTable />
+      {/* clients table */}
+      <Suspense fallback={<p className="text-sm">Loading clients…</p>}>
+        <ClientsTable />
       </Suspense>
     </div>
   );

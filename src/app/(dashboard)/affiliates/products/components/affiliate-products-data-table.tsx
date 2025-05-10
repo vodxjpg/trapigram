@@ -52,7 +52,7 @@ export function AffiliateProductsDataTable() {
   const handleDelete = async () => {
     if (!deleteId) return
     try {
-      const res = await fetch(`/api/affiliate-products/${deleteId}`, { method: "DELETE" })
+      const res = await fetch(`/api/affiliate/products/${deleteId}`, { method: "DELETE" })
       if (!res.ok) throw new Error()
       toast.success("Affiliate product deleted")
       mutate()
@@ -151,7 +151,7 @@ const columns: ColumnDef<AffiliateProduct>[] = [
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>Actions</DropdownMenuLabel>
             <DropdownMenuItem
-              onClick={() => router.push(`/affiliate-products/${product.id}`)}
+              onClick={() => router.push(`/affiliates/products/${product.id}`)}
             >
               <Edit className="h-4 w-4 mr-2" />
               Edit

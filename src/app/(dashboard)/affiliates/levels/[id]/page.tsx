@@ -1,4 +1,3 @@
-// src/app/(dashboard)/affiliate-levels/[id]/page.tsx
 import { LevelForm } from "../level-form";
 
 export const metadata = { title: "Edit Affiliate Level" };

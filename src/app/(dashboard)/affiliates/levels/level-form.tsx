@@ -1,4 +1,3 @@
-// src/app/(dashboard)/affiliate-levels/level-form.tsx  ⟵ full file with fixed schema
 "use client";
 
 import { useForm } from "react-hook-form";
@@ -99,7 +98,7 @@ export function LevelForm({ id }: Props) {
       });
       if (!r.ok) throw new Error((await r.json()).error || "Request failed");
       toast.success(id ? "Level updated" : "Level created");
-      router.push("/affiliate-levels");
+      router.push("/affiliates/levels");
       router.refresh();
     } catch (e: any) {
       toast.error(e.message);
@@ -121,7 +120,7 @@ export function LevelForm({ id }: Props) {
   return (
     <Card>
       <CardContent className="p-6 space-y-6">
-        <Link href="/affiliate-levels">
+        <Link href="/affiliates/levels">
           <Button variant="ghost" size="icon">
             <ArrowLeft className="h-4 w-4" />
           </Button>

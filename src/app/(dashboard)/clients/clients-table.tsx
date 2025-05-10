@@ -128,7 +128,7 @@ export function ClientsTable() {
   const saveAdjustment = async () => {
     const val = Number(delta);
     if (!selected || !Number.isFinite(val) || val === 0) {
-      toast.error("Enter a non‑zero integer");
+      toast.error("Enter a non-zero integer");
       return;
     }
     try {
@@ -139,7 +139,7 @@ export function ClientsTable() {
           "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
         },
         body: JSON.stringify({
-          id: selected.id, // ← send client primary key
+          id: selected.id,
           points: val,
           action: val > 0 ? "MANUAL_ADD" : "MANUAL_SUBTRACT",
           description: "Dashboard manual adjustment",
@@ -148,7 +148,8 @@ export function ClientsTable() {
       if (!res.ok) throw new Error((await res.json()).error || "Update failed");
       toast.success("Points updated");
       setOpen(false);
-      fetchClients();
+      /* redirect to Affiliates dashboard */
+      router.push("/affiliates");
     } catch (e: any) {
       toast.error(e.message);
     }
