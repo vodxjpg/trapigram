@@ -562,6 +562,28 @@ interface DB {
     variationId: string | null;
     createdAt: Date;
   };
+
+   /* ─────────────── Sections ─────────────── */
+   sections: {
+    id: string;
+    organizationId: string;
+    parentSectionId: string | null;
+    name: string;
+    title: string;
+    content: string;
+    videoUrl: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  /* ─────────────── Placeholders (internal) ─────────────── */
+  placeholders: {
+    key: string;           // '{review_count}' → 'review_count'
+    description: string;
+    source: string;        // e.g. 'reviews.getCount'
+    createdAt: Date;
+    updatedAt: Date;
+  };
 }
 
 const pool = new Pool({
