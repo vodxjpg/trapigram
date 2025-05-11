@@ -42,6 +42,7 @@ function encryptSecretNode(plain: string): string {
 
 // 1️⃣ Define Zod schema for order creation
 const orderSchema = z.object({
+    organization: z.string(),
     clientId: z.string().uuid(),
     cartId: z.string().uuid(),
     country: z.string().length(2),
@@ -99,6 +100,7 @@ export async function POST(req: NextRequest) {
     let payload: OrderPayload;
     try {
         const body = await req.json();
+        body.organization = organizationId;
         payload = orderSchema.parse(body);
     } catch (err: any) {
         if (err instanceof z.ZodError) {
@@ -109,6 +111,7 @@ export async function POST(req: NextRequest) {
 
     // --- Insert into DB ---
     const {
+        organization,
         clientId,
         cartId,
         country,
@@ -126,20 +129,21 @@ export async function POST(req: NextRequest) {
 
     const insertSQL = `
     INSERT INTO orders
-      (id, "clientId", "cartId", country,
+      (id, "clientId", "organizationId", "cartId", country,
        "paymentMethod", "shippingTotal", "discountTotal",
-       "totalAmount", "couponCode", "shippingService", address,
+       "totalAmount", "couponCode", "shippingService", address, "cartHash",
        "createdAt", "updatedAt")
     VALUES
       ($1, $2, $3, $4, $5,
        $6, $7, $8,
-       $9, $10, $11,
+       $9, $10, $11, $12, $13,
        NOW(), NOW())
     RETURNING *
   `;
     const values = [
         orderId,
         clientId,
+        organization,
         cartId,
         country,
         paymentMethod,
@@ -152,18 +156,21 @@ export async function POST(req: NextRequest) {
     ];
 
     const status = false
+    const encryptedResponse = encryptSecretNode(JSON.stringify(values))
+
+    values.push(encryptedResponse)
 
     const insert = `
             UPDATE carts 
-            SET "status" = '${status}' , "updatedAt" = NOW()
+            SET "status" = '${status}' , "updatedAt" = NOW(), "cartHash" = '${encryptedResponse}'
             WHERE id = '${cartId}'
             RETURNING *
         `;
 
-    try {
-        await pool.query(insert);
+    try {        
         const result = await pool.query(insertSQL, values);
         const order = result.rows[0];
+        await pool.query(insert);
         return NextResponse.json(order, { status: 201 });
     } catch (error: any) {
         console.error("[POST /api/orders] error:", error);

@@ -515,6 +515,7 @@ interface DB {
 
   orders: {
     id: string;
+    organizationId: string;
     clientId: string;
     cartId: string;
     country: string;

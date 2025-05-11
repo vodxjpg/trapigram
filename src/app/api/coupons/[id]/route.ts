@@ -23,6 +23,7 @@ const couponUpdateSchema = z.object({
   expendingMinimum: z.coerce.number().int().min(0, { message: "Expending minimum must be at least 0." }).default(0),
   countries: z.array(z.string()).min(1, { message: "At least one country is required." }),
   visibility: z.boolean(),
+  startDate: z.string().nullable().optional(),
   expirationDate: z.string().nullable().optional(),
   limitPerUser: z.coerce
     .number()

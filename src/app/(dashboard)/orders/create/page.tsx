@@ -126,6 +126,7 @@ export default function CreateOrderPage() {
     "fixed"
   );
   const [discount, setDiscount] = useState(0);
+  const [ value, setValue ] = useState(0)
   const [cartId, setCartId] = useState("");
 
   // — Load clients once
@@ -208,8 +209,7 @@ export default function CreateOrderPage() {
       item.product.regularPrice[clientCountry] ?? item.product.price;
     return sum + price * item.quantity;
   }, 0);
-  const discountAmount =
-    discountType === "percentage" ? (subtotal * discount) / 100 : discount;
+  const discountAmount = discount;
   const total = subtotal - discountAmount;
 
   // — Shipping cost whenever total or method changes
@@ -390,11 +390,14 @@ const addProduct = async () => {
       const res = await fetch(`/api/cart/${cartId}/apply-coupon`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: couponCode }),
+        body: JSON.stringify({ code: couponCode, total: subtotal }),
       });
-      if (!res.ok) throw new Error("Failed to apply coupon");
+      if (!res.ok) {
+        const error = await res.json()
+        throw new Error(error.error);
+      }
       const data = await res.json();
-      const { discountAmount: amt, discountType: dt, cc } = data;
+      const { discountAmount: amt, discountType: dt, discountValue: dv, cc } = data;
 
       if (cc === null) {
         // coupon invalid: clear the input and don’t apply
@@ -404,6 +407,7 @@ const addProduct = async () => {
       } else {
         // coupon valid: keep it, apply discount
         setDiscount(amt);
+        setValue(dv);
         setDiscountType(dt);
         setCouponApplied(true);
         toast.success("Coupon applied!");
@@ -502,9 +506,9 @@ const addProduct = async () => {
 
     // final totals
     const shippingAmount = shippingCost;
-    const discountAmount =
-      discountType === "percentage" ? (subtotal * discount) / 100 : discount;
+    const discountAmount = discount;
     const totalAmount = subtotal - discountAmount + shippingAmount;
+    console.log(totalAmount)
 
     const payload = {
       clientId: selectedClient,
@@ -952,11 +956,11 @@ const addProduct = async () => {
                     <div className="flex justify-between text-green-600">
                       <span>
                         Discount
-                        {discountType === "percentage" ? ` (${discount}%)` : ""}
+                        {discountType === "percentage" ? ` (${value}%)` : ""}
                         :
                       </span>
                       <span className="font-medium">
-                        –${discountAmount.toFixed(2)}
+                        –${discount}
                       </span>
                     </div>
                   )}
