@@ -1,3 +1,4 @@
+// src/app/api/warehouses/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { auth } from "@/lib/auth";
@@ -31,11 +32,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Query warehouses and their stock
     const { rows: warehouseRows } = await pool.query(
       `
       SELECT w.*, 
-             ws."id" AS stock_id, 
+             ws.id        AS stock_id, 
              ws."productId", 
              ws."variationId", 
              ws."country", 
@@ -49,47 +49,17 @@ export async function GET(req: NextRequest) {
       [userId]
     );
 
-    // Group stock data by warehouse
     const warehousesMap = new Map<string, any>();
     for (const row of warehouseRows) {
       const warehouseId = row.id;
       if (!warehousesMap.has(warehouseId)) {
-        let organizationId: string[] = [];
-        if (row.organizationId) {
-          if (typeof row.organizationId === "string") {
-            if (row.organizationId.startsWith("[")) {
-              try {
-                organizationId = JSON.parse(row.organizationId);
-              } catch (e) {
-                console.error(`Failed to parse organizationId: ${row.organizationId}`, e);
-                organizationId = [];
-              }
-            } else {
-              organizationId = row.organizationId.split(",");
-            }
-          } else {
-            organizationId = row.organizationId || [];
-          }
-        }
-
+        const organizationId = String(row.organizationId).split(",");
         let countries: string[] = [];
-        if (row.countries) {
-          if (typeof row.countries === "string") {
-            if (row.countries.startsWith("[")) {
-              try {
-                countries = JSON.parse(row.countries);
-              } catch (e) {
-                console.error(`Failed to parse countries: ${row.countries}`, e);
-                countries = [];
-              }
-            } else {
-              countries = row.countries.split(",");
-            }
-          } else {
-            countries = row.countries || [];
-          }
+        try {
+          countries = JSON.parse(row.countries);
+        } catch {
+          countries = String(row.countries).split(",");
         }
-
         warehousesMap.set(warehouseId, {
           id: row.id,
           tenantId: row.tenantId,
@@ -101,8 +71,6 @@ export async function GET(req: NextRequest) {
           stock: [],
         });
       }
-
-      // Add stock entry if present
       if (row.stock_id) {
         warehousesMap.get(warehouseId).stock.push({
           id: row.stock_id,
@@ -115,7 +83,6 @@ export async function GET(req: NextRequest) {
     }
 
     const warehouses = Array.from(warehousesMap.values());
-
     return NextResponse.json({ warehouses }, { status: 200 });
   } catch (error) {
     console.error("[GET /api/warehouses] error:", error);
@@ -149,38 +116,23 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Frontend sends `organizationId` as an array of IDs
     const { name, organizationId, countries, stock } = await req.json();
-    console.log("Received payload:", { name, organizationId, countries, stock, userId });
+    const organizationIds = Array.isArray(organizationId) ? organizationId : [];
 
-    if (!name || !organizationId || !countries) {
+    if (
+      !name ||
+      organizationIds.length === 0 ||
+      !Array.isArray(countries) ||
+      countries.length === 0
+    ) {
       return NextResponse.json(
-        { error: "Name, organizationId, and countries are required" },
+        { error: "Name, organizationId (array), and countries (array) are required" },
         { status: 400 }
       );
     }
 
-    // Validate stock if provided
-    if (stock) {
-      if (!Array.isArray(stock)) {
-        return NextResponse.json({ error: "Stock must be an array" }, { status: 400 });
-      }
-      for (const entry of stock) {
-        if (
-          !entry.productId ||
-          typeof entry.country !== "string" ||
-          typeof entry.quantity !== "number" ||
-          entry.quantity < 0 ||
-          (entry.variationId && typeof entry.variationId !== "string")
-        ) {
-          return NextResponse.json(
-            { error: "Invalid stock entry: must include productId, country, quantity, and optional variationId" },
-            { status: 400 }
-          );
-        }
-      }
-    }
-
-    // Fetch tenantId based on userId
+    // Fetch tenantId
     const { rows: tenantRows } = await pool.query(
       `SELECT id FROM tenant WHERE "ownerUserId" = $1`,
       [userId]
@@ -190,56 +142,61 @@ export async function POST(req: NextRequest) {
     }
     const tenantId = tenantRows[0].id;
 
-    // Fetch organization to get organizationId for stock entries
+    // Validate organization IDs exist
     const { rows: orgRows } = await pool.query(
       `SELECT id FROM organization WHERE id = ANY($1)`,
-      [organizationId]
+      [organizationIds]
     );
-    if (orgRows.length === 0) {
-      return NextResponse.json({ error: "Invalid organizationId" }, { status: 400 });
+    const validOrgIds = orgRows.map(r => r.id);
+    if (validOrgIds.length === 0) {
+      return NextResponse.json({ error: "Invalid organizationId values" }, { status: 400 });
     }
-    const orgId = orgRows[0].id;
 
-    const organizationIdJson = JSON.stringify(organizationId);
     const countriesJson = JSON.stringify(countries);
+    const created: any[] = [];
 
-    // Create warehouse
-    const { rows } = await pool.query(
-      `
-      INSERT INTO warehouse (id, "tenantId", "organizationId", name, countries)
-      VALUES (gen_random_uuid()::text, $1, $2::jsonb, $3, $4::jsonb)
-      RETURNING *
-      `,
-      [tenantId, organizationIdJson, name, countriesJson]
-    );
+    // Insert one warehouse per valid organization
+    for (const orgId of validOrgIds) {
+      const { rows } = await pool.query(
+        `
+        INSERT INTO warehouse (
+          id, "tenantId", "organizationId", name, countries
+        ) VALUES (
+          gen_random_uuid()::text, $1, $2, $3, $4::jsonb
+        )
+        RETURNING *
+        `,
+        [tenantId, orgId, name, countriesJson]
+      );
+      const warehouse = rows[0];
+      created.push(warehouse);
 
-    const warehouse = rows[0];
-
-    // Insert stock entries if provided
-    if (stock && stock.length > 0) {
-      for (const entry of stock) {
-        await pool.query(
-          `
-          INSERT INTO "warehouseStock" (
-            "id", "warehouseId", "productId", "variationId", "country", "quantity", 
-            "organizationId", "tenantId", "createdAt", "updatedAt"
-          )
-          VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-          `,
-          [
-            warehouse.id,
-            entry.productId,
-            entry.variationId || null,
-            entry.country,
-            entry.quantity,
-            orgId,
-            tenantId,
-          ]
-        );
+      if (Array.isArray(stock) && stock.length > 0) {
+        for (const entry of stock) {
+          await pool.query(
+            `
+            INSERT INTO "warehouseStock" (
+              id, "warehouseId", "productId", "variationId",
+              country, quantity, "organizationId", "tenantId", createdAt, updatedAt
+            ) VALUES (
+              gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, NOW(), NOW()
+            )
+            `,
+            [
+              warehouse.id,
+              entry.productId,
+              entry.variationId || null,
+              entry.country,
+              entry.quantity,
+              orgId,
+              tenantId,
+            ]
+          );
+        }
       }
     }
 
-    return NextResponse.json({ warehouse }, { status: 201 });
+    return NextResponse.json({ warehouses: created }, { status: 201 });
   } catch (error) {
     console.error("[POST /api/warehouses] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
