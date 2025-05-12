@@ -366,7 +366,8 @@ The Trapigram Team
                 ...organization.metadata,
                 tenantId,
               },
-              countries: countriesJson,    // ← inject here
+              countries: countriesJson,
+              encryptedSecret: ""    // ← inject here
             },
           };
         },
