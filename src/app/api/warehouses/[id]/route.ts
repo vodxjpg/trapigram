@@ -1,3 +1,4 @@
+// src/app/api/warehouses/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { auth } from "@/lib/auth";
@@ -5,11 +6,15 @@ import { auth } from "@/lib/auth";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
   let userId: string;
 
+  // Authenticate
   if (apiKey) {
     const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
     if (!valid || !key) {
@@ -21,7 +26,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     if (!session) {
       if (internalSecret !== INTERNAL_API_SECRET) {
         return NextResponse.json(
-          { error: "Unauthorized: Provide either an API key or internal secret" },
+          { error: "Unauthorized: API key or internal secret required" },
           { status: 403 }
         );
       }
@@ -31,39 +36,24 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 
   try {
-    const id = params.id;
+    const warehouseId = params.id;
     const { name, organizationId, countries, stock } = await req.json();
-    console.log("Received payload for PUT:", { name, organizationId, countries, stock, id, userId });
 
-    if (!name || !organizationId || !countries) {
+    // organizationId arrives as array; extract first element
+    const orgIds = Array.isArray(organizationId) ? organizationId : [];
+    if (orgIds.length === 0) {
+      return NextResponse.json({ error: "organizationId array must have at least one ID" }, { status: 400 });
+    }
+    const orgId = orgIds[0];
+
+    if (!name || !countries || !Array.isArray(countries) || countries.length === 0) {
       return NextResponse.json(
-        { error: "Name, organizationId, and countries are required" },
+        { error: "Name and countries (non-empty array) are required" },
         { status: 400 }
       );
     }
 
-    // Validate stock if provided
-    if (stock) {
-      if (!Array.isArray(stock)) {
-        return NextResponse.json({ error: "Stock must be an array" }, { status: 400 });
-      }
-      for (const entry of stock) {
-        if (
-          !entry.productId ||
-          typeof entry.country !== "string" ||
-          typeof entry.quantity !== "number" ||
-          entry.quantity < 0 ||
-          (entry.variationId && typeof entry.variationId !== "string")
-        ) {
-          return NextResponse.json(
-            { error: "Invalid stock entry: must include productId, country, quantity, and optional variationId" },
-            { status: 400 }
-          );
-        }
-      }
-    }
-
-    // Fetch tenantId based on userId
+    // Validate tenant
     const { rows: tenantRows } = await pool.query(
       `SELECT id FROM tenant WHERE "ownerUserId" = $1`,
       [userId]
@@ -73,56 +63,60 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     }
     const tenantId = tenantRows[0].id;
 
-    // Fetch organization to get organizationId for stock entries
+    // Validate organization exists
     const { rows: orgRows } = await pool.query(
-      `SELECT id FROM organization WHERE id = ANY($1)`,
-      [organizationId]
+      `SELECT id FROM organization WHERE id = $1`,
+      [orgId]
     );
     if (orgRows.length === 0) {
       return NextResponse.json({ error: "Invalid organizationId" }, { status: 400 });
     }
-    const orgId = orgRows[0].id;
 
-    const organizationIdJson = JSON.stringify(organizationId);
     const countriesJson = JSON.stringify(countries);
 
-    // Update warehouse
+    // Update warehouse record
     const { rows } = await pool.query(
       `
       UPDATE warehouse
-      SET "tenantId" = $1, "organizationId" = $2::jsonb, name = $3, countries = $4::jsonb, "updatedAt" = NOW()
+      SET
+        "tenantId" = $1,
+        "organizationId" = $2,
+        name = $3,
+        countries = $4::jsonb,
+        "updatedAt" = NOW()
       WHERE id = $5
       RETURNING *
       `,
-      [tenantId, organizationIdJson, name, countriesJson, id]
+      [tenantId, orgId, name, countriesJson, warehouseId]
     );
 
     if (rows.length === 0) {
-      return NextResponse.json({ error: `Warehouse with ID ${id} not found` }, { status: 404 });
+      return NextResponse.json({ error: `Warehouse ${warehouseId} not found` }, { status: 404 });
     }
-
     const warehouse = rows[0];
 
-    // Update stock entries if provided
+    // Replace stock if provided
     if (stock) {
-      // Delete existing stock entries for this warehouse
-      await pool.query(
-        `DELETE FROM "warehouseStock" WHERE "warehouseId" = $1`,
-        [id]
-      );
+      if (!Array.isArray(stock)) {
+        return NextResponse.json({ error: "Stock must be an array" }, { status: 400 });
+      }
+      // Delete existing
+      await pool.query(`DELETE FROM "warehouseStock" WHERE "warehouseId" = $1`, [warehouseId]);
 
-      // Insert new stock entries
+      // Insert new entries
       for (const entry of stock) {
         await pool.query(
           `
           INSERT INTO "warehouseStock" (
-            "id", "warehouseId", "productId", "variationId", "country", "quantity", 
-            "organizationId", "tenantId", "createdAt", "updatedAt"
+            id, "warehouseId", "productId", "variationId",
+            country, quantity, "organizationId", "tenantId", createdAt, updatedAt
           )
-          VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+          VALUES (
+            gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, NOW(), NOW()
+          )
           `,
           [
-            id,
+            warehouseId,
             entry.productId,
             entry.variationId || null,
             entry.country,
@@ -141,7 +135,10 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   const apiKey = req.headers.get("x-api-key");
   const internalSecret = req.headers.get("x-internal-secret");
   let userId: string;
@@ -157,7 +154,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     if (!session) {
       if (internalSecret !== INTERNAL_API_SECRET) {
         return NextResponse.json(
-          { error: "Unauthorized: Provide either an API key or internal secret" },
+          { error: "Unauthorized: Provide API key or internal secret" },
           { status: 403 }
         );
       }
@@ -167,14 +164,11 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   }
 
   try {
-    const id = params.id;
-
-    const { rowCount } = await pool.query("DELETE FROM warehouse WHERE id = $1", [id]);
-
+    const warehouseId = params.id;
+    const { rowCount } = await pool.query("DELETE FROM warehouse WHERE id = $1", [warehouseId]);
     if (rowCount === 0) {
-      return NextResponse.json({ error: `Warehouse with ID ${id} not found` }, { status: 404 });
+      return NextResponse.json({ error: `Warehouse ${warehouseId} not found` }, { status: 404 });
     }
-
     return NextResponse.json({ message: "Warehouse deleted" }, { status: 200 });
   } catch (error) {
     console.error("[DELETE /api/warehouses/[id]] error:", error);
