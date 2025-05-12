@@ -4,7 +4,11 @@ import { z } from "zod"
 import { db } from "@/lib/db"
 import { auth } from "@/lib/auth"
 import { v4 as uuidv4 } from "uuid"
-import { getContext } from "@/lib/context";
+import { getContext } from "@/lib/context"
+import { Pool } from "pg"
+
+// Initialize a raw pg pool for stock queries to preserve exact column casing
+const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 
 /* ------------------------------------------------------------------ */
 /*  ZOD - schema                                                      */
@@ -123,14 +127,16 @@ export async function GET(req: NextRequest) {
       ])
       .where("id", "in", productIds)
       .execute()
-    
 
     /* -------- STEP 3 – related data in bulk --------------------- */
-    const stockRows = await db
-      .selectFrom("warehouseStock")
-      .select(["productId", "variationId", "warehouseId", "country", "quantity"])
-      .where("productId", "in", productIds)
-      .execute()
+    // Use raw pg for stock to handle quoted camelCase columns
+    const stockResult = await pool.query(
+      `SELECT "productId", "variationId", "warehouseId", country, quantity
+       FROM "warehouseStock"
+       WHERE "productId" = ANY($1)`,
+      [productIds]
+    )
+    const stockRows = stockResult.rows as Array<{ productId: string; variationId: string | null; warehouseId: string; country: string; quantity: number }>;
 
     const variationRows = await db
       .selectFrom("productVariations")
@@ -178,7 +184,6 @@ export async function GET(req: NextRequest) {
           }))
         : []
 
-      /* recompute stockStatus */
       let computedStatus = p.stockStatus
       if (p.manageStock) {
         if (p.productType === "variable") {
@@ -206,7 +211,7 @@ export async function GET(req: NextRequest) {
         updatedAt: p.updatedAt,
         stockData,
         categories: categoryRows.filter(c => c.productId === p.id).map(c => c.name),
-        attributes: [],   // not needed for list view
+        attributes: [],
         variations,
       }
     })
@@ -250,7 +255,6 @@ function mergePriceMaps(
   return map
 }
 
-
 /* ------------------------------------------------------------------ */
 /*  POST                                                              */
 /* ------------------------------------------------------------------ */
@@ -259,7 +263,6 @@ export async function POST(req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, tenantId, userId } = ctx;
 
-  /* ----------  main logic  --------------------------------------- */
   try {
     const body = await req.json()
     let parsedProduct = productSchema.parse(body)
@@ -268,7 +271,6 @@ export async function POST(req: NextRequest) {
     if (!tenant) return NextResponse.json({ error: "No tenant found for user" }, { status: 404 })
     const tenantId = tenant.id
 
-    /* SKU handling */
     let finalSku = parsedProduct.sku
     if (!finalSku) {
       do {
@@ -286,7 +288,6 @@ export async function POST(req: NextRequest) {
     }
     parsedProduct = { ...parsedProduct, sku: finalSku }
 
-    /* category validation */
     if (parsedProduct.categories?.length) {
       const validIds = (await db.selectFrom("productCategories")
         .select("id")
@@ -297,12 +298,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `Invalid category IDs: ${bad.join(", ")}` }, { status: 400 })
     }
 
-    /* split prices into two JSON objects */
     const { regularPrice, salePrice } = splitPrices(parsedProduct.prices)
 
     const productId = uuidv4()
 
-    /* Compute stockStatus */
     let stockStatus = parsedProduct.manageStock ? "managed" : "unmanaged"
     if (parsedProduct.productType === "variable" && parsedProduct.warehouseStock?.some(ws => ws.variationId)) {
       stockStatus = "managed"
@@ -328,7 +327,6 @@ export async function POST(req: NextRequest) {
       updatedAt: new Date(),
     }).execute()
 
-    /* variations */
     if (parsedProduct.productType === "variable" && parsedProduct.variations?.length) {
       for (const v of parsedProduct.variations) {
         const { regularPrice, salePrice } = splitPrices(v.prices)
@@ -347,14 +345,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    /* insert warehouseStock entries */
     if (parsedProduct.warehouseStock?.length) {
       for (const entry of parsedProduct.warehouseStock) {
-        /* after */
         await db.insertInto("warehouseStock").values({
           id: uuidv4(),
           warehouseId: entry.warehouseId,
-          productId,                        // ← use the local const `productId`
+          productId,
           variationId: entry.variationId,
           country: entry.country,
           quantity: entry.quantity,
@@ -366,7 +362,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    /* attribute & category relations */
     if (parsedProduct.attributes?.length) {
       for (const a of parsedProduct.attributes)
         for (const termId of a.selectedTerms)
@@ -380,11 +375,8 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      product: {
-        id: productId, ...parsedProduct, cost: parsedProduct.cost ?? {}, organizationId, tenantId,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
+      product: { id: productId, ...parsedProduct, cost: parsedProduct.cost ?? {}, organizationId, tenantId,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
     }, { status: 201 })
   } catch (err) {
     console.error("[PRODUCTS_POST]", err)
