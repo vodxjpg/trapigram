@@ -119,6 +119,7 @@ export default function CreateOrderPage() {
   const [orderGenerated, setOrderGenerated] = useState(false);
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
+  const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
   const [quantity, setQuantity] = useState(1);
   const [couponCode, setCouponCode] = useState("");
   const [couponApplied, setCouponApplied] = useState(false);
@@ -126,7 +127,7 @@ export default function CreateOrderPage() {
     "fixed"
   );
   const [discount, setDiscount] = useState(0);
-  const [ value, setValue ] = useState(0)
+  const [value, setValue] = useState(0);
   const [cartId, setCartId] = useState("");
 
   // — Load clients once
@@ -239,7 +240,6 @@ export default function CreateOrderPage() {
       if (!res.ok) throw new Error("Failed to create cart");
       const data = await res.json();
       const { newCart, resultCartProducts } = data;
-      console.log(resultCartProducts.rows)
       setCartId(newCart.id);
       // if the API returned a `rows` array, seed our orderItems from it
       if (Array.isArray(resultCartProducts.rows)) {
@@ -274,7 +274,6 @@ export default function CreateOrderPage() {
         });
         if (!shipRes.ok) throw new Error("Failed to fetch shipping methods");
         const methods: { shipments: ShippingMethod[] } = await shipRes.json();
-        console.log(methods);
         setShippingMethods(methods.shipments);
         const compRes = await fetch("/api/shipping-companies", {
           headers: {
@@ -298,57 +297,53 @@ export default function CreateOrderPage() {
   };
 
   // — Add or update product
-// — Add or update product
-const addProduct = async () => {
-  if (!selectedProduct) return;
-  if (!cartId) {
-    toast.error("Cart hasn’t been created yet!");
-    return;
-  }
-
-  const product = products.find((p) => p.id === selectedProduct);
-  if (!product) return;
-  const unitPrice = product.regularPrice[clientCountry] ?? product.price;
-
-  try {
-    const res = await fetch(`/api/cart/${cartId}/add-product`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        productId: selectedProduct,
-        quantity,
-        price: unitPrice,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      throw new Error(err?.message || "Failed to add product");
+  // — Add or update product
+  const addProduct = async () => {
+    if (!selectedProduct) return;
+    if (!cartId) {
+      toast.error("Cart hasn’t been created yet!");
+      return;
     }
-    const { product: added, quantity: qty } = await res.json();
 
-    setOrderItems((prev) => {
-      console.log(prev)
-      // if we already have that product in the cart, update its line
-      if (prev.some((it) => it.product.id === added.id)) {
-        return prev.map((it) =>
-          it.product.id === added.id
-            ? { product: added, quantity: qty }
-            : it
-        );
+    const product = products.find((p) => p.id === selectedProduct);
+    if (!product) return;
+    const unitPrice = product.regularPrice[clientCountry] ?? product.price;
+
+    try {
+      const res = await fetch(`/api/cart/${cartId}/add-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: selectedProduct,
+          quantity,
+          price: unitPrice,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.message || "Failed to add product");
       }
-      // otherwise append as new
-      return [...prev, { product: added, quantity: qty }];
-    });
+      const { product: added, quantity: qty } = await res.json();
 
-    setSelectedProduct("");
-    setQuantity(1);
-    toast.success("Product added to cart!");
-  } catch (error: any) {
-    console.error("addProduct error:", error);
-    toast.error(error.message || "Could not add product");
-  }
-};
+      setOrderItems((prev) => {
+        // if we already have that product in the cart, update its line
+        if (prev.some((it) => it.product.id === added.id)) {
+          return prev.map((it) =>
+            it.product.id === added.id ? { product: added, quantity: qty } : it
+          );
+        }
+        // otherwise append as new
+        return [...prev, { product: added, quantity: qty }];
+      });
 
+      setSelectedProduct("");
+      setQuantity(1);
+      toast.success("Product added to cart!");
+    } catch (error: any) {
+      console.error("addProduct error:", error);
+      toast.error(error.message || "Could not add product");
+    }
+  };
 
   // — Remove item
   // inside your component, alongside addProduct…
@@ -393,11 +388,16 @@ const addProduct = async () => {
         body: JSON.stringify({ code: couponCode, total: subtotal }),
       });
       if (!res.ok) {
-        const error = await res.json()
+        const error = await res.json();
         throw new Error(error.error);
       }
       const data = await res.json();
-      const { discountAmount: amt, discountType: dt, discountValue: dv, cc } = data;
+      const {
+        discountAmount: amt,
+        discountType: dt,
+        discountValue: dv,
+        cc,
+      } = data;
 
       if (cc === null) {
         // coupon invalid: clear the input and don’t apply
@@ -508,7 +508,6 @@ const addProduct = async () => {
     const shippingAmount = shippingCost;
     const discountAmount = discount;
     const totalAmount = subtotal - discountAmount + shippingAmount;
-    console.log(totalAmount)
 
     const payload = {
       clientId: selectedClient,
@@ -529,9 +528,16 @@ const addProduct = async () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const data = await res.json();
       if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        throw new Error(err?.message || "Failed to create order");
+        if (Array.isArray(data.products)) {
+          const errs: Record<string, number> = {};
+          data.products.forEach((p: any) => {
+            errs[p.productId] = p.available;
+          });
+          setStockErrors(errs);
+        }
+        throw new Error(data.error || "Failed to create order");
       }
       toast.success("Order created successfully!");
       // reset everything
@@ -617,7 +623,10 @@ const addProduct = async () => {
                     return (
                       <div
                         key={idx}
-                        className="flex items-center gap-4 p-4 border rounded-lg"
+                        className={
+                          "flex items-center gap-4 p-4 border rounded-lg" +
+                          (stockErrors[product.id] ? " border-red-500" : "")
+                        }
                       >
                         <Image
                           src={product.image}
@@ -652,6 +661,11 @@ const addProduct = async () => {
                                 Unit Price: ${price}
                               </span>{" "}
                               × <span className="font-medium">{quantity}</span>
+                              {stockErrors[product.id] && (
+                                <span className="text-red-600 text-sm ml-2">
+                                  Only {stockErrors[product.id]} available
+                                </span>
+                              )}
                             </div>
                             <span className="font-medium">
                               ${(price * quantity).toFixed(2)}
@@ -956,12 +970,9 @@ const addProduct = async () => {
                     <div className="flex justify-between text-green-600">
                       <span>
                         Discount
-                        {discountType === "percentage" ? ` (${value}%)` : ""}
-                        :
+                        {discountType === "percentage" ? ` (${value}%)` : ""}:
                       </span>
-                      <span className="font-medium">
-                        –${discount}
-                      </span>
+                      <span className="font-medium">–${discount}</span>
                     </div>
                   )}
                   <div className="flex justify-between">

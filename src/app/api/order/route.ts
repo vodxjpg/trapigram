@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
     }
 
-    // --- Insert into DB ---
+    // Destructure for later use
     const {
         organization,
         clientId,
@@ -124,9 +124,9 @@ export async function POST(req: NextRequest) {
         address,
     } = payload;
     const orderId = uuidv4();
+    const encryptedAddress = encryptSecretNode(address);
 
-    const encryptedAddress = encryptSecretNode(address)
-
+    // Build order INSERT SQL & values (you had 13 placeholders)
     const insertSQL = `
     INSERT INTO orders
       (id, "clientId", "organizationId", "cartId", country,
@@ -153,26 +153,80 @@ export async function POST(req: NextRequest) {
         couponCode,
         shippingCompany,
         encryptedAddress,
+        // we'll push cartHash below
     ];
 
-    const status = false
-    const encryptedResponse = encryptSecretNode(JSON.stringify(values))
+    // PREPARE: update cart status + hash
+    const status = false;
+    const encryptedResponse = encryptSecretNode(JSON.stringify(values));
+    values.push(encryptedResponse);
+    const updateCartSQL = `
+    UPDATE carts 
+    SET "status" = $1, "updatedAt" = NOW(), "cartHash" = $2
+    WHERE id = $3
+    RETURNING *
+  `;
+    const updateCartValues = [status, encryptedResponse, cartId];
 
-    values.push(encryptedResponse)
+    // 1️⃣ FETCH all cartProducts
+    const cartProductsQuery = `
+    SELECT * FROM "cartProducts"
+    WHERE "cartId" = $1
+  `;
+    const cartProductsResults = await pool.query(cartProductsQuery, [cartId]);
 
-    const insert = `
-            UPDATE carts 
-            SET "status" = '${status}' , "updatedAt" = NOW(), "cartHash" = '${encryptedResponse}'
-            WHERE id = '${cartId}'
-            RETURNING *
-        `;
+    // 2️⃣ CHECK stock availability
+    const outOfStock: Array<{ productId: string; requested: number; available: number }> = [];
+    for (const cp of cartProductsResults.rows) {
+        const stockQuery = `
+      SELECT quantity FROM "warehouseStock"
+      WHERE "productId" = $1 AND country = $2
+    `;
+        const stockResult = await pool.query(stockQuery, [cp.productId, country]);
+        const available = stockResult.rows[0]?.quantity ?? 0;
 
-    try {        
+        if (cp.quantity > available) {
+            outOfStock.push({
+                productId: cp.productId,
+                requested: cp.quantity,
+                available,
+            });
+        }
+    }
+
+    // 3️⃣ IF any are out of stock → RETURN error + list
+    if (outOfStock.length > 0) {
+        return NextResponse.json(
+            { error: "Products out of stock", products: outOfStock },
+            { status: 400 }
+        );
+    }
+
+    // 4️⃣ ALL in stock → UPDATE warehouseStock, then CART & ORDER
+    try {
+        await pool.query("BEGIN");
+
+        // a) decrement every stock
+        for (const cp of cartProductsResults.rows) {
+            const decrementSQL = `
+        UPDATE "warehouseStock"
+        SET quantity = quantity - $1, "updatedAt" = NOW()
+        WHERE "productId" = $2 AND country = $3
+      `;
+            await pool.query(decrementSQL, [cp.quantity, cp.productId, country]);
+        }
+
+        // b) update cart status/hash
+        await pool.query(updateCartSQL, updateCartValues);
+
+        // c) insert order
         const result = await pool.query(insertSQL, values);
         const order = result.rows[0];
-        await pool.query(insert);
+
+        await pool.query("COMMIT");
         return NextResponse.json(order, { status: 201 });
     } catch (error: any) {
+        await pool.query("ROLLBACK");
         console.error("[POST /api/orders] error:", error);
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
