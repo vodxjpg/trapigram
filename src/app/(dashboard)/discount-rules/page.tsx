@@ -9,7 +9,7 @@ import { Suspense } from "react";
 export default function DiscountRulesPage() {
   const { setHeaderTitle } = useHeaderTitle();
   useEffect(() => {
-    setHeaderTitle("Discount Rules");
+    setHeaderTitle("Tier pricing");
   }, [setHeaderTitle]);
 
   return (

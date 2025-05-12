@@ -537,32 +537,32 @@ interface DB {
     updatedAt: Date;
   }
 
-  discountRules: {
-    id: string;
-    organizationId: string;
-    name: string;
-    countries: string;      // JSON array of country codes
-    createdAt: Date;
-    updatedAt: Date;
-  };
+  tierPricings: {
+    id            : string
+    organizationId: string
+    name          : string
+    countries     : string          // JSON array
+    createdAt     : Date
+    updatedAt     : Date
+  }
 
-  discountRuleSteps: {
-    id: string;
-    discountRuleId: string;
-    fromUnits: number;
-    toUnits: number;
-    discountAmount: number;
-    createdAt: Date;
-    updatedAt: Date;
-  };
+  tierPricingSteps: {
+    id           : string
+    tierPricingId: string           // FK ↺ tierPricings.id
+    fromUnits    : number
+    toUnits      : number
+    price        : number           // new column name
+    createdAt    : Date
+    updatedAt    : Date
+  }
 
-  discountRuleProducts: {
-    id: string;
-    discountRuleId: string;
-    productId: string | null;
-    variationId: string | null;
-    createdAt: Date;
-  };
+  tierPricingProducts: {
+    id           : string
+    tierPricingId: string
+    productId    : string | null
+    variationId  : string | null
+    createdAt    : Date
+  }
 
    /* ─────────────── Sections ─────────────── */
    sections: {

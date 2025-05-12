@@ -17,7 +17,7 @@ export default function EditDiscountRulePage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/discount-rules/${id}`)
+    fetch(`/api/tier-pricing/${id}`)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch");
         return res.json();

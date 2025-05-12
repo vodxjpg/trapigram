@@ -49,10 +49,10 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 
-type Step = { fromUnits: number; toUnits: number; discountAmount: number };
+type Step = { fromUnits: number; toUnits: number; price: number };
 type ProdItem = { productId: string | null; variationId: string | null };
 
-type Rule = {
+type TierPricing = {
   id: string;
   name: string;
   countries: string[];
@@ -62,24 +62,26 @@ type Rule = {
 
 export function DiscountRulesTable() {
   const router = useRouter();
-  const [rules, setRules] = useState<Rule[]>([]);
+  const [rules, setRules] = useState<TierPricing[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [ruleToDelete, setRuleToDelete] = useState<Rule | null>(null);
+  const [ruleToDelete, setRuleToDelete] = useState<TierPricing | null>(null);
 
   const fetchRules = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/discount-rules?page=${page}&pageSize=${pageSize}&search=${search}`);
+      const res = await fetch(
+        `/api/tier-pricing?page=${page}&pageSize=${pageSize}&search=${search}`,
+      );
       if (!res.ok) throw new Error("Failed to fetch");
-      const { discountRules } = await res.json();
-      setRules(discountRules);
-      setTotalPages(1);
+      const { tierPricings } = await res.json();   // ← correct key
+      setRules(tierPricings);
+      setTotalPages(1); // TODO: update once backend pagination added
     } catch {
-      toast.error("Failed to load discount rules");
+      toast.error("Failed to load tier-pricing rules");
     } finally {
       setLoading(false);
     }
@@ -87,12 +89,13 @@ export function DiscountRulesTable() {
 
   useEffect(() => {
     fetchRules();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageSize, search]);
 
   const confirmDelete = async () => {
     if (!ruleToDelete) return;
     try {
-      await fetch(`/api/discount-rules/${ruleToDelete.id}`, { method: "DELETE" });
+      await fetch(`/api/tier-pricing/${ruleToDelete.id}`, { method: "DELETE" });
       toast.success("Deleted");
       setRuleToDelete(null);
       fetchRules();
@@ -103,31 +106,32 @@ export function DiscountRulesTable() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row justify-between gap-4">
+      {/* search & add */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between">
         <form
           onSubmit={(e) => {
             e.preventDefault();
             setPage(1);
             fetchRules();
           }}
-          className="flex w-full sm:w-auto gap-2"
+          className="flex w-full gap-2 sm:w-auto"
         >
-          <div className="relative flex-1">
-            <Input
-              type="search"
-              placeholder="Search rules..."
-              className="pl-8 w-full"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+          <Input
+            type="search"
+            placeholder="Search rules..."
+            className="w-full pl-8"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
           <Button type="submit">Search</Button>
         </form>
         <Button onClick={() => router.push("/discount-rules/new")}>
-          <Plus className="mr-2 h-4 w-4" /> Add Rule
+          <Plus className="mr-2 h-4 w-4" />
+          Add Rule
         </Button>
       </div>
 
+      {/* table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -147,7 +151,7 @@ export function DiscountRulesTable() {
             ) : rules.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={3} className="h-24 text-center">
-                  No discount rules.
+                  No tier-pricing rules.
                 </TableCell>
               </TableRow>
             ) : (
@@ -169,14 +173,18 @@ export function DiscountRulesTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => router.push(`/discount-rules/${r.id}`)}>
-                          <Edit className="mr-2 h-4 w-4" /> Edit
+                        <DropdownMenuItem
+                          onClick={() => router.push(`/discount-rules/${r.id}`)}
+                        >
+                          <Edit className="mr-2 h-4 w-4" />
+                          Edit
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-destructive"
                           onClick={() => setRuleToDelete(r)}
                         >
-                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
