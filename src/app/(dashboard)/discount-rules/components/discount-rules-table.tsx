@@ -251,7 +251,7 @@ export function DiscountRulesTable() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Discount Rule?</AlertDialogTitle>
+            <AlertDialogTitle>Delete this tier price?</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to delete “{ruleToDelete?.name}”? This cannot be undone.
             </AlertDialogDescription>

@@ -14,7 +14,7 @@ export default function NewDiscountRulePage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-3xl font-bold">New Discount Rule</h1>
+          <h1 className="text-3xl font-bold">New Tier price</h1>
           <p className="text-muted-foreground">Create a discount rule.</p>
         </div>
       </div>

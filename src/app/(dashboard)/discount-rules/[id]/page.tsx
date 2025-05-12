@@ -39,7 +39,7 @@ export default function EditDiscountRulePage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-3xl font-bold">Edit Discount Rule</h1>
+          <h1 className="text-3xl font-bold">Edit tier pricing</h1>
           <p className="text-muted-foreground">Update your rule.</p>
         </div>
       </div>

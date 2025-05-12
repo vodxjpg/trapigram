@@ -15,10 +15,10 @@ export default function DiscountRulesPage() {
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-bold tracking-tight">Discount Rules</h1>
-        <p className="text-muted-foreground">Manage your discount rules.</p>
+        <h1 className="text-3xl font-bold tracking-tight">Tier pricing</h1>
+        <p className="text-muted-foreground">Manage your tiers pricing.</p>
       </div>
-      <Suspense fallback={<div>Loading discount rules…</div>}>
+      <Suspense fallback={<div>Loading tiers pricingn</div>}>
         <DiscountRulesTable />
       </Suspense>
     </div>
