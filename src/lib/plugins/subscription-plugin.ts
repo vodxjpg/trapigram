@@ -1,8 +1,9 @@
-// /home/zodx/Desktop/trapigram/src/lib/plugins/subscription-plugin.ts
+// src/lib/plugins/subscription-plugin.ts
 import { BetterAuthPlugin } from "better-auth";
 import { createAuthEndpoint } from "better-auth/api";
 import { plans } from "@/data/plans";
 import { Pool } from "pg";
+import { v4 as uuidv4 } from "uuid";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -40,11 +41,33 @@ export const subscriptionPlugin = (): BetterAuthPlugin => {
           const now = new Date();
           const trialEnd = new Date(now);
           trialEnd.setDate(now.getDate() + 365);
+
+          // Generate and include UUID for the subscription id
+          const id = uuidv4();
+
           const { rows } = await pool.query(
-            `INSERT INTO subscription ("userId", plan, status, "trialStart", "trialEnd", "periodStart", "periodEnd")
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO subscription (
+               id,
+               "userId",
+               plan,
+               status,
+               "trialStart",
+               "trialEnd",
+               "periodStart",
+               "periodEnd"
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING *`,
-            [userId, selectedPlan.name, "trialing", now, trialEnd, now, trialEnd]
+            [
+              id,
+              userId,
+              selectedPlan.name,
+              "trialing",
+              now,
+              trialEnd,
+              now,
+              trialEnd,
+            ]
           );
           return ctx.json({ subscription: rows[0] });
         }
