@@ -64,6 +64,7 @@ const data = {
         { title: "Add new", url: "/products/new" },
         { title: "Product categories", url: "/product-categories" },
         { title: "Product attributes", url: "/product-attributes" },
+        { title: "Tier pricing", url: "/discount-rules" },
         { title: "Warehouses", url: "/warehouses" },
       ],
     },
@@ -83,7 +84,6 @@ const data = {
       items: [
         { title: "Affiliates", url: "/affiliates" },
         { title: "Coupons", url: "/coupons" },
-        { title: "Discount rules", url: "/discount-rules" },
         { title: "Announcements", url: "/announcements" },
       ],
     },
