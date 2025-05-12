@@ -343,6 +343,7 @@ The Trapigram Team
       },
       organizationCreation: {
         beforeCreate: async ({ organization, user }, request) => {
+          // 1) Ensure tenant exists
           const { rows: tenants } = await pool.query(
             `SELECT id FROM tenant WHERE "ownerUserId" = $1`,
             [user.id]
@@ -351,6 +352,13 @@ The Trapigram Team
             throw new Error("No tenant found for user");
           }
           const tenantId = tenants[0].id;
+
+          // 2) Prepare countries JSON for NOT NULL column
+          const countriesArr = organization.metadata?.countries;
+          const countriesJson = Array.isArray(countriesArr)
+            ? JSON.stringify(countriesArr)
+            : JSON.stringify([]);
+
           return {
             data: {
               ...organization,
@@ -358,6 +366,7 @@ The Trapigram Team
                 ...organization.metadata,
                 tenantId,
               },
+              countries: countriesJson,    // ← inject here
             },
           };
         },
