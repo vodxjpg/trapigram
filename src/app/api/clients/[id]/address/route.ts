@@ -45,8 +45,6 @@ function decryptSecretNode(encryptedB64: string): string {
 const addressCreateSchema = z.object({
   clientId: z.string().uuid(),
   address: z.string().min(1, "Address is required"),
-  postalCode: z.string().min(1, "Postal code is required"),
-  phone: z.string().min(1, "Phone number is required"),
 });
 
 export async function GET(
@@ -78,7 +76,7 @@ export async function GET(
   try {
     const { id: clientId } = await params;
     const result = await pool.query(
-      `SELECT id, "clientId", address, "postalCode", phone
+      `SELECT id, "clientId", address
        FROM "clientAddresses"
        WHERE "clientId" = $1`,
       [clientId]
@@ -140,16 +138,14 @@ export async function POST(
 
     const insertQ = `
       INSERT INTO "clientAddresses" 
-        (id, "clientId", address, "postalCode", phone)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, "clientId", address, "postalCode", phone
+        (id, "clientId", address)
+      VALUES ($1, $2, $3)
+      RETURNING id, "clientId", address
     `;
     const values = [
       addressId,
       parsed.clientId,
       encryptedAddress,
-      parsed.postalCode,
-      parsed.phone,
     ];
     const result = await pool.query(insertQ, values);
     const newAddress = result.rows[0];

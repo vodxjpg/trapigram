@@ -88,8 +88,6 @@ interface DB {
     id: string;
     clientId: string;
     address: string;
-    postalCode: string;
-    phone: string;
     createdAt: Date;
     updatedAt: Date;
   }

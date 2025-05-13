@@ -68,12 +68,11 @@ interface ShippingMethod {
   }>;
 }
 
+// Address now only has id, clientId and address text
 interface Address {
   id: string;
   clientId: string;
   address: string;
-  postalCode: string;
-  phone: string;
 }
 
 interface ShippingCompany {
@@ -109,12 +108,10 @@ export default function CreateOrderPage() {
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
 
-  // — Addresses
+  // — Addresses (no postalCode/phone)
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState("");
   const [newAddress, setNewAddress] = useState("");
-  const [newPostalCode, setNewPostalCode] = useState("");
-  const [newPhone, setNewPhone] = useState("");
 
   // — Order
   const [selectedClient, setSelectedClient] = useState("");
@@ -244,7 +241,6 @@ export default function CreateOrderPage() {
       const data = await res.json();
       const { newCart, resultCartProducts } = data;
       setCartId(newCart.id);
-      // if the API returned a `rows` array, seed our orderItems from it
       if (Array.isArray(resultCartProducts)) {
         setOrderItems(
           resultCartProducts.map((r: any) => ({
@@ -276,6 +272,7 @@ export default function CreateOrderPage() {
         if (!shipRes.ok) throw new Error("Failed to fetch shipping methods");
         const methods: { shipments: ShippingMethod[] } = await shipRes.json();
         setShippingMethods(methods.shipments);
+
         const compRes = await fetch("/api/shipping-companies", {
           headers: {
             "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
@@ -297,7 +294,7 @@ export default function CreateOrderPage() {
     }
   };
 
-  // — Update product quantity in cart
+  // — Update product quantity
   const updateQuantity = async (
     productId: string,
     action: "add" | "subtract",
@@ -454,10 +451,10 @@ export default function CreateOrderPage() {
   const removePaymentMethod = (i: number) =>
     setAppliedPaymentMethods((p) => p.filter((_, idx) => idx !== i));
 
-  // — Add a new address
+  // — Add a new address (only address text)
   const addAddress = async () => {
-    if (!newAddress || !newPostalCode || !newPhone) {
-      return toast.error("All address fields are required");
+    if (!newAddress) {
+      return toast.error("Address field is required");
     }
     try {
       const res = await fetch(`/api/clients/${selectedClient}/address`, {
@@ -469,8 +466,6 @@ export default function CreateOrderPage() {
         body: JSON.stringify({
           clientId: selectedClient,
           address: newAddress,
-          postalCode: newPostalCode,
-          phone: newPhone,
         }),
       });
       if (!res.ok) throw new Error("Failed to save address");
@@ -478,8 +473,6 @@ export default function CreateOrderPage() {
       setAddresses((prev) => [...prev, created]);
       setSelectedAddressId(created.id);
       setNewAddress("");
-      setNewPostalCode("");
-      setNewPhone("");
       toast.success("Address added");
     } catch (err: any) {
       toast.error(err.message);
@@ -522,7 +515,7 @@ export default function CreateOrderPage() {
     }
     const addr = addresses.find((a) => a.id === selectedAddressId);
     if (!addr) {
-      toast.error("Select a shipping address");
+      toast.error("Select an address");
       return;
     }
     const shippingAmount = shippingCost;
@@ -805,7 +798,7 @@ export default function CreateOrderPage() {
               </div>
             </CardContent>
           </Card>
-
+          
           {/* Addresses Section */}
           {orderGenerated && (
             <Card>
@@ -814,39 +807,32 @@ export default function CreateOrderPage() {
                   <Truck className="h-5 w-5" /> Shipping Address
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent>
                 {addresses.length > 0 && (
-                  <>
-                    <div className="space-y-2">
-                      {addresses.map((addr) => (
-                        <label
-                          key={addr.id}
-                          className="flex items-start gap-3 cursor-pointer"
-                        >
-                          <input
-                            type="radio"
-                            name="address"
-                            className="mt-1"
-                            value={addr.id}
-                            checked={selectedAddressId === addr.id}
-                            onChange={() => setSelectedAddressId(addr.id)}
-                          />
-                          <div>
-                            <p className="font-medium">{addr.address}</p>
-                            <p className="text-sm text-muted-foreground">
-                              Postal Code: {addr.postalCode} • Phone:{" "}
-                              {addr.phone}
-                            </p>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                    <Separator />
-                  </>
+                  <div className="space-y-2 mb-4">
+                    {addresses.map((addr) => (
+                      <label
+                        key={addr.id}
+                        className="flex items-center gap-3 cursor-pointer"
+                      >
+                        <input
+                          type="radio"
+                          name="address"
+                          className="mt-1"
+                          value={addr.id}
+                          checked={selectedAddressId === addr.id}
+                          onChange={() => setSelectedAddressId(addr.id)}
+                        />
+                        <span className="font-medium">{addr.address}</span>
+                      </label>
+                    ))}
+                  </div>
                 )}
+                
+                <Separator className="my-4" />
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
+                <div className="flex gap-4">
+                  <div className="flex-1">
                     <Label>Address</Label>
                     <Input
                       value={newAddress}
@@ -854,29 +840,15 @@ export default function CreateOrderPage() {
                       placeholder="123 Main St."
                     />
                   </div>
-                  <div>
-                    <Label>Postal Code</Label>
-                    <Input
-                      value={newPostalCode}
-                      onChange={(e) => setNewPostalCode(e.target.value)}
-                      placeholder="90210"
-                    />
-                  </div>
-                  <div>
-                    <Label>Phone</Label>
-                    <Input
-                      value={newPhone}
-                      onChange={(e) => setNewPhone(e.target.value)}
-                      placeholder="+1 555-1234"
-                    />
+                  <div className="flex items-end">
+                    <Button
+                      onClick={addAddress}
+                      disabled={!newAddress}
+                    >
+                      Add Address
+                    </Button>
                   </div>
                 </div>
-                <Button
-                  onClick={addAddress}
-                  disabled={!newAddress || !newPostalCode || !newPhone}
-                >
-                  Add Address
-                </Button>
               </CardContent>
             </Card>
           )}
