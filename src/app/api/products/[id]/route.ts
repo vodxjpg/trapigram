@@ -4,6 +4,9 @@
   import { db } from "@/lib/db";
   import { auth } from "@/lib/auth";
   import { v4 as uuidv4 } from "uuid";
+  import { propagateStockDeep } from "@/lib/propagate-stock";
+  import { propagateStatusDeep } from "@/lib/propagate-status";
+  import { propagateDeleteDeep } from "@/lib/propagate-delete";
 
   /* ------------------------------------------------------------------ */
   /* helper – merge regular/sale JSON objects ➜ { IT:{regular, sale}, …} */
@@ -577,6 +580,7 @@
       /* warehouseStock                                              */
       /* -------------------------------------------------------------- */
       if (parsedUpdate.warehouseStock) {
+        const nextProductIds = new Set<string>();
         // Delete existing stock entries for this product (User A's warehouses)
         await db.deleteFrom("warehouseStock").where("productId", "=", id).execute();
 
@@ -641,6 +645,7 @@
             console.log(`[DEBUG_STOCK_UPDATE] Grouped mappings by targetProductId:`, mappingsByTarget);
 
             // Step 3: Process each target product
+            
             for (const [targetProductId, targetMappings] of Object.entries(mappingsByTarget)) {
               console.log(`[DEBUG_STOCK_UPDATE] Processing targetProductId: ${targetProductId}`);
 
@@ -831,12 +836,15 @@
                   console.log(`[DEBUG_STOCK_UPDATE] Successfully updated stock for targetProductId: ${targetProductId} in warehouseId: ${targetWarehouse.id}`);
                 }
               }
+              nextProductIds.add(targetProductId);
             }
           }
         }
+        if (nextProductIds.size) {
+          await propagateStockDeep(db, [...nextProductIds], generateId);
+        }
       }
-
-       /* -------------------------------------------------------------- */
+     /* -------------------------------------------------------------- */
     /* **NEW** product-change propagation to shared copies           */
     /* -------------------------------------------------------------- */
     // Only propagate if this is a source product (User A)
@@ -852,16 +860,11 @@
         .where("sourceProductId", "=", id)
         .where("shareLinkId", "in", sharedEntries.map(s => s.shareLinkId))
         .execute();
-      for (const map of mappings) {
-        // 1) propagate status
         if (parsedUpdate.status) {
-          await db
-            .updateTable("products")
-            .set({ status: parsedUpdate.status, updatedAt: new Date() })
-            .where("id", "=", map.targetProductId)
-            .execute();
+          // first hop is handled by the helper itself as well, so just:
+          await propagateStatusDeep(db, [id], parsedUpdate.status);
         }
-      }
+        
     }
 
       return NextResponse.json({
@@ -879,126 +882,45 @@
 /* ================================================================== */
 /* DELETE                                                            */
 /* ================================================================== */
+/* ================================================================== */
+/* DELETE                                                            */
+/* ================================================================== */
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    // 1) Auth & ownership
+    /* 1) auth / ownership ─ unchanged -------------------------------- */
     const session = await auth.api.getSession({ headers: req.headers });
-    if (!session)
-      return NextResponse.json(
-        { error: "Unauthorized: No session found" },
-        { status: 401 },
-      );
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const organizationId = session.session.activeOrganizationId;
     if (!organizationId)
-      return NextResponse.json(
-        { error: "No active organization" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "No active organization" }, { status: 400 });
 
     const { id } = await params;
-    const existing = await db
+
+    /* 2) make sure the product belongs to this org ------------------- */
+    const ok = await db
       .selectFrom("products")
       .select("id")
       .where("id", "=", id)
       .where("organizationId", "=", organizationId)
       .executeTakeFirst();
-    if (!existing)
+    if (!ok) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
-
-    // 2) Gather variation IDs for this product
-    const varRows = await db
-      .selectFrom("productVariations")
-      .select("id")
-      .where("productId", "=", id)
-      .execute();
-    const variationIds = varRows.map((r) => r.id);
-
-    // 3) Gather any B-side (shared) copies before deleting mappings
-    const mappingRows = await db
-      .selectFrom("sharedProductMapping")
-      .select("targetProductId")
-      .where("sourceProductId", "=", id)
-      .execute();
-    const targetProductIds = mappingRows.map((r) => r.targetProductId);
-
-    // 4) Delete any sharedProduct entries pointing at this product or its variations
-    if (variationIds.length > 0) {
-      // both productId and variationId conditions
-      await db
-        .deleteFrom("sharedProduct")
-        .where((eb) =>
-          eb.or([
-            eb("productId", "=", id),
-            eb("variationId", "in", variationIds),
-          ]),
-        )
-        .execute();
-    } else {
-      // only productId condition
-      await db
-        .deleteFrom("sharedProduct")
-        .where("productId", "=", id)
-        .execute();
     }
 
-    // 5) Delete the mapping tables
-    // sharedVariationMapping needs the same guard
-    if (variationIds.length > 0) {
-      await db
-        .deleteFrom("sharedVariationMapping")
-        .where((eb) =>
-          eb.or([
-            eb("sourceProductId", "=", id),
-            eb("sourceVariationId", "in", variationIds),
-          ]),
-        )
-        .execute();
-    } else {
-      await db
-        .deleteFrom("sharedVariationMapping")
-        .where("sourceProductId", "=", id)
-        .execute();
-    }
+    /* 3) one call => helper wipes the whole tree (root + copies) ----- */
+    await propagateDeleteDeep(db, [id]);
 
-    // sharedProductMapping only needs the sourceProductId
-    await db
-      .deleteFrom("sharedProductMapping")
-      .where("sourceProductId", "=", id)
-      .execute();
-
-    // 6) Delete each B-side copy (stock, variations, categories, attributes, product)
-    for (const tgt of targetProductIds) {
-      await db.deleteFrom("warehouseStock").where("productId", "=", tgt).execute();
-      await db.deleteFrom("productVariations").where("productId", "=", tgt).execute();
-      await db.deleteFrom("productCategory").where("productId", "=", tgt).execute();
-      await db
-        .deleteFrom("productAttributeValues")
-        .where("productId", "=", tgt)
-        .execute();
-      await db.deleteFrom("products").where("id", "=", tgt).execute();
-    }
-
-    // 7) Finally delete this product’s own data
-    await db.deleteFrom("warehouseStock").where("productId", "=", id).execute();
-    await db.deleteFrom("productVariations").where("productId", "=", id).execute();
-    await db.deleteFrom("productCategory").where("productId", "=", id).execute();
-    await db
-      .deleteFrom("productAttributeValues")
-      .where("productId", "=", id)
-      .execute();
-    await db.deleteFrom("products").where("id", "=", id).execute();
-
+    /* 4) done -------------------------------------------------------- */
     return NextResponse.json({ message: "Product deleted successfully" });
   } catch (error) {
-    const { id } = await params;
-    console.error(`[PRODUCT_DELETE_${id}]`, error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    console.error(`[PRODUCT_DELETE_${(await params).id}]`, error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
 

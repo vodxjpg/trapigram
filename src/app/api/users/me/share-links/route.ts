@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
+import { propagateDeleteDeep } from "@/lib/propagate-delete"; 
 
 export async function GET(req: NextRequest) {
   try {
@@ -116,7 +117,11 @@ export async function DELETE(req: NextRequest) {
       .where("shareLinkId", "=", shareLinkId)
       .execute();
 
-    const targetProductIds = mappings.map((m) => m.targetProductId);
+      const targetProductIds = mappings.map((m) => m.targetProductId);
+    
+      if (targetProductIds.length) {
+        await propagateDeleteDeep(db, targetProductIds);          // <── ADD
+      }
 
     await db
       .deleteFrom("sharedProductMapping")

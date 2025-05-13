@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { sql } from "kysely";
 import { auth } from "@/lib/auth";
+import { propagateStockDeep } from "@/lib/propagate-stock";
 
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
@@ -378,12 +379,11 @@ export async function PATCH(
       string,
       { productId: string; variationId: string | null; country: string; quantity: number }[]
     > = {};
-
-    for (const update of stockUpdates) {
-      const key = update.productId;
-      if (!updatesByProduct[key]) updatesByProduct[key] = [];
-      updatesByProduct[key].push(update);
+    for (const u of stockUpdates) {
+      (updatesByProduct[u.productId] ??= []).push(u);
     }
+
+    const nextProductIds = new Set<string>();   // collect for deep pass
 
     for (const [productKey, updates] of Object.entries(updatesByProduct)) {
       /* if the product is an affiliate product, continue; propagation is
@@ -603,16 +603,20 @@ export async function PATCH(
                 })
                 .execute();
             }
-
+            
             console.log(`[PROPAGATE] Successfully updated stock for targetProductId: ${targetProductId}`);
           } /* end inner‑for */
-        }   /* end loop targetWarehouses */
+        }
+        nextProductIds.add(targetProductId);   /* end loop targetWarehouses */
       }     /* end loop mappingsByTarget */
     }       /* end loop updatesByProduct */
 
     /* ──────────────────────────────────────────────────────────── */
     /* 6. Done                                                     */
     /* ──────────────────────────────────────────────────────────── */
+    if (nextProductIds.size) {
+      await propagateStockDeep(db, [...nextProductIds], generateId);
+    }
     return NextResponse.json(
       { message: "Stock updated successfully" },
       { status: 200 },
