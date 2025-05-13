@@ -5,6 +5,7 @@ import Image from "next/image";
 import {
   CreditCard,
   Package,
+  Minus,
   Plus,
   Trash2,
   User,
@@ -92,10 +93,12 @@ export default function CreateOrderPage() {
   const [productsLoading, setProductsLoading] = useState(true);
 
   // — Shipping
-  const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
+  const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>(
     []
   );
+  const [shippingCompanies, setShippingCompanies] = useState<
+    ShippingCompany[]
+  >([]);
   const [shippingLoading, setShippingLoading] = useState(true);
   const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
@@ -219,9 +222,7 @@ export default function CreateOrderPage() {
       setShippingCost(0);
       return;
     }
-    const method = shippingMethods.find(
-      (m) => m.id === selectedShippingMethod
-    );
+    const method = shippingMethods.find((m) => m.id === selectedShippingMethod);
     if (!method) return;
     const tier = method.costs.find(
       ({ minOrderCost, maxOrderCost }) =>
@@ -243,6 +244,7 @@ export default function CreateOrderPage() {
       const data = await res.json();
       const { newCart, resultCartProducts } = data;
       setCartId(newCart.id);
+      // if the API returned a `rows` array, seed our orderItems from it
       if (Array.isArray(resultCartProducts)) {
         setOrderItems(
           resultCartProducts.map((r: any) => ({
@@ -260,6 +262,7 @@ export default function CreateOrderPage() {
           }))
         );
       }
+
       const client = clients.find((c) => c.id === selectedClient);
       if (client) setClientCountry(client.country);
 
@@ -294,6 +297,38 @@ export default function CreateOrderPage() {
     }
   };
 
+  // — Update product quantity in cart
+  const updateQuantity = async (
+    productId: string,
+    action: "add" | "subtract",
+    qty: number
+  ) => {
+    if (!cartId) {
+      toast.error("Cart hasn’t been created yet!");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/cart/${cartId}/update-product`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId, action, quantity: qty }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.message || "Failed to update quantity");
+      }
+      const data = await res.json();
+      const newQty = data.quantity;
+      setOrderItems((prev) =>
+        prev.map((it) =>
+          it.product.id === productId ? { ...it, quantity: newQty } : it
+        )
+      );
+    } catch (err: any) {
+      toast.error(err.message || "Could not update quantity");
+    }
+  };
+
   // — Add or update product
   const addProduct = async () => {
     if (!selectedProduct) return;
@@ -301,6 +336,7 @@ export default function CreateOrderPage() {
       toast.error("Cart hasn’t been created yet!");
       return;
     }
+
     const product = products.find((p) => p.id === selectedProduct);
     if (!product) return;
     const unitPrice = product.regularPrice[clientCountry] ?? product.price;
@@ -320,6 +356,7 @@ export default function CreateOrderPage() {
         throw new Error(err?.message || "Failed to add product");
       }
       const { product: added, quantity: qty } = await res.json();
+
       setOrderItems((prev) => {
         if (prev.some((it) => it.product.id === added.id)) {
           return prev.map((it) =>
@@ -328,6 +365,7 @@ export default function CreateOrderPage() {
         }
         return [...prev, { product: added, quantity: qty }];
       });
+
       setSelectedProduct("");
       setQuantity(1);
       toast.success("Product added to cart!");
@@ -389,7 +427,8 @@ export default function CreateOrderPage() {
       } = data;
 
       if (cc === null) {
-        setCouponCode(""), setCouponApplied(false);
+        setCouponCode("");
+        setCouponApplied(false);
         toast.error("Coupon can't be applied!");
       } else {
         setDiscount(amt);
@@ -474,7 +513,6 @@ export default function CreateOrderPage() {
       toast.error("Select a payment method");
       return;
     }
-
     const shippingCompanyName = shippingCompanies.find(
       (c) => c.id === selectedShippingCompany
     )?.name;
@@ -482,13 +520,11 @@ export default function CreateOrderPage() {
       toast.error("Select a shipping company");
       return;
     }
-
     const addr = addresses.find((a) => a.id === selectedAddressId);
     if (!addr) {
       toast.error("Select a shipping address");
       return;
     }
-
     const shippingAmount = shippingCost;
     const discountAmount = discount;
     const totalAmount = subtotal - discountAmount + shippingAmount;
@@ -638,17 +674,36 @@ export default function CreateOrderPage() {
                               __html: product.description,
                             }}
                           />
+                          <div className="flex items-center gap-2 mt-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() =>
+                                updateQuantity(product.id, "subtract", quantity)
+                              }
+                            >
+                              <Minus className="h-4 w-4" />
+                            </Button>
+                            <span className="font-medium">{quantity}</span>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() =>
+                                updateQuantity(product.id, "add", quantity)
+                              }
+                            >
+                              <Plus className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          {stockErrors[product.id] && (
+                            <p className="text-red-600 text-sm mt-1">
+                              Only {stockErrors[product.id]} available
+                            </p>
+                          )}
                           <div className="flex justify-between mt-2">
-                            <div>
-                              <span className="font-medium">
-                                Unit Price: ${price}
-                              </span>{" "}× <span className="font-medium">{quantity}</span>
-                              {stockErrors[product.id] && (
-                                <span className="text-red-600 text-sm ml-2">
-                                  Only {stockErrors[product.id]} available
-                                </span>
-                              )}
-                            </div>
+                            <span className="font-medium">
+                              Unit Price: ${price}
+                            </span>
                             <span className="font-medium">
                               ${(price * quantity).toFixed(2)}
                             </span>
@@ -684,7 +739,8 @@ export default function CreateOrderPage() {
                         );
                         return (
                           <SelectItem key={p.id} value={p.id}>
-                            {p.title} — ${price.toFixed(2)} — Stock: {stockCount}
+                            {p.title} — ${price.toFixed(2)} — Stock:{" "}
+                            {stockCount}
                           </SelectItem>
                         );
                       })}
@@ -732,20 +788,20 @@ export default function CreateOrderPage() {
                   placeholder="Enter coupon code"
                 />
               </div>
-              <div className="flex items-end">`
-              <Button
-                onClick={applyCoupon}
-                disabled={!couponCode || couponApplied}
-                variant={couponApplied ? "outline" : "default"}
-              >
-                {couponApplied ? (
-                  <>`
-                    <Check className="h-4 w-4 mr-2" /> Applied
-                  </>
-                ) : (
-                  "Apply Coupon"
-                )}
-              </Button>
+              <div className="flex items-end">
+                <Button
+                  onClick={applyCoupon}
+                  disabled={!couponCode || couponApplied}
+                  variant={couponApplied ? "outline" : "default"}
+                >
+                  {couponApplied ? (
+                    <>
+                      <Check className="h-4 w-4 mr-2" /> Applied
+                    </>
+                  ) : (
+                    "Apply Coupon"
+                  )}
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -778,7 +834,8 @@ export default function CreateOrderPage() {
                           <div>
                             <p className="font-medium">{addr.address}</p>
                             <p className="text-sm text-muted-foreground">
-                              Postal Code: {addr.postalCode} • Phone: {addr.phone}
+                              Postal Code: {addr.postalCode} • Phone:{" "}
+                              {addr.phone}
                             </p>
                           </div>
                         </label>
@@ -860,7 +917,8 @@ export default function CreateOrderPage() {
                         const cost = tier ? tier.shipmentCost : 0;
                         return (
                           <SelectItem key={m.id} value={m.id}>
-                            {m.title} — {m.description} — ${cost.toFixed(2)}
+                            {m.title} — {m.description} — $
+                            {cost.toFixed(2)}
                           </SelectItem>
                         );
                       })}

@@ -37,7 +37,9 @@ function encryptSecretNode(plain: string): string {
 }
 
 const cartProductSchema = z.object({
+    productId: z.string().uuid(),
     quantity: z.number(),
+    action: z.string() || z.null()
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -76,15 +78,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         const body = await req.json();
         const data = cartProductSchema.parse(body); // throws if invalid
 
+        if(data.action === "add"){
+            data.quantity ++
+        } else {
+            data.quantity --
+        }
+
         const insert = `
         UPDATE "cartProducts" 
         SET quantity = $1, "updatedAt" = NOW()
-        WHERE id = $2
+        WHERE "cartId" = $2 AND "productId" = $3
         RETURNING *
       `;
         const vals = [
             data.quantity,
-            id
+            id,
+            data.productId
         ];
 
         const result = await pool.query(insert, vals);
