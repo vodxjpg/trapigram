@@ -219,7 +219,9 @@ export default function CreateOrderPage() {
       setShippingCost(0);
       return;
     }
-    const method = shippingMethods.find((m) => m.id === selectedShippingMethod);
+    const method = shippingMethods.find(
+      (m) => m.id === selectedShippingMethod
+    );
     if (!method) return;
     const tier = method.costs.find(
       ({ minOrderCost, maxOrderCost }) =>
@@ -241,18 +243,15 @@ export default function CreateOrderPage() {
       const data = await res.json();
       const { newCart, resultCartProducts } = data;
       setCartId(newCart.id);
-      // if the API returned a `rows` array, seed our orderItems from it
-      if (Array.isArray(resultCartProducts.rows)) {
+      if (Array.isArray(resultCartProducts)) {
         setOrderItems(
-          resultCartProducts.rows.map((r: any) => ({
+          resultCartProducts.map((r: any) => ({
             product: {
               id: r.id,
               title: r.title,
               sku: r.sku,
               description: r.description,
               image: r.image,
-              // UI falls back to `product.price` if regularPrice is empty,
-              // so we only need to set `price` here:
               price: r.unitPrice,
               regularPrice: {},
               stockData: {},
@@ -261,7 +260,6 @@ export default function CreateOrderPage() {
           }))
         );
       }
-
       const client = clients.find((c) => c.id === selectedClient);
       if (client) setClientCountry(client.country);
 
@@ -297,14 +295,12 @@ export default function CreateOrderPage() {
   };
 
   // — Add or update product
-  // — Add or update product
   const addProduct = async () => {
     if (!selectedProduct) return;
     if (!cartId) {
       toast.error("Cart hasn’t been created yet!");
       return;
     }
-
     const product = products.find((p) => p.id === selectedProduct);
     if (!product) return;
     const unitPrice = product.regularPrice[clientCountry] ?? product.price;
@@ -324,18 +320,14 @@ export default function CreateOrderPage() {
         throw new Error(err?.message || "Failed to add product");
       }
       const { product: added, quantity: qty } = await res.json();
-
       setOrderItems((prev) => {
-        // if we already have that product in the cart, update its line
         if (prev.some((it) => it.product.id === added.id)) {
           return prev.map((it) =>
             it.product.id === added.id ? { product: added, quantity: qty } : it
           );
         }
-        // otherwise append as new
         return [...prev, { product: added, quantity: qty }];
       });
-
       setSelectedProduct("");
       setQuantity(1);
       toast.success("Product added to cart!");
@@ -346,8 +338,6 @@ export default function CreateOrderPage() {
   };
 
   // — Remove item
-  // inside your component, alongside addProduct…
-
   const removeProduct = async (productId: string, idx: number) => {
     if (!cartId) {
       toast.error("No cart created yet!");
@@ -366,7 +356,6 @@ export default function CreateOrderPage() {
         const err = await res.json().catch(() => null);
         throw new Error(err?.message || "Failed to remove product");
       }
-      // on success, remove from UI
       setOrderItems((prev) => prev.filter((_, i) => i !== idx));
       toast.success("Product removed from cart");
     } catch (error: any) {
@@ -400,12 +389,9 @@ export default function CreateOrderPage() {
       } = data;
 
       if (cc === null) {
-        // coupon invalid: clear the input and don’t apply
-        setCouponCode("");
-        setCouponApplied(false);
+        setCouponCode(""), setCouponApplied(false);
         toast.error("Coupon can't be applied!");
       } else {
-        // coupon valid: keep it, apply discount
         setDiscount(amt);
         setValue(dv);
         setDiscountType(dt);
@@ -418,6 +404,9 @@ export default function CreateOrderPage() {
   };
 
   // — Add payment method to order
+  const [appliedPaymentMethods, setAppliedPaymentMethods] = useState<
+    PaymentMethod[]
+  >([]);
   const addPaymentMethod = () => {
     const m = paymentMethods.find((m) => m.id === selectedPaymentMethod);
     if (m) setAppliedPaymentMethods((p) => [...p, m]);
@@ -472,14 +461,12 @@ export default function CreateOrderPage() {
     setSelectedShippingCompany("");
     setShippingCost(0);
   };
-  // inside your CreateOrderPage component
 
   const createOrder = async () => {
     if (!orderGenerated) {
       toast.error("Generate your cart first!");
       return;
     }
-    // pull out the selected payment method title
     const payment = paymentMethods.find(
       (m) => m.id === selectedPaymentMethod
     )?.name;
@@ -488,7 +475,6 @@ export default function CreateOrderPage() {
       return;
     }
 
-    // pull out the selected shipping company name
     const shippingCompanyName = shippingCompanies.find(
       (c) => c.id === selectedShippingCompany
     )?.name;
@@ -497,14 +483,12 @@ export default function CreateOrderPage() {
       return;
     }
 
-    // pull out the selected address object
     const addr = addresses.find((a) => a.id === selectedAddressId);
     if (!addr) {
       toast.error("Select a shipping address");
       return;
     }
 
-    // final totals
     const shippingAmount = shippingCost;
     const discountAmount = discount;
     const totalAmount = subtotal - discountAmount + shippingAmount;
@@ -540,7 +524,6 @@ export default function CreateOrderPage() {
         throw new Error(data.error || "Failed to create order");
       }
       toast.success("Order created successfully!");
-      // reset everything
       cancelOrder();
     } catch (err: any) {
       console.error("createOrder error:", err);
@@ -659,8 +642,7 @@ export default function CreateOrderPage() {
                             <div>
                               <span className="font-medium">
                                 Unit Price: ${price}
-                              </span>{" "}
-                              × <span className="font-medium">{quantity}</span>
+                              </span>{" "}× <span className="font-medium">{quantity}</span>
                               {stockErrors[product.id] && (
                                 <span className="text-red-600 text-sm ml-2">
                                   Only {stockErrors[product.id]} available
@@ -696,9 +678,13 @@ export default function CreateOrderPage() {
                     <SelectContent>
                       {countryProducts.map((p) => {
                         const price = p.regularPrice[clientCountry];
+                        const stockCount = Object.values(p.stockData).reduce(
+                          (sum, e) => sum + (e[clientCountry] || 0),
+                          0
+                        );
                         return (
                           <SelectItem key={p.id} value={p.id}>
-                            {p.title} — ${price.toFixed(2)}
+                            {p.title} — ${price.toFixed(2)} — Stock: {stockCount}
                           </SelectItem>
                         );
                       })}
@@ -746,20 +732,20 @@ export default function CreateOrderPage() {
                   placeholder="Enter coupon code"
                 />
               </div>
-              <div className="flex items-end">
-                <Button
-                  onClick={applyCoupon}
-                  disabled={!couponCode || couponApplied}
-                  variant={couponApplied ? "outline" : "default"}
-                >
-                  {couponApplied ? (
-                    <>
-                      <Check className="h-4 w-4 mr-2" /> Applied
-                    </>
-                  ) : (
-                    "Apply Coupon"
-                  )}
-                </Button>
+              <div className="flex items-end">`
+              <Button
+                onClick={applyCoupon}
+                disabled={!couponCode || couponApplied}
+                variant={couponApplied ? "outline" : "default"}
+              >
+                {couponApplied ? (
+                  <>`
+                    <Check className="h-4 w-4 mr-2" /> Applied
+                  </>
+                ) : (
+                  "Apply Coupon"
+                )}
+              </Button>
               </div>
             </CardContent>
           </Card>
@@ -792,8 +778,7 @@ export default function CreateOrderPage() {
                           <div>
                             <p className="font-medium">{addr.address}</p>
                             <p className="text-sm text-muted-foreground">
-                              Postal Code: {addr.postalCode} • Phone:{" "}
-                              {addr.phone}
+                              Postal Code: {addr.postalCode} • Phone: {addr.phone}
                             </p>
                           </div>
                         </label>
