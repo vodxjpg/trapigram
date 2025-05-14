@@ -1,21 +1,21 @@
-// /home/zodx/Desktop/trapigram/src/app/api/internal/onboarding/route.ts
+// src/app/api/internal/onboarding/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { verifyInternalPost } from "@/lib/verifyOrigin";
 import { Pool } from "pg";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
-
 export async function POST(req: NextRequest) {
   try {
-    const secret = req.headers.get("x-internal-secret");
-    if (secret !== INTERNAL_API_SECRET) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    // 0) CSRF-style origin check — no secret needed
+    if (!verifyInternalPost(req)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    // 1) Logged-in user
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     const user = session.user;
     const { onboardingCompleted } = await req.json();
 
-    // Allow -1 (completed), 0 (not started), or 1-5 (steps)
+    // 2) Validate step (-1 completed, 0–5 in-progress)
     if (
       typeof onboardingCompleted !== "number" ||
       (onboardingCompleted !== -1 && (onboardingCompleted < 0 || onboardingCompleted > 5))
@@ -32,17 +32,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid onboarding step" }, { status: 400 });
     }
 
+    // 3) Ensure tenant exists and update
     const { rows: tenants } = await pool.query(
       `SELECT id FROM tenant WHERE "ownerUserId" = $1`,
-      [user.id]
+      [user.id],
     );
-    if (tenants.length === 0) {
+    if (!tenants.length) {
       return NextResponse.json({ error: "No tenant found" }, { status: 404 });
     }
 
     await pool.query(
-      `UPDATE tenant SET "onboardingCompleted" = $1, "updatedAt" = NOW() WHERE "ownerUserId" = $2`,
-      [onboardingCompleted, user.id]
+      `UPDATE tenant
+         SET "onboardingCompleted" = $1,
+             "updatedAt"          = NOW()
+       WHERE "ownerUserId" = $2`,
+      [onboardingCompleted, user.id],
     );
 
     return NextResponse.json({ message: "Onboarding step updated" }, { status: 200 });

@@ -9,18 +9,17 @@ export type RequestContext = {
 };
 
 /**
- * Validate x-api-key or x-internal-secret + optional ?organizationId,
- * or fall back to session. Then fetch tenant by user.
+ * Validate x-api-key + optional ?organizationId,
+ * or fall back to session cookies. Then fetch tenant by user.
  * Returns NextResponse on error, or RequestContext on success.
  */
 export async function getContext(
   req: NextRequest,
 ): Promise<RequestContext | NextResponse> {
   const apiKey = req.headers.get("x-api-key");
-  const internalSecret = req.headers.get("x-internal-secret");
   const explicitOrg = new URL(req.url).searchParams.get("organizationId");
 
-  // API key branch
+  /* 1 — API-key branch */
   if (apiKey) {
     const { valid, error } = await auth.api.verifyApiKey({ body: { key: apiKey } });
     if (!valid) {
@@ -34,26 +33,23 @@ export async function getContext(
     }
   }
 
-  // session for internal-secret and fallback
+  /* 2 — Session branch */
   const session = await auth.api.getSession({ headers: req.headers });
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Determine organizationId
+  /* 3 — Determine organisation */
   let organizationId = explicitOrg;
-  if (!organizationId) {
-    if (internalSecret === process.env.INTERNAL_API_SECRET) {
-      organizationId = session.session.activeOrganizationId;
-    } else if (!apiKey) {
-      organizationId = session.session.activeOrganizationId;
-    }
+  if (!organizationId && !apiKey) {
+    // Fall back to the user’s active organisation held in the session cookie
+    organizationId = session.session.activeOrganizationId;
   }
   if (!organizationId) {
     return NextResponse.json({ error: "No active organization" }, { status: 400 });
   }
 
-  // Get the user and tenant
+  /* 4 — Derive tenant */
   const userId = session.user.id;
   const tenantRow = await db
     .selectFrom("tenant")
