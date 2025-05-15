@@ -12,17 +12,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   try {
     const { id } = await params;
-    const query = `
-      SELECT id, "clientId", country, "counponCode", "shippingMethod", "cartHash", "cartUpdatedHash", "createdAt", "updatedAt"
-      FROM carts
-      WHERE id = $1
-    `;
-    const result = await pool.query(query, [id]);
-    if (result.rows.length === 0) {
-      return NextResponse.json({ error: "Coupon not found" }, { status: 404 });
-    }
 
-    const cart = result.rows[0];
+    const activeCartQ = `
+      SELECT * FROM carts
+      WHERE "id" = $1
+    `;
+    const resultCart = await pool.query(activeCartQ, [id]);
+    const cart = resultCart.rows[0];
+
+    const countryCart = cart.country
 
     const countryQuery = `
       SELECT country
@@ -33,12 +31,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const countryResult = await pool.query(countryQuery);
     const clientCountry = countryResult.rows[0]
 
-    if (cart.country !== clientCountry.country) {
-      //update prices, coupons and shipping
-      //update country in cart
+    const countryClient = clientCountry.country
+
+    if (countryCart !== countryClient) {
+      return console.log("_____________________")
     }
 
-    return NextResponse.json(cart);
+    const cartProductsQ = `
+        SELECT 
+          p.id, p.title, p.description, p.image, p.sku,
+          cp.quantity, cp."unitPrice"
+        FROM products p
+        JOIN "cartProducts" cp ON p.id = cp."productId"
+        WHERE cp."cartId" = $1
+      `;
+    const resultCartProducts = await pool.query(cartProductsQ, [id]);
+    return NextResponse.json({ resultCartProducts: resultCartProducts.rows }, { status: 201 });
   } catch (error: any) {
     console.error("[GET /api/coupons/[id]] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

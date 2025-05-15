@@ -345,15 +345,6 @@ export default function OrdersPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
                               onClick={() =>
-                                handleOrderAction(order.id, "initiate-payment")
-                              }
-                              disabled={order.status !== "open"}
-                            >
-                              <CreditCard className="mr-2 h-4 w-4" />
-                              <span>Initiate Payment</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() =>
                                 handleOrderAction(order.id, "send-notification")
                               }
                               disabled={

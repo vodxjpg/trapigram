@@ -47,6 +47,8 @@ const orderSchema = z.object({
     country: z.string().length(2),
     paymentMethod: z.string().min(1),
     shippingAmount: z.coerce.number().min(0),
+    shippingMethodTitle: z.string(),
+    shippingMethodDescription: z.string(),
     discountAmount: z.coerce.number().min(0),
     totalAmount: z.coerce.number().min(0),
     couponCode: z.string().optional().nullable(),
@@ -59,7 +61,6 @@ export async function GET(req: NextRequest) {
     const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
     const { organizationId } = ctx;
-    console.log(organizationId)
 
     try {
         const getOrder = `
@@ -77,7 +78,6 @@ export async function GET(req: NextRequest) {
 
         const resultOrder = await pool.query(getOrder);
         const orders = resultOrder.rows;
-        console.log(orders)
 
         let sampleOrders: Orders[] = []
 
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
     // --- Parse & validate body ---
     let payload: OrderPayload;
     try {
-        const body = await req.json();
+        const body = await req.json();        
         body.organization = organizationId;
         payload = orderSchema.parse(body);
     } catch (err: any) {
@@ -129,27 +129,32 @@ export async function POST(req: NextRequest) {
         country,
         paymentMethod,
         shippingAmount,
+        shippingMethodTitle,
+        shippingMethodDescription,
         discountAmount,
         totalAmount,
         couponCode,
         shippingCompany,
         address,
     } = payload;
+
     const orderId = uuidv4();
     const encryptedAddress = encryptSecretNode(address);
-    const status = "open"
+    const shippingMethod = `${shippingMethodTitle} - ${shippingMethodDescription}`
+    const orderStatus = "open"
+    const cartStatus = false
 
     // Build order INSERT SQL & values (you had 13 placeholders)
     const insertSQL = `
     INSERT INTO orders
       (id, "clientId", "organizationId", "cartId", country,
        "paymentMethod", "shippingTotal", "discountTotal",
-       "totalAmount", "couponCode", "shippingService", address, "cartHash", status
+       "totalAmount", "couponCode", "shippingService", "shippingMethod", address, status, "cartHash", "dateCreated",
        "createdAt", "updatedAt")
     VALUES
       ($1, $2, $3, $4, $5,
        $6, $7, $8,
-       $9, $10, $11, $12, $13, $14
+       $9, $10, $11, $12, $13, $14, $15, NOW(),
        NOW(), NOW())
     RETURNING *
   `;
@@ -165,8 +170,9 @@ export async function POST(req: NextRequest) {
         totalAmount,
         couponCode,
         shippingCompany,
+        shippingMethod,
         encryptedAddress,
-        status
+        orderStatus
         // we'll push cartHash below
     ];
 
@@ -179,7 +185,7 @@ export async function POST(req: NextRequest) {
     WHERE id = $3
     RETURNING *
   `;
-    const updateCartValues = [status, encryptedResponse, cartId];
+    const updateCartValues = [cartStatus, encryptedResponse, cartId];
 
     // 1️⃣ FETCH all cartProducts
     const cartProductsQuery = `

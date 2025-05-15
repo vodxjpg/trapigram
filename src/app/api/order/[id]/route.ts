@@ -1,11 +1,40 @@
 // pages/api/orders/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
+import crypto from "crypto";
 import { getContext } from "@/lib/context";
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
 });
+
+const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || ""
+const ENC_IV_B64 = process.env.ENCRYPTION_IV || ""
+
+function getEncryptionKeyAndIv(): { key: Buffer, iv: Buffer } {
+    const key = Buffer.from(ENC_KEY_B64, "base64") // decode base64 -> bytes
+    const iv = Buffer.from(ENC_IV_B64, "base64")
+    // For AES-256, key should be 32 bytes; iv typically 16 bytes
+    // Added validation to ensure correct lengths
+    if (!ENC_KEY_B64 || !ENC_IV_B64) {
+        throw new Error("ENCRYPTION_KEY or ENCRYPTION_IV not set in environment")
+    }
+    if (key.length !== 32) {
+        throw new Error(`Invalid ENCRYPTION_KEY: must decode to 32 bytes, got ${key.length}`)
+    }
+    if (iv.length !== 16) {
+        throw new Error(`Invalid ENCRYPTION_IV: must decode to 16 bytes, got ${iv.length}`)
+    }
+    return { key, iv }
+}
+
+function decryptSecretNode(encryptedB64: string): string {
+  const { key, iv } = getEncryptionKeyAndIv();
+  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+  let decrypted = decipher.update(encryptedB64, "base64", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const ctx = await getContext(req);
@@ -27,7 +56,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             `;
 
         const resultClient = await pool.query(getClient);
-        const client = resultClient.rows[0];
+        const client = resultClient.rows[0];        
 
         const getProducts = `
         SELECT 
@@ -39,7 +68,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       `;
         const resultProducts = await pool.query(getProducts, [order.cartId]);
         const products = resultProducts.rows
-
         let total = 0
 
         products.map((p) => {
@@ -63,9 +91,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             subTotal: Number(total),
             total: Number(order.totalAmount),
             shippingInfo:{
-                address: order.address,
+                address: decryptSecretNode(order.address),
                 company: order.shippingService,
-                method: "Standard Shipping (3-5 business days)",
+                method: order.shippingMethod,
                 payment: order.paymentMethod
             }
         }

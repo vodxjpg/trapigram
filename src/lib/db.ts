@@ -521,6 +521,7 @@ interface DB {
     paymentMethod: string;
     orderKey: string;
     cartHash: string;
+    shippingMethod: string;
     shippingTotal: number;
     discountTotal: number;
     totalAmount: number;

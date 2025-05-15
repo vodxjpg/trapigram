@@ -30,16 +30,7 @@ export async function POST(req: NextRequest) {
     const cart = resultCart.rows[0];
 
     if (cart) {
-      const cartProductsQ = `
-        SELECT 
-          p.id, p.title, p.description, p.image, p.sku,
-          cp.quantity, cp."unitPrice"
-        FROM products p
-        JOIN "cartProducts" cp ON p.id = cp."productId"
-        WHERE cp."cartId" = $1
-      `;
-      const resultCartProducts = await pool.query(cartProductsQ, [cart.id]);
-      return NextResponse.json({ newCart: cart, resultCartProducts: resultCartProducts.rows }, { status: 201 });
+      return NextResponse.json({ newCart: cart }, { status: 201 });  
     }
 
     // No existing cart → create new one
@@ -95,9 +86,8 @@ export async function POST(req: NextRequest) {
 
     const result = await pool.query(insertQ, values);
     const newCart = result.rows[0];
-    const resultCartProducts: any[] = [];
 
-    return NextResponse.json({ newCart, resultCartProducts }, { status: 201 });
+    return NextResponse.json({ newCart }, { status: 201 });
   } catch (error: any) {
     console.error("[POST /api/cart] error:", error);
     if (error instanceof z.ZodError) {

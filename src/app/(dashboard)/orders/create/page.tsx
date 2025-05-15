@@ -83,7 +83,14 @@ interface ShippingCompany {
 export default function CreateOrderPage() {
   // — Clients
   const [clients, setClients] = useState<
-    { id: string; firstName: string, lastName: string, username: string, email: string, country: string }[]
+    {
+      id: string;
+      firstName: string;
+      lastName: string;
+      username: string;
+      email: string;
+      country: string;
+    }[]
   >([]);
   const [clientsLoading, setClientsLoading] = useState(true);
 
@@ -92,12 +99,10 @@ export default function CreateOrderPage() {
   const [productsLoading, setProductsLoading] = useState(true);
 
   // — Shipping
-  const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>(
+  const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
     []
   );
-  const [shippingCompanies, setShippingCompanies] = useState<
-    ShippingCompany[]
-  >([]);
   const [shippingLoading, setShippingLoading] = useState(true);
   const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
@@ -232,15 +237,21 @@ export default function CreateOrderPage() {
   const generateOrder = async () => {
     if (!selectedClient) return;
     try {
-      const res = await fetch("/api/cart", {
+      const resC = await fetch("/api/cart", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ clientId: selectedClient }),
       });
-      if (!res.ok) throw new Error("Failed to create cart");
-      const data = await res.json();
-      const { newCart, resultCartProducts } = data;
+      if (!resC.ok) throw new Error("Failed to create cart");
+      const dataC = await resC.json();
+      const { newCart } = dataC;
       setCartId(newCart.id);
+      const resP = await fetch(`/api/cart/${newCart.id}`, {
+        headers: { "Content-Type": "application/json" },
+      });
+      const dataP = await resP.json();
+      const { resultCartProducts } = dataP;
+      console.log(resultCartProducts);
       if (Array.isArray(resultCartProducts)) {
         setOrderItems(
           resultCartProducts.map((r: any) => ({
@@ -513,6 +524,14 @@ export default function CreateOrderPage() {
       toast.error("Select a shipping company");
       return;
     }
+    //pull out the selected SHIPPING METHOD object
+    const shippingMethodObj = shippingMethods.find(
+      (m) => m.id === selectedShippingMethod
+    );
+    if (!shippingMethodObj) {
+      toast.error("Select a shipping method");
+      return;
+    }
     const addr = addresses.find((a) => a.id === selectedAddressId);
     if (!addr) {
       toast.error("Select an address");
@@ -528,6 +547,8 @@ export default function CreateOrderPage() {
       country: clientCountry,
       paymentMethod: payment,
       shippingAmount,
+      shippingMethodTitle: shippingMethodObj.title,
+      shippingMethodDescription: shippingMethodObj.description,
       discountAmount,
       totalAmount,
       couponCode: couponCode || null,
@@ -798,7 +819,7 @@ export default function CreateOrderPage() {
               </div>
             </CardContent>
           </Card>
-          
+
           {/* Addresses Section */}
           {orderGenerated && (
             <Card>
@@ -828,7 +849,7 @@ export default function CreateOrderPage() {
                     ))}
                   </div>
                 )}
-                
+
                 <Separator className="my-4" />
 
                 <div className="flex gap-4">
@@ -841,10 +862,7 @@ export default function CreateOrderPage() {
                     />
                   </div>
                   <div className="flex items-end">
-                    <Button
-                      onClick={addAddress}
-                      disabled={!newAddress}
-                    >
+                    <Button onClick={addAddress} disabled={!newAddress}>
                       Add Address
                     </Button>
                   </div>
@@ -889,8 +907,7 @@ export default function CreateOrderPage() {
                         const cost = tier ? tier.shipmentCost : 0;
                         return (
                           <SelectItem key={m.id} value={m.id}>
-                            {m.title} — {m.description} — $
-                            {cost.toFixed(2)}
+                            {m.title} — {m.description} — ${cost.toFixed(2)}
                           </SelectItem>
                         );
                       })}
