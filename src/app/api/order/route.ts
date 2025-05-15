@@ -55,6 +55,53 @@ const orderSchema = z.object({
 });
 type OrderPayload = z.infer<typeof orderSchema>;
 
+export async function GET(req: NextRequest) {
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId } = ctx;
+    console.log(organizationId)
+
+    try {
+        const getOrder = `
+            SELECT 
+            o.*,
+            c."firstName",
+            c."lastName",
+            c."username",
+            c.email
+            FROM orders AS o
+            JOIN clients AS c
+            ON o."clientId" = c.id
+            WHERE o."organizationId" = '${organizationId}'
+        `;
+
+        const resultOrder = await pool.query(getOrder);
+        const orders = resultOrder.rows;
+        console.log(orders)
+
+        let sampleOrders: Orders[] = []
+
+        orders.map((o) => {
+            o.totalAmount = Number(o.totalAmount)
+            sampleOrders.push({
+                id: o.id,
+                status: o.status,
+                createdAt: o.createdAt,
+                total: o.totalAmount,
+                firstName: o.firstName,
+                lastName: o.lastName,
+                username: o.username,
+                email: o.email
+            })
+        })
+
+        return NextResponse.json(sampleOrders, { status: 201 });
+    } catch (error) {
+        return NextResponse.json(error, { status: 403 });
+    }
+
+}
+
 // 2️⃣ Handle POST
 export async function POST(req: NextRequest) {
     const ctx = await getContext(req);
@@ -90,18 +137,19 @@ export async function POST(req: NextRequest) {
     } = payload;
     const orderId = uuidv4();
     const encryptedAddress = encryptSecretNode(address);
+    const status = "open"
 
     // Build order INSERT SQL & values (you had 13 placeholders)
     const insertSQL = `
     INSERT INTO orders
       (id, "clientId", "organizationId", "cartId", country,
        "paymentMethod", "shippingTotal", "discountTotal",
-       "totalAmount", "couponCode", "shippingService", address, "cartHash",
+       "totalAmount", "couponCode", "shippingService", address, "cartHash", status
        "createdAt", "updatedAt")
     VALUES
       ($1, $2, $3, $4, $5,
        $6, $7, $8,
-       $9, $10, $11, $12, $13,
+       $9, $10, $11, $12, $13, $14
        NOW(), NOW())
     RETURNING *
   `;
@@ -118,11 +166,11 @@ export async function POST(req: NextRequest) {
         couponCode,
         shippingCompany,
         encryptedAddress,
+        status
         // we'll push cartHash below
     ];
 
     // PREPARE: update cart status + hash
-    const status = false;
     const encryptedResponse = encryptSecretNode(JSON.stringify(values));
     values.push(encryptedResponse);
     const updateCartSQL = `
