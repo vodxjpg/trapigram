@@ -1,57 +1,22 @@
 // src/app/api/organizations/[slug]/members/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
-import { auth } from "@/lib/auth";
+import { getContext } from "@/lib/context";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 export async function GET(
-  req: NextRequest,
-  context: { params: Promise<{ slug: string }> }
+  req: NextRequest, { params }: { params: Promise<{ slug: string }> }
 ) {
+  const { slug } = await params;
+
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { userId } = ctx;
+
   try {
-    const { slug } = await context.params;
-    const apiKey = req.headers.get("x-api-key");
-    const internalSecret = req.headers.get("x-internal-secret");
-    let userId: string;
-
-    console.log("Request headers:", {
-      apiKey: !!apiKey, // Log presence, not value, for security
-      internalSecret: !!internalSecret,
-    });
-    console.log("Requested slug:", slug);
-
-    // Authentication
-    if (apiKey) {
-      const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-      if (!valid || !key) {
-        console.log("API key validation failed:", error?.message);
-        return NextResponse.json(
-          { error: error?.message || "Invalid API key" },
-          { status: 401 }
-        );
-      }
-      userId = key.userId;
-      console.log("Authenticated via API key, userId:", userId);
-    } else if (internalSecret === INTERNAL_API_SECRET) {
-      const session = await auth.api.getSession({ headers: req.headers });
-      if (!session) {
-        console.log("Session not found");
-        return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-      }
-      userId = session.user.id;
-      console.log("Authenticated via session, userId:", userId);
-    } else {
-      console.log("No valid auth method provided");
-      return NextResponse.json(
-        { error: "Unauthorized: Provide either an API key or internal secret" },
-        { status: 403 }
-      );
-    }
-
     // Check organization and membership
     const orgQuery = `
       SELECT o.id, o.slug, m."userId", m."organizationId"

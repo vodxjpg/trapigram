@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
-import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
+import { getContext } from "@/lib/context";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -14,51 +14,34 @@ const termSchema = z.object({
 });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ attributeId: string }> }) {
-  const apiKey = req.headers.get("x-api-key");
-  const internalSecret = req.headers.get("x-internal-secret");
-  let organizationId: string;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
-  const { searchParams } = new URL(req.url);
-  const explicitOrgId = searchParams.get("organizationId");
-  const page = Number(searchParams.get("page")) || 1;
-  const pageSize = Number(searchParams.get("pageSize")) || 10;
-  const search = searchParams.get("search") || "";
+  try {
+    const { searchParams } = new URL(req.url);
+    const page = Number(searchParams.get("page")) || 1;
+    const pageSize = Number(searchParams.get("pageSize")) || 10;
+    const search = searchParams.get("search") || "";
 
-  if (apiKey) {
-    const { valid, error } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-    if (!valid) return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-    organizationId = explicitOrgId || "";
-    if (!organizationId) return NextResponse.json({ error: "Organization ID required" }, { status: 400 });
-  } else if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-    organizationId = session.session.activeOrganizationId;
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 });
-  } else {
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) return NextResponse.json({ error: "Unauthorized: No session" }, { status: 403 });
-    organizationId = session.session.activeOrganizationId;
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 });
-  }
+    const { attributeId } = await params;
 
-  const { attributeId } = await params;
-
-  const countQuery = `
+    const countQuery = `
     SELECT COUNT(*) FROM "productAttributeTerms"
     WHERE "attributeId" = $1 AND "organizationId" = $2 ${search ? "AND (name ILIKE $3 OR slug ILIKE $3)" : ""}
   `;
-  const countValues = [attributeId, organizationId, ...(search ? [`%${search}%`] : [])];
+    const countValues = [attributeId, organizationId, ...(search ? [`%${search}%`] : [])];
 
-  const query = `
+    const query = `
     SELECT id, "attributeId", name, slug, "organizationId", "createdAt", "updatedAt"
     FROM "productAttributeTerms"
     WHERE "attributeId" = $1 AND "organizationId" = $2 ${search ? "AND (name ILIKE $3 OR slug ILIKE $3)" : ""}
     ORDER BY "createdAt" DESC
     LIMIT $${countValues.length + 1} OFFSET $${countValues.length + 2}
   `;
-  const values = [...countValues, pageSize, (page - 1) * pageSize];
+    const values = [...countValues, pageSize, (page - 1) * pageSize];
 
-  try {
+
     const countResult = await pool.query(countQuery, countValues);
     const totalRows = Number(countResult.rows[0].count);
     const totalPages = Math.ceil(totalRows / pageSize);
@@ -74,27 +57,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ attr
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ attributeId: string }> }) {
-  const apiKey = req.headers.get("x-api-key");
-  const internalSecret = req.headers.get("x-internal-secret");
-  let organizationId: string;
-
-  if (apiKey) {
-    const { valid, error } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-    if (!valid) return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-    const session = await auth.api.getSession({ headers: req.headers });
-    organizationId = session?.session.activeOrganizationId || "";
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 });
-  } else if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-    organizationId = session.session.activeOrganizationId;
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 });
-  } else {
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) return NextResponse.json({ error: "Unauthorized: No session" }, { status: 403 });
-    organizationId = session.session.activeOrganizationId;
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 });
-  }
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
   try {
     const { attributeId } = await params;

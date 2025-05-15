@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { auth } from "@/lib/auth";
+import { getContext } from "@/lib/context";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 /* helper – make a unique CODE within an org */
 async function uniqueCode(base: string, organizationId: string): Promise<string> {
@@ -24,42 +23,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  /* ---------- auth (same rules as POST /api/coupons) ----------- */
-  const apiKey = req.headers.get("x-api-key");
-  const internalSecret = req.headers.get("x-internal-secret");
-  let organizationId: string;
-
-  const { searchParams } = new URL(req.url);
-  const explicitOrgId = searchParams.get("organizationId");
-
-  const session = await auth.api.getSession({ headers: req.headers });
-  if (session) {
-    organizationId = explicitOrgId || session.session.activeOrganizationId;
-    if (!organizationId)
-      return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
-  } else if (apiKey) {
-    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-    if (!valid || !key)
-      return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-    organizationId = explicitOrgId || "";
-    if (!organizationId)
-      return NextResponse.json(
-        { error: "Organization ID is required in query parameters" },
-        { status: 400 },
-      );
-  } else if (internalSecret === INTERNAL_API_SECRET) {
-    const s = await auth.api.getSession({ headers: req.headers });
-    if (!s)
-      return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-    organizationId = explicitOrgId || s.session.activeOrganizationId;
-    if (!organizationId)
-      return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
-  } else {
-    return NextResponse.json(
-      { error: "Unauthorized: Provide a valid session, API key, or internal secret" },
-      { status: 403 },
-    );
-  }
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
   try {
     const { id: sourceId } = await params;

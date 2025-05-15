@@ -3,51 +3,14 @@ import { writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
+import { getContext } from "@/lib/context"
 
 export async function POST(req: NextRequest) {
-  console.log("Headers received:", Object.fromEntries(req.headers.entries()));
-  const apiKey = req.headers.get("x-api-key");
-  const internalSecret = req.headers.get("x-internal-secret");
-  let organizationId: string;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
   try {
-    if (apiKey) {
-      const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-      if (!valid || !key) {
-        return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-      }
-      // For API key usage, we might need organizationId from the session or a query param
-      const session = await auth.api.getSession({ headers: req.headers });
-      organizationId = session?.session.activeOrganizationId || "";
-      if (!organizationId) {
-        return NextResponse.json(
-          { error: "Organization ID required when using API key" },
-          { status: 400 }
-        );
-      }
-    } else if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
-      const session = await auth.api.getSession({ headers: req.headers });
-      console.log("Session (internal):", session);
-      if (!session) {
-        return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-      }
-      organizationId = session.session.activeOrganizationId;
-      if (!organizationId) {
-        return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
-      }
-    } else {
-      // Fallback for UI requests using session cookie
-      const session = await auth.api.getSession({ headers: req.headers });
-      console.log("Session (fallback):", session);
-      if (!session) {
-        return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 403 });
-      }
-      organizationId = session.session.activeOrganizationId;
-      if (!organizationId) {
-        return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
-      }
-    }
-
     const formData = await req.formData();
     const file = formData.get("file") as File;
 

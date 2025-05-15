@@ -2,12 +2,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
-import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
+import { getContext } from "@/lib/context";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
 
@@ -18,10 +17,14 @@ function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
     throw new Error("ENCRYPTION_KEY or ENCRYPTION_IV not set in environment");
   }
   if (key.length !== 32) {
-    throw new Error(`Invalid ENCRYPTION_KEY: must decode to 32 bytes, got ${key.length}`);
+    throw new Error(
+      `Invalid ENCRYPTION_KEY: must decode to 32 bytes, got ${key.length}`
+    );
   }
   if (iv.length !== 16) {
-    throw new Error(`Invalid ENCRYPTION_IV: must decode to 16 bytes, got ${iv.length}`);
+    throw new Error(
+      `Invalid ENCRYPTION_IV: must decode to 16 bytes, got ${iv.length}`
+    );
   }
   return { key, iv };
 }
@@ -51,27 +54,8 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // auth boilerplate...
-  const apiKey = req.headers.get("x-api-key");
-  const internalSecret = req.headers.get("x-internal-secret");
-  let organizationId: string;
-  const { searchParams } = new URL(req.url);
-  const explicitOrgId = searchParams.get("organizationId");
-
-  const session = await auth.api.getSession({ headers: req.headers });
-  if (session) {
-    organizationId = explicitOrgId || session.session.activeOrganizationId!;
-  } else if (apiKey) {
-    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-    if (!valid || !key) return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-    organizationId = explicitOrgId || "";
-  } else if (internalSecret === INTERNAL_API_SECRET) {
-    const internalSession = await auth.api.getSession({ headers: req.headers });
-    if (!internalSession) return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-    organizationId = explicitOrgId || internalSession.session.activeOrganizationId!;
-  } else {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-  }
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
 
   try {
     const { id: clientId } = await params;
@@ -86,7 +70,7 @@ export async function GET(
       return NextResponse.json({ addresses: [] });
     }
 
-    const addresses = result.rows.map(row => ({
+    const addresses = result.rows.map((row) => ({
       ...row,
       address: decryptSecretNode(row.address),
     }));
@@ -94,7 +78,10 @@ export async function GET(
     return NextResponse.json({ addresses });
   } catch (error: any) {
     console.error("[GET /api/clients/[id]/address] error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }
 
@@ -102,27 +89,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // auth boilerplate same as GET...
-  const apiKey = req.headers.get("x-api-key");
-  const internalSecret = req.headers.get("x-internal-secret");
-  let organizationId: string;
-  const { searchParams } = new URL(req.url);
-  const explicitOrgId = searchParams.get("organizationId");
-
-  const session = await auth.api.getSession({ headers: req.headers });
-  if (session) {
-    organizationId = explicitOrgId || session.session.activeOrganizationId!;
-  } else if (apiKey) {
-    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-    if (!valid || !key) return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-    organizationId = explicitOrgId || "";
-  } else if (internalSecret === INTERNAL_API_SECRET) {
-    const internalSession = await auth.api.getSession({ headers: req.headers });
-    if (!internalSession) return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-    organizationId = explicitOrgId || internalSession.session.activeOrganizationId!;
-  } else {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-  }
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
 
   try {
     const { id: clientId } = await params;
@@ -142,11 +110,7 @@ export async function POST(
       VALUES ($1, $2, $3)
       RETURNING id, "clientId", address
     `;
-    const values = [
-      addressId,
-      parsed.clientId,
-      encryptedAddress,
-    ];
+    const values = [addressId, parsed.clientId, encryptedAddress];
     const result = await pool.query(insertQ, values);
     const newAddress = result.rows[0];
 
@@ -156,6 +120,9 @@ export async function POST(
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 });
     }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }

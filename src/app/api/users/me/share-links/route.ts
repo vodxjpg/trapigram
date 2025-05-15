@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
 import { propagateDeleteDeep } from "@/lib/propagate-delete"; 
+import { getContext } from "@/lib/context";
 
 export async function GET(req: NextRequest) {
-  try {
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
-    }
-    const userId = session.user.id;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { userId } = ctx;
 
+  try {
     // Fetch share links
     const shareLinks = await db
       .selectFrom("warehouseShareLink")
@@ -86,13 +84,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  try {
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
-    }
-    const userId = session.user.id;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { userId } = ctx;
 
+  try {
     const { shareLinkId } = await req.json();
     if (!shareLinkId) {
       return NextResponse.json({ error: "Share link ID is required" }, { status: 400 });

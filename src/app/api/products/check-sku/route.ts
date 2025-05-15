@@ -1,31 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { getContext } from "@/lib/context";
 
 export async function GET(req: NextRequest) {
-  const apiKey = req.headers.get("x-api-key")
-  const internalSecret = req.headers.get("x-internal-secret")
-  let organizationId: string
-
-  if (apiKey) {
-    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } })
-    if (!valid || !key) {
-      return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 })
-    }
-    const session = await auth.api.getSession({ headers: req.headers })
-    organizationId = session?.session.activeOrganizationId || ""
-    if (!organizationId) {
-      return NextResponse.json({ error: "No active organization" }, { status: 400 })
-    }
-  } else {
-    const session = await auth.api.getSession({ headers: req.headers })
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 403 })
-    }
-    organizationId = session.session.activeOrganizationId
-    if (!organizationId) {
-      return NextResponse.json({ error: "No active organization in session" }, { status: 400 })
-    }
-  }
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
 
   const { searchParams } = new URL(req.url)
   const sku = searchParams.get("sku")

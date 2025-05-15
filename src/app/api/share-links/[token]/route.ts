@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
+import { getContext } from "@/lib/context";
 
 export async function GET(req: NextRequest, { params }: { params: { token: string } }) {
+
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { userId } = ctx;
+  const token = params.token;
+
   try {
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
-    }
-    const userId = session.user.id;
-    const token = params.token;
 
     // Fetch share link
     const shareLink = await db

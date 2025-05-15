@@ -2,52 +2,18 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
-import { auth } from "@/lib/auth";
+import { getContext } from "@/lib/context";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 export async function GET(req: NextRequest) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
   try {
-    const apiKey = req.headers.get("x-api-key");
-    const internalSecret = req.headers.get("x-internal-secret");
-    let organizationId: string | undefined;
-
-    // Prefer session: get session and extract the active organization ID.
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (session && session.session && session.session.activeOrganizationId) {
-      organizationId = session.session.activeOrganizationId;
-    }
-    // Alternatively, if an API key is provided.
-    else if (apiKey) {
-      const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-      if (!valid || !key) {
-        return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-      }
-      // You could set organizationId from the API key object if available.
-      // For example, if your API key object contains organizationId:
-      organizationId = key.organizationId;
-    }
-    // Alternatively, check the internal secret.
-    else if (internalSecret === INTERNAL_API_SECRET) {
-      const internalSession = await auth.api.getSession({ headers: req.headers });
-      if (!internalSession || !internalSession.session || !internalSession.session.activeOrganizationId) {
-        return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-      }
-      organizationId = internalSession.session.activeOrganizationId;
-    } else {
-      return NextResponse.json(
-        { error: "Unauthorized: Provide a valid session, API key, or internal secret" },
-        { status: 403 }
-      );
-    }
-
-    if (!organizationId) {
-      return NextResponse.json({ error: "No active organization found in the session" }, { status: 400 });
-    }
-
     // Query the organization table for the countries using the organizationId.
     const query = `
       SELECT countries

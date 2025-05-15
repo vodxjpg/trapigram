@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { v4 as uuidv4 } from "uuid"
 import { db } from "@/lib/db"
-import { auth } from "@/lib/auth"
+import { getContext } from "@/lib/context";
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                            */
@@ -44,14 +44,11 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
   try {
-    /* ---------- auth ------------------------------------------- */
-    const session = await auth.api.getSession({ headers: req.headers })
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    const organizationId = session.session.activeOrganizationId
-    if (!organizationId) return NextResponse.json({ error: "No active organization" }, { status: 400 })
-
-    const { id: sourceProductId } = await params
+        const { id: sourceProductId } = await params
 
     /* ---------- source product --------------------------------- */
     const source = await db

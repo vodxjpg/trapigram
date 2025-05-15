@@ -2,7 +2,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { z } from "zod"
 import { db } from "@/lib/db"
-import { auth } from "@/lib/auth"
 import { v4 as uuidv4 } from "uuid"
 import { getContext } from "@/lib/context";
 
@@ -73,11 +72,11 @@ function splitPrices(pr: Record<string, { regular: number; sale: number | null }
 /*  GET – fixed pagination                                            */
 /* ------------------------------------------------------------------ */
 export async function GET(req: NextRequest) {
-  try {
-    const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
-    const { organizationId, tenantId, userId } = ctx;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId, tenantId } = ctx;
 
+  try {
     const { searchParams } = new URL(req.url)
     const page = parseInt(searchParams.get("page") || "1")
     const pageSize = parseInt(searchParams.get("pageSize") || "10")
@@ -123,7 +122,7 @@ export async function GET(req: NextRequest) {
       ])
       .where("id", "in", productIds)
       .execute()
-    
+
 
     /* -------- STEP 3 – related data in bulk --------------------- */
     const stockRows = await db
@@ -257,7 +256,7 @@ function mergePriceMaps(
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { organizationId, tenantId, userId } = ctx;
+  const { organizationId, userId } = ctx;
 
   /* ----------  main logic  --------------------------------------- */
   try {

@@ -83,7 +83,7 @@ interface ShippingCompany {
 export default function CreateOrderPage() {
   // — Clients
   const [clients, setClients] = useState<
-    { id: string; username: string; country: string }[]
+    { id: string; firstName: string, lastName: string, username: string, email: string, country: string }[]
   >([]);
   const [clientsLoading, setClientsLoading] = useState(true);
 
@@ -600,7 +600,7 @@ export default function CreateOrderPage() {
                   <SelectContent>
                     {clients.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
-                        {c.username}
+                        {c.firstName} {c.lastName} — {c.username} ({c.email})
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -970,7 +970,7 @@ export default function CreateOrderPage() {
                   <div className="flex justify-between">
                     <span>Client:</span>
                     <span className="font-medium">
-                      {clients.find((c) => c.id === selectedClient)?.username}
+                      {clients.find((c) => c.id === selectedClient)?.email}
                     </span>
                   </div>
                   <div className="flex justify-between">

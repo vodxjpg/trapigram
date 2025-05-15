@@ -3,12 +3,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
-import { auth } from "@/lib/auth";
+import { getContext } from "@/lib/context";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 // Schema for PATCH body
 const shippingMethodUpdateSchema = z.object({
@@ -16,32 +15,17 @@ const shippingMethodUpdateSchema = z.object({
   countries: z.array(z.string()).optional(),
 });
 
-async function authenticate(req: NextRequest) {
-  const apiKey = req.headers.get("x-api-key");
-  const internalSecret = req.headers.get("x-internal-secret");
-  const session = await auth.api.getSession({ headers: req.headers });
-  if (session) return session.session.activeOrganizationId!;
-  if (apiKey) {
-    const { valid, key, error } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-    if (!valid || !key) throw new Error(error?.message || "Invalid API key");
-    return key.userId; // or however you map API‐key to orgId
-  }
-  if (internalSecret === INTERNAL_API_SECRET) {
-    const internalSession = await auth.api.getSession({ headers: req.headers });
-    if (!internalSession) throw new Error("Unauthorized session");
-    return internalSession.session.activeOrganizationId!;
-  }
-  throw new Error("Unauthorized");
-}
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const organizationId = await authenticate(req);
-    const { id } = await params;
 
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
+  try {
+    const { id } = await params;
     const { rows } = await pool.query(
       `
       SELECT id, "organizationId", name, countries, "createdAt", "updatedAt"
@@ -69,8 +53,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
   try {
-    const organizationId = await authenticate(req);
     const { id } = await params;
     const body = await req.json();
     body.countries = JSON.parse(body.countries)
@@ -124,8 +111,11 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
   try {
-    const organizationId = await authenticate(req);
     const { id } = await params;
 
     const { rows } = await pool.query(

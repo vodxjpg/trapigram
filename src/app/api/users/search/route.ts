@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
-
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
+import { getContext } from "@/lib/context";
 
 export async function GET(req: NextRequest) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+
   try {
-    const internalSecret = req.headers.get("x-internal-secret");
-    const session = await auth.api.getSession({ headers: req.headers });
-
-    if (!session && internalSecret !== INTERNAL_API_SECRET) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { searchParams } = new URL(req.url);
     const email = searchParams.get("email");
 

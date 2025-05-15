@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
-import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
+import { getContext } from "@/lib/context";
 
 // Database connection
 const pool = new Pool({
@@ -20,83 +20,44 @@ const categorySchema = z.object({
 
 // GET handler: Fetch product categories
 export async function GET(req: NextRequest) {
-  console.log("Headers received:", Object.fromEntries(req.headers.entries()));
-  const apiKey = req.headers.get("x-api-key");
-  const internalSecret = req.headers.get("x-internal-secret");
-  let organizationId: string;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
-  const { searchParams } = new URL(req.url);
-  const explicitOrgId = searchParams.get("organizationId");
+  try {
+    const { searchParams } = new URL(req.url);
+    const page = Number(searchParams.get("page")) || 1;
+    const pageSize = Number(searchParams.get("pageSize")) || 10;
+    const search = searchParams.get("search") || "";
 
-  if (apiKey) {
-    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-    if (!valid || !key) {
-      return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-    }
-    organizationId = explicitOrgId || "";
-    if (!organizationId) {
-      return NextResponse.json(
-        { error: "Organization ID is required in query parameters" },
-        { status: 400 }
-      );
-    }
-  } else if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
-    const session = await auth.api.getSession({ headers: req.headers });
-    console.log("Session:", session);
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-    }
-    organizationId = session.session.activeOrganizationId;
-    if (!organizationId) {
-      return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
-    }
-  } else {
-    // Fallback for UI requests using session cookie
-    const session = await auth.api.getSession({ headers: req.headers });
-    console.log("Session (fallback):", session);
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 403 });
-    }
-    organizationId = session.session.activeOrganizationId;
-    if (!organizationId) {
-      return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
-    }
-  }
-
-  // Pagination and search parameters
-  const page = Number(searchParams.get("page")) || 1;
-  const pageSize = Number(searchParams.get("pageSize")) || 10;
-  const search = searchParams.get("search") || "";
-
-  // Query for total count
-  let countQuery = `
+    // Query for total count
+    let countQuery = `
     SELECT COUNT(*) FROM "productCategories"
     WHERE "organizationId" = $1
   `;
-  const countValues: any[] = [organizationId];
-  if (search) {
-    countQuery += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
-    countValues.push(`%${search}%`);
-  }
+    const countValues: any[] = [organizationId];
+    if (search) {
+      countQuery += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
+      countValues.push(`%${search}%`);
+    }
 
-  // Main query for categories
-  let query = `
+    // Main query for categories
+    let query = `
     SELECT id, name, slug, image, "order", "parentId", "organizationId", "createdAt", "updatedAt"
     FROM "productCategories"
     WHERE "organizationId" = $1
   `;
-  const values: any[] = [organizationId];
-  if (search) {
-    query += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
-    values.push(`%${search}%`);
-  }
-  query += `
+    const values: any[] = [organizationId];
+    if (search) {
+      query += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
+      values.push(`%${search}%`);
+    }
+    query += `
     ORDER BY "order" ASC, "createdAt" DESC
     LIMIT $${values.length + 1} OFFSET $${values.length + 2}
   `;
-  values.push(pageSize, (page - 1) * pageSize);
+    values.push(pageSize, (page - 1) * pageSize);
 
-  try {
     const countResult = await pool.query(countQuery, countValues);
     const totalRows = Number(countResult.rows[0].count);
     const totalPages = Math.ceil(totalRows / pageSize);

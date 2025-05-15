@@ -2,11 +2,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
-import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
+import { getContext } from "@/lib/context";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 /* ---------------------- Schema ---------------------- */
 const clientSchema = z.object({
@@ -19,41 +18,12 @@ const clientSchema = z.object({
   country: z.string().optional().nullable(),
 });
 
-/* ---------------------- Helpers ---------------------- */
-function missingOrg() {
-  return NextResponse.json(
-    { error: "organizationId query parameter is required" },
-    { status: 400 },
-  );
-}
-
-/** resolve organization ID based on headers & query params */
-async function resolveOrg(req: NextRequest): Promise<string | NextResponse> {
-  const apiKey = req.headers.get("x-api-key");
-  const intSecret = req.headers.get("x-internal-secret");
-  const explicit = new URL(req.url).searchParams.get("organizationId");
-
-  if (apiKey) {
-    const { valid, error } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-    if (!valid) return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-    return explicit || missingOrg();
-  }
-
-  if (intSecret === INTERNAL_API_SECRET) {
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-    return explicit || session.session.activeOrganizationId;
-  }
-
-  return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-}
-
 /* ---------------------- GET /api/clients ---------------------- */
 export async function GET(req: NextRequest) {
-  const org = await resolveOrg(req);
-  console.log(org+"---")
-  if (org instanceof NextResponse) return org;
-  const organizationId = org;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
 
   /* pagination & search */
   const params = new URL(req.url).searchParams;
@@ -99,9 +69,9 @@ export async function GET(req: NextRequest) {
 
 /* ---------------------- POST /api/clients ---------------------- */
 export async function POST(req: NextRequest) {
-  const org = await resolveOrg(req);
-  if (org instanceof NextResponse) return org;
-  const organizationId = org;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
   try {
     const parsed = clientSchema.parse(await req.json());
