@@ -1,59 +1,61 @@
-"use client"
+"use client";
 
-import type React from "react"
-import { useState, useEffect } from "react"
-import { Eye, EyeOff, Copy, Trash2 } from "lucide-react"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
-import { authClient } from "@/lib/auth-client" // Import Better Auth client
-import toast from "react-hot-toast"
+import type React from "react";
+import { useState, useEffect } from "react";
+import { Eye, EyeOff, Copy, Trash2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { authClient } from "@/lib/auth-client"; // Import Better Auth client
+import toast from "react-hot-toast";
 
 export function ApiKeyGenerator() {
-  const [apiKey, setApiKey] = useState("") // Full API key for the input field
-  const [apiKeyName, setApiKeyName] = useState("")
-  const [showApiKey, setShowApiKey] = useState(false)
-  const [loadingGenerate, setLoadingGenerate] = useState(false)
-  const [loadingUpdate, setLoadingUpdate] = useState(false)
-  const [loadingDelete, setLoadingDelete] = useState<string | null>(null) // Track deleting key
-  const [apiKeys, setApiKeys] = useState<any[]>([]) // List of user's API keys
-  const [currentKeyId, setCurrentKeyId] = useState<string | null>(null) // Track selected key
-  const [fullKeys, setFullKeys] = useState<Record<string, string>>({}) // Store full keys by keyId
+  const [apiKey, setApiKey] = useState(""); // Full API key for the input field
+  const [apiKeyName, setApiKeyName] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [loadingGenerate, setLoadingGenerate] = useState(false);
+  const [loadingUpdate, setLoadingUpdate] = useState(false);
+  const [loadingDelete, setLoadingDelete] = useState<string | null>(null); // Track deleting key
+  const [apiKeys, setApiKeys] = useState<any[]>([]); // List of user's API keys
+  const [currentKeyId, setCurrentKeyId] = useState<string | null>(null); // Track selected key
+  const [fullKeys, setFullKeys] = useState<Record<string, string>>({}); // Store full keys by keyId
 
   useEffect(() => {
-    fetchApiKeys()
-  }, [])
+    fetchApiKeys();
+  }, []);
 
   const fetchApiKeys = async () => {
     try {
-      const { data, error } = await authClient.apiKey.list()
+      const { data, error } = await authClient.apiKey.list();
       if (error) {
-        toast.error("Failed to load API keys.")
-        return
+        toast.error("Failed to load API keys.");
+        return;
       }
-      setApiKeys(data || [])
+      setApiKeys(data || []);
       if (data && data.length > 0 && !apiKey) {
-        const latestKey = data[data.length - 1]
-        setCurrentKeyId(latestKey.id)
+        const latestKey = data[data.length - 1];
+        setCurrentKeyId(latestKey.id);
       }
     } catch (err) {
-      toast.error("An unexpected error occurred while fetching API keys.")
+      toast.error("An unexpected error occurred while fetching API keys.");
     }
-  }
+  };
 
   const toggleVisibility = () => {
-    setShowApiKey(!showApiKey)
-  }
+    setShowApiKey(!showApiKey);
+  };
 
   const handleGenerate = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setLoadingGenerate(true)
+    event.preventDefault();
+    setLoadingGenerate(true);
 
-    const isDuplicate = apiKeys.some((key) => key.name === apiKeyName)
+    const isDuplicate = apiKeys.some((key) => key.name === apiKeyName);
     if (isDuplicate) {
-      toast.error("An API key with this name already exists. Please choose a different name.")
-      setLoadingGenerate(false)
-      return
+      toast.error(
+        "An API key with this name already exists. Please choose a different name."
+      );
+      setLoadingGenerate(false);
+      return;
     }
 
     try {
@@ -62,103 +64,111 @@ export function ApiKeyGenerator() {
         expiresIn: 60 * 60 * 24 * 30, // 30 days expiration
         prefix: "tp_", // Add tp_ prefix
         metadata: { createdBy: "user" },
-      })
+      });
 
       if (error) {
-        toast.error(error.message || "Failed to generate API key.")
+        toast.error(error.message || "Failed to generate API key.");
       } else if (data) {
-        setApiKey(data.key) // Show full key temporarily
-        setCurrentKeyId(data.id)
-        setFullKeys((prev) => ({ ...prev, [data.id]: data.key }))
-        await fetchApiKeys()
-        toast.success("API key generated successfully!")
+        setApiKey(data.key); // Show full key temporarily
+        setCurrentKeyId(data.id);
+        setFullKeys((prev) => ({ ...prev, [data.id]: data.key }));
+        await fetchApiKeys();
+        toast.success("API key generated successfully!");
         // Clear inputs
-        setApiKey("")
-        setApiKeyName("")
-        setCurrentKeyId(null)
+        setApiKey("");
+        setApiKeyName("");
+        setCurrentKeyId(null);
       }
     } catch (err) {
-      toast.error("An unexpected error occurred while generating API key.")
+      toast.error("An unexpected error occurred while generating API key.");
     } finally {
-      setLoadingGenerate(false)
+      setLoadingGenerate(false);
     }
-  }
+  };
 
   const handleUpdate = async () => {
     if (!currentKeyId) {
-      toast.error("No API key selected to update.")
-      return
+      toast.error("No API key selected to update.");
+      return;
     }
 
-    setLoadingUpdate(true)
+    setLoadingUpdate(true);
 
     try {
       const { data, error } = await authClient.apiKey.update({
         keyId: currentKeyId,
         name: apiKeyName,
-      })
+      });
 
       if (error) {
-        toast.error(error.message || "Failed to update API key.")
+        toast.error(error.message || "Failed to update API key.");
       } else if (data) {
-        setApiKey("")
-        setApiKeyName("")
-        setCurrentKeyId(null)
-        await fetchApiKeys()
-        toast.success("API key updated successfully!")
+        setApiKey("");
+        setApiKeyName("");
+        setCurrentKeyId(null);
+        await fetchApiKeys();
+        toast.success("API key updated successfully!");
       }
     } catch (err) {
-      toast.error("An unexpected error occurred while updating API key.")
+      toast.error("An unexpected error occurred while updating API key.");
     } finally {
-      setLoadingUpdate(false)
+      setLoadingUpdate(false);
     }
-  }
+  };
 
   const handleDelete = async (keyId: string) => {
-    setLoadingDelete(keyId)
+    setLoadingDelete(keyId);
 
     try {
-      const { data, error } = await authClient.apiKey.delete({ keyId })
+      const { data, error } = await authClient.apiKey.delete({ keyId });
       if (error) {
-        toast.error(error.message || "Failed to delete API key.")
+        toast.error(error.message || "Failed to delete API key.");
       } else if (data.success) {
-        await fetchApiKeys()
+        await fetchApiKeys();
         if (currentKeyId === keyId) {
-          setApiKey("")
-          setApiKeyName("")
-          setCurrentKeyId(null)
+          setApiKey("");
+          setApiKeyName("");
+          setCurrentKeyId(null);
         }
         setFullKeys((prev) => {
-          const newKeys = { ...prev }
-          delete newKeys[keyId]
-          return newKeys
-        })
-        toast.success("API key deleted successfully!")
+          const newKeys = { ...prev };
+          delete newKeys[keyId];
+          return newKeys;
+        });
+        toast.success("API key deleted successfully!");
       }
     } catch (err) {
-      toast.error("An unexpected error occurred while deleting API key.")
+      toast.error("An unexpected error occurred while deleting API key.");
     } finally {
-      setLoadingDelete(null)
+      setLoadingDelete(null);
     }
-  }
+  };
 
   const handleCopy = (keyId: string) => {
-    const fullKey = fullKeys[keyId]
+    const fullKey = fullKeys[keyId];
     if (fullKey) {
-      navigator.clipboard.writeText(fullKey).then(() => {
-        toast.success("Full API key copied to clipboard!")
-      }).catch(() => {
-        toast.error("Failed to copy API key.")
-      })
+      navigator.clipboard
+        .writeText(fullKey)
+        .then(() => {
+          toast.success("Full API key copied to clipboard!");
+        })
+        .catch(() => {
+          toast.error("Failed to copy API key.");
+        });
     } else {
-      const key = apiKeys.find((k) => k.id === keyId)
-      navigator.clipboard.writeText(key.start + "...").then(() => {
-        toast.error("Only the partial key was copied. Regenerate this key to copy the full value.")
-      }).catch(() => {
-        toast.error("Failed to copy API key.")
-      })
+      const key = apiKeys.find((k) => k.id === keyId);
+      navigator.clipboard
+        .writeText(key.start + "...")
+        .then(() => {
+          toast.error(
+            "Only the partial key was copied. Regenerate this key to copy the full value."
+          );
+        })
+        .catch(() => {
+          toast.error("Failed to copy API key.");
+        });
     }
-  }
+  };
 
   return (
     <div className="space-y-6">
@@ -178,14 +188,6 @@ export function ApiKeyGenerator() {
         <div className="space-y-2">
           <Label htmlFor="apiKey">API Key</Label>
           <div className="relative">
-            <Input
-              id="apiKey"
-              type={showApiKey ? "text" : "password"}
-              value={apiKey}
-              readOnly
-              placeholder="Your API key will appear here after generation"
-              className="pr-10"
-            />
             <Button
               type="button"
               variant="ghost"
@@ -204,12 +206,17 @@ export function ApiKeyGenerator() {
         </div>
 
         <div className="flex space-x-4">
-          <Button type="submit" disabled={loadingGenerate || apiKeyName.trim() === ""}>
+          <Button
+            type="submit"
+            disabled={loadingGenerate || apiKeyName.trim() === ""}
+          >
             {loadingGenerate ? "Generating..." : "Generate API Key"}
           </Button>
           <Button
             type="button"
-            disabled={loadingUpdate || apiKeyName.trim() === "" || !currentKeyId}
+            disabled={
+              loadingUpdate || apiKeyName.trim() === "" || !currentKeyId
+            }
             onClick={handleUpdate}
           >
             {loadingUpdate ? "Updating..." : "Update API Key"}
@@ -221,7 +228,8 @@ export function ApiKeyGenerator() {
         <div className="space-y-4">
           <h3 className="text-lg font-semibold">Your API Keys</h3>
           <p className="text-sm text-muted-foreground">
-            Note: Full keys are only available right after generation. Regenerate older keys to copy their full values.
+            Note: Full keys are only available right after generation.
+            Regenerate older keys to copy their full values.
           </p>
           <ul className="space-y-2">
             {apiKeys.map((key) => (
@@ -231,7 +239,9 @@ export function ApiKeyGenerator() {
               >
                 <div>
                   <p className="font-medium">{key.name}</p>
-                  <p className="text-sm text-muted-foreground">{key.start}...</p>
+                  <p className="text-sm text-muted-foreground">
+                    {key.start}...
+                  </p>
                 </div>
                 <div className="flex space-x-2">
                   <Button
@@ -257,5 +267,5 @@ export function ApiKeyGenerator() {
         </div>
       )}
     </div>
-  )
+  );
 }

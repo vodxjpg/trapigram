@@ -34,7 +34,38 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const countryClient = clientCountry.country
 
     if (countryCart !== countryClient) {
-      return console.log("_____________________")
+      const updateCartCountry = `
+      UPDATE carts
+      SET country = '${countryClient}'
+      WHERE id = '${id}'
+      `
+      await pool.query(updateCartCountry);
+
+      console.log("_____________________")
+
+      const cartProductsQ = `
+        SELECT 
+          p.id, p.title, p.description, p.image, p.sku,
+          cp.quantity, cp."unitPrice"
+        FROM products p
+        JOIN "cartProducts" cp ON p.id = cp."productId"
+        WHERE cp."cartId" = $1
+      `;
+      const resultCartProducts = await pool.query(cartProductsQ, [id]);
+
+      resultCartProducts.rows.map(async (cp: any) => {
+        const countryProducts = `
+        SELECT "regularPrice" FROM products WHERE id='${cp.id}'
+      `
+        const result = await pool.query(countryProducts);
+
+        const updateCart = `UPDATE "cartProducts" SET "unitPrice" = ${result.rows[0].regularPrice[countryClient]} WHERE "productId" = '${cp.id}' AND "cartId" = '${id}' `
+        await pool.query(updateCart);
+      })
+
+      const newResultCartProducts = await pool.query(cartProductsQ, [id]);
+
+      return NextResponse.json({ resultCartProducts: newResultCartProducts.rows }, { status: 201 });
     }
 
     const cartProductsQ = `

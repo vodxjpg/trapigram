@@ -71,9 +71,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             await pool.query(updateProductCart);
 
             const productQuery = `
-        SELECT * FROM products
-        WHERE id = '${body.productId}'
-      `;
+                SELECT * FROM products
+                WHERE id = '${body.productId}'
+            `;
 
             const resultProduct = await pool.query(productQuery);
 
@@ -91,19 +91,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             return NextResponse.json(cartItem, { status: 201 });
         } else {
             const productQuery = `
-        SELECT * FROM products
-        WHERE id = '${body.productId}'
-      `;
+                SELECT * FROM products
+                WHERE id = '${body.productId}'
+            `;
 
             const resultProduct = await pool.query(productQuery);
             body.unitPrice = body.price
             const data = cartProductSchema.parse(body); // throws if invalid        
 
             const insert = `
-        INSERT INTO "cartProducts" (id, "cartId", "productId", quantity, "unitPrice", "createdAt", "updatedAt")
-        VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
-        RETURNING *
-      `;
+                INSERT INTO "cartProducts" (id, "cartId", "productId", quantity, "unitPrice", "createdAt", "updatedAt")
+                VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+                RETURNING *
+            `;
             const vals = [
                 cartProductId,
                 id,

@@ -251,7 +251,6 @@ export default function CreateOrderPage() {
       });
       const dataP = await resP.json();
       const { resultCartProducts } = dataP;
-      console.log(resultCartProducts);
       if (Array.isArray(resultCartProducts)) {
         setOrderItems(
           resultCartProducts.map((r: any) => ({
@@ -357,6 +356,7 @@ export default function CreateOrderPage() {
           productId: selectedProduct,
           quantity,
           price: unitPrice,
+          country: clientCountry,
         }),
       });
       if (!res.ok) {
