@@ -42,28 +42,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       await pool.query(updateCartCountry);
 
       const cartProductsQ = `
-        SELECT 
-          p.id, p.title, p.description, p.image, p.sku,
-          cp.quantity, cp."unitPrice"
-        FROM products p
-        JOIN "cartProducts" cp ON p.id = cp."productId"
-        WHERE cp."cartId" = $1
+        SELECT * FROM "cartProducts" WHERE "cartId" = $1
       `;
       const resultCartProducts = await pool.query(cartProductsQ, [id]);
 
       resultCartProducts.rows.map(async (cp: any) => {
         const countryProducts = `
-        SELECT "regularPrice" FROM products WHERE id='${cp.id}'
+        SELECT "regularPrice" FROM products WHERE id='${cp.productId}'
       `
         const result = await pool.query(countryProducts);
 
-        const updateCart = `UPDATE "cartProducts" SET "unitPrice" = ${result.rows[0].regularPrice[countryClient]} WHERE "productId" = '${cp.id}' AND "cartId" = '${id}' `
+        const updateCart = `UPDATE "cartProducts" SET "unitPrice" = ${result.rows[0].regularPrice[countryClient]}, "updatedAt" = NOW() WHERE "productId" = '${cp.productId}' AND "cartId" = '${id}' `
         await pool.query(updateCart);
+        await pool.query(cartProductsQ, [id])
       })
-
-      const newResultCartProducts = await pool.query(cartProductsQ, [id]);
-
-      return NextResponse.json({ resultCartProducts: newResultCartProducts.rows }, { status: 201 });
     }
 
     const cartProductsQ = `
@@ -75,6 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         WHERE cp."cartId" = $1
       `;
     const resultCartProducts = await pool.query(cartProductsQ, [id]);
+    console.log(resultCartProducts.rows)
     return NextResponse.json({ resultCartProducts: resultCartProducts.rows }, { status: 201 });
   } catch (error: any) {
     console.error("[GET /api/coupons/[id]] error:", error);
