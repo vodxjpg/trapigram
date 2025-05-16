@@ -31,17 +31,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Search,
   CalendarIcon,
   MoreVertical,
-  CreditCard,
   Mail,
   XCircle,
 } from "lucide-react";
 import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
+import { toast } from "sonner";
 
 // Define order status types
 type OrderStatus = "open" | "paid" | "cancelled" | "completed";
@@ -79,7 +79,7 @@ export default function OrdersPage() {
     to: Date | undefined;
   }>({ from: undefined, to: undefined });
 
-  // — fetch orders from /api/orders on mount
+  // — fetch orders from /api/order on mount
   useEffect(() => {
     setLoading(true);
     fetch("/api/order")
@@ -99,8 +99,8 @@ export default function OrdersPage() {
   useEffect(() => {
     let result = orders.map((o) => ({
       ...o,
-      createdAt: new Date(o.createdAt).toString(), // ensure Date
-    })) as unknown as Order[];
+      createdAt: new Date(o.createdAt).toString(),
+    })) as Order[];
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -152,6 +152,31 @@ export default function OrdersPage() {
     }
   };
 
+  // Function to change order status via API
+  const handleStatusChange = async (
+    orderId: string,
+    newStatus: OrderStatus
+  ) => {
+    try {
+      const res = await fetch(`/api/order/${orderId}/change-status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to update status");
+      }
+      // Optimistically update UI
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+      );
+      toast.success(`Order status changed`);
+    } catch (err) {
+      console.error(err);
+      alert("Error updating order status");
+    }
+  };
+
   const handleOrderAction = (orderId: string, action: string) => {
     console.log(`Performing ${action} on order ${orderId}`);
     if (action === "cancel") {
@@ -168,11 +193,8 @@ export default function OrdersPage() {
   const formatDate = (dateStr: string) =>
     format(new Date(dateStr), "MMM dd, yyyy");
 
-  // Function to handle date filter change
   const handleDateFilterChange = (value: DateFilterOption) => {
     setDateFilter(value);
-
-    // Reset custom date range if not using custom filter
     if (value !== "custom") {
       setDateRange({ from: undefined, to: undefined });
     }
@@ -223,7 +245,7 @@ export default function OrdersPage() {
             {/* Status Filter */}
             <Select
               value={statusFilter}
-              onValueChange={(value) => setStatusFilter(value)}
+              onValueChange={(v) => setStatusFilter(v)}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Filter by status" />
@@ -240,8 +262,8 @@ export default function OrdersPage() {
             {/* Date Filter */}
             <Select
               value={dateFilter}
-              onValueChange={(value) =>
-                handleDateFilterChange(value as DateFilterOption)
+              onValueChange={(v) =>
+                handleDateFilterChange(v as DateFilterOption)
               }
             >
               <SelectTrigger>
@@ -326,11 +348,55 @@ export default function OrdersPage() {
                         {order.firstName} {order.lastName} — {order.username} (
                         {order.email})
                       </TableCell>
+                      {/* Status Select showing only badges */}
                       <TableCell>
-                        <Badge className={getStatusColor(order.status)}>
-                          {order.status.charAt(0).toUpperCase() +
-                            order.status.slice(1)}
-                        </Badge>
+                        <Select
+                          value={order.status}
+                          onValueChange={(v) =>
+                            handleStatusChange(order.id, v as OrderStatus)
+                          }
+                        >
+                          <SelectTrigger className="w-auto flex justify-center">
+                            <Badge className={getStatusColor(order.status)}>
+                              {order.status.charAt(0).toUpperCase() +
+                                order.status.slice(1)}
+                            </Badge>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem
+                              value="open"
+                              className="w-auto flex justify-left"
+                            >
+                              <Badge className={getStatusColor("open")}>
+                                Open
+                              </Badge>
+                            </SelectItem>
+                            <SelectItem
+                              value="paid"
+                              className="w-auto flex justify-left"
+                            >
+                              <Badge className={getStatusColor("paid")}>
+                                Paid
+                              </Badge>
+                            </SelectItem>
+                            <SelectItem
+                              value="completed"
+                              className="w-auto flex justify-left"
+                            >
+                              <Badge className={getStatusColor("completed")}>
+                                Completed
+                              </Badge>
+                            </SelectItem>
+                            <SelectItem
+                              value="cancelled"
+                              className="w-auto flex justify-left"
+                            >
+                              <Badge className={getStatusColor("cancelled")}>
+                                Cancelled
+                              </Badge>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell>{formatDate(order.createdAt)}</TableCell>
                       <TableCell>${order.total.toFixed(2)}</TableCell>

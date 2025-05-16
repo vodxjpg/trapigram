@@ -41,8 +41,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       `
       await pool.query(updateCartCountry);
 
-      console.log("_____________________")
-
       const cartProductsQ = `
         SELECT 
           p.id, p.title, p.description, p.image, p.sku,
