@@ -421,19 +421,6 @@ export default function OrdersPage() {
                               <Mail className="mr-2 h-4 w-4" />
                               <span>Send Payment Notification</span>
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() =>
-                                handleOrderAction(order.id, "cancel")
-                              }
-                              className="text-red-600"
-                              disabled={
-                                order.status === "cancelled" ||
-                                order.status === "completed"
-                              }
-                            >
-                              <XCircle className="mr-2 h-4 w-4" />
-                              <span>Cancel Order</span>
-                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
