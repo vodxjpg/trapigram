@@ -429,7 +429,6 @@ export default function CreateOrderPage() {
         throw new Error(error.error);
       }
       const data = await res.json();
-      console.log(data);
       const {
         discountAmount: amt,
         discountType: dt,
