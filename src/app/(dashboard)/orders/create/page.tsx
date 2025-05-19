@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import {
   CreditCard,
@@ -81,6 +82,7 @@ interface ShippingCompany {
 }
 
 export default function CreateOrderPage() {
+  const router = useRouter();
   // — Clients
   const [clients, setClients] = useState<
     {
@@ -427,6 +429,7 @@ export default function CreateOrderPage() {
         throw new Error(error.error);
       }
       const data = await res.json();
+      console.log(data);
       const {
         discountAmount: amt,
         discountType: dt,
@@ -575,6 +578,7 @@ export default function CreateOrderPage() {
       }
       toast.success("Order created successfully!");
       cancelOrder();
+      router.push(`/orders/${data.id}`);
     } catch (err: any) {
       console.error("createOrder error:", err);
       toast.error(err.message || "Could not create order");

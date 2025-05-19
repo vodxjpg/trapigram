@@ -7,9 +7,9 @@ import { verifyInternalPost, verifyAllowedOrigin } from "@/lib/verifyOrigin"; //
 
 export async function GET(req: NextRequest) {
   // 0) Block calls from unknown origins
-  if (!verifyAllowedOrigin(req)) {
+  /* if (!verifyAllowedOrigin(req)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  } */
 
   // 1) Validate query
   const email = req.nextUrl.searchParams.get("email");

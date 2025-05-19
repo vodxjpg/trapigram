@@ -180,7 +180,9 @@ export default function OrderView() {
         <Button
           variant="ghost"
           className="mb-2 flex items-center gap-1 pl-0 hover:bg-transparent"
-          onClick={() => window.history.back()}
+          onClick={() => {
+            window.history.back();
+          }}
         >
           <ArrowLeft className="h-4 w-4" />
           <span>Back to Orders</span>

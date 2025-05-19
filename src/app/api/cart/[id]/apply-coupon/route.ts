@@ -50,7 +50,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
         const { id } = await params;
         const body = await req.json();
-        const data = cartProductSchema.parse(body); // throws if invalid        
+        const data = cartProductSchema.parse(body); // throws if invalid    
 
         const coupon = `
         SELECT * FROM coupons 
@@ -120,7 +120,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
             if (total > maximum) {
                 if (appliedCoupon.rows[0].discountType === "percentage") {
-                    discountAmount = ((appliedCoupon.rows[0].expendingLimit * appliedCoupon.rows[0].discountAmount) / 100).toFixed(2)
+                    if (maximum > 0) {
+                        discountAmount = ((maximum * appliedCoupon.rows[0].discountAmount) / 100).toFixed(2)
+                    } else {
+                        discountAmount = ((total * appliedCoupon.rows[0].discountAmount) / 100).toFixed(2)
+                    }
                 } else {
                     discountAmount = appliedCoupon.rows[0].discountAmount
                 }
