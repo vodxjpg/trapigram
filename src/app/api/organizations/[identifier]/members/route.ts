@@ -1,4 +1,4 @@
-// src/app/api/organizations/[slug]/members/route.ts
+// src/app/api/organizations/[identifier]/members/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
@@ -73,7 +73,7 @@ export async function GET(
 
     return NextResponse.json({ members: formattedMembers }, { status: 200 });
   } catch (error) {
-    console.error("[GET /api/organizations/[slug]/members] error:", error);
+    console.error("[GET /api/organizations/[identifier]/members] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
