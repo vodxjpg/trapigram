@@ -1,7 +1,10 @@
+// app/orders/[id]/page.tsx
 "use client";
+
 import { useParams } from "next/navigation";
-import OrderForm from "../../create/orderForm";
-export default function EditOrderPage() {
-  const { id } = useParams<{ id: string }>();
-  return <OrderForm orderId={id} />;
+import OrderFormVisual from "./orderForm";
+
+export default function OrderPage() {
+  const { id } = useParams(); // pulls the [id] from the URL
+  return <OrderFormVisual orderId={id} />;
 }
