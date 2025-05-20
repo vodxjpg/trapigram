@@ -33,13 +33,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Search,
-  CalendarIcon,
-  MoreVertical,
-  Mail,
-  XCircle,
-} from "lucide-react";
+import { Search, CalendarIcon, MoreVertical, Mail } from "lucide-react";
 import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 import { toast } from "sonner";
 
@@ -78,6 +72,10 @@ export default function OrdersPage() {
     from: Date | undefined;
     to: Date | undefined;
   }>({ from: undefined, to: undefined });
+
+  // ◼︎ pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   // — fetch orders from /api/order on mount
   useEffect(() => {
@@ -135,6 +133,7 @@ export default function OrdersPage() {
     }
 
     setFilteredOrders(result);
+    setCurrentPage(1); // reset to first page when filters change
   }, [orders, searchQuery, statusFilter, dateFilter, dateRange]);
 
   const getStatusColor = (s: OrderStatus) => {
@@ -199,6 +198,13 @@ export default function OrdersPage() {
       setDateRange({ from: undefined, to: undefined });
     }
   };
+
+  // ◼︎ derive the orders to show on this page
+  const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
+  const paginatedOrders = filteredOrders.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
 
   if (loading) {
     return (
@@ -332,8 +338,8 @@ export default function OrdersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredOrders.length > 0 ? (
-                  filteredOrders.map((order) => (
+                {paginatedOrders.length > 0 ? (
+                  paginatedOrders.map((order) => (
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">
                         <Button
@@ -435,6 +441,38 @@ export default function OrdersPage() {
                 )}
               </TableBody>
             </Table>
+          </div>
+
+          {/* Pagination Controls */}
+          <div className="flex items-center justify-between p-4">
+            <div>
+              Showing{" "}
+              <strong>
+                {(currentPage - 1) * itemsPerPage + 1} to{" "}
+                {Math.min(currentPage * itemsPerPage, filteredOrders.length)}
+              </strong>{" "}
+              of <strong>{filteredOrders.length}</strong> orders
+            </div>
+            <div className="space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage === pageCount || pageCount === 0}
+                onClick={() =>
+                  setCurrentPage((p) => Math.min(p + 1, pageCount))
+                }
+              >
+                Next
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

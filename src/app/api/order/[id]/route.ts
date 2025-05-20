@@ -29,11 +29,11 @@ function getEncryptionKeyAndIv(): { key: Buffer, iv: Buffer } {
 }
 
 function decryptSecretNode(encryptedB64: string): string {
-  const { key, iv } = getEncryptionKeyAndIv();
-  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-  let decrypted = decipher.update(encryptedB64, "base64", "utf8");
-  decrypted += decipher.final("utf8");
-  return decrypted;
+    const { key, iv } = getEncryptionKeyAndIv();
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    let decrypted = decipher.update(encryptedB64, "base64", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -56,7 +56,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             `;
 
         const resultClient = await pool.query(getClient);
-        const client = resultClient.rows[0];        
+        const client = resultClient.rows[0];
 
         const getProducts = `
         SELECT 
@@ -78,6 +78,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
         const fullOrder = {
             id: order.id,
+            clientId: client.id,
             cartId: order.cartId,
             clientFirstName: client.firstName,
             clientLastName: client.lastName,
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             shipping: Number(order.shippingTotal),
             subTotal: Number(total),
             total: Number(order.totalAmount),
-            shippingInfo:{
+            shippingInfo: {
                 address: decryptSecretNode(order.address),
                 company: order.shippingService,
                 method: order.shippingMethod,
