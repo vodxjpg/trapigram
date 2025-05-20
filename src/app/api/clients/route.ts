@@ -9,14 +9,17 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* ---------------------- Schema ---------------------- */
 const clientSchema = z.object({
-  username: z.string().min(3),
+  userId: z.string().min(1),
+  username: z.string().min(1),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  email: z.string().email(),
-  phoneNumber: z.string().min(1),
-  referredBy: z.string().optional().nullable(),
+  email: z.string().optional().nullable(),
+  phoneNumber: z.string().optional().nullable(),
   country: z.string().optional().nullable(),
+  levelId: z.string().optional().nullable(),
+  referredBy: z.string().optional().nullable(),
 });
+
 
 /* ---------------------- GET /api/clients ---------------------- */
 export async function GET(req: NextRequest) {
@@ -73,37 +76,91 @@ export async function POST(req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  try {
-    const parsed = clientSchema.parse(await req.json());
-    const userId = uuidv4();
+  const parsed = clientSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+  const {
+    userId,
+    username,
+    firstName,
+    lastName,
+    email = null,
+    phoneNumber = null,
+    country = null,
+    levelId = null,
+    referredBy = null,
+  } = parsed.data;
 
-    const insert = await pool.query(
-      `
-      INSERT INTO clients(
-        id,"organizationId",username,"firstName","lastName",email,
-        "phoneNumber","referredBy",country,"createdAt","updatedAt"
-      )
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
-      RETURNING *
-    `,
-      [
-        userId,
-        organizationId,
-        parsed.username,
-        parsed.firstName,
-        parsed.lastName,
-        parsed.email,
-        parsed.phoneNumber,
-        parsed.referredBy,
-        parsed.country,
-      ],
+  try {
+    // Look for existing by org + telegram chat ID
+    const existingRes = await pool.query(
+      `SELECT id FROM clients WHERE "organizationId" = $1 AND "userId" = $2`,
+      [organizationId, userId]
     );
 
-    return NextResponse.json(insert.rows[0], { status: 201 });
-  } catch (e: any) {
-    if (e instanceof z.ZodError)
-      return NextResponse.json({ error: e.errors }, { status: 400 });
-    console.error(e);
+    if (existingRes.rowCount > 0) {
+      // UPDATE existing: note placeholders $1..$9 are all used
+      const { id } = existingRes.rows[0];
+      const updateRes = await pool.query(
+        `
+        UPDATE clients
+        SET
+          username      = $2,
+          "firstName"   = $3,
+          "lastName"    = $4,
+          email         = $5,
+          "phoneNumber" = $6,
+          country       = $7,
+          "levelId"     = $8,
+          "referredBy"  = $9,
+          "lastInteraction" = NOW(),
+          "updatedAt"       = NOW()
+        WHERE id = $1
+        RETURNING *
+        `,
+        [
+          id,
+          username,
+          firstName,
+          lastName,
+          email,
+          phoneNumber,
+          country,
+          levelId,
+          referredBy,
+        ]
+      );
+      return NextResponse.json(updateRes.rows[0], { status: 200 });
+    } else {
+      // INSERT new
+      const insertRes = await pool.query(
+        `
+        INSERT INTO clients
+          ("organizationId","userId",username,"firstName","lastName",
+           email,"phoneNumber",country,"levelId","referredBy",
+           "lastInteraction","createdAt","updatedAt")
+        VALUES
+          ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW(),NOW())
+        RETURNING *
+        `,
+        [
+          organizationId,
+          userId,
+          username,
+          firstName,
+          lastName,
+          email,
+          phoneNumber,
+          country,
+          levelId,
+          referredBy,
+        ]
+      );
+      return NextResponse.json(insertRes.rows[0], { status: 201 });
+    }
+  } catch (error) {
+    console.error("[POST /api/clients] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
