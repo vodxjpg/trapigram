@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Edit } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -415,6 +416,14 @@ export default function OrdersPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={() =>
+                                router.push(`/orders/${order.id}/edit`)
+                              }
+                            >
+                              <Edit className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() =>
                                 handleOrderAction(order.id, "send-notification")
