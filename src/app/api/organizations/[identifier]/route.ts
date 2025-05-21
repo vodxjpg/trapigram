@@ -5,29 +5,23 @@ import { getContext } from "@/lib/context";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-/**
- * GET /api/organizations/:identifier
- * – identifier may be the organisation id **or** slug
- * – service account (userId === "service-account") → global read
- * – normal user  → must be a member of the organisation
- */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { identifier: string } },
+  { params }: { params: Promise<{ identifier: string }> },
 ) {
-  const ident = params.identifier;
+  /* 1 — await dynamic params */
+  const { identifier: ident } = await params;
   if (!ident) {
     return NextResponse.json({ error: "identifier is required" }, { status: 400 });
   }
 
-  /* universal context (handles service-account too) */
+  /* 2 — context (handles service-account, personal API-key, session) */
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-
   const { userId } = ctx;
   const isService = userId === "service-account";
 
-  /* ---------------- build SQL dynamically ---------------- */
+  /* 3 — SQL with membership filter only for normal users */
   const baseSql = `
     SELECT
       o.id,

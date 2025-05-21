@@ -1,3 +1,4 @@
+// src/app/api/products/[id]/route.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -50,7 +51,7 @@ function generateId(prefix: string): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* Zod schema for PATCH                                               */
+/* Zod schema for PATCH – unchanged                                   */
 /* ------------------------------------------------------------------ */
 const warehouseStockSchema = z.array(
   z.object({
@@ -99,7 +100,7 @@ const productUpdateSchema = z.object({
 });
 
 /* ================================================================== */
-/* GET                                                               */
+/* GET                                                                */
 /* ================================================================== */
 export async function GET(
   req: NextRequest,
@@ -110,15 +111,130 @@ export async function GET(
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
+  const isServiceAccount = userId === "service-account";
 
-  /* ---------- fetch tenantId for user ---------------------------- */
+  /* ---------- product row (exists?) -------------------------------- */
+  const raw = await db
+    .selectFrom("products")
+    .selectAll()
+    .where("id", "=", id)
+    .where("organizationId", "=", organizationId)
+    .executeTakeFirst();
+  if (!raw)
+    return NextResponse.json({ error: "Product not found" }, { status: 404 });
+
+  /* ---------- Early branch for service account -------------------- */
+  if (isServiceAccount) {
+    /* stock rows across all warehouses of the product’s tenant */
+    const tenantWarehouses = await db
+      .selectFrom("warehouse")
+      .select("id")
+      .where("tenantId", "=", raw.tenantId)
+      .execute();
+    const warehouseIds = tenantWarehouses.map((w) => w.id);
+
+    const stockRows = await db
+      .selectFrom("warehouseStock")
+      .select(["warehouseId", "country", "quantity", "variationId"])
+      .where("productId", "=", id)
+      .where("warehouseId", "in", warehouseIds)
+      .execute();
+
+    const stockData = stockRows
+      .filter((row) => !row.variationId)
+      .reduce((acc, row) => {
+        if (!acc[row.warehouseId]) acc[row.warehouseId] = {};
+        acc[row.warehouseId][row.country] = row.quantity;
+        return acc;
+      }, {} as Record<string, Record<string, number>>);
+
+    const categoryRows = await db
+      .selectFrom("productCategory")
+      .select("categoryId")
+      .where("productId", "=", id)
+      .execute();
+
+    const variationsRaw =
+      raw.productType === "variable"
+        ? await db
+            .selectFrom("productVariations")
+            .selectAll()
+            .where("productId", "=", id)
+            .execute()
+        : [];
+
+    const variations = variationsRaw.map((v) => ({
+      id: v.id,
+      attributes: v.attributes,
+      sku: v.sku,
+      image: v.image,
+      prices: mergePriceMaps(
+        typeof v.regularPrice === "string"
+          ? JSON.parse(v.regularPrice)
+          : v.regularPrice,
+        typeof v.salePrice === "string"
+          ? JSON.parse(v.salePrice)
+          : v.salePrice,
+      ),
+      cost:
+        typeof v.cost === "string"
+          ? JSON.parse(v.cost)
+          : v.cost ?? {},
+      stock: stockRows
+        .filter((row) => row.variationId === v.id)
+        .reduce((acc, row) => {
+          if (!acc[row.warehouseId]) acc[row.warehouseId] = {};
+          acc[row.warehouseId][row.country] = row.quantity;
+          return acc;
+        }, {} as Record<string, Record<string, number>>),
+    }));
+
+    const reg =
+      typeof raw.regularPrice === "string"
+        ? JSON.parse(raw.regularPrice)
+        : raw.regularPrice;
+    const sal =
+      typeof raw.salePrice === "string"
+        ? JSON.parse(raw.salePrice)
+        : raw.salePrice;
+    const cost =
+      typeof raw.cost === "string" ? JSON.parse(raw.cost) : raw.cost ?? {};
+
+    const product = {
+      ...raw,
+      prices: mergePriceMaps(reg, sal),
+      cost,
+      stockData,
+      stockStatus: raw.manageStock ? "managed" : "unmanaged",
+      categories: categoryRows.map((r) => r.categoryId),
+      attributes: [], // service account doesn’t need attribute expansion
+      variations,
+    };
+
+    return NextResponse.json(
+      { product, shared: false },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate, proxy-revalidate",
+        },
+      },
+    );
+  }
+
+  /* ---------- normal user flow (unchanged) ------------------------ */
+  /* ---------- fetch tenantId for user ----------------------------- */
   const tenant = await db
     .selectFrom("tenant")
     .select("id")
     .where("ownerUserId", "=", userId)
     .executeTakeFirst();
   if (!tenant)
-    return NextResponse.json({ error: "No tenant found for user" }, { status: 404 });
+    return NextResponse.json(
+      { error: "No tenant found for user" },
+      { status: 404 },
+    );
   const userTenantId = tenant.id;
 
   /* ---------- detect “shared copy” purely via mapping -------- */
@@ -130,38 +246,25 @@ export async function GET(
   const sourceProductId = mapping?.sourceProductId ?? null;
   const isShared = Boolean(sourceProductId);
   const actualProductId = id;
-  /* ---------- product row ---------------------------------------- */
-  const raw = await db
-    .selectFrom("products")
-    .selectAll()
-    .where("id", "=", actualProductId)
-    .where("organizationId", "=", organizationId)
-    .executeTakeFirst();
-  if (!raw)
-    return NextResponse.json({ error: "Product not found" }, { status: 404 });
-
-  const tenantId = raw.tenantId;
 
   /* ---------- determine relevant warehouseIds -------------------- */
   let warehouseIds: string[] = [];
   if (sourceProductId) {
-    // This is a shared product; fetch the target warehouse IDs for the current user
+    // shared product → current user’s warehouses
     const targetWarehouses = await db
       .selectFrom("warehouse")
       .select("id")
       .where("tenantId", "=", userTenantId)
       .execute();
     warehouseIds = targetWarehouses.map((w) => w.id);
-    console.log(`[PRODUCT_GET] Target warehouse IDs for tenant ${userTenantId}:`, warehouseIds);
   } else {
-    // Not a shared product, fetch all warehouses for the product's tenant
+    // own product
     const warehouses = await db
       .selectFrom("warehouse")
       .select("id")
-      .where("tenantId", "=", tenantId)
+      .where("tenantId", "=", raw.tenantId)
       .execute();
     warehouseIds = warehouses.map((w) => w.id);
-    console.log(`[PRODUCT_GET] Warehouse IDs for tenant ${tenantId}:`, warehouseIds);
   }
 
   /* ---------- stock data ----------------------------------------- */
@@ -171,8 +274,6 @@ export async function GET(
     .where("productId", "=", actualProductId)
     .where("warehouseId", "in", warehouseIds)
     .execute();
-
-  console.log(`[PRODUCT_GET] Stock rows for productId ${actualProductId}:`, stockRows);
 
   const stockData = stockRows
     .filter((row) => !row.variationId)
@@ -185,17 +286,12 @@ export async function GET(
   /* ---------- categories ----------------------------------------- */
   const categoryRows = await db
     .selectFrom("productCategory")
-    .innerJoin(
-      "productCategories",
-      "productCategories.id",
-      "productCategory.categoryId",
-    )
-    .select(["productCategories.id"])
-    .where("productCategory.productId", "=", actualProductId)
+    .select("categoryId")
+    .where("productId", "=", actualProductId)
     .execute();
-  const categories = categoryRows.map((r) => r.id);
+  const categories = categoryRows.map((r) => r.categoryId);
 
-  /* ---------- attributes ----------------------------------------- */
+  /* ---------- attributes (unchanged) ----------------------------- */
   const attrRows = await db
     .selectFrom("productAttributeValues")
     .innerJoin(
@@ -266,7 +362,6 @@ export async function GET(
       cost,
       stock: stockRows
         .filter((row) => row.variationId === v.id)
-        .filter((row) => warehouseIds.includes(row.warehouseId))
         .reduce((acc, row) => {
           if (!acc[row.warehouseId]) acc[row.warehouseId] = {};
           acc[row.warehouseId][row.country] = row.quantity;
@@ -307,7 +402,7 @@ export async function GET(
       headers: {
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
       },
-    }
+    },
   );
 }
 

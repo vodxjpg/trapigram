@@ -1,15 +1,18 @@
+// src/app/api/product-categories/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { getContext } from "@/lib/context";
+import { getContext } from "@/lib/context";   // ← central auth / tenant resolver
 
-// Database connection
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+/* ────────────────────────────────────────────────────────────────
+   DB
+   ──────────────────────────────────────────────────────────────── */
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// Schema for POST requests (no organizationId in body)
+/* ────────────────────────────────────────────────────────────────
+   Zod schema
+   ──────────────────────────────────────────────────────────────── */
 const categorySchema = z.object({
   name: z.string().min(1, { message: "Name is required." }),
   slug: z.string().min(1, { message: "Slug is required." }),
@@ -18,7 +21,9 @@ const categorySchema = z.object({
   parentId: z.string().nullable().optional(),
 });
 
-// GET handler: Fetch product categories
+/* ------------------------------------------------------------------
+   GET – list categories (unchanged)
+   ------------------------------------------------------------------ */
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -26,123 +31,84 @@ export async function GET(req: NextRequest) {
 
   try {
     const { searchParams } = new URL(req.url);
-    const page = Number(searchParams.get("page")) || 1;
+    const page     = Number(searchParams.get("page"))     || 1;
     const pageSize = Number(searchParams.get("pageSize")) || 10;
-    const search = searchParams.get("search") || "";
+    const search   = searchParams.get("search") || "";
 
-    // Query for total count
-    let countQuery = `
-    SELECT COUNT(*) FROM "productCategories"
-    WHERE "organizationId" = $1
-  `;
-    const countValues: any[] = [organizationId];
+    /* count */
+    let countSql    = `SELECT COUNT(*) FROM "productCategories" WHERE "organizationId" = $1`;
+    const countVals = [organizationId];
     if (search) {
-      countQuery += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
-      countValues.push(`%${search}%`);
+      countSql   += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
+      countVals.push(`%${search}%`);
     }
 
-    // Main query for categories
-    let query = `
-    SELECT id, name, slug, image, "order", "parentId", "organizationId", "createdAt", "updatedAt"
-    FROM "productCategories"
-    WHERE "organizationId" = $1
-  `;
-    const values: any[] = [organizationId];
+    /* rows */
+    let rowsSql = `
+      SELECT id, name, slug, image, "order", "parentId",
+             "organizationId", "createdAt", "updatedAt"
+      FROM "productCategories"
+      WHERE "organizationId" = $1
+    `;
+    const rowsVals: any[] = [organizationId];
     if (search) {
-      query += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
-      values.push(`%${search}%`);
+      rowsSql  += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
+      rowsVals.push(`%${search}%`);
     }
-    query += `
-    ORDER BY "order" ASC, "createdAt" DESC
-    LIMIT $${values.length + 1} OFFSET $${values.length + 2}
-  `;
-    values.push(pageSize, (page - 1) * pageSize);
+    rowsSql += `
+      ORDER BY "order" ASC, "createdAt" DESC
+      LIMIT  $${rowsVals.length + 1}
+      OFFSET $${rowsVals.length + 2}
+    `;
+    rowsVals.push(pageSize, (page - 1) * pageSize);
 
-    const countResult = await pool.query(countQuery, countValues);
-    const totalRows = Number(countResult.rows[0].count);
-    const totalPages = Math.ceil(totalRows / pageSize);
+    const [{ count }]    = (await pool.query(countSql, countVals)).rows;
+    const categories     = (await pool.query(rowsSql, rowsVals)).rows;
+    const totalPages     = Math.ceil(Number(count) / pageSize);
 
-    const result = await pool.query(query, values);
-    const categories = result.rows;
-
-    return NextResponse.json({
-      categories,
-      totalPages,
-      currentPage: page,
-    });
-  } catch (error: any) {
-    console.error("[GET /api/product-categories] error:", error);
+    return NextResponse.json({ categories, totalPages, currentPage: page });
+  } catch (error) {
+    console.error("[GET /api/product-categories]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
-// POST handler: Create a new product category
+/* ------------------------------------------------------------------
+   POST – create category (now uses getContext)
+   ------------------------------------------------------------------ */
 export async function POST(req: NextRequest) {
-  console.log("Headers received:", Object.fromEntries(req.headers.entries()));
-  const apiKey = req.headers.get("x-api-key");
-  const internalSecret = req.headers.get("x-internal-secret");
-  let organizationId: string;
-
-  if (apiKey) {
-    const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-    if (!valid || !key) {
-      return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-    }
-    const session = await auth.api.getSession({ headers: req.headers });
-    organizationId = session?.session.activeOrganizationId || "";
-    if (!organizationId) {
-      return NextResponse.json({ error: "No active organization" }, { status: 400 });
-    }
-  } else if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
-    const session = await auth.api.getSession({ headers: req.headers });
-    console.log("Session:", session);
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-    }
-    organizationId = session.session.activeOrganizationId;
-    if (!organizationId) {
-      return NextResponse.json({ error: "No active organization" }, { status: 400 });
-    }
-  } else {
-    // Fallback for UI requests using session cookie
-    const session = await auth.api.getSession({ headers: req.headers });
-    console.log("Session (fallback):", session);
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 403 });
-    }
-    organizationId = session.session.activeOrganizationId;
-    if (!organizationId) {
-      return NextResponse.json({ error: "No active organization" }, { status: 400 });
-    }
-  }
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
   try {
-    const body = await req.json();
-    const parsedCategory = categorySchema.parse(body);
-    const { name, slug, image, order, parentId } = parsedCategory;
-    const categoryId = uuidv4();
+    /* 1 – validate body */
+    const parsed = categorySchema.parse(await req.json());
+    const { name, slug, image, order, parentId } = parsed;
 
-    // Check for unique slug within the organization
-    const slugCheck = await pool.query(
-      `SELECT id FROM "productCategories" WHERE slug = $1 AND "organizationId" = $2`,
-      [slug, organizationId]
+    /* 2 – unique slug per organisation */
+    const dup = await pool.query(
+      `SELECT 1 FROM "productCategories" WHERE slug = $1 AND "organizationId" = $2 LIMIT 1`,
+      [slug, organizationId],
     );
-    if (slugCheck.rows.length > 0) {
+    if (dup.rowCount) {
       return NextResponse.json({ error: "Slug already exists" }, { status: 400 });
     }
 
-    // Insert new category
-    const insertQuery = `
-      INSERT INTO "productCategories"(id, name, slug, image, "order", "parentId", "organizationId", "createdAt", "updatedAt")
-      VALUES($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+    /* 3 – insert */
+    const id   = uuidv4();
+    const ins  = `
+      INSERT INTO "productCategories"
+        (id, name, slug, image, "order", "parentId", "organizationId", "createdAt", "updatedAt")
+      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
       RETURNING *
     `;
-    const values = [categoryId, name, slug, image, order, parentId || null, organizationId];
+    const vals = [id, name, slug, image, order, parentId ?? null, organizationId];
+    const { rows } = await pool.query(ins, vals);
 
-    const result = await pool.query(insertQuery, values);
-    return NextResponse.json(result.rows[0], { status: 201 });
-  } catch (error: any) {
-    console.error("[POST /api/product-categories] error:", error);
+    return NextResponse.json(rows[0], { status: 201 });
+  } catch (error) {
+    console.error("[POST /api/product-categories]", error);
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 });
     }

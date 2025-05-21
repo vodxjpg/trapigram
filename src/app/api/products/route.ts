@@ -1,8 +1,8 @@
 // src/app/api/products/route.ts
-import { type NextRequest, NextResponse } from "next/server"
-import { z } from "zod"
-import { db } from "@/lib/db"
-import { v4 as uuidv4 } from "uuid"
+import { type NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { db } from "@/lib/db";
+import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 
 /* ------------------------------------------------------------------ */
@@ -11,17 +11,19 @@ import { getContext } from "@/lib/context";
 const priceObj = z.object({
   regular: z.number().min(0),
   sale: z.number().nullable(),
-})
+});
 
-const costMap = z.record(z.string(), z.number().min(0))
+const costMap = z.record(z.string(), z.number().min(0));
 
-const warehouseStockSchema = z.array(z.object({
-  warehouseId: z.string(),
-  productId: z.string(),
-  variationId: z.string().nullable(),
-  country: z.string(),
-  quantity: z.number().min(0),
-}))
+const warehouseStockSchema = z.array(
+  z.object({
+    warehouseId: z.string(),
+    productId: z.string(),
+    variationId: z.string().nullable(),
+    country: z.string(),
+    quantity: z.number().min(0),
+  }),
+);
 
 const variationSchema = z.object({
   id: z.string(),
@@ -30,7 +32,7 @@ const variationSchema = z.object({
   image: z.string().nullable().optional(),
   prices: z.record(z.string(), priceObj),
   cost: costMap.optional(),
-})
+});
 
 const productSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -45,27 +47,34 @@ const productSchema = z.object({
   allowBackorders: z.boolean().default(false),
   manageStock: z.boolean().default(false),
   warehouseStock: warehouseStockSchema.optional(),
-  attributes: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      terms: z.array(z.object({ id: z.string(), name: z.string() })),
-      useForVariations: z.boolean(),
-      selectedTerms: z.array(z.string()),
-    }),
-  ).optional(),
+  attributes: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        terms: z.array(z.object({ id: z.string(), name: z.string() })),
+        useForVariations: z.boolean(),
+        selectedTerms: z.array(z.string()),
+      }),
+    )
+    .optional(),
   variations: z.array(variationSchema).optional(),
-})
+});
 
 /* helper: convert { ES: {regular:19, sale:10}, … } --> two JSON objects */
-function splitPrices(pr: Record<string, { regular: number; sale: number | null }>) {
-  const regular: Record<string, number> = {}
-  const sale: Record<string, number> = {}
+function splitPrices(
+  pr: Record<string, { regular: number; sale: number | null }>,
+) {
+  const regular: Record<string, number> = {};
+  const sale: Record<string, number> = {};
   for (const [c, v] of Object.entries(pr)) {
-    regular[c] = v.regular
-    if (v.sale != null) sale[c] = v.sale
+    regular[c] = v.regular;
+    if (v.sale != null) sale[c] = v.sale;
   }
-  return { regularPrice: regular, salePrice: Object.keys(sale).length ? sale : null }
+  return {
+    regularPrice: regular,
+    salePrice: Object.keys(sale).length ? sale : null,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -77,113 +86,142 @@ export async function GET(req: NextRequest) {
   const { organizationId, tenantId } = ctx;
 
   try {
-    const { searchParams } = new URL(req.url)
-    const page = parseInt(searchParams.get("page") || "1")
-    const pageSize = parseInt(searchParams.get("pageSize") || "10")
-    const search = searchParams.get("search") || ""
-    const categoryId = searchParams.get("categoryId") || ""
+    const { searchParams } = new URL(req.url);
+    const page = parseInt(searchParams.get("page") || "1");
+    const pageSize = parseInt(searchParams.get("pageSize") || "10");
+    const search = searchParams.get("search") || "";
+    const categoryId = searchParams.get("categoryId") || "";
 
     /* -------- STEP 1 – product IDs with proper limit/offset ----- */
     let idQuery = db
       .selectFrom("products")
       .select("id")
       .where("organizationId", "=", organizationId)
-      .where("tenantId", "=", tenantId)
+      .where("tenantId", "=", tenantId);
 
-    if (search) idQuery = idQuery.where("title", "ilike", `%${search}%`)
-    if (categoryId) idQuery = idQuery.where(
-      "id",
-      "in",
-      db
-        .selectFrom("productCategory")
-        .select("productId")
-        .where("categoryId", "=", categoryId),
-    )
+    if (search) idQuery = idQuery.where("title", "ilike", `%${search}%`);
+    if (categoryId)
+      idQuery = idQuery.where(
+        "id",
+        "in",
+        db
+          .selectFrom("productCategory")
+          .select("productId")
+          .where("categoryId", "=", categoryId),
+      );
 
-    const idRows = await idQuery.limit(pageSize).offset((page - 1) * pageSize).execute()
-    const productIds = idRows.map(r => r.id)
+    const idRows = await idQuery
+      .limit(pageSize)
+      .offset((page - 1) * pageSize)
+      .execute();
+    const productIds = idRows.map((r) => r.id);
 
     /* return early if empty page */
     if (!productIds.length) {
       return NextResponse.json({
         products: [],
         pagination: { page, pageSize, total: 0, totalPages: 0 },
-      })
+      });
     }
 
     /* -------- STEP 2 – core product rows ------------------------ */
     const productRows = await db
       .selectFrom("products")
       .select([
-        "id", "title", "description", "image", "sku", "status", "productType",
-        "regularPrice", "salePrice", "cost",
-        "allowBackorders", "manageStock", "stockStatus",
-        "createdAt", "updatedAt",
+        "id",
+        "title",
+        "description",
+        "image",
+        "sku",
+        "status",
+        "productType",
+        "regularPrice",
+        "salePrice",
+        "cost",
+        "allowBackorders",
+        "manageStock",
+        "stockStatus",
+        "createdAt",
+        "updatedAt",
       ])
       .where("id", "in", productIds)
-      .execute()
-
+      .execute();
 
     /* -------- STEP 3 – related data in bulk --------------------- */
     const stockRows = await db
       .selectFrom("warehouseStock")
       .select(["productId", "variationId", "warehouseId", "country", "quantity"])
       .where("productId", "in", productIds)
-      .execute()
+      .execute();
 
     const variationRows = await db
       .selectFrom("productVariations")
       .selectAll()
       .where("productId", "in", productIds)
-      .execute()
+      .execute();
 
+    /* select category IDs, no join to names */
     const categoryRows = await db
       .selectFrom("productCategory")
-      .innerJoin("productCategories", "productCategories.id", "productCategory.categoryId")
-      .select(["productCategory.productId", "productCategories.name"])
+      .select(["productCategory.productId", "productCategory.categoryId"])
       .where("productCategory.productId", "in", productIds)
-      .execute()
+      .execute();
 
     /* -------- STEP 4 – assemble final products ------------------ */
-    const products = productRows.map(p => {
+    const products = productRows.map((p) => {
       const stockData = stockRows
-        .filter(s => s.productId === p.id && !s.variationId)
+        .filter((s) => s.productId === p.id && !s.variationId)
         .reduce((acc, s) => {
-          if (!acc[s.warehouseId]) acc[s.warehouseId] = {}
-          acc[s.warehouseId][s.country] = s.quantity
-          return acc
-        }, {} as Record<string, Record<string, number>>)
+          if (!acc[s.warehouseId]) acc[s.warehouseId] = {};
+          acc[s.warehouseId][s.country] = s.quantity;
+          return acc;
+        }, {} as Record<string, Record<string, number>>);
 
-      const variations = p.productType === "variable"
-        ? variationRows
-          .filter(v => v.productId === p.id)
-          .map(v => ({
-            id: v.id,
-            attributes: typeof v.attributes === "string" ? JSON.parse(v.attributes) : v.attributes,
-            sku: v.sku,
-            image: v.image,
-            prices: mergePriceMaps(
-              typeof v.regularPrice === "string" ? JSON.parse(v.regularPrice) : v.regularPrice,
-              typeof v.salePrice === "string" ? JSON.parse(v.salePrice) : v.salePrice,
-            ),
-            cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
-            stock: stockRows
-              .filter(s => s.variationId === v.id)
-              .reduce((acc, s) => {
-                if (!acc[s.warehouseId]) acc[s.warehouseId] = {}
-                acc[s.warehouseId][s.country] = s.quantity
-                return acc
-              }, {} as Record<string, Record<string, number>>)
-          }))
-        : []
+      const variations =
+        p.productType === "variable"
+          ? variationRows
+              .filter((v) => v.productId === p.id)
+              .map((v) => ({
+                id: v.id,
+                attributes:
+                  typeof v.attributes === "string"
+                    ? JSON.parse(v.attributes)
+                    : v.attributes,
+                sku: v.sku,
+                image: v.image,
+                prices: mergePriceMaps(
+                  typeof v.regularPrice === "string"
+                    ? JSON.parse(v.regularPrice)
+                    : v.regularPrice,
+                  typeof v.salePrice === "string"
+                    ? JSON.parse(v.salePrice)
+                    : v.salePrice,
+                ),
+                cost:
+                  typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
+                stock: stockRows
+                  .filter((s) => s.variationId === v.id)
+                  .reduce((acc, s) => {
+                    if (!acc[s.warehouseId]) acc[s.warehouseId] = {};
+                    acc[s.warehouseId][s.country] = s.quantity;
+                    return acc;
+                  }, {} as Record<string, Record<string, number>>),
+              }))
+          : [];
 
       /* recompute stockStatus */
-      let computedStatus = p.stockStatus
+      let computedStatus = p.stockStatus;
       if (p.manageStock) {
         if (p.productType === "variable") {
-          computedStatus = variations.some(v => Object.keys(v.stock).length) ? "managed" : "unmanaged"
+          computedStatus = variations.some(
+            (v) => Object.keys(v.stock).length,
+          )
+            ? "managed"
+            : "unmanaged";
         } else {
-          computedStatus = Object.keys(stockData).length ? "managed" : "unmanaged"
+          computedStatus = Object.keys(stockData).length
+            ? "managed"
+            : "unmanaged";
         }
       }
 
@@ -195,20 +233,29 @@ export async function GET(req: NextRequest) {
         sku: p.sku,
         status: p.status,
         productType: p.productType,
-        regularPrice: typeof p.regularPrice === "string" ? JSON.parse(p.regularPrice) : p.regularPrice,
-        salePrice: typeof p.salePrice === "string" ? JSON.parse(p.salePrice) : p.salePrice,
-        cost: typeof p.cost === "string" ? JSON.parse(p.cost) : p.cost,
+        regularPrice:
+          typeof p.regularPrice === "string"
+            ? JSON.parse(p.regularPrice)
+            : p.regularPrice,
+        salePrice:
+          typeof p.salePrice === "string"
+            ? JSON.parse(p.salePrice)
+            : p.salePrice,
+        cost:
+          typeof p.cost === "string" ? JSON.parse(p.cost) : p.cost,
         allowBackorders: p.allowBackorders,
         manageStock: p.manageStock,
         stockStatus: computedStatus,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
         stockData,
-        categories: categoryRows.filter(c => c.productId === p.id).map(c => c.name),
-        attributes: [],   // not needed for list view
+        categories: categoryRows
+          .filter((c) => c.productId === p.id)
+          .map((c) => c.categoryId), // ← return IDs
+        attributes: [], // not needed for list view
         variations,
-      }
-    })
+      };
+    });
 
     /* -------- STEP 5 – total count ------------------------------ */
     const totalRes = await db
@@ -216,22 +263,35 @@ export async function GET(req: NextRequest) {
       .select(db.fn.count("id").as("total"))
       .where("organizationId", "=", organizationId)
       .where("tenantId", "=", tenantId)
-      .$if(search, q => q.where("title", "ilike", `%${search}%`))
-      .$if(categoryId, q => q.where(
-        "id",
-        "in",
-        db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
-      ))
-      .executeTakeFirst()
-    const total = Number(totalRes?.total || 0)
+      .$if(search, (q) => q.where("title", "ilike", `%${search}%`))
+      .$if(categoryId, (q) =>
+        q.where(
+          "id",
+          "in",
+          db
+            .selectFrom("productCategory")
+            .select("productId")
+            .where("categoryId", "=", categoryId),
+        ),
+      )
+      .executeTakeFirst();
+    const total = Number(totalRes?.total || 0);
 
     return NextResponse.json({
       products,
-      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
-    })
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    });
   } catch (err) {
-    console.error("[PRODUCTS_GET]", err)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("[PRODUCTS_GET]", err);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }
 
@@ -240,13 +300,14 @@ function mergePriceMaps(
   regular: Record<string, number> | null,
   sale: Record<string, number> | null,
 ) {
-  const map: Record<string, { regular: number; sale: number | null }> = {}
-  const reg = regular || {}
-  const sal = sale || {}
-  for (const [c, v] of Object.entries(reg)) map[c] = { regular: Number(v), sale: null }
+  const map: Record<string, { regular: number; sale: number | null }> = {};
+  const reg = regular || {};
+  const sal = sale || {};
+  for (const [c, v] of Object.entries(reg))
+    map[c] = { regular: Number(v), sale: null };
   for (const [c, v] of Object.entries(sal))
-    map[c] = { ...(map[c] || { regular: 0, sale: null }), sale: Number(v) }
-  return map
+    map[c] = { ...(map[c] || { regular: 0, sale: null }), sale: Number(v) };
+  return map;
 }
 
 
