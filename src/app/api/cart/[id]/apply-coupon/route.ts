@@ -79,6 +79,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       `;
 
         const appliedCoupon = await pool.query(coupon);
+        if (appliedCoupon.rows.length === 0) {
+            return NextResponse.json(
+              { error: "Coupon not found" },
+              { status: 400 }
+            );
+        }
         const couponCountry = JSON.parse(appliedCoupon.rows[0].countries);
 
         const cart = `
@@ -179,27 +185,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
 
         if (!couponCountry.includes(cartCountry)) {
-            const setCoupon = `
-            UPDATE carts 
-            SET "couponCode" = NULL, "updatedAt" = NOW()
-            WHERE id = '${id}'
-            RETURNING *
-        `;
+            // 1) Clear out any couponCode on the cart:
+            await pool.query(
+                `UPDATE carts 
+               SET "couponCode" = NULL, "updatedAt" = NOW()
+               WHERE id = $1`,
+                [id]
+            );
 
-            const removed = await pool.query(setCoupon);
-            const discount = {
-                cc: removed.rows[0].couponCode
-            }
+            // 2) Re‐encrypt the (empty) cartUpdatedHash:
+            const removed = await pool.query(
+                `SELECT "couponCode" FROM carts WHERE id = $1`,
+                [id]
+            );
+            const discount = { cc: removed.rows[0].couponCode };  // will be null
+            const encryptedResponse = encryptSecretNode(JSON.stringify(discount));
+            await pool.query(
+                `UPDATE carts 
+               SET "cartUpdatedHash" = $1, "updatedAt" = NOW()
+               WHERE id = $2`,
+                [encryptedResponse, id]
+            );
 
-            const encryptedResponse = encryptSecretNode(JSON.stringify(discount))
-
-            await pool.query(`UPDATE carts 
-            SET "cartUpdatedHash" = '${encryptedResponse}', "updatedAt" = NOW()
-            WHERE id = '${id}'
-            RETURNING *`)
-
-            return NextResponse.json(discount, { status: 201 });
+            // 3) Return a 400 with an error message
+            return NextResponse.json(
+                { error: "This coupon cannot be used in your country." },
+                { status: 400 }
+            );
         }
+
     } catch (err: any) {
         console.error("[PATCH /api/cart/:id/apply-coupon]", err);
         if (err instanceof z.ZodError)
