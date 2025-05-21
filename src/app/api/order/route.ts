@@ -54,6 +54,7 @@ const orderSchema = z.object({
     couponCode: z.string().optional().nullable(),
     shippingCompany: z.string().min(1),
     address: z.string().min(1),
+    counponType: z.string()
 });
 type OrderPayload = z.infer<typeof orderSchema>;
 
@@ -111,9 +112,12 @@ export async function POST(req: NextRequest) {
     // --- Parse & validate body ---
     let payload: OrderPayload;
     try {
-        const body = await req.json();        
+        const body = await req.json();
         body.organization = organizationId;
+        body.totalAmount = body.subtotal - body.discountAmount + body.shippingAmount
         payload = orderSchema.parse(body);
+
+
     } catch (err: any) {
         if (err instanceof z.ZodError) {
             return NextResponse.json({ error: err.errors }, { status: 400 });
@@ -154,7 +158,7 @@ export async function POST(req: NextRequest) {
     VALUES
       ($1, $2, $3, $4, $5,
        $6, $7, $8,
-       $9, $10, $11, $12, $13, $14, $15, NOW(),
+       $9, $10, $11, $12, $13, $14, $15, $16, NOW(),
        NOW(), NOW())
     RETURNING *
   `;

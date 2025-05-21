@@ -70,6 +70,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         ];
 
         const result = await pool.query(insert, vals);
+        const subtotal = result.rows[0].unitPrice * result.rows[0].quantity
+
+        const productQuery = `
+                SELECT * FROM products
+                WHERE id = '${data.productId}'
+            `;
+
+        const resultProduct = await pool.query(productQuery);
+        const product = resultProduct.rows[0]
+        product.subtotal = subtotal
+
+        const cartItem = {
+            product: product,
+            quantity: result.rows[0].quantity
+        }
 
         const encryptedResponse = encryptSecretNode(JSON.stringify(result.rows[0]))
 
@@ -78,7 +93,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             WHERE id = '${id}'
             RETURNING *`)
 
-        return NextResponse.json(result.rows[0], { status: 201 });
+        return NextResponse.json(cartItem, { status: 201 });
     } catch (err: any) {
         console.error("[PATCH /api/cart/:id/update-product]", err);
         if (err instanceof z.ZodError)

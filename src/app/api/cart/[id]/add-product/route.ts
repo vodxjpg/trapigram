@@ -77,9 +77,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
             const resultProduct = await pool.query(productQuery);
 
+            const product = resultProduct.rows[0]
+            product.subtotal = body.price * newQuantity
+
             const cartItem = {
-                product: resultProduct.rows[0],
-                quantity: newQuantity
+                product: product,
+                quantity: newQuantity,
             }
             const encryptedResponse = encryptSecretNode(JSON.stringify(cartItem))
 
@@ -114,8 +117,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
             await pool.query(insert, vals);
 
+            const product = resultProduct.rows[0]
+            product.subtotal = body.price * data.quantity
+
             const cartItem = {
-                product: resultProduct.rows[0],
+                product: product,
                 quantity: data.quantity
             }
             const encryptedResponse = encryptSecretNode(JSON.stringify(cartItem))

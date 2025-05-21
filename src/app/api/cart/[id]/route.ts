@@ -67,6 +67,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         WHERE cp."cartId" = $1
       `;
     const resultCartProducts = await pool.query(cartProductsQ, [id]);
+    resultCartProducts.rows.map((pr) => {
+      pr.subtotal = pr.unitPrice * pr.quantity
+    })
+
     console.log(resultCartProducts.rows)
     return NextResponse.json({ resultCartProducts: resultCartProducts.rows }, { status: 201 });
   } catch (error: any) {

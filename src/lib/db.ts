@@ -137,40 +137,40 @@ interface DB {
 
   /* ──────────────────────────────────────────────────────────────── */
   affiliateProducts: {
-    id:              string;
-    organizationId:  string;
-    tenantId:        string;
-    title:           string;
-    description:     string | null;
-    image:           string | null;
-    sku:             string;
-    status:          "published" | "draft";
-    productType:     "simple" | "variable";
+    id: string;
+    organizationId: string;
+    tenantId: string;
+    title: string;
+    description: string | null;
+    image: string | null;
+    sku: string;
+    status: "published" | "draft";
+    productType: "simple" | "variable";
     minLevelId: string | null;
     /* points – country ➜ integer (sale nullable, mirrors salePrice) */
     regularPoints: Record<string, Record<string, number>>;   // ⬅︎ changed
-    salePoints   : Record<string, Record<string, number>> | null;
-    cost:            Record<string, number>;
+    salePoints: Record<string, Record<string, number>> | null;
+    cost: Record<string, number>;
     allowBackorders: boolean;
-    manageStock:     boolean;
-    stockStatus:     "managed" | "unmanaged";
-    createdAt:       Date;
+    manageStock: boolean;
+    stockStatus: "managed" | "unmanaged";
+    createdAt: Date;
     updatedAt: Date;
   };
 
   affiliateProductVariations: {
-    id:             string;
-    productId:      string;                       /* ↺ affiliateProducts.id */
-    attributes:     Record<string, string>;
-    sku:            string;
+    id: string;
+    productId: string;                       /* ↺ affiliateProducts.id */
+    attributes: Record<string, string>;
+    sku: string;
     minLevelId: string | null;
     regularPoints: Record<string, Record<string, number>>;   // ⬅︎ changed
-    salePoints   : Record<string, Record<string, number>> | null;
-    cost:           Record<string, number>;
-    image:          string | null;
-    stock:          Record<string, Record<string, number>> | null;
-    createdAt:      Date;
-    updatedAt:      Date;
+    salePoints: Record<string, Record<string, number>> | null;
+    cost: Record<string, number>;
+    image: string | null;
+    stock: Record<string, Record<string, number>> | null;
+    createdAt: Date;
+    updatedAt: Date;
   };
 
   coupons: {
@@ -524,6 +524,7 @@ interface DB {
     shippingMethod: string;
     shippingTotal: number;
     discountTotal: number;
+    counponType: string;
     totalAmount: number;
     couponCode: string;
     shippingService: string;
@@ -537,34 +538,34 @@ interface DB {
   }
 
   tierPricings: {
-    id            : string
+    id: string
     organizationId: string
-    name          : string
-    countries     : string          // JSON array
-    createdAt     : Date
-    updatedAt     : Date
+    name: string
+    countries: string          // JSON array
+    createdAt: Date
+    updatedAt: Date
   }
 
   tierPricingSteps: {
-    id           : string
+    id: string
     tierPricingId: string           // FK ↺ tierPricings.id
-    fromUnits    : number
-    toUnits      : number
-    price        : number           // new column name
-    createdAt    : Date
-    updatedAt    : Date
+    fromUnits: number
+    toUnits: number
+    price: number           // new column name
+    createdAt: Date
+    updatedAt: Date
   }
 
   tierPricingProducts: {
-    id           : string
+    id: string
     tierPricingId: string
-    productId    : string | null
-    variationId  : string | null
-    createdAt    : Date
+    productId: string | null
+    variationId: string | null
+    createdAt: Date
   }
 
-   /* ─────────────── Sections ─────────────── */
-   sections: {
+  /* ─────────────── Sections ─────────────── */
+  sections: {
     id: string;
     organizationId: string;
     parentSectionId: string | null;

@@ -40,6 +40,28 @@ const cartProductSchema = z.object({
     total: z.number()
 });
 
+export async function GET(req: NextRequest) {
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId } = ctx;
+
+    try {
+        const coupon = req.headers.get("coupon");
+
+        const queryCoupon = `
+        SELECT * FROM coupons 
+        WHERE code = '${coupon}' AND "organizationId" = '${organizationId}'
+      `;
+
+        const appliedCoupon = await pool.query(queryCoupon);
+        console.log(appliedCoupon.rows[0])
+
+        return NextResponse.json({ coupon: appliedCoupon.rows[0] }, { status: 200 })
+    } catch (error) {
+        return NextResponse.json({ error })
+    }
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
@@ -50,11 +72,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
         const { id } = await params;
         const body = await req.json();
-        const data = cartProductSchema.parse(body); // throws if invalid    
+        const data = cartProductSchema.parse(body); // throws if invalid 
 
         const coupon = `
-        SELECT * FROM coupons 
-        WHERE code = '${data.code}' AND "organizationId" = '${organizationId}'
+        SELECT * FROM "coupons" WHERE "organizationId" = '${organizationId}' AND code = '${data.code}'
       `;
 
         const appliedCoupon = await pool.query(coupon);
@@ -104,8 +125,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             const currentUsage = await pool.query(usage);
             const usageLimit = currentUsage.rows.length
             const couponUsage = appliedCoupon.rows[0].usageLimit
-
-            if (usageLimit >= couponUsage && usageLimit !== 0) {
+            if (usageLimit >= couponUsage && couponUsage !== 0) {
                 return NextResponse.json({ error: "Coupon usage limit reached" }, { status: 400 });
             }
 
@@ -153,6 +173,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             WHERE id = '${id}'
             RETURNING *`)
 
+            console.log(discount)
+
             return NextResponse.json(discount, { status: 201 });
         }
 
@@ -179,7 +201,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             return NextResponse.json(discount, { status: 201 });
         }
     } catch (err: any) {
-        console.error("[PATCH /api/cart/:id/update-product]", err);
+        console.error("[PATCH /api/cart/:id/apply-coupon]", err);
         if (err instanceof z.ZodError)
             return NextResponse.json({ error: err.errors }, { status: 400 });
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });

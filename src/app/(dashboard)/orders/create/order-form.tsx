@@ -1,4 +1,3 @@
-// components/OrderForm.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -46,15 +45,11 @@ interface Product {
   price: number;
   image: string;
   stockData: Record<string, { [countryCode: string]: number }>;
+  subtotal: number;
 }
 interface OrderItem {
   product: Product;
   quantity: number;
-}
-interface PaymentMethod {
-  id: string;
-  name: string;
-  details: string;
 }
 interface ShippingMethod {
   id: string;
@@ -66,47 +61,46 @@ interface ShippingMethod {
     shipmentCost: number;
   }>;
 }
+interface ShippingCompany {
+  id: string;
+  name: string;
+}
 interface Address {
   id: string;
   clientId: string;
   address: string;
 }
-interface ShippingCompany {
+interface PaymentMethod {
   id: string;
   name: string;
+  details: string;
 }
 
-interface OrderFormProps {
-  orderId?: string;
-}
-export default function OrderForm({ orderId }: OrderFormProps) {
+export default function OrderForm() {
   const router = useRouter();
-  const isEdit = Boolean(orderId);
 
   // States
+
   const [clients, setClients] = useState<any[]>([]);
   const [clientsLoading, setClientsLoading] = useState(true);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [productsLoading, setProductsLoading] = useState(true);
+  const [selectedClient, setSelectedClient] = useState("");
+  const [clientCountry, setClientCountry] = useState("");
+
+  const [orderGenerated, setOrderGenerated] = useState(false);
+
+  const [cartId, setCartId] = useState("");
+  const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
+  const [shippingLoading, setShippingLoading] = useState(true);
   const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
   const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
     []
   );
-  const [shippingLoading, setShippingLoading] = useState(true);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-  const [paymentLoading, setPaymentLoading] = useState(false);
-  const [addresses, setAddresses] = useState<Address[]>([]);
 
-  // Order form states
-  const [selectedClient, setSelectedClient] = useState("");
-  const [clientCountry, setClientCountry] = useState("");
-  const [orderGenerated, setOrderGenerated] = useState(false);
-  const [cartId, setCartId] = useState("");
-  const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
-  const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
-
+  const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
+  const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
   const [quantity, setQuantity] = useState(1);
+  const [productsLoading, setProductsLoading] = useState(true);
 
   const [couponCode, setCouponCode] = useState("");
   const [couponApplied, setCouponApplied] = useState(false);
@@ -116,18 +110,35 @@ export default function OrderForm({ orderId }: OrderFormProps) {
   const [discount, setDiscount] = useState(0);
   const [value, setValue] = useState(0);
 
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
-  const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
-  const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
-  const [shippingCost, setShippingCost] = useState(0);
-  const [selectedAddressId, setSelectedAddressId] = useState("");
+  const [addresses, setAddresses] = useState<Address[]>([]);
   const [newAddress, setNewAddress] = useState("");
+  const [selectedAddressId, setSelectedAddressId] = useState("");
 
-  // Load clients & products
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+
+  const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
+  const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
+  const [shippingCost, setShippingCost] = useState(0);
+
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
+
+  const [subtotal, setSubtotal] = useState(0);
+
+  // Added useEffect to recalculate subtotal whenever orderItems change
+  useEffect(() => {
+    const sum = orderItems.reduce(
+      (acc, item) => acc + item.product.subtotal,
+      0
+    );
+    setSubtotal(sum);
+  }, [orderItems]);
+
   useEffect(() => {
     loadClients();
     loadProducts();
   }, []);
+
   async function loadClients() {
     setClientsLoading(true);
     try {
@@ -144,137 +155,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
       setClientsLoading(false);
     }
   }
-  async function loadProducts() {
-    setProductsLoading(true);
-    try {
-      const res = await fetch("/api/products", {
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-        },
-      });
-      const { products } = await res.json();
-      setProducts(products);
-    } catch {
-      toast.error("Failed loading products");
-    } finally {
-      setProductsLoading(false);
-    }
-  }
 
-  // Load existing order for edit
-  useEffect(() => {
-    if (!isEdit) return;
-    fetch(`/api/order/${orderId}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data) => {
-        console.log(data);
-        setSelectedClient(data.clientId);
-        setCartId(data.cartId);
-        setOrderItems(data.products || []);
-        setOrderGenerated(true);
-        setCouponCode(data.couponCode || "");
-        setCouponApplied(!!data.couponCode);
-        setDiscount(data.discountAmount || 0);
-        setValue(data.discountValue || 0);
-        setDiscountType(data.discountType || "fixed");
-        setSelectedPaymentMethod(data.paymentMethodId);
-        setSelectedShippingMethod(data.shippingMethodId);
-        setSelectedShippingCompany(data.shippingCompanyId);
-        setSelectedAddressId(data.addressId);
-      })
-      .catch(() => toast.error("Failed loading order"));
-  }, [orderId]);
-
-  // React to client change: load addresses, payment, shipping
-  useEffect(() => {
-    if (!selectedClient) return;
-    const loadAddresses = async () => {
-      try {
-        const res = await fetch(`/api/clients/${selectedClient}/address`, {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
-        });
-        const data = await res.json();
-        setAddresses(data.addresses);
-        if (data.addresses.length && !selectedAddressId)
-          setSelectedAddressId(data.addresses[0].id);
-      } catch (e) {
-        toast.error("Addresses load error");
-      }
-    };
-    const loadPayments = async () => {
-      setPaymentLoading(true);
-      try {
-        const res = await fetch("/api/payment-methods", {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
-        });
-        const data = await res.json();
-        setPaymentMethods(data.methods);
-      } catch (e) {
-        toast.error("Payments load error");
-      } finally {
-        setPaymentLoading(false);
-      }
-    };
-    const loadShipping = async () => {
-      setShippingLoading(true);
-      try {
-        const [shipRes, compRes] = await Promise.all([
-          fetch("/api/shipments", {
-            headers: {
-              "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-            },
-          }),
-          fetch("/api/shipping-companies", {
-            headers: {
-              "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-            },
-          }),
-        ]);
-        const shipData = await shipRes.json();
-        const compData = await compRes.json();
-        setShippingMethods(shipData.shipments);
-        setShippingCompanies(compData.shippingMethods);
-      } catch (e) {
-        toast.error("Shipping load error");
-      } finally {
-        setShippingLoading(false);
-      }
-    };
-    loadAddresses();
-    loadPayments();
-    loadShipping();
-
-    // set country from client list
-    const client = clients.find((c) => c.id === selectedClient);
-    if (client) setClientCountry(client.country);
-  }, [selectedClient]);
-
-  // Subtotal, discount, total
-  const subtotal = orderItems.reduce(
-    (sum, i) =>
-      sum +
-      (i.product.regularPrice[clientCountry] ?? i.product.price) * i.quantity,
-    0
-  );
-  const discountAmount = discount;
-  const total = subtotal - discountAmount;
-  // Shipping cost
-  useEffect(() => {
-    if (!selectedShippingMethod) return;
-    const m = shippingMethods.find((m) => m.id === selectedShippingMethod);
-    const tier = m?.costs.find(
-      (c) =>
-        total >= c.minOrderCost &&
-        (c.maxOrderCost === 0 || total <= c.maxOrderCost)
-    );
-    setShippingCost(tier?.shipmentCost || 0);
-  }, [total, selectedShippingMethod]);
-
-  // — Generate cart & load shipping data
   const generateOrder = async () => {
     if (!selectedClient) return;
     try {
@@ -304,11 +185,18 @@ export default function OrderForm({ orderId }: OrderFormProps) {
               price: r.unitPrice,
               regularPrice: {},
               stockData: {},
+              subtotal: r.subtotal,
             },
             quantity: r.quantity,
           }))
         );
       }
+
+      const subtotal = resultCartProducts.reduce((accumulator, current) => {
+        return accumulator + current.subtotal;
+      }, 0);
+
+      setSubtotal(subtotal);
 
       const client = clients.find((c) => c.id === selectedClient);
       if (client) setClientCountry(client.country);
@@ -345,39 +233,102 @@ export default function OrderForm({ orderId }: OrderFormProps) {
     }
   };
 
-  // — Update product quantity
-  const updateQuantity = async (
-    productId: string,
-    action: "add" | "subtract",
-    qty: number
-  ) => {
-    if (!cartId) {
-      toast.error("Cart hasn’t been created yet!");
-      return;
-    }
+  async function loadProducts() {
+    setProductsLoading(true);
     try {
-      const res = await fetch(`/api/cart/${cartId}/update-product`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, action, quantity: qty }),
+      const res = await fetch("/api/products", {
+        headers: {
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+        },
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        throw new Error(err?.message || "Failed to update quantity");
-      }
-      const data = await res.json();
-      const newQty = data.quantity;
-      setOrderItems((prev) =>
-        prev.map((it) =>
-          it.product.id === productId ? { ...it, quantity: newQty } : it
-        )
-      );
-    } catch (err: any) {
-      toast.error(err.message || "Could not update quantity");
+      const { products } = await res.json();
+      setProducts(products);
+    } catch {
+      toast.error("Failed loading products");
+    } finally {
+      setProductsLoading(false);
     }
-  };
+  }
 
-  // — Add or update product
+  const countryProducts = products.filter((p) => {
+    const totalStock = Object.values(p.stockData).reduce(
+      (sum, e) => sum + (e[clientCountry] || 0),
+      0
+    );
+    return totalStock > 0;
+  });
+
+  useEffect(() => {
+    if (!selectedClient) return;
+    const loadAddresses = async () => {
+      try {
+        const res = await fetch(`/api/clients/${selectedClient}/address`, {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
+        });
+        const data = await res.json();
+        setAddresses(data.addresses);
+        if (data.addresses.length && !selectedAddressId)
+          setSelectedAddressId(data.addresses[0].id);
+      } catch (e) {
+        toast.error("Addresses load error");
+      }
+    };
+
+    const loadPayments = async () => {
+      setPaymentLoading(true);
+      try {
+        const res = await fetch("/api/payment-methods", {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
+        });
+        const data = await res.json();
+        setPaymentMethods(data.methods);
+      } catch (e) {
+        toast.error("Payments load error");
+      } finally {
+        setPaymentLoading(false);
+      }
+    };
+
+    const loadShipping = async () => {
+      setShippingLoading(true);
+      try {
+        const [shipRes, compRes] = await Promise.all([
+          fetch("/api/shipments", {
+            headers: {
+              "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+            },
+          }),
+          fetch("/api/shipping-companies", {
+            headers: {
+              "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+            },
+          }),
+        ]);
+        const shipData = await shipRes.json();
+        const compData = await compRes.json();
+        setShippingMethods(shipData.shipments);
+        setShippingCompanies(compData.shippingMethods);
+      } catch (e) {
+        toast.error("Shipping load error");
+      } finally {
+        setShippingLoading(false);
+      }
+    };
+
+    loadAddresses();
+    loadPayments();
+    loadShipping();
+
+    // set country from client list
+    const client = clients.find((c) => c.id === selectedClient);
+    if (client) setClientCountry(client.country);
+  }, [selectedClient]);
+
+  // — Add product
   const addProduct = async () => {
     if (!selectedProduct) return;
     if (!cartId) {
@@ -424,7 +375,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
     }
   };
 
-  // — Remove item
+  // — Remove Product
   const removeProduct = async (productId: string, idx: number) => {
     if (!cartId) {
       toast.error("No cart created yet!");
@@ -448,6 +399,41 @@ export default function OrderForm({ orderId }: OrderFormProps) {
     } catch (error: any) {
       console.error("removeProduct error:", error);
       toast.error(error.message || "Could not remove product");
+    }
+  };
+
+  // — Update product quantity
+  const updateQuantity = async (
+    productId: string,
+    action: "add" | "subtract",
+    qty: number
+  ) => {
+    if (!cartId) {
+      toast.error("Cart hasn’t been created yet!");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/cart/${cartId}/update-product`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId, action, quantity: qty }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.message || "Failed to update quantity");
+      }
+      const { product: added, quantity } = await res.json();
+
+      setOrderItems((prev) => {
+        if (prev.some((it) => it.product.id === added.id)) {
+          return prev.map((it) =>
+            it.product.id === added.id ? { product: added, quantity } : it
+          );
+        }
+        return [...prev, { product: added, quantity }];
+      });
+    } catch (err: any) {
+      toast.error(err.message || "Could not update quantity");
     }
   };
 
@@ -491,15 +477,6 @@ export default function OrderForm({ orderId }: OrderFormProps) {
     }
   };
 
-  // — Add payment method to order
-  const addPaymentMethod = () => {
-    const m = paymentMethods.find((m) => m.id === selectedPaymentMethod);
-    if (m) setAppliedPaymentMethods((p) => [...p, m]);
-    setSelectedPaymentMethod("");
-  };
-  const removePaymentMethod = (i: number) =>
-    setAppliedPaymentMethods((p) => p.filter((_, idx) => idx !== i));
-
   // — Add a new address (only address text)
   const addAddress = async () => {
     if (!newAddress) {
@@ -527,6 +504,20 @@ export default function OrderForm({ orderId }: OrderFormProps) {
       toast.error(err.message);
     }
   };
+
+  const total = subtotal - discount;
+
+  // Shipping cost
+  useEffect(() => {
+    if (!selectedShippingMethod) return;
+    const m = shippingMethods.find((m) => m.id === selectedShippingMethod);
+    const tier = m?.costs.find(
+      (c) =>
+        total >= c.minOrderCost &&
+        (c.maxOrderCost === 0 || total <= c.maxOrderCost)
+    );
+    setShippingCost(tier?.shipmentCost || 0);
+  }, [total, selectedShippingMethod]);
 
   // — Cancel / Create
   const cancelOrder = () => {
@@ -577,7 +568,6 @@ export default function OrderForm({ orderId }: OrderFormProps) {
     }
     const shippingAmount = shippingCost;
     const discountAmount = discount;
-    const totalAmount = subtotal - discountAmount + shippingAmount;
 
     const payload = {
       clientId: selectedClient,
@@ -588,10 +578,11 @@ export default function OrderForm({ orderId }: OrderFormProps) {
       shippingMethodTitle: shippingMethodObj.title,
       shippingMethodDescription: shippingMethodObj.description,
       discountAmount,
-      totalAmount,
       couponCode: couponCode || null,
+      counponType: discountType,
       shippingCompany: shippingCompanyName,
       address: addr.address,
+      subtotal: subtotal,
     };
 
     try {
@@ -620,23 +611,9 @@ export default function OrderForm({ orderId }: OrderFormProps) {
     }
   };
 
-  const handleSubmit = isEdit
-    ? createOrder /* update uses same method */
-    : createOrder;
-
-  const countryProducts = products.filter((p) => {
-    const totalStock = Object.values(p.stockData).reduce(
-      (sum, e) => sum + (e[clientCountry] || 0),
-      0
-    );
-    return totalStock > 0;
-  });
-
   return (
     <div className="container mx-auto py-6">
-      <h1 className="text-3xl font-bold mb-6">
-        {isEdit ? "Edit Order" : "Create New Order"}
-      </h1>
+      <h1 className="text-3xl font-bold mb-6">Create New Order</h1>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT COLUMN */}
         <div className="lg:col-span-2 space-y-6">
@@ -687,6 +664,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
           </Card>
 
           {/* Product Selection */}
+
           <Card
             className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
           >
@@ -767,7 +745,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
                               Unit Price: ${price}
                             </span>
                             <span className="font-medium">
-                              ${(price * quantity).toFixed(2)}
+                              ${product.subtotal.toFixed(2)}
                             </span>
                           </div>
                         </div>
@@ -776,7 +754,6 @@ export default function OrderForm({ orderId }: OrderFormProps) {
                   })}
                 </div>
               )}
-
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
                   <Label>Select Product</Label>
@@ -832,6 +809,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
           </Card>
 
           {/* Discount Coupon */}
+
           <Card
             className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
           >
@@ -869,6 +847,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
           </Card>
 
           {/* Addresses Section */}
+
           {orderGenerated && (
             <Card>
               <CardHeader>
@@ -878,16 +857,13 @@ export default function OrderForm({ orderId }: OrderFormProps) {
               </CardHeader>
               <CardContent>
                 {addresses.length > 0 && (
-                  <div className="space-y-2 mb-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {addresses.map((addr) => (
-                      <label
-                        key={addr.id}
-                        className="flex items-center gap-3 cursor-pointer"
-                      >
+                      <label key={addr.id} className="flex items-center gap-2">
                         <input
                           type="radio"
                           name="address"
-                          className="mt-1"
+                          className="h-4 w-4"
                           value={addr.id}
                           checked={selectedAddressId === addr.id}
                           onChange={() => setSelectedAddressId(addr.id)}
@@ -920,6 +896,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
           )}
 
           {/* Shipping Section */}
+
           <Card
             className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
           >
@@ -991,6 +968,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
           </Card>
 
           {/* Payment Methods */}
+
           <Card
             className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
           >
@@ -1022,6 +1000,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
         </div>
 
         {/* RIGHT COLUMN: Order Summary */}
+
         <div className="lg:col-span-1">
           <Card className="sticky top-6">
             <CardHeader>
@@ -1046,7 +1025,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
                     <span>Subtotal:</span>
                     <span className="font-medium">${subtotal.toFixed(2)}</span>
                   </div>
-                  {couponApplied && discountAmount > 0 && (
+                  {couponApplied && discount > 0 && (
                     <div className="flex justify-between text-green-600">
                       <span>
                         Discount
@@ -1085,7 +1064,7 @@ export default function OrderForm({ orderId }: OrderFormProps) {
                 }
                 className="w-full"
               >
-                {isEdit ? "Update Order" : "Create Order"}
+                Create Order
               </Button>
             </CardFooter>
           </Card>

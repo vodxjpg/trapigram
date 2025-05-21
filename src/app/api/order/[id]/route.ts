@@ -28,6 +28,15 @@ function getEncryptionKeyAndIv(): { key: Buffer, iv: Buffer } {
     return { key, iv }
 }
 
+function encryptSecretNode(plain: string): string {
+    const { key, iv } = getEncryptionKeyAndIv()
+    // For demo: using AES-256-CBC. You can choose GCM or CTR if you wish.
+    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv)
+    let encrypted = cipher.update(plain, "utf8", "base64")
+    encrypted += cipher.final("base64")
+    return encrypted
+}
+
 function decryptSecretNode(encryptedB64: string): string {
     const { key, iv } = getEncryptionKeyAndIv();
     const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
@@ -85,6 +94,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             clientEmail: client.email,
             clientUsername: client.username,
             status: order.status,
+            country: order.country,
             products: products,
             coupon: order.couponCode,
             discount: Number(order.discountTotal),
@@ -102,5 +112,32 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         return NextResponse.json(fullOrder, { status: 201 });
     } catch (error) {
         return NextResponse.json(error, { status: 403 });
+    }
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+
+    try {
+        const { id } = await params;
+        const body = await req.json();
+        const { discount, couponCode, address, total } = body
+
+        const encryptedAddress = encryptSecretNode(address)
+
+        const insert = `
+        UPDATE "orders" 
+        SET "discountTotal" = ${discount}, "couponCode" = '${couponCode}', address = '${encryptedAddress}', "totalAmount" = ${total}, "updatedAt" = NOW()
+        WHERE "id" = '${id}'
+        RETURNING *
+      `;
+        console.log(insert)
+
+        const result = await pool.query(insert);
+
+        return NextResponse.json({ result: result.rows[0] }, { status: 201 });
+    } catch (error) {
+        return NextResponse.json({ error: error }, { status: 500 });
     }
 }
