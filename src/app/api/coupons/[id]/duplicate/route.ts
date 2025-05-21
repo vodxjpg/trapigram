@@ -1,3 +1,4 @@
+// src/app/api/coupons/[id]/duplicate/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
@@ -46,30 +47,40 @@ export async function POST(
     const insert = `
       INSERT INTO coupons(
         id, "organizationId", name, code, description,
-        "discountType", "discountAmount", "expirationDate",
-        "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum",
-        countries, visibility, "createdAt", "updatedAt"
+        "discountType", "discountAmount",
+        "startDate", "expirationDate",
+        "limitPerUser", "usageLimit",
+        "expendingLimit", "expendingMinimum",
+        countries, visibility,
+        "createdAt", "updatedAt"
       )
       VALUES(
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW()
+        $1,$2,$3,$4,$5,
+        $6,$7,
+        $8,$9,
+        $10,$11,
+        $12,$13,
+        $14,$15,
+        NOW(),NOW()
       )
       RETURNING *
     `;
     const vals = [
-      newId,
-      organizationId,
-      c.name,
-      newCode,
-      c.description,
-      c.discountType,
-      c.discountAmount,
-      c.expirationDate,
-      c.limitPerUser,
-      c.usageLimit,
-      c.expendingLimit,
-      c.expendingMinimum,
-      c.countries,
-      c.visibility,
+      newId,            // $1
+      organizationId,   // $2
+      c.name,           // $3
+      newCode,          // $4
+      c.description,    // $5
+      c.discountType,   // $6
+      c.discountAmount, // $7
+      c.startDate,      // $8  ← NEW
+      c.expirationDate, // $9
+      c.limitPerUser,   // $10
+      c.usageLimit,     // $11
+      c.expendingLimit, // $12
+      c.expendingMinimum,// $13
+      c.countries,      // $14
+      c.visibility,     // $15
     ];
 
     const { rows: newRows } = await pool.query(insert, vals);
