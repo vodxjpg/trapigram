@@ -1,4 +1,4 @@
-// pages/api/orders/route.ts
+// pages/api/order/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import crypto from "crypto";
