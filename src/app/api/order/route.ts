@@ -1,4 +1,3 @@
-// src/app/api/order/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
@@ -10,12 +9,15 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+/* ------------------------------------------------------------------ */
+/*  Encryption helpers                                                */
+/* ------------------------------------------------------------------ */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
-const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
+const ENC_IV_B64  = process.env.ENCRYPTION_IV  || "";
 
 function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
   const key = Buffer.from(ENC_KEY_B64, "base64");
-  const iv = Buffer.from(ENC_IV_B64, "base64");
+  const iv  = Buffer.from(ENC_IV_B64, "base64");
   if (!ENC_KEY_B64 || !ENC_IV_B64) {
     throw new Error("ENCRYPTION_KEY or ENCRYPTION_IV not set in environment");
   }
@@ -62,42 +64,66 @@ const orderSchema = z.object({
 type OrderPayload = z.infer<typeof orderSchema>;
 
 /* ================================================================== */
-/* GET – list orders                                                  */
+/* GET – single order (orderKey) or list orders                       */
 /* ================================================================== */
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  try {
-    const getOrder = `
-      SELECT 
-        o.*,
-        c."firstName",
-        c."lastName",
-        c."username",
-        c.email
-      FROM orders AS o
-      JOIN clients AS c ON o."clientId" = c.id
-      WHERE o."organizationId" = $1
-    `;
-    const resultOrder = await pool.query(getOrder, [organizationId]);
-    const orders = resultOrder.rows;
+  const { searchParams } = new URL(req.url);
+  const filterOrderKey = searchParams.get("orderKey");
 
-    const sampleOrders = orders.map((o) => ({
-      id: o.id,
-      status: o.status,
+  try {
+    /* ---------- single-order fetch ------------------------------ */
+    if (filterOrderKey) {
+      const sql = `
+        SELECT o.*,
+               c."firstName",
+               c."lastName",
+               c."username",
+               c.email
+        FROM   orders o
+        JOIN   clients c ON c.id = o."clientId"
+        WHERE  o."organizationId" = $1
+          AND  o."orderKey"       = $2
+        LIMIT  1
+      `;
+      const res = await pool.query(sql, [organizationId, filterOrderKey]);
+      if (res.rowCount === 0) {
+        return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      }
+      return NextResponse.json(res.rows[0], { status: 200 });
+    }
+
+    /* ---------- list orders ------------------------------------- */
+    const listSql = `
+      SELECT o.*,
+             c."firstName",
+             c."lastName",
+             c."username",
+             c.email
+      FROM   orders o
+      JOIN   clients c ON c.id = o."clientId"
+      WHERE  o."organizationId" = $1
+    `;
+    const listRes = await pool.query(listSql, [organizationId]);
+
+    const orders = listRes.rows.map((o) => ({
+      id:        o.id,
+      orderKey:  o.orderKey,
+      status:    o.status,
       createdAt: o.createdAt,
-      total: Number(o.totalAmount),
+      total:     Number(o.totalAmount),
       firstName: o.firstName,
-      lastName: o.lastName,
-      username: o.username,
-      email: o.email,
+      lastName:  o.lastName,
+      username:  o.username,
+      email:     o.email,
     }));
 
-    return NextResponse.json(sampleOrders, { status: 201 });
+    return NextResponse.json(orders, { status: 200 });
   } catch (error) {
-    return NextResponse.json(error, { status: 403 });
+    return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
 
@@ -139,30 +165,37 @@ export async function POST(req: NextRequest) {
     address,
   } = payload;
 
-  const orderId = uuidv4();
+  const orderId  = uuidv4();
+
+  /* ---------- generate sequential orderKey ---------------------- */
+  const seqRes = await pool.query(`SELECT nextval('order_key_seq') AS seq`);
+  const seqNum = Number(seqRes.rows[0].seq);
+  const orderKey = String(seqNum).padStart(3, "0");   // 001, 002 … 999, 1000 …
+
   const encryptedAddress = encryptSecretNode(address);
-  const shippingMethod = `${shippingMethodTitle} - ${shippingMethodDescription}`;
-  const orderStatus = "open";
-  const cartStatus = false;
+  const shippingMethod   = `${shippingMethodTitle} - ${shippingMethodDescription}`;
+  const orderStatus      = "open";
+  const cartStatus       = false;
 
   /* ---------- prepare order INSERT ------------------------------ */
   const insertSQL = `
     INSERT INTO orders
-      (id, "clientId", "organizationId", "cartId", country,
+      (id, "orderKey", "clientId", "organizationId", "cartId", country,
        "paymentMethod", "shippingTotal", "discountTotal",
        "totalAmount", "couponCode", "shippingService", "shippingMethod",
-       address, status, "cartHash", "dateCreated",
-       "createdAt", "updatedAt")
+       address, status, "cartHash",
+       "dateCreated", "createdAt", "updatedAt")
     VALUES
-      ($1, $2, $3, $4, $5,
-       $6, $7, $8,
-       $9, $10, $11, $12,
-       $13, $14, $15,
+      ($1, $2, $3, $4, $5, $6,
+       $7, $8, $9,
+       $10, $11, $12, $13,
+       $14, $15, $16,
        NOW(), NOW(), NOW())
     RETURNING *
   `;
   const insertValues = [
     orderId,
+    orderKey,
     clientId,
     organization,
     cartId,
@@ -206,8 +239,7 @@ export async function POST(req: NextRequest) {
 
   for (const cp of cartProductsResults.rows) {
     const stockQuery = `
-      SELECT ws.quantity,
-             p."allowBackorders"
+      SELECT ws.quantity, p."allowBackorders"
       FROM   "warehouseStock" ws
       JOIN   products p ON p.id = ws."productId"
       WHERE  ws."productId" = $1
@@ -217,13 +249,13 @@ export async function POST(req: NextRequest) {
     const stockResult = await pool.query(stockQuery, [cp.productId, country]);
     const row = stockResult.rows[0] || { quantity: 0, allowBackorders: false };
 
-    const available = Number(row.quantity);
-    const canBackorder = Boolean(row.allowBackorders);
+    const available     = Number(row.quantity);
+    const canBackorder  = Boolean(row.allowBackorders);
 
     if (!canBackorder && cp.quantity > available) {
       outOfStock.push({
-        productId: cp.productId,
-        requested: cp.quantity,
+        productId:  cp.productId,
+        requested:  cp.quantity,
         available,
       });
     }
@@ -242,54 +274,41 @@ export async function POST(req: NextRequest) {
   try {
     await pool.query("BEGIN");
 
-
-    /* -------- decrement stock, never going negative if backorders allowed --------- */
+    /* -------- decrement stock (respecting backorder) --------------- */
     for (const cp of cartProductsResults.rows) {
-      const decrementSQL = `
-      UPDATE "warehouseStock" AS ws
-      SET
-        quantity   = CASE
-                       WHEN p."allowBackorders" = TRUE
-                         THEN GREATEST(ws.quantity - $1, 0)
-                       ELSE ws.quantity - $1
-                     END,
-        "updatedAt" = NOW()
-      FROM products p
-      WHERE
-        ws."productId" = $2
-        AND ws.country = $3
-        AND p.id        = ws."productId"
-        AND (
-          -- for no-backorder items require enough stock
-          p."allowBackorders" = TRUE
-          OR ws.quantity >= $1
-        )
-      RETURNING ws.quantity, p."allowBackorders"
-    `;
-      const decRes = await pool.query(decrementSQL, [
-        cp.quantity,
-        cp.productId,
-        country,
-      ]);
-      if (decRes.rowCount === 0) {
-        throw new Error(
-          `Insufficient stock for product ${cp.productId} during commit`
-        );
+      const decSQL = `
+        UPDATE "warehouseStock" ws
+        SET quantity = CASE
+                         WHEN p."allowBackorders" = TRUE
+                           THEN GREATEST(ws.quantity - $1, 0)
+                         ELSE ws.quantity - $1
+                       END,
+            "updatedAt" = NOW()
+        FROM products p
+        WHERE ws."productId" = $2
+          AND ws.country     = $3
+          AND p.id           = ws."productId"
+          AND (
+            p."allowBackorders" = TRUE
+            OR ws.quantity >= $1
+          )
+        RETURNING ws.quantity
+      `;
+      const res = await pool.query(decSQL, [cp.quantity, cp.productId, country]);
+      if (res.rowCount === 0) {
+        throw new Error(`Insufficient stock for product ${cp.productId}`);
       }
     }
 
-    /* -------- finalise cart & order ----------------------------- */
+    /* -------- finalise cart & order ------------------------------- */
     await pool.query(updateCartSQL, updateCartValues);
     const orderRes = await pool.query(insertSQL, insertValues);
-    await pool.query("COMMIT");
 
+    await pool.query("COMMIT");
     return NextResponse.json(orderRes.rows[0], { status: 201 });
   } catch (error: any) {
     await pool.query("ROLLBACK");
     console.error("[POST /api/order] error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
