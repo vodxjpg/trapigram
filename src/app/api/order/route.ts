@@ -73,9 +73,10 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const filterOrderKey = searchParams.get("orderKey");
+  const filterClientId = searchParams.get("clientId");
 
   try {
-    /* ---------- single-order fetch ------------------------------ */
+    // 1) Fetch one by orderKey
     if (filterOrderKey) {
       const sql = `
         SELECT o.*,
@@ -96,7 +97,35 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(res.rows[0], { status: 200 });
     }
 
-    /* ---------- list orders ------------------------------------- */
+    // 2) Fetch all orders for a specific client
+    if (filterClientId) {
+      const sql = `
+        SELECT o.*,
+               c."firstName",
+               c."lastName",
+               c."username",
+               c.email
+        FROM   orders o
+        JOIN   clients c ON c.id = o."clientId"
+        WHERE  o."organizationId" = $1
+          AND  o."clientId"       = $2
+      `;
+      const res = await pool.query(sql, [organizationId, filterClientId]);
+      const orders = res.rows.map((o) => ({
+        id:        o.id,
+        orderKey:  o.orderKey,
+        status:    o.status,
+        createdAt: o.createdAt,
+        total:     Number(o.totalAmount),
+        firstName: o.firstName,
+        lastName:  o.lastName,
+        username:  o.username,
+        email:     o.email,
+      }));
+      return NextResponse.json(orders, { status: 200 });
+    }
+
+    // 3) List all orders in this organization
     const listSql = `
       SELECT o.*,
              c."firstName",
@@ -108,7 +137,6 @@ export async function GET(req: NextRequest) {
       WHERE  o."organizationId" = $1
     `;
     const listRes = await pool.query(listSql, [organizationId]);
-
     const orders = listRes.rows.map((o) => ({
       id:        o.id,
       orderKey:  o.orderKey,
