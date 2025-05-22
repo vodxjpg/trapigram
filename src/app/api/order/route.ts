@@ -242,31 +242,38 @@ export async function POST(req: NextRequest) {
   try {
     await pool.query("BEGIN");
 
-    /* -------- decrement stock with atomic guard ------------------ */
+
+    /* -------- decrement stock, never going negative if backorders allowed --------- */
     for (const cp of cartProductsResults.rows) {
       const decrementSQL = `
-        UPDATE "warehouseStock" AS ws
-        SET    quantity   = ws.quantity - $1,
-               "updatedAt" = NOW()
-        FROM   products p
-        WHERE  ws."productId" = $2
-          AND  ws.country     = $3
-          AND  p.id           = ws."productId"
-          AND  (
-                 p."allowBackorders" = TRUE
-                 OR ws.quantity >= $1           -- enough on hand
-               )
-        RETURNING ws.quantity, p."allowBackorders"
-      `;
+      UPDATE "warehouseStock" AS ws
+      SET
+        quantity   = CASE
+                       WHEN p."allowBackorders" = TRUE
+                         THEN GREATEST(ws.quantity - $1, 0)
+                       ELSE ws.quantity - $1
+                     END,
+        "updatedAt" = NOW()
+      FROM products p
+      WHERE
+        ws."productId" = $2
+        AND ws.country = $3
+        AND p.id        = ws."productId"
+        AND (
+          -- for no-backorder items require enough stock
+          p."allowBackorders" = TRUE
+          OR ws.quantity >= $1
+        )
+      RETURNING ws.quantity, p."allowBackorders"
+    `;
       const decRes = await pool.query(decrementSQL, [
         cp.quantity,
         cp.productId,
         country,
       ]);
       if (decRes.rowCount === 0) {
-        /* rollback handled by catch */
         throw new Error(
-          `Insufficient stock for product ${cp.productId} during commit`,
+          `Insufficient stock for product ${cp.productId} during commit`
         );
       }
     }
