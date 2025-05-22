@@ -167,7 +167,14 @@ export async function POST(req: NextRequest) {
 
   const orderId  = uuidv4();
 
-  /* ---------- generate sequential orderKey ---------------------- */
+
+  /* ---------- ensure sequence & generate sequential orderKey ------ */
+  await pool.query(`
+    CREATE SEQUENCE IF NOT EXISTS order_key_seq
+    START 1
+    INCREMENT 1
+    OWNED BY NONE
+  `);
   const seqRes = await pool.query(`SELECT nextval('order_key_seq') AS seq`);
   const seqNum = Number(seqRes.rows[0].seq);
   const orderKey = String(seqNum).padStart(3, "0");   // 001, 002 … 999, 1000 …
