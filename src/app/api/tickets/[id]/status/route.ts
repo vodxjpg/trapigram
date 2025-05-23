@@ -3,40 +3,37 @@ import { z } from "zod";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// Messages schema 
-
-const statusTicketSchema = z.object({
-    status: z.string(),
-});
+const statusTicketSchema = z.object({ status: z.string() });
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
 
-    try {
+  // 1) parse & validate JSON
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const { status } = statusTicketSchema.parse(body);
 
-        const { id } = await params;
-        const insertQuery = `UPDATE "tickets"
-            SET status = $1
-            WHERE id = $2`;
+  // 2) get the id
+  const { id } = await params;
 
-        const values = [
-            status,
-            id,
-        ];
+  // 3) run the update
+  const updateQuery = `
+    UPDATE "tickets"
+    SET status = $1
+    WHERE id = $2
+    RETURNING *
+  `;
+  const { rows } = await pool.query(updateQuery, [status, id]);
+  if (rows.length === 0) {
+    return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+  }
 
-        const result = await pool.query(insertQuery, values);
-
-        return NextResponse.json(result, { status: 201 });
-
-    } catch (error: any) {
-
-        console.error("[POST /api/tickets/[id]/messages] error:", error);
-        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-
-    }
+  return NextResponse.json(rows[0], { status: 200 });
 }

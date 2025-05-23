@@ -124,8 +124,10 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     try {
       const res = await fetch(`/api/tickets/${id}/status`, {
         method: "PATCH",
-        headers: { "x-status": newStatus },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus })
       });
+      
       if (!res.ok) throw new Error();
       toast.success(`Status set to ${newStatus}`);
     } catch {
