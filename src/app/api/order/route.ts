@@ -51,7 +51,9 @@ const orderSchema = z.object({
     shippingMethodDescription: z.string(),
     discountAmount: z.coerce.number().min(0),
     totalAmount: z.coerce.number().min(0),
+    subtotal: z.coerce.number().min(0),
     couponCode: z.string().optional().nullable(),
+    couponType: z.string().optional().nullable(),
     shippingCompany: z.string().min(1),
     address: z.string().min(1),
     counponType: z.string()
@@ -140,6 +142,8 @@ export async function POST(req: NextRequest) {
         couponCode,
         shippingCompany,
         address,
+        counponType,
+        subtotal
     } = payload;
 
     const orderId = uuidv4();
@@ -151,15 +155,19 @@ export async function POST(req: NextRequest) {
     // Build order INSERT SQL & values (you had 13 placeholders)
     const insertSQL = `
     INSERT INTO orders
-      (id, "clientId", "organizationId", "cartId", country,
-       "paymentMethod", "shippingTotal", "discountTotal",
-       "totalAmount", "couponCode", "shippingService", "shippingMethod", address, status, "cartHash", "dateCreated",
-       "createdAt", "updatedAt")
+      (id, "clientId", "organizationId", 
+      "cartId", country, "paymentMethod", 
+      "shippingTotal", "discountTotal", "totalAmount", 
+      "couponCode", "couponType", "shippingService", "shippingMethod", 
+      address, status, subtotal, "cartHash", 
+      "dateCreated", "createdAt", "updatedAt")
     VALUES
-      ($1, $2, $3, $4, $5,
-       $6, $7, $8,
-       $9, $10, $11, $12, $13, $14, $15, $16, NOW(),
-       NOW(), NOW())
+      ($1, $2, $3, 
+      $4, $5, $6, 
+      $7, $8, $9, 
+      $10, $11, $12, $13, 
+      $14, $15, $16, $17,
+      NOW(), NOW(), NOW())
     RETURNING *
   `;
     const values = [
@@ -173,10 +181,12 @@ export async function POST(req: NextRequest) {
         discountAmount,
         totalAmount,
         couponCode,
+        counponType,
         shippingCompany,
         shippingMethod,
         encryptedAddress,
-        orderStatus
+        orderStatus,
+        subtotal
         // we'll push cartHash below
     ];
 

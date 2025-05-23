@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     const cart = resultCart.rows[0];
 
     if (cart) {
-      return NextResponse.json({ newCart: cart }, { status: 201 });  
+      return NextResponse.json({ newCart: cart }, { status: 201 });
     }
 
     // No existing cart → create new one
@@ -68,9 +68,9 @@ export async function POST(req: NextRequest) {
       INSERT INTO carts (
         id, "clientId", country, "couponCode",
         "shippingMethod", "cartHash", "cartUpdatedHash",
-        status, "createdAt", "updatedAt"
+        status, "createdAt", "updatedAt", "organizationId"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), $9)
       RETURNING *
     `;
     const values = [
@@ -82,6 +82,7 @@ export async function POST(req: NextRequest) {
       cartHash,
       cartUpdatedHash,
       status,
+      organizationId
     ];
 
     const result = await pool.query(insertQ, values);

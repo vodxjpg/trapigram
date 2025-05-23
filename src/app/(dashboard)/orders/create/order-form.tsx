@@ -583,6 +583,7 @@ export default function OrderForm() {
       shippingCompany: shippingCompanyName,
       address: addr.address,
       subtotal: subtotal,
+      discountType,
     };
 
     try {

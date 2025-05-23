@@ -81,6 +81,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         const appliedCoupon = await pool.query(coupon);
         const couponCountry = JSON.parse(appliedCoupon.rows[0].countries);
 
+
         const cart = `
         SELECT * FROM carts 
         WHERE id = '${id}'
@@ -152,16 +153,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
             const insert = `
             UPDATE carts 
-            SET "couponCode" = $1, "updatedAt" = NOW()
-            WHERE id = $2
+            SET "couponCode" = '${data.code}', "updatedAt" = NOW()
+            WHERE id = '${id}'
             RETURNING *
             `;
-            const vals = [
-                data.code,
-                id
-            ];
 
-            await pool.query(insert, vals);
+            console.log(insert)
+
+            await pool.query(insert);
             const discount = {
                 discountType: appliedCoupon.rows[0].discountType, discountValue: appliedCoupon.rows[0].discountAmount, discountAmount
             }
@@ -172,8 +171,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             SET "cartUpdatedHash" = '${encryptedResponse}', "updatedAt" = NOW()
             WHERE id = '${id}'
             RETURNING *`)
-
-            console.log(discount)
 
             return NextResponse.json(discount, { status: 201 });
         }

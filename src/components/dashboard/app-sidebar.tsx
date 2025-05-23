@@ -105,6 +105,7 @@ const data = {
       items: [
         { title: "Revenue", url: "/analytics/revenue" },
         { title: "Coupons", url: "/analytics/coupons/" },
+        { title: "Products", url: "/analytics/products/" },
       ],
     },
     {

@@ -97,9 +97,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             country: order.country,
             products: products,
             coupon: order.couponCode,
+            couponType: order.couponType,
             discount: Number(order.discountTotal),
             shipping: Number(order.shippingTotal),
-            subTotal: Number(total),
+            subtotal: Number(total),
             total: Number(order.totalAmount),
             shippingInfo: {
                 address: decryptSecretNode(order.address),

@@ -20,6 +20,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import Image from "next/image";
 import { format } from "date-fns";
+
 interface Product {
   id: number;
   title: string;
@@ -41,13 +42,14 @@ interface ShippingInfo {
 interface Order {
   id: string;
   cartId: string;
+  clientId: string;
   clientFirstName: string;
   clientLastName: string;
   clientEmail: string;
   clientUsername: string;
   status: string;
   products: Product[];
-  subTotal: number;
+  subtotal: number;
   coupon?: string;
   discount: number;
   shipping: number;
@@ -57,45 +59,20 @@ interface Order {
 
 interface Message {
   id: number;
-  text: string;
-  sender: "admin" | "client";
-  timestamp: Date;
-  senderName: string;
+  message: string;
+  isInternal: true | false;
+  createdAt: Date;
 }
 
 export default function OrderView() {
-  const initialMessages: Message[] = [
-    {
-      id: 1,
-      text: "Your order has been received and is being processed.",
-      sender: "admin",
-      timestamp: new Date(2025, 4, 14, 9, 30),
-      senderName: "Support Team",
-    },
-    {
-      id: 2,
-      text: "Thank you for your order! Do you have an estimated shipping date?",
-      sender: "client",
-      timestamp: new Date(2025, 4, 14, 10, 15),
-      senderName: "John Doe",
-    },
-    {
-      id: 3,
-      text: "Your order is scheduled to ship tomorrow. You'll receive tracking information via email.",
-      sender: "admin",
-      timestamp: new Date(2025, 4, 14, 11, 5),
-      senderName: "Support Team",
-    },
-  ];
-
-  const { id } = useParams(); // grabs [id] from URL
+  const { id } = useParams();
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
 
-  // Fetch real order data on mount / when `id` changes
+  // Fetch order data
   useEffect(() => {
     if (!id) return;
     setLoading(true);
@@ -115,7 +92,18 @@ export default function OrderView() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  // Handle loading / error states
+  // Fetch messages
+  useEffect(() => {
+    if (!id || !order) return;
+    fetch(`/api/order/${id}/messages`)
+      .then((res) => res.json())
+      .then((data: any[]) => {
+        console.log(data.messages);
+        setMessages(data.messages);
+      })
+      .catch(console.error);
+  }, [id, order]);
+
   if (loading) {
     return (
       <div className="container mx-auto py-8 px-4 text-center">
@@ -153,23 +141,28 @@ export default function OrderView() {
     }
   };
 
-  // Function to send a new message
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (newMessage.trim() === "") return;
 
-    const message: Message = {
-      id: messages.length + 1,
-      text: newMessage,
-      sender: "admin",
-      timestamp: new Date(),
-      senderName: "Support Team",
+    const res = await fetch(`/api/order/${id}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-is-internal": "true",
+      },
+      body: JSON.stringify({ message: newMessage, clientId: order.clientId }),
+    });
+    const m = await res.json();
+    const sent: Message = {
+      id: m.messages.id,
+      message: m.messages.message,
+      isInternal: m.messages.isInternal,
+      createdAt: m.messages.createdAt,
     };
-
-    setMessages([...messages, message]);
+    setMessages((prev) => [...prev, sent]);
     setNewMessage("");
   };
 
-  // Function to format message time
   const formatMessageTime = (date: Date) => {
     return format(date, "MMM d, h:mm a");
   };
@@ -291,7 +284,7 @@ export default function OrderView() {
               <div className="mt-6 space-y-2 border-t pt-4">
                 <div className="flex justify-between">
                   <span>Subtotal</span>
-                  <span>${order.subTotal.toFixed(2)}</span>
+                  <span>${order.subtotal.toFixed(2)}</span>
                 </div>
 
                 {order.coupon && (
@@ -381,33 +374,40 @@ export default function OrderView() {
               </div>
             </CardHeader>
             <CardContent className="flex-grow flex flex-col h-[500px]">
-              <ScrollArea className="flex-grow mb-4 pr-4">
-                <div className="space-y-4">
-                  {messages.map((message) => (
+              <ScrollArea className="flex-1 overflow-auto">
+                <div className="p-2">
+                  {messages.map((message, index) => (
                     <div
-                      key={message.id}
-                      className={`flex ${message.sender === "admin" ? "justify-end" : "justify-start"}`}
+                      key={index}
+                      className={`flex ${message.isInternal === false ? "justify-start" : "justify-end"}`}
                     >
                       <div
-                        className={`max-w-[80%] rounded-lg p-3 ${
-                          message.sender === "admin"
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted"
-                        }`}
+                        className={`max-w-[80%] rounded-lg p-3 ${message.isInternal === false ? "flex-row" : "flex-row-reverse"}`}
                       >
                         <div className="flex items-center gap-2 mb-1">
-                          <Avatar className="h-6 w-6">
+                          <Avatar
+                            className={
+                              message.isInternal === false ? "mt-1" : "mt-1"
+                            }
+                          >
                             <AvatarFallback>
-                              {message.sender === "admin" ? "ST" : "JD"}
+                              {message.isInternal === false
+                                ? order.clientEmail.charAt(0).toUpperCase()
+                                : "A"}
                             </AvatarFallback>
                           </Avatar>
-                          <span className="text-xs font-medium">
-                            {message.senderName}
-                          </span>
+                          <div
+                            className={`rounded-lg p-3 ${
+                              message.isInternal === false
+                                ? "bg-muted text-foreground"
+                                : "bg-primary text-primary-foreground"
+                            }`}
+                          >
+                            <p>{message.message}</p>
+                          </div>
                         </div>
-                        <p>{message.text}</p>
                         <div className="text-xs mt-1 text-right opacity-70">
-                          {formatMessageTime(message.timestamp)}
+                          {formatMessageTime(message.createdAt)}
                         </div>
                       </div>
                     </div>

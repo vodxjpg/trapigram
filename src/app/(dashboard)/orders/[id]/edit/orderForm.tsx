@@ -96,18 +96,27 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   useEffect(() => {
     if (!orderData) return;
     const shipping = orderData.shipping ?? 0;
-    const discount = orderData.discount ?? 0;
-    let discountValue = discount;
-    if (orderData.discountType === "percentage") {
-      discountValue = (subtotal * discount) / 100;
+
+    // Determine base discount amount and type
+    const baseAmount = couponApplied ? discount : (orderData.discount ?? 0);
+    const baseType = couponApplied ? discountType : orderData.couponType;
+    setDiscountType(baseType);
+
+    if (baseType === "percentage") {
+      const dct = ((orderData.discount * 100) / orderData.subtotal).toFixed(0);
+      setValue(dct);
+      const dctAmount = (subtotal * dct) / 100;
+      setDiscount(dctAmount);
     }
-    console.log(discountValue);
-    setTotal(subtotal + shipping - discountValue);
+
+    setTotal(subtotal + shipping - discount);
   }, [
     subtotal,
     orderData?.shipping,
     orderData?.discount,
     orderData?.discountType,
+    couponApplied,
+    discountType,
   ]);
   // Fetch order and addresses
   useEffect(() => {
@@ -145,6 +154,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           headers: { "Content-Type": "application/json" },
         });
         const { resultCartProducts } = await res.json();
+        console.log(resultCartProducts);
         // map into your orderItems
         setOrderItems(
           resultCartProducts.map((r: any) => ({
@@ -266,6 +276,8 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       console.error(err);
     }
   };
+
+  console.log(value);
 
   // — Add product
   const addProduct = async () => {
@@ -720,9 +732,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                     Discount
                     {discountType === "percentage" ? ` (${value}%)` : ""}:
                   </span>
-                  <span className="font-medium">
-                    –${discount ? discount : orderData?.discount.toFixed(2)}
-                  </span>
+                  <span className="font-medium">–${discount}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Shipping:</span>

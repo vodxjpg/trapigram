@@ -496,6 +496,7 @@ interface DB {
     shippingMethod: string;
     cartHash: string;
     cartUpdatedHash: string;
+    organizationId: string;
     status: boolean;
     createdAt: Date;
     updatedAt: Date;
@@ -525,14 +526,26 @@ interface DB {
     shippingTotal: number;
     discountTotal: number;
     counponType: string;
+    subtotal: number;
     totalAmount: number;
     couponCode: string;
+    couponType: string;
     shippingService: string;
     address: string;
     dateCreated: Date;
     datePaid: Date;
     dateCompleted: Date;
     dateCancelled: Date;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  orderMessages: {
+    id: string;
+    orderId: string;
+    clientId: string;
+    isInternal: boolean;
+    message: string;
     createdAt: Date;
     updatedAt: Date;
   }
