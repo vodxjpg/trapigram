@@ -84,13 +84,17 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [discount, setDiscount] = useState(0);
   const [value, setValue] = useState(0);
 
+  const calcRowSubtotal = (p: Product, qty: number) =>
+    (p.regularPrice[clientCountry] ?? p.price) * qty;
+
   useEffect(() => {
     const sum = orderItems.reduce(
-      (acc, item) => acc + item.product.subtotal,
-      0
+      (acc, item) =>
+        acc + (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
+      0,
     );
     setSubtotal(sum);
-  }, [orderItems]);
+  }, [orderItems, clientCountry])
 
   // Recalculate total when subtotal, shipping, or discount change
   useEffect(() => {
@@ -281,11 +285,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
   // — Add product
   const addProduct = async () => {
-    if (!selectedProduct) return;
-    if (!cartId) {
-      toast.error("Cart hasn’t been created yet!");
-      return;
-    }
+    if (!selectedProduct || !cartId) return toast.error("Cart hasn’t been created yet!");
 
     const product = products.find((p) => p.id === selectedProduct);
     if (!product) return;
@@ -307,14 +307,17 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         throw new Error(err?.message || "Failed to add product");
       }
       const { product: added, quantity: qty } = await res.json();
+      const subtotalRow = calcRowSubtotal(added, qty);
 
       setOrderItems((prev) => {
         if (prev.some((it) => it.product.id === added.id)) {
           return prev.map((it) =>
-            it.product.id === added.id ? { product: added, quantity: qty } : it
+            it.product.id === added.id
+              ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
+              : it,
           );
         }
-        return [...prev, { product: added, quantity: qty }];
+        return [...prev, { product: { ...added, subtotal: subtotalRow }, quantity: qty }];
       });
 
       setSelectedProduct("");
@@ -357,12 +360,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const updateQuantity = async (
     productId: string,
     action: "add" | "subtract",
-    qty: number
+    qty: number,
   ) => {
-    if (!cartId) {
-      toast.error("Cart hasn’t been created yet!");
-      return;
-    }
+    if (!cartId) return toast.error("Cart hasn’t been created yet!");
     try {
       const res = await fetch(`/api/cart/${cartId}/update-product`, {
         method: "PATCH",
@@ -373,16 +373,16 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         const err = await res.json().catch(() => null);
         throw new Error(err?.message || "Failed to update quantity");
       }
-      const { product: added, quantity } = await res.json();
+      const { product: updated, quantity } = await res.json();
+      const subtotalRow = calcRowSubtotal(updated, quantity);
 
-      setOrderItems((prev) => {
-        if (prev.some((it) => it.product.id === added.id)) {
-          return prev.map((it) =>
-            it.product.id === added.id ? { product: added, quantity } : it
-          );
-        }
-        return [...prev, { product: added, quantity }];
-      });
+      setOrderItems((prev) =>
+        prev.map((it) =>
+          it.product.id === updated.id
+            ? { product: { ...updated, subtotal: subtotalRow }, quantity }
+            : it,
+        ),
+      );
     } catch (err: any) {
       toast.error(err.message || "Could not update quantity");
     }
@@ -509,13 +509,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                             </p>
                           )}
                           <div className="flex justify-between mt-2">
-                            <span className="font-medium">
-                              Unit Price: ${price}
-                            </span>
-                            <span className="font-medium">
-                              ${product.subtotal.toFixed(2)}
-                            </span>
-                          </div>
+                              <span className="font-medium">Unit Price: ${price}</span>
+                              <span className="font-medium">
+                                $
+                                {(
+                                  product.subtotal ??
+                                  calcRowSubtotal(product, quantity)
+                                ).toFixed(2)}
+                              </span>
+                            </div>
                         </div>
                       </div>
                     );
