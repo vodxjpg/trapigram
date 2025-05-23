@@ -16,7 +16,11 @@ const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
 
 function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
   const key = Buffer.from(ENC_KEY_B64, "base64");
+<<<<<<< HEAD
   const iv = Buffer.from(ENC_IV_B64, "base64");
+=======
+  const iv  = Buffer.from(ENC_IV_B64, "base64");
+>>>>>>> 056ad2eb7b8893517216f63929a4d3e560a6e8d2
   if (!ENC_KEY_B64 || !ENC_IV_B64) throw new Error("ENCRYPTION_* env vars missing");
   if (key.length !== 32) throw new Error("ENCRYPTION_KEY must decode to 32 bytes");
   if (iv.length !== 16) throw new Error("ENCRYPTION_IV must decode to 16 bytes");
@@ -32,6 +36,7 @@ function encryptSecretNode(plain: string): string {
 /*  Zod – order payload                                               */
 /* ------------------------------------------------------------------ */
 const orderSchema = z.object({
+<<<<<<< HEAD
   organization: z.string(),
   clientId: z.string().uuid(),
   cartId: z.string().uuid(),
@@ -49,6 +54,25 @@ const orderSchema = z.object({
   shippingCompany: z.string().nullable().optional(),
   address: z.string().min(1),
   trackingNumber: z.string().nullable().optional(),
+=======
+  organization:             z.string(),
+  clientId:                 z.string().uuid(),
+  cartId:                   z.string().uuid(),
+  country:                  z.string().length(2),
+  paymentMethod:            z.string().min(1),
+  shippingAmount:           z.coerce.number().min(0),
+  shippingMethodTitle:      z.string(),
+  shippingMethodDescription:z.string(),
+  discountAmount:           z.coerce.number().min(0),
+  totalAmount:              z.coerce.number().min(0),
+  subtotal:                 z.coerce.number().min(0),
+  couponCode:               z.string().nullable().optional(),
+  couponType:               z.string().nullable().optional(),
+  counponType:              z.string().nullable().optional(), // legacy typo
+  shippingCompany:          z.string().nullable().optional(),
+  address:                  z.string().min(1),
+  trackingNumber:           z.string().nullable().optional(),
+>>>>>>> 056ad2eb7b8893517216f63929a4d3e560a6e8d2
 });
 type OrderPayload = z.infer<typeof orderSchema>;
 
@@ -142,7 +166,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     body.organization = organizationId;
-    body.totalAmount = body.subtotal - body.discountAmount + body.shippingAmount;
+    body.totalAmount  = body.subtotal - body.discountAmount + body.shippingAmount;
     payload = orderSchema.parse(body);
   } catch (err) {
     if (err instanceof z.ZodError)
@@ -202,6 +226,7 @@ export async function POST(req: NextRequest) {
        NOW(),NOW(),NOW(),$19)
     RETURNING *
   `;
+<<<<<<< HEAD
   /* ---------- build the list up to $17 (no cartHash yet) ---------- */
   const baseValues: unknown[] = [
     orderId,                // $1
@@ -226,6 +251,32 @@ export async function POST(req: NextRequest) {
   /* ---------- compute cartHash from the SAME list ----------------- */
   const cartHash = encryptSecretNode(JSON.stringify(baseValues));
 
+=======
+   /* ---------- build the list up to $17 (no cartHash yet) ---------- */
+   const baseValues: unknown[] = [
+     orderId,                // $1
+     clientId,               // $2
+     organization,           // $3
+     cartId,                 // $4
+     country,                // $5
+     paymentMethod,          // $6
+     shippingAmount,         // $7
+     discountAmount,         // $8
+     totalAmount,            // $9
+     couponCode,             // $10
+     couponTypeResolved,     // $11
+     shippingCompany,        // $12
+     shippingMethod,         // $13
+     trackingNumber,         // $14
+     encryptedAddress,       // $15
+     orderStatus,            // $16
+     subtotal,               // $17
+   ];
+ 
+   /* ---------- compute cartHash from the SAME list ----------------- */
+   const cartHash = encryptSecretNode(JSON.stringify(baseValues));
+
+>>>>>>> 056ad2eb7b8893517216f63929a4d3e560a6e8d2
   /* ---------- final values exactly matching $1…$19 ---------------- */
   const insertValues = [...baseValues, cartHash, orderKey]; // $18, $19
 

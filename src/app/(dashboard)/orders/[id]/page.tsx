@@ -1,3 +1,4 @@
+// src/app/(dashboard)/orders/[id]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -72,24 +73,38 @@ export default function OrderView() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
 
-  // Fetch order data
+  // Fetch order data, then fetch client to populate email & names
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    fetch(`/api/order/${id}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Failed to load order ${id}`);
-        return res.json();
-      })
-      .then((data: Order) => {
-        setOrder(data);
+    (async () => {
+      try {
+        // 1. Load order
+        const orderRes = await fetch(`/api/order/${id}`);
+        if (!orderRes.ok) throw new Error(`Failed to load order ${id}`);
+        const orderData: Order = await orderRes.json();
+
+        // 2. Load client info
+        const clientRes = await fetch(`/api/clients/${orderData.clientId}`);
+        if (!clientRes.ok) throw new Error(`Failed to load client ${orderData.clientId}`);
+        const clientData = await clientRes.json();
+
+        // 3. Merge and set
+        setOrder({
+          ...orderData,
+          clientFirstName: clientData.firstName,
+          clientLastName: clientData.lastName,
+          clientEmail: clientData.email,
+          clientUsername: clientData.username,
+        });
         setError(null);
-      })
-      .catch((err: Error) => {
+      } catch (err: any) {
         console.error(err);
         setError(err.message);
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [id]);
 
   // Fetch messages
@@ -98,7 +113,6 @@ export default function OrderView() {
     fetch(`/api/order/${id}/messages`)
       .then((res) => res.json())
       .then((data: any[]) => {
-        console.log(data.messages);
         setMessages(data.messages);
       })
       .catch(console.error);
@@ -331,7 +345,6 @@ export default function OrderView() {
                   <p className="text-muted-foreground">
                     {order.shippingInfo.address}
                   </p>
-
                   <div className="mt-4">
                     <h3 className="font-semibold mb-2">Shipping Company</h3>
                     <p className="text-muted-foreground">
@@ -339,13 +352,11 @@ export default function OrderView() {
                     </p>
                   </div>
                 </div>
-
                 <div>
                   <h3 className="font-semibold mb-2">Shipping Method</h3>
                   <p className="text-muted-foreground">
                     {order.shippingInfo.method}
                   </p>
-
                   <div className="mt-4">
                     <h3 className="font-semibold flex items-center gap-2 mb-2">
                       <CreditCard className="h-4 w-4" />
@@ -379,17 +390,17 @@ export default function OrderView() {
                   {messages.map((message, index) => (
                     <div
                       key={index}
-                      className={`flex ${message.isInternal === false ? "justify-start" : "justify-end"}`}
+                      className={`flex ${
+                        message.isInternal === false ? "justify-start" : "justify-end"
+                      }`}
                     >
                       <div
-                        className={`max-w-[80%] rounded-lg p-3 ${message.isInternal === false ? "flex-row" : "flex-row-reverse"}`}
+                        className={`max-w-[80%] rounded-lg p-3 ${
+                          message.isInternal === false ? "flex-row" : "flex-row-reverse"
+                        }`}
                       >
                         <div className="flex items-center gap-2 mb-1">
-                          <Avatar
-                            className={
-                              message.isInternal === false ? "mt-1" : "mt-1"
-                            }
-                          >
+                          <Avatar className={message.isInternal === false ? "mt-1" : "mt-1"}>
                             <AvatarFallback>
                               {message.isInternal === false
                                 ? order.clientEmail.charAt(0).toUpperCase()
@@ -414,7 +425,6 @@ export default function OrderView() {
                   ))}
                 </div>
               </ScrollArea>
-
               <div className="flex gap-2 mt-auto">
                 <Input
                   placeholder="Type a message..."

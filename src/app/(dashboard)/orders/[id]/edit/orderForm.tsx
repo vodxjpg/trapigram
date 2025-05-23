@@ -426,10 +426,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
               <CardTitle>Client</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-lg font-medium">
-                {orderData?.clientFirstName} {orderData?.clientLastName} —{" "}
-                {orderData?.clientUserName} ({orderData?.clientEmail})
-              </p>
+            <p className="text-lg font-medium">
+  {orderData?.client?.firstName} {orderData?.client?.lastName} —{" "}
+  {orderData?.client?.username} ({orderData?.client?.email})
+</p>
+
             </CardContent>
           </Card>
 
@@ -455,13 +456,21 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                           (stockErrors[product.id] ? " border-red-500" : "")
                         }
                       >
-                        <Image
-                          src={product.image}
-                          alt={product.title}
-                          width={80}
-                          height={80}
-                          className="rounded-md"
-                        />
+                        {product.image ? (
+  <Image
+    src={product.image}
+    alt={product.title}
+    width={80}
+    height={80}
+    className="rounded-md"
+  />
+) : (
+  <div
+    className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-500"
+  >
+    No image
+  </div>
+)}
                         <div className="flex-1">
                           <div className="flex justify-between">
                             <h3 className="font-medium">{product.title}</h3>
