@@ -98,7 +98,6 @@ export async function GET(
 
     // 4) Finally, select & return the up-to-date cart lines
     const cartProductsQ = `
-<<<<<<< HEAD
         SELECT 
           p.id, p.title, p.description, p.image, p.sku,
           cp.quantity, cp."unitPrice"
@@ -113,21 +112,6 @@ export async function GET(
 
     console.log(resultCartProducts.rows)
     return NextResponse.json({ resultCartProducts: resultCartProducts.rows }, { status: 201 });
-=======
-      SELECT 
-        p.id, p.title, p.description, p.image, p.sku,
-        cp.quantity, cp."unitPrice"
-      FROM products p
-      JOIN "cartProducts" cp ON p.id = cp."productId"
-      WHERE cp."cartId" = $1
-    `;
-    const finalCartProducts = await pool.query(cartProductsQ, [id]);
-
-    return NextResponse.json(
-      { resultCartProducts: finalCartProducts.rows },
-      { status: 201 }
-    );
->>>>>>> 82b8a909518f91705d0332317ffc6ad806b7c086
   } catch (error: any) {
     console.error("[GET /api/cart/[id]] error:", error);
     return NextResponse.json(
