@@ -202,31 +202,32 @@ export async function POST(req: NextRequest) {
        NOW(),NOW(),NOW(),$19)
     RETURNING *
   `;
-  const insertValues: unknown[] = [
-    orderId,
-    clientId,
-    organization,
-    cartId,
-    country,
-    paymentMethod,
-    shippingAmount,
-    discountAmount,
-    totalAmount,
-    couponCode,
-    couponTypeResolved,
-    shippingCompany,
-    shippingMethod,
-    trackingNumber,
-    encryptedAddress,
-    orderStatus,
-    subtotal,
-    /* cartHash placeholder pushed later */,
-    orderKey,
-  ];
+   /* ---------- build the list up to $17 (no cartHash yet) ---------- */
+   const baseValues: unknown[] = [
+     orderId,                // $1
+     clientId,               // $2
+     organization,           // $3
+     cartId,                 // $4
+     country,                // $5
+     paymentMethod,          // $6
+     shippingAmount,         // $7
+     discountAmount,         // $8
+     totalAmount,            // $9
+     couponCode,             // $10
+     couponTypeResolved,     // $11
+     shippingCompany,        // $12
+     shippingMethod,         // $13
+     trackingNumber,         // $14
+     encryptedAddress,       // $15
+     orderStatus,            // $16
+     subtotal,               // $17
+   ];
+ 
+   /* ---------- compute cartHash from the SAME list ----------------- */
+   const cartHash = encryptSecretNode(JSON.stringify(baseValues));
 
-  /* ---------- cart hash + update cart ----------------------------- */
-  const cartHash = encryptSecretNode(JSON.stringify(insertValues));
-  insertValues.splice(18, 0, cartHash); // place cartHash in $18
+  /* ---------- final values exactly matching $1…$19 ---------------- */
+  const insertValues = [...baseValues, cartHash, orderKey]; // $18, $19
 
   const updCartSQL = `
     UPDATE carts
