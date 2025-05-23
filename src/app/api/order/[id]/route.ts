@@ -1,144 +1,153 @@
-// pages/api/order/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || ""
-const ENC_IV_B64 = process.env.ENCRYPTION_IV || ""
+/* ---------- encryption helpers ---------------------------------- */
+const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
+const ENC_IV_B64  = process.env.ENCRYPTION_IV  || "";
 
-function getEncryptionKeyAndIv(): { key: Buffer, iv: Buffer } {
-    const key = Buffer.from(ENC_KEY_B64, "base64") // decode base64 -> bytes
-    const iv = Buffer.from(ENC_IV_B64, "base64")
-    // For AES-256, key should be 32 bytes; iv typically 16 bytes
-    // Added validation to ensure correct lengths
-    if (!ENC_KEY_B64 || !ENC_IV_B64) {
-        throw new Error("ENCRYPTION_KEY or ENCRYPTION_IV not set in environment")
-    }
-    if (key.length !== 32) {
-        throw new Error(`Invalid ENCRYPTION_KEY: must decode to 32 bytes, got ${key.length}`)
-    }
-    if (iv.length !== 16) {
-        throw new Error(`Invalid ENCRYPTION_IV: must decode to 16 bytes, got ${iv.length}`)
-    }
-    return { key, iv }
+function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
+  const key = Buffer.from(ENC_KEY_B64, "base64");
+  const iv  = Buffer.from(ENC_IV_B64, "base64");
+  if (!ENC_KEY_B64 || !ENC_IV_B64) throw new Error("ENC vars not set");
+  if (key.length !== 32) throw new Error("ENCRYPTION_KEY must be 32-byte");
+  if (iv.length !== 16) throw new Error("ENCRYPTION_IV must be 16-byte");
+  return { key, iv };
 }
-
 function encryptSecretNode(plain: string): string {
-    const { key, iv } = getEncryptionKeyAndIv()
-    // For demo: using AES-256-CBC. You can choose GCM or CTR if you wish.
-    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv)
-    let encrypted = cipher.update(plain, "utf8", "base64")
-    encrypted += cipher.final("base64")
-    return encrypted
+  const { key, iv } = getEncryptionKeyAndIv();
+  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+  return cipher.update(plain, "utf8", "base64") + cipher.final("base64");
+}
+function decryptSecretNode(enc: string): string {
+  const { key, iv } = getEncryptionKeyAndIv();
+  const d = crypto.createDecipheriv("aes-256-cbc", key, iv);
+  return d.update(enc, "base64", "utf8") + d.final("utf8");
 }
 
-function decryptSecretNode(encryptedB64: string): string {
-    const { key, iv } = getEncryptionKeyAndIv();
-    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-    let decrypted = decipher.update(encryptedB64, "base64", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted;
+/* ================================================================= */
+/* GET – full order                                                  */
+/* ================================================================= */
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+
+  const { id } = await params;
+
+  const orderRes = await pool.query(`SELECT * FROM orders WHERE id = $1`, [id]);
+  if (!orderRes.rowCount)
+    return NextResponse.json({ error: "Order not found" }, { status: 404 });
+  const order = orderRes.rows[0];
+
+  const clientRes = await pool.query(`SELECT * FROM clients WHERE id = $1`, [
+    order.clientId,
+  ]);
+  const client = clientRes.rows[0];
+
+  const prodSql = `
+    SELECT p.id, p.title, p.description, p.image, p.sku,
+           cp.quantity, cp."unitPrice"
+    FROM   products p
+    JOIN   "cartProducts" cp ON p.id = cp."productId"
+    WHERE  cp."cartId" = $1
+  `;
+  const prods = await pool.query(prodSql, [order.cartId]);
+  const products = prods.rows.map(p => ({
+    ...p,
+    unitPrice: Number(p.unitPrice),
+  }));
+  const subtotal = products.reduce(
+    (t, p) => t + p.unitPrice * p.quantity,
+    0,
+  );
+
+  const full = {
+    id: order.id,
+    orderKey: order.orderKey,
+    clientId: client.id,
+    cartId: order.cartId,
+    status: order.status,
+    country: order.country,
+    products,
+    coupon: order.couponCode,
+    couponType: order.couponType,
+    discount: Number(order.discountTotal),
+    shipping: Number(order.shippingTotal),
+    subtotal,
+    total: Number(order.totalAmount),
+    trackingNumber: order.trackingNumber,
+    shippingInfo: {
+      address: decryptSecretNode(order.address),
+      company: order.shippingService,
+      method: order.shippingMethod,
+      payment: order.paymentMethod,
+    },
+    client: {
+      firstName: client.firstName,
+      lastName:  client.lastName,
+      username:  client.username,
+      email:     client.email,
+    },
+  };
+
+  return NextResponse.json(full, { status: 200 });
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
-    try {
+/* ================================================================= */
+/* PATCH – update editable fields (address, totals, tracking)        */
+/* ================================================================= */
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
 
-        const { id } = await params
-        const getOrder = `
-            SELECT * FROM orders
-            WHERE "id" = '${id}'
-            `;
+  const { id } = await params;
+  const body   = await req.json();
 
-        const resultOrder = await pool.query(getOrder);
-        const order = resultOrder.rows[0];
+  /* only update provided keys ------------------------------------- */
+  const fields: string[] = [];
+  const values: unknown[] = [];
 
-        const getClient = `
-            SELECT * FROM clients
-            WHERE "id" = '${order.clientId}'
-            `;
+  if ("discount" in body) {
+    fields.push(`"discountTotal" = $${fields.length + 1}`);
+    values.push(body.discount);
+  }
+  if ("couponCode" in body) {
+    fields.push(`"couponCode" = $${fields.length + 1}`);
+    values.push(body.couponCode);
+  }
+  if ("address" in body) {
+    fields.push(`address = $${fields.length + 1}`);
+    values.push(encryptSecretNode(body.address));
+  }
+  if ("total" in body) {
+    fields.push(`"totalAmount" = $${fields.length + 1}`);
+    values.push(body.total);
+  }
+  if ("trackingNumber" in body) {
+    fields.push(`"trackingNumber" = $${fields.length + 1}`);
+    values.push(body.trackingNumber || null);
+  }
 
-        const resultClient = await pool.query(getClient);
-        const client = resultClient.rows[0];
+  if (!fields.length)
+    return NextResponse.json({ error: "No updatable fields" }, { status: 400 });
 
-        const getProducts = `
-        SELECT 
-          p.id, p.title, p.description, p.image, p.sku,
-          cp.quantity, cp."unitPrice"
-        FROM products p
-        JOIN "cartProducts" cp ON p.id = cp."productId"
-        WHERE cp."cartId" = $1
-      `;
-        const resultProducts = await pool.query(getProducts, [order.cartId]);
-        const products = resultProducts.rows
-        let total = 0
+  const sql = `
+    UPDATE orders
+    SET ${fields.join(", ")}, "updatedAt" = NOW()
+    WHERE id = $${fields.length + 1}
+    RETURNING *
+  `;
+  values.push(id);
 
-        products.map((p) => {
-            p.unitPrice = Number(p.unitPrice)
-            total = (p.unitPrice * p.quantity) + total
-
-        })
-
-        const fullOrder = {
-            id: order.id,
-            clientId: client.id,
-            cartId: order.cartId,
-            clientFirstName: client.firstName,
-            clientLastName: client.lastName,
-            clientEmail: client.email,
-            clientUsername: client.username,
-            status: order.status,
-            country: order.country,
-            products: products,
-            coupon: order.couponCode,
-            couponType: order.couponType,
-            discount: Number(order.discountTotal),
-            shipping: Number(order.shippingTotal),
-            subtotal: Number(total),
-            total: Number(order.totalAmount),
-            shippingInfo: {
-                address: decryptSecretNode(order.address),
-                company: order.shippingService,
-                method: order.shippingMethod,
-                payment: order.paymentMethod
-            }
-        }
-
-        return NextResponse.json(fullOrder, { status: 201 });
-    } catch (error) {
-        return NextResponse.json(error, { status: 403 });
-    }
-}
-
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
-
-    try {
-        const { id } = await params;
-        const body = await req.json();
-        const { discount, couponCode, address, total } = body
-
-        const encryptedAddress = encryptSecretNode(address)
-
-        const insert = `
-        UPDATE "orders" 
-        SET "discountTotal" = ${discount}, "couponCode" = '${couponCode}', address = '${encryptedAddress}', "totalAmount" = ${total}, "updatedAt" = NOW()
-        WHERE "id" = '${id}'
-        RETURNING *
-      `;
-        console.log(insert)
-
-        const result = await pool.query(insert);
-
-        return NextResponse.json({ result: result.rows[0] }, { status: 201 });
-    } catch (error) {
-        return NextResponse.json({ error: error }, { status: 500 });
-    }
+  const r = await pool.query(sql, values);
+  return NextResponse.json(r.rows[0], { status: 200 });
 }
