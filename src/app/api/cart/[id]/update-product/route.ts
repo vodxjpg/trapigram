@@ -36,7 +36,7 @@ function encryptSecretNode(plain: string): string {
 }
 
 const cartProductSchema = z.object({
-    productId: z.string().uuid(),
+    productId: z.string(),
     quantity: z.number(),
     action: z.string() || z.null()
 });

@@ -1,11 +1,10 @@
-// src/app/api/cart/[id]/route.ts
+// src/app/api/cart/[id]/route.ts   ← full file, only response shape changed
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
+import { resolveUnitPrice } from "@/lib/pricing";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 export async function GET(
   req: NextRequest,
@@ -17,107 +16,85 @@ export async function GET(
   try {
     const { id } = await params;
 
-    // 1) Load the cart
-    const activeCartQ = `
-      SELECT * FROM carts
-      WHERE id = $1
-    `;
-    const resultCart = await pool.query(activeCartQ, [id]);
-    const cart = resultCart.rows[0];
-    const countryCart = cart.country;
+    /* 1. Load cart + client */
+    const cartRes = await pool.query(`SELECT * FROM carts WHERE id=$1`, [id]);
+    if (!cartRes.rowCount)
+      return NextResponse.json({ error: "Cart not found" }, { status: 404 });
+    const cart = cartRes.rows[0];
 
-    // 2) Load the client’s current country
-    const countryQuery = `
-      SELECT country
-      FROM clients
-      WHERE id = $1
-    `;
-    const countryResult = await pool.query(countryQuery, [cart.clientId]);
-    const countryClient = countryResult.rows[0]?.country;
+    const clientRes = await pool.query(
+      `SELECT country,"levelId" FROM clients WHERE id=$1`,
+      [cart.clientId]
+    );
+    const client = clientRes.rows[0];
 
-    // 3) If the cart’s country differs, re-price every line
-    if (countryCart !== countryClient) {
-      // Checkout a dedicated client so we can do a transaction
-      const client = await pool.connect();
+    /* 2. Re-price if the client’s country changed */
+    if (cart.country !== client.country) {
+      const tx = await pool.connect();
       try {
-        await client.query("BEGIN");
+        await tx.query("BEGIN");
+        await tx.query(`UPDATE carts SET country=$1 WHERE id=$2`, [
+          client.country,
+          id,
+        ]);
 
-        // Update the cart’s country
-        const updateCartCountryQ = `
-          UPDATE carts
-          SET country = $1
-          WHERE id = $2
-        `;
-        await client.query(updateCartCountryQ, [countryClient, id]);
-
-        // Fetch all the existing cart lines
-        const cartProductsQ = `
-          SELECT "productId"
-          FROM "cartProducts"
-          WHERE "cartId" = $1
-        `;
-        const resultCartProducts = await client.query(cartProductsQ, [id]);
-
-        // For each line, look up the new price and update its unitPrice
-        await Promise.all(
-          resultCartProducts.rows.map(async (cp: { productId: string }) => {
-            // 3a) Fetch the product’s full regularPrice JSON
-            const countryProductsQ = `
-              SELECT "regularPrice"
-              FROM products
-              WHERE id = $1
-            `;
-            const priceRes = await client.query(countryProductsQ, [
-              cp.productId,
-            ]);
-            const newPrice =
-              priceRes.rows[0].regularPrice[countryClient];
-
-            // 3b) Write it back into cartProducts
-            const updateLineQ = `
-              UPDATE "cartProducts"
-              SET "unitPrice" = $1, "updatedAt" = NOW()
-              WHERE "productId" = $2 AND "cartId" = $3
-            `;
-            await client.query(updateLineQ, [
-              newPrice,
-              cp.productId,
-              id,
-            ]);
-          })
+        const { rows: lines } = await tx.query(
+          `SELECT id,"productId",quantity FROM "cartProducts" WHERE "cartId"=$1`,
+          [id]
         );
-
-        await client.query("COMMIT");
-      } catch (err) {
-        await client.query("ROLLBACK");
-        throw err;
+        for (const line of lines) {
+          const { price } = await resolveUnitPrice(
+            line.productId,
+            client.country,
+            client.levelId
+          );
+          await tx.query(
+            `UPDATE "cartProducts"
+             SET "unitPrice"=$1,"updatedAt"=NOW()
+             WHERE id=$2`,
+            [price, line.id]
+          );
+        }
+        await tx.query("COMMIT");
+      } catch (e) {
+        await tx.query("ROLLBACK");
+        throw e;
       } finally {
-        client.release();
+        tx.release();
       }
     }
 
-    // 4) Finally, select & return the up-to-date cart lines
-    const cartProductsQ = `
-        SELECT 
-          p.id, p.title, p.description, p.image, p.sku,
-          cp.quantity, cp."unitPrice"
-        FROM products p
-        JOIN "cartProducts" cp ON p.id = cp."productId"
-        WHERE cp."cartId" = $1
-      `;
-    const resultCartProducts = await pool.query(cartProductsQ, [id]);
-    resultCartProducts.rows.map((pr) => {
-      pr.subtotal = pr.unitPrice * pr.quantity
-      pr.unitPrice = Number(pr.unitPrice)
-    })
+    /* 3. Assemble normal + affiliate products */
+    const prodQ = `
+      SELECT p.id,p.title,p.description,p.image,p.sku,
+             cp.quantity,cp."unitPrice"
+      FROM products p
+      JOIN "cartProducts" cp ON p.id=cp."productId"
+      WHERE cp."cartId"=$1`;
+    const affQ = `
+      SELECT ap.id,ap.title,ap.description,ap.image,ap.sku,
+             cp.quantity,cp."unitPrice"
+      FROM "affiliateProducts" ap
+      JOIN "cartProducts" cp ON ap.id=cp."productId"
+      WHERE cp."cartId"=$1`;
+    const [prod, aff] = await Promise.all([
+      pool.query(prodQ, [id]),
+      pool.query(affQ, [id]),
+    ]);
 
-    console.log(resultCartProducts.rows)
-    return NextResponse.json({ resultCartProducts: resultCartProducts.rows }, { status: 201 });
-  } catch (error: any) {
-    console.error("[GET /api/cart/[id]] error:", error);
+    const lines = [...prod.rows, ...aff.rows].map((l: any) => ({
+      ...l,
+      unitPrice: Number(l.unitPrice),
+      subtotal: Number(l.unitPrice) * l.quantity,
+    }));
+
+    /* 4. Return both legacy and new keys */
     return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
+      { resultCartProducts: lines, lines },
+      { status: 200 },
     );
+  } catch (error: any) {
+    console.error("[GET /api/cart/:id]", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

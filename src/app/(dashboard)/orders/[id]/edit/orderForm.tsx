@@ -1,4 +1,4 @@
-// components/OrderFormVisual.tsx
+// src/app/(dashboard)/orders/[id]/edit/orderForm.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -35,6 +35,7 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
+/* ——————————————————— TYPES ——————————————————— */
 interface OrderFormWithFetchProps {
   orderId?: string;
 }
@@ -49,16 +50,15 @@ interface Product {
   stockData: Record<string, { [countryCode: string]: number }>;
   subtotal: number;
 }
-
+interface OrderItem {
+  product: Product;
+  quantity: number;
+}
 interface ShippingMethod {
   id: string;
   title: string;
   description: string;
-  costs: Array<{
-    minOrderCost: number;
-    maxOrderCost: number;
-    shipmentCost: number;
-  }>;
+  costs: Array<{ minOrderCost: number; maxOrderCost: number; shipmentCost: number }>;
 }
 interface ShippingCompany {
   id: string;
@@ -67,127 +67,102 @@ interface ShippingCompany {
 
 export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
+
+  /* ——————————————————— STATE ——————————————————— */
   const [orderData, setOrderData] = useState<any | null>(null);
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [subtotal, setSubtotal] = useState(0);
-  const [total, setTotal] = useState(0);
+  const [total, setTotal]       = useState(0);
   const [clientCountry, setClientCountry] = useState("");
   const [cartId, setCartId] = useState("");
+
   const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
 
   const [productsLoading, setProductsLoading] = useState(true);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts]       = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
-  const [quantity, setQuantity] = useState(1);
+  const [quantity, setQuantity]       = useState(1);
 
-  const [addresses, setAddresses] = useState<{ id: string; address: string }[]>(
-    []
-  );
-  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(
-    null
-  );
-  const [newAddress, setNewAddress] = useState("");
+  const [addresses, setAddresses]     = useState<{ id: string; address: string }[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [newAddress, setNewAddress]   = useState("");
 
   const [showNewCoupon, setShowNewCoupon] = useState(false);
-  const [newCoupon, setNewCoupon] = useState("");
+  const [newCoupon, setNewCoupon]     = useState("");
 
-  const [couponCode, setCouponCode] = useState("");
   const [couponApplied, setCouponApplied] = useState(false);
-  const [discountType, setDiscountType] = useState<"percentage" | "fixed">(
-    "fixed"
-  );
-  const [discount, setDiscount] = useState(0);
-  const [value, setValue] = useState(0);
+  const [couponCode, setCouponCode]       = useState("");
+
+  const [discountType, setDiscountType] = useState<"percentage" | "fixed">("fixed");
+  const [discount, setDiscount]         = useState<number>(0);   // ← number, never null
+  const [value, setValue]               = useState<number>(0);   // ← “
 
   const [shippingLoading, setShippingLoading] = useState(true);
   const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
-    []
-  );
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
-  const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
+  const [selectedShippingMethod, setSelectedShippingMethod]   = useState("");
 
+  /* ——————————————————— HELPERS ——————————————————— */
   const calcRowSubtotal = (p: Product, qty: number) =>
     (p.regularPrice[clientCountry] ?? p.price) * qty;
 
+  /* ——————————————————— EFFECTS ——————————————————— */
   useEffect(() => {
     const sum = orderItems.reduce(
-      (acc, item) =>
-        acc +
-        (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
+      (acc, item) => acc + (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
       0
     );
     setSubtotal(sum);
   }, [orderItems, clientCountry]);
 
-  // Recalculate total when subtotal, shipping, or discount change
+  // total recalculation
   useEffect(() => {
     if (!orderData) return;
-    const shipping = orderData.shipping ?? 0;
+    const shipping      = orderData.shipping ?? 0;
+    const baseDiscount  = couponApplied ? discount : orderData.discount ?? 0;
+    const dType         = couponApplied ? discountType : orderData.discountType;
+    setDiscountType(dType);
+    setDiscount(Number(baseDiscount));
+    setTotal(subtotal + shipping - Number(baseDiscount));
+  }, [subtotal, orderData?.shipping, orderData?.discount, orderData?.discountType,
+      couponApplied, discountType]);
 
-    // Determine base discount amount and type
-    const dctType = couponApplied ? discountType : orderData.couponType;
-    setDiscountType(dctType);
-
-    if (dctType === "percentage") {
-      const dctAmount = (subtotal * value) / 100;
-      setDiscount(dctAmount);
-    } else {
-      setDiscount(value);
-    }
-
-    setTotal(subtotal + shipping - discount);
-  }, [
-    subtotal,
-    orderData?.shipping,
-    orderData?.discount,
-    orderData?.discountType,
-    couponApplied,
-    discountType,
-  ]);
-  // Fetch order and addresses
+  /* ——————————————————— FETCH ORDER + ADDRESSES ——————————————————— */
   useEffect(() => {
     if (!orderId) return;
     (async () => {
       try {
         const res = await fetch(`/api/order/${orderId}`);
         const data = await res.json();
-        console.log(data);
         setOrderData(data);
         setClientCountry(data.country);
         setCartId(data.cartId);
-        setDiscount(data.discount);
-        setValue(data.discountValue);
+        setDiscount(Number(data.discount ?? 0));
+        setValue(Number(data.discountValue ?? 0));
         setDiscountType(data.discountType);
         setSubtotal(data.subtotal);
         setTotal(data.total);
 
-        // Fetch addresses
-        const addrRes = await fetch(`/api/clients/${data.clientId}/address`);
+        const addrRes  = await fetch(`/api/clients/${data.clientId}/address`);
         const addrData = await addrRes.json();
         setAddresses(addrData.addresses);
 
-        // Auto-select matching address text
-        const match = addrData.addresses.find(
-          (a: any) => a.address === data.shippingInfo.address
-        );
+        const match = addrData.addresses.find((a: any) => a.address === data.shippingInfo.address);
         if (match) setSelectedAddressId(match.id);
-      } catch (err: any) {
+      } catch {
         toast.error("Failed to load order or addresses");
       }
     })();
   }, [orderId]);
 
-  // 2) When cartId is ready, fetch cart items
+  /* ——————————————————— FETCH CART ITEMS ——————————————————— */
   useEffect(() => {
     if (!cartId) return;
     (async () => {
       try {
-        const res = await fetch(`/api/cart/${cartId}`, {
-          headers: { "Content-Type": "application/json" },
-        });
+        const res = await fetch(`/api/cart/${cartId}`, { headers: { "Content-Type": "application/json" } });
         const { resultCartProducts } = await res.json();
-        // map into your orderItems
         setOrderItems(
           resultCartProducts.map((r: any) => ({
             product: {
@@ -211,7 +186,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     })();
   }, [cartId]);
 
-  // Load products once
+  /* ——————————————————— LOAD STATIC DATA ——————————————————— */
   useEffect(() => {
     loadProducts();
     loadShipping();
@@ -220,11 +195,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   async function loadProducts() {
     setProductsLoading(true);
     try {
-      const res = await fetch("/api/products", {
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-        },
-      });
+      const res = await fetch("/api/products", { headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! }});
       const { products } = await res.json();
       setProducts(products);
     } catch {
