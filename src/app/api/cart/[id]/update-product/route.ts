@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Pool } from "pg";
 import crypto from "crypto"
 import { getContext } from "@/lib/context";
+import { adjustStock }   from "@/lib/stock";  
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || ""
@@ -51,11 +52,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         const body = await req.json();
         const data = cartProductSchema.parse(body); // throws if invalid
 
-        if (data.action === "add") {
-            data.quantity++
-        } else {
-            data.quantity--
-        }
+              /* grab client country once */
+      const { rows: cRows } = await pool.query(
+        `SELECT clients.country
+           FROM clients
+           JOIN carts ON carts."clientId" = clients.id
+          WHERE carts.id = $1`,
+        [id],
+      );
+      const country = cRows[0]?.country as string;
+
+      const delta = data.action === "add" ? -1 : +1;   // reserve / release
+      if (data.action === "add") data.quantity++;
+      else                       data.quantity--;
 
         const insert = `
         UPDATE "cartProducts" 
@@ -79,6 +88,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
         const resultProduct = await pool.query(productQuery);
         const product = resultProduct.rows[0]
+        await adjustStock(pool, data.productId, country, delta); 
         product.subtotal = subtotal
 
         const cartItem = {

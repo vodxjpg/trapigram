@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Pool } from "pg";
 import crypto from "crypto"
 import { getContext } from "@/lib/context";
+import { adjustStock }   from "@/lib/stock";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || ""
@@ -59,7 +60,21 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
             data.productId
         ];
 
-        const result = await pool.query(insert, vals);
+             const result = await pool.query(insert, vals);   // gives us old quantity
+
+     /* country lookup (same query as other routes) */
+     const { rows: cRows } = await pool.query(
+       `SELECT clients.country
+          FROM clients
+          JOIN carts ON carts."clientId" = clients.id
+         WHERE carts.id = $1`,
+       [id],
+     );
+     const country = cRows[0]?.country as string;
+
+     const released = result.rows[0]?.quantity ?? 0;
+     if (released)
+       await adjustStock(pool, data.productId, country, +released);  // ➋
 
         const encryptedResponse = encryptSecretNode(JSON.stringify(result.rows[0]))
 

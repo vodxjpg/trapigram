@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { resolveUnitPrice } from "@/lib/pricing";
+import { adjustStock }   from "@/lib/stock";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -70,6 +71,8 @@ export async function POST(
         [uuidv4(), cartId, body.productId, quantity, price]
       );
     }
+    /* 3b️⃣  reserve the JUST-ADDED quantity */
+    await adjustStock(pool, body.productId, country, -body.quantity); 
 
     /* 4️⃣  refresh cart hash */
     const rowsHash = await pool.query(
