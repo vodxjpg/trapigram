@@ -135,6 +135,29 @@ interface DB {
     updatedAt: Date;
   };
 
+  affiliateGroups: {             // already present, show for clarity
+    id: string;
+    organizationId: string;
+    groupId: string;
+    groupName: string | null;    // ← NEW
+    points: number;
+    platform: "telegram";
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  affiliateGroupMembers: {       // ← NEW TABLE
+    id: string;
+    organizationId: string;
+    affiliateGroupId: string;    // FK ↺ affiliateGroups.id
+    groupId: string;             // telegram handle/id
+    userId: string;              // auth user UUID
+    clientId: string;            // clients.id
+    joinedAt: Date;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
   /* ──────────────────────────────────────────────────────────────── */
   affiliateProducts: {
     id: string;
