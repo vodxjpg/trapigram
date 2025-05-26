@@ -81,8 +81,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         const appliedCoupon = await pool.query(coupon);
         if (appliedCoupon.rows.length === 0) {
             return NextResponse.json(
-              { error: "Coupon not found" },
-              { status: 400 }
+                { error: "Coupon not found" },
+                { status: 400 }
             );
         }
         const couponCountry = JSON.parse(appliedCoupon.rows[0].countries);
@@ -168,7 +168,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
             await pool.query(insert);
             const discount = {
-                discountType: appliedCoupon.rows[0].discountType, discountValue: appliedCoupon.rows[0].discountAmount, discountAmount
+                discountType: appliedCoupon.rows[0].discountType, discountValue: Number(appliedCoupon.rows[0].discountAmount), discountAmount: Number(discountAmount)
             }
 
             const encryptedResponse = encryptSecretNode(JSON.stringify(discount))

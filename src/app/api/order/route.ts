@@ -49,6 +49,7 @@ const orderSchema = z.object({
   shippingCompany: z.string().nullable().optional(),
   address: z.string().min(1),
   trackingNumber: z.string().nullable().optional(),
+  discountValue: z.coerce.number().min(0),
 });
 type OrderPayload = z.infer<typeof orderSchema>;
 
@@ -169,6 +170,7 @@ export async function POST(req: NextRequest) {
     address,
     trackingNumber = null,
     subtotal,
+    discountValue
   } = payload;
   const couponTypeResolved = couponType ?? counponType ?? null;
 
@@ -191,15 +193,15 @@ export async function POST(req: NextRequest) {
        "cartId", country, "paymentMethod",
        "shippingTotal", "discountTotal", "totalAmount",
        "couponCode", "couponType", "shippingService", "shippingMethod",
-       "trackingNumber", address, status, subtotal, "cartHash",
+       "trackingNumber", address, status, subtotal, "discountValue", "cartHash",
        "dateCreated", "createdAt", "updatedAt", "orderKey")
     VALUES
       ($1,$2,$3,
        $4,$5,$6,
        $7,$8,$9,
        $10,$11,$12,$13,
-       $14,$15,$16,$17,$18,
-       NOW(),NOW(),NOW(),$19)
+       $14,$15,$16,$17,$18,$19,
+       NOW(),NOW(),NOW(),$20)
     RETURNING *
   `;
   /* ---------- build the list up to $17 (no cartHash yet) ---------- */
@@ -221,6 +223,7 @@ export async function POST(req: NextRequest) {
     encryptedAddress,       // $15
     orderStatus,            // $16
     subtotal,               // $17
+    discountValue,          // $18
   ];
 
   /* ---------- compute cartHash from the SAME list ----------------- */

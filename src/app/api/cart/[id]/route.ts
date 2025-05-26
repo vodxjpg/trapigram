@@ -108,6 +108,7 @@ export async function GET(
     const resultCartProducts = await pool.query(cartProductsQ, [id]);
     resultCartProducts.rows.map((pr) => {
       pr.subtotal = pr.unitPrice * pr.quantity
+      pr.unitPrice = Number(pr.unitPrice)
     })
 
     console.log(resultCartProducts.rows)

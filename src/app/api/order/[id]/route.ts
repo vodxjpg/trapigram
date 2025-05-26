@@ -7,11 +7,11 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* ---------- encryption helpers ---------------------------------- */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
-const ENC_IV_B64  = process.env.ENCRYPTION_IV  || "";
+const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
 
 function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
   const key = Buffer.from(ENC_KEY_B64, "base64");
-  const iv  = Buffer.from(ENC_IV_B64, "base64");
+  const iv = Buffer.from(ENC_IV_B64, "base64");
   if (!ENC_KEY_B64 || !ENC_IV_B64) throw new Error("ENC vars not set");
   if (key.length !== 32) throw new Error("ENCRYPTION_KEY must be 32-byte");
   if (iv.length !== 16) throw new Error("ENCRYPTION_IV must be 16-byte");
@@ -78,6 +78,7 @@ export async function GET(
     coupon: order.couponCode,
     couponType: order.couponType,
     discount: Number(order.discountTotal),
+    discountValue: Number(order.discountValue),
     shipping: Number(order.shippingTotal),
     subtotal,
     total: Number(order.totalAmount),
@@ -90,9 +91,9 @@ export async function GET(
     },
     client: {
       firstName: client.firstName,
-      lastName:  client.lastName,
-      username:  client.username,
-      email:     client.email,
+      lastName: client.lastName,
+      username: client.username,
+      email: client.email,
     },
   };
 
@@ -110,7 +111,7 @@ export async function PATCH(
   if (ctx instanceof NextResponse) return ctx;
 
   const { id } = await params;
-  const body   = await req.json();
+  const body = await req.json();
 
   /* only update provided keys ------------------------------------- */
   const fields: string[] = [];

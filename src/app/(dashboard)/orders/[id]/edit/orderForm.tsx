@@ -50,6 +50,21 @@ interface Product {
   subtotal: number;
 }
 
+interface ShippingMethod {
+  id: string;
+  title: string;
+  description: string;
+  costs: Array<{
+    minOrderCost: number;
+    maxOrderCost: number;
+    shipmentCost: number;
+  }>;
+}
+interface ShippingCompany {
+  id: string;
+  name: string;
+}
+
 export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
   const [orderData, setOrderData] = useState<any | null>(null);
@@ -84,17 +99,26 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [discount, setDiscount] = useState(0);
   const [value, setValue] = useState(0);
 
+  const [shippingLoading, setShippingLoading] = useState(true);
+  const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
+    []
+  );
+  const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
+  const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
+
   const calcRowSubtotal = (p: Product, qty: number) =>
     (p.regularPrice[clientCountry] ?? p.price) * qty;
 
   useEffect(() => {
     const sum = orderItems.reduce(
       (acc, item) =>
-        acc + (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
-      0,
+        acc +
+        (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
+      0
     );
     setSubtotal(sum);
-  }, [orderItems, clientCountry])
+  }, [orderItems, clientCountry]);
 
   // Recalculate total when subtotal, shipping, or discount change
   useEffect(() => {
@@ -102,15 +126,14 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     const shipping = orderData.shipping ?? 0;
 
     // Determine base discount amount and type
-    const baseAmount = couponApplied ? discount : (orderData.discount ?? 0);
-    const baseType = couponApplied ? discountType : orderData.couponType;
-    setDiscountType(baseType);
+    const dctType = couponApplied ? discountType : orderData.couponType;
+    setDiscountType(dctType);
 
-    if (baseType === "percentage") {
-      const dct = ((orderData.discount * 100) / orderData.subtotal).toFixed(0);
-      setValue(dct);
-      const dctAmount = (subtotal * dct) / 100;
+    if (dctType === "percentage") {
+      const dctAmount = (subtotal * value) / 100;
       setDiscount(dctAmount);
+    } else {
+      setDiscount(value);
     }
 
     setTotal(subtotal + shipping - discount);
@@ -129,9 +152,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       try {
         const res = await fetch(`/api/order/${orderId}`);
         const data = await res.json();
+        console.log(data);
         setOrderData(data);
         setClientCountry(data.country);
         setCartId(data.cartId);
+        setDiscount(data.discount);
+        setValue(data.discountValue);
+        setDiscountType(data.discountType);
+        setSubtotal(data.subtotal);
+        setTotal(data.total);
 
         // Fetch addresses
         const addrRes = await fetch(`/api/clients/${data.clientId}/address`);
@@ -158,7 +187,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           headers: { "Content-Type": "application/json" },
         });
         const { resultCartProducts } = await res.json();
-        console.log(resultCartProducts);
         // map into your orderItems
         setOrderItems(
           resultCartProducts.map((r: any) => ({
@@ -176,12 +204,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             quantity: r.quantity,
           }))
         );
-        // compute subtotal
-        const sub = resultCartProducts.reduce(
-          (acc: number, cur: any) => acc + cur.subtotal,
-          0
-        );
-        setSubtotal(sub);
         toast.success("Order Loaded!");
       } catch (err: any) {
         toast.error(err.message);
@@ -192,6 +214,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   // Load products once
   useEffect(() => {
     loadProducts();
+    loadShipping();
   }, []);
 
   async function loadProducts() {
@@ -219,23 +242,89 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     return totalStock > 0;
   });
 
-  // Add new address then re-fetch list
+  const loadShipping = async () => {
+    setShippingLoading(true);
+    try {
+      const [shipRes, compRes] = await Promise.all([
+        fetch("/api/shipments", {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
+        }),
+        fetch("/api/shipping-companies", {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
+        }),
+      ]);
+      const shipData = await shipRes.json();
+      const compData = await compRes.json();
+      setShippingMethods(shipData.shipments);
+      setShippingCompanies(compData.shippingMethods);
+    } catch (e) {
+      toast.error("Shipping load error");
+    } finally {
+      setShippingLoading(false);
+    }
+  };
+
+  // Auto-select the shipping method once both orderData and shippingMethods are ready
+  useEffect(() => {
+    if (orderData && shippingMethods.length) {
+      const match = shippingMethods.find(
+        (m) =>
+          // if your API gives you the ID:
+          m.id === orderData.shippingInfo.method ||
+          // or if it gives you the title:
+          m.title === orderData.shippingInfo.method
+      );
+      console.log(match);
+      if (match) setSelectedShippingMethod(match.id);
+    }
+  }, [orderData, shippingMethods]);
+
+  // Auto-select the shipping company once both orderData and shippingCompanies are ready
+  useEffect(() => {
+    if (orderData && shippingCompanies.length) {
+      const match = shippingCompanies.find(
+        (c) =>
+          // if your API gives you the ID:
+          c.id === orderData.shippingInfo.company ||
+          // or if it gives you the name:
+          c.name === orderData.shippingInfo.company
+      );
+      if (match) setSelectedShippingCompany(match.id);
+    }
+  }, [orderData, shippingCompanies]);
+
+  // Add new address then re-fetch list and select it
   const handleAddAddress = async () => {
     if (!newAddress || !orderData?.clientId) return;
+    const newAddrText = newAddress; // keep the text before clearing
     try {
       const res = await fetch(`/api/clients/${orderData.clientId}/address`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: newAddress }),
+        body: JSON.stringify({ address: newAddrText }),
       });
       if (!res.ok) throw new Error("Failed to add address");
-      setNewAddress("");
+      setNewAddress(""); // clear input
+
       // Refresh list
       const upd = await fetch(`/api/clients/${orderData.clientId}/address`);
       const addrData = await upd.json();
       setAddresses(addrData.addresses);
-    } catch (err) {
+
+      // Auto-select the one we just added
+      const match = addrData.addresses.find(
+        (a: any) => a.address === newAddrText
+      );
+      if (match) {
+        setSelectedAddressId(match.id);
+      }
+    } catch (err: any) {
       console.error(err);
+      toast.error("Could not add address");
     }
   };
 
@@ -281,11 +370,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     }
   };
 
-  console.log(value);
-
   // — Add product
   const addProduct = async () => {
-    if (!selectedProduct || !cartId) return toast.error("Cart hasn’t been created yet!");
+    if (!selectedProduct || !cartId)
+      return toast.error("Cart hasn’t been created yet!");
 
     const product = products.find((p) => p.id === selectedProduct);
     if (!product) return;
@@ -314,10 +402,13 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           return prev.map((it) =>
             it.product.id === added.id
               ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
-              : it,
+              : it
           );
         }
-        return [...prev, { product: { ...added, subtotal: subtotalRow }, quantity: qty }];
+        return [
+          ...prev,
+          { product: { ...added, subtotal: subtotalRow }, quantity: qty },
+        ];
       });
 
       setSelectedProduct("");
@@ -360,7 +451,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const updateQuantity = async (
     productId: string,
     action: "add" | "subtract",
-    qty: number,
+    qty: number
   ) => {
     if (!cartId) return toast.error("Cart hasn’t been created yet!");
     try {
@@ -373,18 +464,18 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         const err = await res.json().catch(() => null);
         throw new Error(err?.message || "Failed to update quantity");
       }
-      const { product: updated, quantity } = await res.json();
-      const subtotalRow = calcRowSubtotal(updated, quantity);
+      const { product, quantity } = await res.json();
+      const subtotalRow = calcRowSubtotal(product, quantity);
 
       setOrderItems((prev) =>
         prev.map((it) =>
-          it.product.id === updated.id
-            ? { product: { ...updated, subtotal: subtotalRow }, quantity }
-            : it,
-        ),
+          it.product.id === product.id
+            ? { product: { ...product, subtotal: subtotalRow }, quantity }
+            : it
+        )
       );
     } catch (err: any) {
-      toast.error(err.message || "Could not update quantity");
+      toast.error(err.message || "Could not update qu|antity");
     }
   };
 
@@ -402,7 +493,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           discount: discount ? Number(discount) : orderData.discount,
           couponCode: newCoupon ? newCoupon : orderData.coupon,
           address: selectedAddressText,
-          total: discount ? subtotal - discount + orderData?.shipping : total,
+          total,
+          selectedShippingMethod,
+          selectedShippingCompany,
         }),
       });
       if (!res.ok) throw new Error("Failed to update order");
@@ -426,11 +519,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
               <CardTitle>Client</CardTitle>
             </CardHeader>
             <CardContent>
-            <p className="text-lg font-medium">
-  {orderData?.client?.firstName} {orderData?.client?.lastName} —{" "}
-  {orderData?.client?.username} ({orderData?.client?.email})
-</p>
-
+              <p className="text-lg font-medium">
+                {orderData?.client?.firstName} {orderData?.client?.lastName} —{" "}
+                {orderData?.client?.username} ({orderData?.client?.email})
+              </p>
             </CardContent>
           </Card>
 
@@ -457,20 +549,18 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                         }
                       >
                         {product.image ? (
-  <Image
-    src={product.image}
-    alt={product.title}
-    width={80}
-    height={80}
-    className="rounded-md"
-  />
-) : (
-  <div
-    className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-500"
-  >
-    No image
-  </div>
-)}
+                          <Image
+                            src={product.image}
+                            alt={product.title}
+                            width={80}
+                            height={80}
+                            className="rounded-md"
+                          />
+                        ) : (
+                          <div className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-500">
+                            No image
+                          </div>
+                        )}
                         <div className="flex-1">
                           <div className="flex justify-between">
                             <h3 className="font-medium">{product.title}</h3>
@@ -518,15 +608,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                             </p>
                           )}
                           <div className="flex justify-between mt-2">
-                              <span className="font-medium">Unit Price: ${price}</span>
-                              <span className="font-medium">
-                                $
-                                {(
-                                  product.subtotal ??
-                                  calcRowSubtotal(product, quantity)
-                                ).toFixed(2)}
-                              </span>
-                            </div>
+                            <span className="font-medium">
+                              Unit Price: ${price.toFixed(2)}
+                            </span>
+                            <span className="font-medium">
+                              $
+                              {product.subtotal.toFixed(2) ??
+                                calcRowSubtotal(product, quantity)}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );
@@ -557,8 +647,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                         );
                         return (
                           <SelectItem key={p.id} value={p.id}>
-                            {p.title} — ${price.toFixed(2)} — Stock:{" "}
-                            {stockCount}
+                            {p.title} — ${price} — Stock: {stockCount}
                           </SelectItem>
                         );
                       })}
@@ -682,17 +771,59 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Method */}
                 <div>
                   <Label>Method</Label>
-                  <p className="text-lg font-medium">
-                    {orderData?.shippingInfo.method}
-                  </p>
+                  <Select
+                    value={selectedShippingMethod}
+                    onValueChange={setSelectedShippingMethod}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          shippingLoading ? "Loading…" : "Select method"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {shippingMethods.map((m) => {
+                        const tier = m.costs.find(
+                          ({ minOrderCost, maxOrderCost }) =>
+                            total >= minOrderCost &&
+                            (maxOrderCost === 0 || total <= maxOrderCost)
+                        );
+                        const cost = tier ? tier.shipmentCost : 0;
+                        return (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.title} — {m.description} — ${cost.toFixed(2)}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
                 </div>
+                {/* Company */}
                 <div>
                   <Label>Company</Label>
-                  <p className="text-lg font-medium">
-                    {orderData?.shippingInfo.company}
-                  </p>
+                  <Select
+                    value={selectedShippingCompany}
+                    onValueChange={setSelectedShippingCompany}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          shippingLoading ? "Loading…" : "Select company"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {shippingCompanies.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             </CardContent>
@@ -741,9 +872,12 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                 <div className="flex justify-between text-green-600">
                   <span>
                     Discount
-                    {discountType === "percentage" ? ` (${value}%)` : ""}:
+                    {discountType === "percentage"
+                      ? ` (${value.toFixed(2)}%)`
+                      : ""}
+                    :
                   </span>
-                  <span className="font-medium">–${discount}</span>
+                  <span className="font-medium">–${discount.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Shipping:</span>
@@ -754,12 +888,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                 <Separator />
                 <div className="flex justify-between text-lg font-bold">
                   <span>Total:</span>
-                  <span>
-                    $
-                    {discount
-                      ? (subtotal - discount + orderData?.shipping).toFixed(2)
-                      : total.toFixed(2)}
-                  </span>
+                  <span>${total.toFixed(2)}</span>
                 </div>
               </div>
             </CardContent>

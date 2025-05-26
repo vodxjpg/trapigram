@@ -132,8 +132,9 @@ export default function OrderForm() {
   useEffect(() => {
     const sum = orderItems.reduce(
       (acc, item) =>
-        acc + (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
-      0,
+        acc +
+        (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
+      0
     );
     setSubtotal(sum);
   }, [orderItems, clientCountry]);
@@ -334,7 +335,8 @@ export default function OrderForm() {
 
   // — Add product
   const addProduct = async () => {
-    if (!selectedProduct || !cartId) return toast.error("Cart hasn’t been created yet!");
+    if (!selectedProduct || !cartId)
+      return toast.error("Cart hasn’t been created yet!");
 
     const product = products.find((p) => p.id === selectedProduct);
     if (!product) return;
@@ -363,10 +365,13 @@ export default function OrderForm() {
           return prev.map((it) =>
             it.product.id === added.id
               ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
-              : it,
+              : it
           );
         }
-        return [...prev, { product: { ...added, subtotal: subtotalRow }, quantity: qty }];
+        return [
+          ...prev,
+          { product: { ...added, subtotal: subtotalRow }, quantity: qty },
+        ];
       });
 
       setSelectedProduct("");
@@ -409,7 +414,7 @@ export default function OrderForm() {
   const updateQuantity = async (
     productId: string,
     action: "add" | "subtract",
-    qty: number,
+    qty: number
   ) => {
     if (!cartId) return toast.error("Cart hasn’t been created yet!");
     try {
@@ -429,8 +434,8 @@ export default function OrderForm() {
         prev.map((it) =>
           it.product.id === updated.id
             ? { product: { ...updated, subtotal: subtotalRow }, quantity }
-            : it,
-        ),
+            : it
+        )
       );
     } catch (err: any) {
       toast.error(err.message || "Could not update quantity");
@@ -584,6 +589,7 @@ export default function OrderForm() {
       address: addr.address,
       subtotal: subtotal,
       discountType,
+      discountValue: value,
     };
 
     try {
@@ -741,8 +747,10 @@ export default function OrderForm() {
                               Only {stockErrors[product.id]} available
                             </p>
                           )}
-                         <div className="flex justify-between mt-2">
-                            <span className="font-medium">Unit Price: ${price}</span>
+                          <div className="flex justify-between mt-2">
+                            <span className="font-medium">
+                              Unit Price: ${price}
+                            </span>
                             <span className="font-medium">
                               $
                               {(
