@@ -46,15 +46,24 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     : NextResponse.json({ error: "Not found" }, { status: 404 });
 }
 /* PATCH update */
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(
+  req: NextRequest,
+  context: { params: { id: string } }
+) {
+  // pull in auth + org
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
+
+  // await your params
+  const { id } = await context.params;
+
   try {
     const vals = levelSchema.parse(await req.json());
     if (Object.keys(vals).length === 0)
       return NextResponse.json({ error: "No fields" }, { status: 400 });
 
+    // build SET clauses
     const set: string[] = [];
     const v: any[] = [];
     let i = 1;
@@ -62,16 +71,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       set.push(`"${k}" = $${i++}`);
       v.push(val);
     }
-    v.push(params.id, org);
+
+    // push the awaited id and the real organizationId
+    v.push(id, organizationId);
+
     const { rows } = await pool.query(
       `
       UPDATE "affiliateLevels"
-      SET ${set.join(", ")},"updatedAt" = NOW()
+      SET ${set.join(", ")}, "updatedAt" = NOW()
       WHERE id = $${i++} AND "organizationId" = $${i}
       RETURNING *
       `,
-      v,
+      v
     );
+
     return rows.length
       ? NextResponse.json(rows[0])
       : NextResponse.json({ error: "Not found" }, { status: 404 });
