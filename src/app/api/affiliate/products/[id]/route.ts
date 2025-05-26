@@ -4,7 +4,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
+import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints"; // ⬅︎ add
 /* ──────────────────────────────────────────────────────────────── */
@@ -46,10 +46,10 @@ const variationPatch = z
     attributes: z.record(z.string(), z.string()),
     sku: z.string(),
     image: z.string().nullable().optional(),
-    pointsPrice: pointsByLvl.optional(), // alias support below
+    pointsPrice: pointsByLvl.optional(),
     prices: pointsByLvl.optional(),
     stock: stockMap.optional(),
-    cost : costMap.optional(),
+    cost: costMap.optional(),
     minLevelId: z.string().uuid().nullable().optional(),
   })
   .transform((v) => ({ ...v, pointsPrice: v.pointsPrice ?? v.prices! }));
@@ -90,15 +90,16 @@ const patchSchema = z.object({
 /* =================================================================
    GET  – fetch single affiliate product (incl. variation stock)
    ================================================================= */
-export async function GET(
-  req: NextRequest,
-  ctx: { params: Promise<{ id: string }> },
-) {
-  const { id } = await ctx.params;
-  const session = await auth.api.getSession({ headers: req.headers });
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const organizationId = session.session.activeOrganizationId;
-  if (!organizationId) return NextResponse.json({ error: "No org" }, { status: 400 });
+   export async function GET(
+    req: NextRequest,
+    ctx: { params: Promise<{ id: string }> },
+  ) {
+    const { id } = await ctx.params;
+  
+    const context = await getContext(req);
+    if (context instanceof NextResponse) return context;
+    const { organizationId } = context;
+  
 
   /* core row */
   const product = await db
@@ -210,37 +211,29 @@ export async function GET(
 /* =================================================================
    PATCH – update affiliate product (core, attributes, variations, stock)
    ================================================================= */
-export async function PATCH(
-  req: NextRequest,
-  ctx: { params: Promise<{ id: string }> },
-) {
-  try {
-    const { id: productId } = await ctx.params;
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const organizationId = session.session.activeOrganizationId;
-    if (!organizationId) return NextResponse.json({ error: "No org" }, { status: 400 });
-
-    const tenantRow = await db
-      .selectFrom("tenant")
-      .select("id")
-      .where("ownerUserId", "=", session.user.id)
-      .executeTakeFirst();
-    if (!tenantRow) return NextResponse.json({ error: "No tenant" }, { status: 404 });
-    const tenantId = tenantRow.id;
-
-    let body: z.infer<typeof patchSchema>;
+   export async function PATCH(
+    req: NextRequest,
+    ctx: { params: Promise<{ id: string }> },
+  ) {
     try {
-      body = patchSchema.parse(await req.json());
-    } catch (err) {
-      if (err instanceof z.ZodError)
-        return NextResponse.json({ error: err.errors }, { status: 400 });
-      throw err;
-    }
-    if (Object.keys(body).length === 0)
-      return NextResponse.json({ message: "Nothing to update" });
-
-    await db.transaction().execute(async (trx) => {
+      const { id: productId } = await ctx.params;
+  
+      const context = await getContext(req);
+      if (context instanceof NextResponse) return context;
+      const { organizationId, tenantId } = context;
+  
+      let body: z.infer<typeof patchSchema>;
+      try {
+        body = patchSchema.parse(await req.json());
+      } catch (err) {
+        if (err instanceof z.ZodError)
+          return NextResponse.json({ error: err.errors }, { status: 400 });
+        throw err;
+      }
+      if (Object.keys(body).length === 0)
+        return NextResponse.json({ message: "Nothing to update" });
+  
+      await db.transaction().execute(async (trx) => {
       /* ---------------- core fields ---------------- */
       const core: Record<string, unknown> = {};
       if (body.title !== undefined) core.title = body.title;
@@ -377,12 +370,12 @@ export async function PATCH(
             id: uuidv4(),
             warehouseId: r.warehouseId,
             affiliateProductId: productId,
-            variationId: null, // legacy – always null for affiliate path
+            variationId: null,
             affiliateVariationId: r.affiliateVariationId,
             country: r.country,
             quantity: r.quantity,
             organizationId,
-            tenantId,
+            tenantId,               /* FIX */
             createdAt: new Date(),
             updatedAt: new Date(),
           })
@@ -409,18 +402,15 @@ export async function PATCH(
 /* ══════════════════════════════════════════════════════════════
    DELETE – remove product  children
    ════════════════════════════════════════════════════════════ */
-export async function DELETE(
-  _req: NextRequest,
-  { params }: { params: { id: string } },
-) {
-  const session = await auth.api.getSession({ headers: _req.headers });
-  if (!session)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const organizationId = session.session.activeOrganizationId;
-  if (!organizationId)
-    return NextResponse.json({ error: "No org" }, { status: 400 });
-
-  const { id } = params;
+   export async function DELETE(
+    req: NextRequest,
+    { params }: { params: { id: string } },
+  ) {
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId } = ctx;
+  
+    const { id } = params;
 
   /* child rows cascade thanks to FK ON DELETE CASCADE, but we
      delete variations manually to clear their stocks first      */

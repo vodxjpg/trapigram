@@ -1,37 +1,31 @@
+/* /src/app/api/affiliate/products/route.ts */
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
-import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints"; // ⬅︎ add
+import { getContext } from "@/lib/context";
+import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints";
 
-/* ──────────────────────────────────────────────────────────────── */
-/*  Zod helpers                                                     */
-/* ──────────────────────────────────────────────────────────────── */
-const ptsObj       = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
-const countryMap   = z.record(z.string(), ptsObj);          // country ➜ points
-const pointsByLvl  = z.record(z.string(), countryMap);      // levelId ➜ country map
-const costMap   = z.record(z.string(), z.number().min(0));
+const ptsObj      = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
+const countryMap  = z.record(z.string(), ptsObj);
+const pointsByLvl = z.record(z.string(), countryMap);
+const costMap     = z.record(z.string(), z.number().min(0));
+const stockMap    = z.record(z.string(), z.record(z.string(), z.number().min(0)));
 
-/* stock map used inside each variation */
-const stockMap = z.record(z.string(), z.record(z.string(), z.number().min(0)));
-
-/* ----------------------- variations ---------------------------- */
 const variationSchema = z
   .object({
     id: z.string(),
     attributes: z.record(z.string(), z.string()),
     sku: z.string().min(1),
     image: z.string().nullable().optional(),
-    pointsPrice: pointsByLvl.optional(), // new name (alias below)
+    pointsPrice: pointsByLvl.optional(),
     prices: pointsByLvl.optional(),
     stock: stockMap.optional(),
-    cost:   costMap.optional(),
+    cost: costMap.optional(),
     minLevelId: z.string().uuid().nullable().optional(),
   })
   .transform((v) => ({ ...v, pointsPrice: v.pointsPrice ?? v.prices! }));
 
-/* ----------------------- warehouse stock rows ------------------ */
 const warehouseStockSchema = z.array(
   z.object({
     warehouseId: z.string(),
@@ -42,11 +36,10 @@ const warehouseStockSchema = z.array(
   }),
 );
 
-/* ----------------------- product ------------------------------- */
 const attributeInput = z.object({
   id: z.string(),
   selectedTerms: z.array(z.string()),
-  useForVariations: z.boolean().optional(), // <‑‑ accepted but not stored
+  useForVariations: z.boolean().optional(),
 });
 
 const productSchema = z.object({
@@ -59,26 +52,14 @@ const productSchema = z.object({
   allowBackorders: z.boolean(),
   manageStock: z.boolean(),
   pointsPrice: pointsByLvl,
-  cost:        costMap.optional(),
+  cost: costMap.optional(),
   attributes: z.array(attributeInput).optional(),
   variations: z.array(variationSchema).optional(),
   warehouseStock: warehouseStockSchema.optional(),
   minLevelId: z.string().uuid().nullable().optional(),
 });
 
-/* ──────────────────────────────────────────────────────────────── */
-/*  helpers                                                        */
-/* ──────────────────────────────────────────────────────────────── */
-function splitPoints(map: Record<string, { regular: number; sale: number | null }>) {
-  const regular: Record<string, number> = {};
-  const sale: Record<string, number> = {};
-  for (const [c, v] of Object.entries(map)) {
-    regular[c] = v.regular;
-    if (v.sale != null) sale[c] = v.sale;
-  }
-  return { regularPoints: regular, salePoints: Object.keys(sale).length ? sale : null };
-}
-
+/*──────────────── helpers ────────────────*/
 async function uniqueSku(base: string, orgId: string) {
   let cand = base;
   while (
@@ -94,27 +75,17 @@ async function uniqueSku(base: string, orgId: string) {
   return cand;
 }
 
-/* =================================================================
-   GET – list affiliate products
-   ================================================================= */
+/*==================================================================
+  GET
+  =================================================================*/
 export async function GET(req: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const organizationId = session.session.activeOrganizationId;
-    if (!organizationId)
-      return NextResponse.json({ error: "No active organization" }, { status: 400 });
-
-    const tenant = await db
-      .selectFrom("tenant")
-      .select("id")
-      .where("ownerUserId", "=", session.user.id)
-      .executeTakeFirst();
-    if (!tenant) return NextResponse.json({ error: "No tenant for user" }, { status: 404 });
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId, tenantId } = ctx;
 
     const { searchParams } = new URL(req.url);
-    const limit = Number(searchParams.get("limit") || "50");
+    const limit  = Number(searchParams.get("limit")  || "50");
     const offset = Number(searchParams.get("offset") || "0");
     const search = searchParams.get("search") || "";
 
@@ -132,7 +103,7 @@ export async function GET(req: NextRequest) {
         "createdAt",
       ])
       .where("organizationId", "=", organizationId)
-      .where("tenantId", "=", tenant.id)
+      .where("tenantId", "=", tenantId)          /* FIX */
       .$if(search, (qb) => qb.where("title", "ilike", `%${search}%`))
       .limit(limit)
       .offset(offset)
@@ -156,37 +127,14 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/* helper: merge two DB JSONB columns into map */
-function mergePoints(
-  regular: Record<string, number> | null,
-  sale: Record<string, number> | null,
-) {
-  const out: Record<string, { regular: number; sale: number | null }> = {};
-  const reg = regular || {};
-  const sal = sale || {};
-  for (const [c, v] of Object.entries(reg)) out[c] = { regular: Number(v), sale: null };
-  for (const [c, v] of Object.entries(sal)) out[c] = { ...(out[c] || { regular: 0, sale: null }), sale: Number(v) };
-  return out;
-}
-
-/* =================================================================
-   POST – create affiliate product (incl. variation stock)
-   ================================================================= */
+/*==================================================================
+  POST
+  =================================================================*/
 export async function POST(req: NextRequest) {
-  const session = await auth.api.getSession({ headers: req.headers });
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const organizationId = session.session.activeOrganizationId;
-  if (!organizationId)
-    return NextResponse.json({ error: "No active organization" }, { status: 400 });
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId, tenantId } = ctx;
 
-  const tenant = await db
-    .selectFrom("tenant")
-    .select("id")
-    .where("ownerUserId", "=", session.user.id)
-    .executeTakeFirst();
-  if (!tenant) return NextResponse.json({ error: "No tenant for user" }, { status: 404 });
-
-  /* validation */
   let body: z.infer<typeof productSchema>;
   try {
     body = productSchema.parse(await req.json());
@@ -196,37 +144,34 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  /* SKU */
   const sku = await uniqueSku(body.sku || `SKU-${uuidv4().slice(0, 8)}`, organizationId);
 
-  /* insert core product */
   const productId = uuidv4();
   const { regularPoints, salePoints } = splitPointsByLevel(body.pointsPrice);
 
   await db
-  .insertInto("affiliateProducts")
-  .values({
-    id: productId,
-    organizationId,
-    tenantId: tenant.id,
-    title: body.title,
-    description: body.description ?? null,
-    image: body.image ?? null,
-    sku,
-    status: body.status,
-    productType: body.productType,
-    regularPoints,
-    salePoints,
-    cost: body.cost ?? {},                                      // ← FIX
-    allowBackorders: body.allowBackorders,
-    manageStock: body.manageStock,
-    stockStatus: body.manageStock ? "managed" : "unmanaged",
-    minLevelId: body.minLevelId ?? null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    
-  })
-  .execute();
+    .insertInto("affiliateProducts")
+    .values({
+      id: productId,
+      organizationId,
+      tenantId,                       /* FIX */
+      title: body.title,
+      description: body.description ?? null,
+      image: body.image ?? null,
+      sku,
+      status: body.status,
+      productType: body.productType,
+      regularPoints,
+      salePoints,
+      cost: body.cost ?? {},
+      allowBackorders: body.allowBackorders,
+      manageStock: body.manageStock,
+      stockStatus: body.manageStock ? "managed" : "unmanaged",
+      minLevelId: body.minLevelId ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .execute();
 
   /* attribute values */
   if (body.attributes?.length) {
@@ -238,7 +183,7 @@ export async function POST(req: NextRequest) {
           .execute();
   }
 
-  /* variations (variable products) */
+  /* variations … (unchanged logic) */
   const variationStockRows: {
     warehouseId: string;
     affiliateProductId: string;
@@ -251,6 +196,7 @@ export async function POST(req: NextRequest) {
     for (const v of body.variations) {
       const srcMap = v.prices ?? v.pointsPrice;
       const { regularPoints, salePoints } = splitPointsByLevel(srcMap);
+
       await db
         .insertInto("affiliateProductVariations")
         .values({
@@ -261,8 +207,8 @@ export async function POST(req: NextRequest) {
           image: v.image ?? null,
           regularPoints,
           salePoints,
-          cost: body.cost ?? {},
-          minLevelId: body.minLevelId ?? null,
+          cost: v.cost ?? {},
+          minLevelId: v.minLevelId ?? null,
           createdAt: new Date(),
           updatedAt: new Date(),
         })
@@ -296,12 +242,12 @@ export async function POST(req: NextRequest) {
         id: uuidv4(),
         warehouseId: row.warehouseId,
         affiliateProductId: productId,
-        variationId: row.variationId, // still filled (legacy) for FK but will be null when variable
-        affiliateVariationId: row.variationId, // new FK column
+        variationId: null,
+        affiliateVariationId: row.variationId,
         country: row.country,
         quantity: row.quantity,
         organizationId,
-        tenantId: tenant.id,
+        tenantId,                       /* FIX */
         createdAt: new Date(),
         updatedAt: new Date(),
       })

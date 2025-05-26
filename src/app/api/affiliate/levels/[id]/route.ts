@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
-import { auth } from "@/lib/auth";
+import { getContext } from "@/lib/context";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
@@ -34,21 +34,22 @@ async function orgId(req: NextRequest): Promise<string | NextResponse> {
 
 /* GET single */
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const org = await orgId(req);
-  if (org instanceof NextResponse) return org;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
   const { rows } = await pool.query(
     `SELECT * FROM "affiliateLevels" WHERE id = $1 AND "organizationId" = $2`,
-    [params.id, org],
+    [params.id, organizationId],
   );
   return rows.length
     ? NextResponse.json(rows[0])
     : NextResponse.json({ error: "Not found" }, { status: 404 });
 }
-
 /* PATCH update */
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const org = await orgId(req);
-  if (org instanceof NextResponse) return org;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
   try {
     const vals = levelSchema.parse(await req.json());
     if (Object.keys(vals).length === 0)
@@ -84,11 +85,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
 /* DELETE */
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const org = await orgId(req);
-  if (org instanceof NextResponse) return org;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
   const { rows } = await pool.query(
     `DELETE FROM "affiliateLevels" WHERE id = $1 AND "organizationId" = $2 RETURNING *`,
-    [params.id, org],
+    [params.id, organizationId],
   );
   return rows.length
     ? NextResponse.json({ message: "Deleted" })

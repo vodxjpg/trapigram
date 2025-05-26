@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
-import { auth } from "@/lib/auth";
+import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -46,19 +46,22 @@ async function orgId(req: NextRequest): Promise<string | NextResponse> {
 
 /* GET list */
 export async function GET(req: NextRequest) {
-  const org = await orgId(req);
-  if (org instanceof NextResponse) return org;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
   const { rows } = await pool.query(
     `SELECT * FROM "affiliateLevels" WHERE "organizationId" = $1 ORDER BY "requiredPoints"`,
-    [org],
+    [organizationId],
   );
   return NextResponse.json({ levels: rows });
 }
 
 /* POST create */
 export async function POST(req: NextRequest) {
-  const org = await orgId(req);
-  if (org instanceof NextResponse) return org;
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
   try {
     const vals = levelSchema.parse(await req.json());
     const id = uuidv4();
