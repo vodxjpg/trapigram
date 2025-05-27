@@ -12,7 +12,7 @@ const clientSchema = z.object({
   userId: z.string().min(1),
   username: z.string().min(1),
   firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  lastName: z.string().optional().nullable(),
   email: z.string().optional().nullable(),
   phoneNumber: z.string().optional().nullable(),
   country: z.string().optional().nullable(),
@@ -20,13 +20,11 @@ const clientSchema = z.object({
   referredBy: z.string().optional().nullable(),
 });
 
-
 /* ---------------------- GET /api/clients ---------------------- */
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
-
 
   /* pagination & search */
   const params = new URL(req.url).searchParams;
@@ -72,19 +70,17 @@ export async function GET(req: NextRequest) {
 
 /* ---------------------- POST /api/clients ---------------------- */
 export async function POST(req: NextRequest) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-
-  const parsed = clientSchema.safeParse(await req.json());
+  const body = await req.json();
+  const parsed = clientSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
+
   const {
     userId,
     username,
     firstName,
-    lastName,
+    lastName = null,
     email = null,
     phoneNumber = null,
     country = null,
@@ -92,75 +88,77 @@ export async function POST(req: NextRequest) {
     referredBy = null,
   } = parsed.data;
 
-  try {
-    // Look for existing by org + telegram chat ID
-    const existingRes = await pool.query(
-      `SELECT id FROM clients WHERE "organizationId" = $1 AND "userId" = $2`,
-      [organizationId, userId]
-    );
+  const organizationId = req.nextUrl.searchParams.get("organizationId");
+  if (!organizationId) {
+    return NextResponse.json({ error: "organizationId is required" }, { status: 400 });
+  }
 
-    if (existingRes.rowCount > 0) {
-      // UPDATE existing: note placeholders $1..$9 are all used
-      const { id } = existingRes.rows[0];
-      const updateRes = await pool.query(
-        `
-        UPDATE clients
-        SET
-          username      = $2,
-          "firstName"   = $3,
-          "lastName"    = $4,
-          email         = $5,
-          "phoneNumber" = $6,
-          country       = $7,
-          "levelId"     = COALESCE($8, "levelId"),
-          "referredBy"  = $9,
-          "lastInteraction" = NOW(),
-          "updatedAt"       = NOW()
-        WHERE id = $1
-        RETURNING *
-        `,
-        [
-          id,
-          username,
-          firstName,
-          lastName,
-          email,
-          phoneNumber,
-          country,
-          levelId,
-          referredBy,
-        ]
-      );
-      return NextResponse.json(updateRes.rows[0], { status: 200 });
-    } else {
-      // INSERT new
-      const insertRes = await pool.query(
-        `
-        INSERT INTO clients
-          ("organizationId","userId",username,"firstName","lastName",
-           email,"phoneNumber",country,"levelId","referredBy",
-           "lastInteraction","createdAt","updatedAt")
-        VALUES
-          ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW(),NOW())
-        RETURNING *
-        `,
-        [
-          organizationId,
-          userId,
-          username,
-          firstName,
-          lastName,
-          email,
-          phoneNumber,
-          country,
-          levelId,
-          referredBy,
-        ]
-      );
-      return NextResponse.json(insertRes.rows[0], { status: 201 });
-    }
-  } catch (error) {
-    console.error("[POST /api/clients] error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  // Check if client exists
+  const existingRes = await pool.query(
+    `SELECT id FROM clients WHERE "organizationId" = $1 AND "userId" = $2`,
+    [organizationId, userId]
+  );
+
+  if (existingRes.rowCount > 0) {
+    // Update existing client
+    const { id } = existingRes.rows[0];
+    const updateRes = await pool.query(
+      `
+      UPDATE clients
+      SET
+        username          = $2,
+        "firstName"      = $3,
+        "lastName"       = COALESCE($4, "lastName"),
+        email             = $5,
+        "phoneNumber"    = $6,
+        country           = $7,
+        "levelId"        = COALESCE($8, "levelId"),
+        "referredBy"     = CASE WHEN "referredBy" IS NULL THEN $9 ELSE "referredBy" END,
+        "lastInteraction"= NOW(),
+        "updatedAt"      = NOW()
+      WHERE id = $1
+      RETURNING *
+      `,
+      [
+        id,
+        username,
+        firstName,
+        lastName,
+        email,
+        phoneNumber,
+        country,
+        levelId,
+        referredBy,
+      ]
+    );
+    return NextResponse.json(updateRes.rows[0], { status: 200 });
+  } else {
+    // Insert new client
+    const id = crypto.randomUUID();
+    const insertRes = await pool.query(
+      `
+      INSERT INTO clients
+        ("id", "organizationId", "userId", username, "firstName", "lastName",
+         email, "phoneNumber", country, "levelId", "referredBy",
+         "lastInteraction", "createdAt", "updatedAt")
+      VALUES
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW())
+      RETURNING *
+      `,
+      [
+        id,
+        organizationId,
+        userId,
+        username,
+        firstName,
+        lastName,
+        email,
+        phoneNumber,
+        country,
+        levelId,
+        referredBy,
+      ]
+    );
+    return NextResponse.json(insertRes.rows[0], { status: 201 });
   }
 }
