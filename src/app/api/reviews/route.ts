@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
+import { v4 as uuidv4 } from "uuid";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -63,16 +64,27 @@ export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
+  
 
   try {
     const { orderId, text, rate } = await req.json();
+
+    // 1) generate a new UUID for this review
+    const id = uuidv4();
+
+    // 2) include `id` in your INSERT and shift all the $-placeholders
     const insertSql = `
       INSERT INTO reviews
-        ("organizationId","orderId",text,rate,"createdAt","updatedAt")
-      VALUES ($1,$2,$3,$4,now(),now())
-      RETURNING id,"orderId",text,rate,"createdAt","updatedAt"
+        (id, "organizationId", "orderId", text, rate, "createdAt", "updatedAt")
+      VALUES
+        ($1,      $2,                $3,       $4,   $5,   now(),       now())
+      RETURNING
+        id, "orderId", text, rate, "createdAt", "updatedAt"
     `;
-    const vals = [organizationId, orderId, text, rate];
+
+    // 3) supply `id` as the first value
+    const vals = [id, organizationId, orderId, text, rate];
+
     const res = await pool.query(insertSql, vals);
     return NextResponse.json(res.rows[0], { status: 201 });
   } catch (err: any) {
