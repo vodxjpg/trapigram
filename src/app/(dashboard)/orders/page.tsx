@@ -44,6 +44,7 @@ type OrderStatus = "open" | "paid" | "cancelled" | "completed";
 // Define order interface
 interface Order {
   id: string;
+  orderKey: string;
   firstName: string;
   lastName: string;
   username: string;
@@ -86,8 +87,9 @@ export default function OrdersPage() {
         if (!res.ok) throw new Error("Failed to fetch orders");
         return res.json();
       })
-      .then((data: Order[]) => {
-        setOrders(data);
+         .then((data: Order[]) => {
+             // data should already include `orderKey` alongside `id`
+             setOrders(data);
         setError(null);
       })
       .catch((err: Error) => setError(err.message))
@@ -103,10 +105,11 @@ export default function OrdersPage() {
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (o) =>
-          o.id.toLowerCase().includes(q) || o.email.toLowerCase().includes(q)
-      );
+           result = result.filter(
+               (o) =>
+                 o.orderKey.toLowerCase().includes(q) ||
+                 o.email.toLowerCase().includes(q)
+             );
     }
 
     if (statusFilter !== "all") {
@@ -330,7 +333,7 @@ export default function OrdersPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Order ID</TableHead>
+                <TableHead>Order #</TableHead>
                   <TableHead>User</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Date</TableHead>
@@ -348,7 +351,7 @@ export default function OrdersPage() {
                           className="p-0 h-auto font-medium"
                           onClick={() => router.push(`/orders/${order.id}`)}
                         >
-                          {order.id}
+                          {order.orderKey}
                         </Button>
                       </TableCell>
                       <TableCell>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react";
 import {
   type ColumnDef,
   type ColumnFiltersState,
@@ -81,6 +81,7 @@ export function ProductsDataTable() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState("")
   const [deleteProductId, setDeleteProductId] = useState<string | null>(null)
+  const [categoryMap, setCategoryMap] = useState<Record<string,string>>({});
 
   const { products, isLoading, totalPages, mutate } = useProducts({
     page,
@@ -88,6 +89,22 @@ export function ProductsDataTable() {
     search,
   })
 
+  useEffect(() => {
+    fetch('/api/product-categories?page=1&pageSize=1000', {
+      headers: { 'x-internal-secret': process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! }
+    })
+      .then(res => res.json())
+      .then(({ categories }) => {
+        const map: Record<string,string> = {};
+        categories.forEach((c: { id: string; name: string }) => {
+          map[c.id] = c.name;
+        });
+        setCategoryMap(map);
+      })
+      .catch(() => {/* swallow or toast */});
+  }, []);
+  
+  
   /* ------------------------------------------------------------ */
   /*  NEW – duplicate handler                                     */
   /* ------------------------------------------------------------ */
@@ -247,25 +264,28 @@ export function ProductsDataTable() {
       accessorKey: "categories",
       header: "Categories",
       cell: ({ row }) => {
-        const categories = row.original.categories
+        const cats = row.original.categories;
+        // map ids → names, falling back to the id if name not yet loaded
+        const names = cats.map(id => categoryMap[id] ?? id);
+    
         return (
           <div className="flex flex-wrap gap-1">
-            {categories.length ? (
-              categories.slice(0, 2).map((c, i) => (
+            {names.length > 0 ? (
+              names.slice(0, 2).map((name, i) => (
                 <Badge key={i} variant="secondary" className="text-xs">
-                  {c}
+                  {name}
                 </Badge>
               ))
             ) : (
               <span className="text-xs text-muted-foreground">No categories</span>
             )}
-            {categories.length > 2 && (
+            {names.length > 2 && (
               <Badge variant="outline" className="text-xs">
-                +{categories.length - 2}
+                +{names.length - 2}
               </Badge>
             )}
           </div>
-        )
+        );
       },
     },
     {

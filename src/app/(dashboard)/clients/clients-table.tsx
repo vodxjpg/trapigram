@@ -98,9 +98,26 @@ export function ClientsTable() {
       );
       if (!res.ok) throw new Error((await res.json()).error || "Fetch failed");
       const { clients, totalPages, currentPage } = await res.json();
-      setClients(clients);
-      setTotalPages(totalPages);
-      setPage(currentPage);
+       // 1) load raw clients...
+ setClients(clients);
+     setTotalPages(totalPages);
+     setPage(currentPage);
+ // 2) then fetch all balances in one go
+ const balRes = await fetch(
+   `/api/affiliate/points/balance`,
+   { headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" } }
+ );
+ if (!balRes.ok) throw new Error("Could not load balances");
+ const { balances } = await balRes.json(); // [{ clientId, pointsCurrent, pointsSpent }, …]
+
+ // 3) merge balances into clients
+ setClients(cs =>
+   cs.map(c => {
+     const b = balances.find(x => x.clientId === c.id);
+     return { ...c, points: b?.pointsCurrent ?? 0 };
+   })
+ );
+
     } catch (e: any) {
       toast.error(e.message);
     } finally {
