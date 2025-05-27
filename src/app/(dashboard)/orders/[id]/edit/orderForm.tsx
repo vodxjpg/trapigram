@@ -195,24 +195,83 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   async function loadProducts() {
     setProductsLoading(true);
     try {
-      const res = await fetch("/api/products", { headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! }});
-      const { products } = await res.json();
-      setProducts(products);
-    } catch {
-      toast.error("Failed loading products");
+      // no custom headers needed
+      const [normRes, affRes] = await Promise.all([
+        fetch("/api/products"),
+        fetch("/api/affiliate/products"),
+      ]);
+      if (!normRes.ok || !affRes.ok) {
+        throw new Error("Failed to fetch product lists");
+      }
+  
+      const { products: norm } = await normRes.json();   // [{ id,…, regularPrice, stockData, … }]
+      const { products: aff }  = await affRes.json();    // [{ id,…, pointsPrice, cost, stock?, … }]
+  
+      // map both into our UI shape
+      const all: Product[] = [
+        // 1) real products
+        ...norm.map(p => ({
+          id:          p.id,
+          title:       p.title,
+          sku:         p.sku,
+          description: p.description,
+          image:       p.image,
+          regularPrice:p.regularPrice,
+          // use the first country’s salePrice or regularPrice as fallback price
+          price:       Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
+          stockData:   p.stockData,
+          subtotal:    0,
+        })),
+  
+        // 2) affiliate products
+        ...aff.map(a => {
+          // pick “first” level then “first” country to derive a flat points → € price
+          const lvlKeys = Object.keys(a.pointsPrice);
+          const countryKeys = lvlKeys.length
+            ? Object.keys(a.pointsPrice[lvlKeys[0]])
+            : [];
+          const firstCountry = countryKeys[0] ?? "";
+          const price = a.cost[firstCountry] ?? 0;
+  
+          // build a regularPrice map so the UI can treat it the same:
+          // use cost in every country as the “currency” price
+          const regularPrice: Record<string,number> = Object.fromEntries(
+            Object.entries(a.cost).map(([country, c]) => [country, c])
+          );
+  
+          return {
+            id:           a.id,
+            title:        a.title,
+            sku:          a.sku,
+            description:  a.description,
+            image:        a.image,
+            regularPrice,
+            price,
+            stockData:    a.stock ?? {},
+            subtotal:     0,
+          };
+        }),
+      ];
+  
+      setProducts(all);
+    } catch (e: any) {
+      console.error(e);
+      toast.error(e.message || "Failed loading products");
     } finally {
       setProductsLoading(false);
     }
   }
-
-  const countryProducts = products.filter((p) => {
-    const totalStock = Object.values(p.stockData).reduce(
-      (sum, e) => sum + (e[clientCountry] || 0),
-      0
-    );
+  
+  const countryProducts = products.filter(p => {
+    // if no stockData at all (affiliate), show it
+    if (!Object.keys(p.stockData).length) return true;
+  
+    // otherwise only those with stock in this country
+    const totalStock = Object.values(p.stockData)
+      .reduce((sum,e)=> sum + (e[clientCountry]||0), 0);
     return totalStock > 0;
   });
-
+  
   const loadShipping = async () => {
     setShippingLoading(true);
     try {
@@ -361,10 +420,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           country: clientCountry,
         }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        throw new Error(err?.message || "Failed to add product");
-      }
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            const msg = (body.error as string) ?? (body.message as string) ?? "Failed to add product";
+            throw new Error(msg);
+          }
       const { product: added, quantity: qty } = await res.json();
       const subtotalRow = calcRowSubtotal(added, qty);
 
@@ -407,9 +467,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         body: JSON.stringify({ productId }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        throw new Error(err?.message || "Failed to remove product");
-      }
+            const body = await res.json().catch(() => ({}));
+            const msg = (body.error as string) ?? (body.message as string) ?? "Failed to remove product";
+            throw new Error(msg);
+          }
       setOrderItems((prev) => prev.filter((_, i) => i !== idx));
       toast.success("Product removed from cart");
     } catch (error: any) {
@@ -431,10 +492,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId, action, quantity: qty }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        throw new Error(err?.message || "Failed to update quantity");
-      }
+          if (!res.ok) {
+              const body = await res.json().catch(() => ({}));
+              const msg = (body.error as string) ?? (body.message as string) ?? "Failed to update quantity";
+              throw new Error(msg);
+            }
       const { product, quantity } = await res.json();
       const subtotalRow = calcRowSubtotal(product, quantity);
 

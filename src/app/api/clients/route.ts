@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
           email         = $5,
           "phoneNumber" = $6,
           country       = $7,
-          "levelId"     = $8,
+          "levelId"     = COALESCE($8, "levelId"),
           "referredBy"  = $9,
           "lastInteraction" = NOW(),
           "updatedAt"       = NOW()

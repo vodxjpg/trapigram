@@ -47,12 +47,13 @@ export async function POST(
     );
 
     /* 3️⃣  upsert cartProducts */
-    const existing = await pool.query(
-      `SELECT id, quantity
-       FROM "cartProducts"
-       WHERE "cartId"=$1 AND "productId"=$2`,
-      [cartId, body.productId]
-    );
+      const existing = await pool.query(
+          `SELECT id, quantity
+             FROM "cartProducts"
+            WHERE "cartId" = $1
+              AND ${isAffiliate ? `"affiliateProductId"` : `"productId"`} = $2`,
+          [cartId, body.productId]
+        );
 
     let quantity = body.quantity;
     if (existing.rowCount) {
@@ -64,19 +65,28 @@ export async function POST(
         [quantity, price, existing.rows[0].id]
       );
     } else {
-      await pool.query(
-        `INSERT INTO "cartProducts"
-         (id,"cartId","productId",quantity,"unitPrice","createdAt","updatedAt")
-         VALUES ($1,$2,$3,$4,$5,NOW(),NOW())`,
-        [uuidv4(), cartId, body.productId, quantity, price]
-      );
+           await pool.query(
+               `INSERT INTO "cartProducts"
+                  (id,"cartId","productId","affiliateProductId",
+                   quantity,"unitPrice","createdAt","updatedAt")
+                VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
+               [
+                 uuidv4(),
+                 cartId,
+                 isAffiliate ? null        : body.productId,
+                 isAffiliate ? body.productId : null,
+                 quantity,
+                 price
+               ]
+             );
     }
     /* 3b️⃣  reserve the JUST-ADDED quantity */
-    await adjustStock(pool, body.productId, country, -body.quantity); 
+    await adjustStock(pool, body.productId, country, -body.quantity);
 
     /* 4️⃣  refresh cart hash */
     const rowsHash = await pool.query(
-      `SELECT "productId",quantity,"unitPrice"
+       `SELECT COALESCE("productId","affiliateProductId") AS pid,
+       quantity,"unitPrice"
        FROM "cartProducts"
        WHERE "cartId"=$1`,
       [cartId]

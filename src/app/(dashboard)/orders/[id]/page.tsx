@@ -30,6 +30,7 @@ interface Product {
   quantity: number;
   unitPrice: number;
   total: number;
+  isAffiliate: boolean;
   image: string;
 }
 
@@ -283,12 +284,16 @@ export default function OrderView() {
                         <TableCell className="text-right">
                           {product.quantity}
                         </TableCell>
-                        <TableCell className="text-right">
-                          ${product.unitPrice.toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          ${(product.unitPrice * product.quantity).toFixed(2)}
-                        </TableCell>
+                          <TableCell className="text-right">
+    {product.isAffiliate
+      ? `${product.unitPrice} pts`
+      : `$${product.unitPrice.toFixed(2)}`}
+  </TableCell>
+  <TableCell className="text-right">
+    {product.isAffiliate
+      ? `${product.unitPrice * product.quantity} pts`
+      : `$${(product.unitPrice * product.quantity).toFixed(2)}`}
+  </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

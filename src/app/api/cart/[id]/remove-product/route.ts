@@ -52,7 +52,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
         const insert = `
         DELETE FROM "cartProducts" 
-        WHERE "cartId" = $1 AND "productId" = $2
+        WHERE "cartId" = $1 AND ( "productId" = $2 OR "affiliateProductId" = $2 )
         RETURNING *
       `;
         const vals = [
@@ -74,7 +74,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
      const released = result.rows[0]?.quantity ?? 0;
      if (released)
-       await adjustStock(pool, data.productId, country, +released);  // ➋
+        await adjustStock(pool, data.productId, country, +released);
 
         const encryptedResponse = encryptSecretNode(JSON.stringify(result.rows[0]))
 

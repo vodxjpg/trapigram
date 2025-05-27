@@ -28,10 +28,12 @@ export async function adjustStock(
   /* 1) product‑level stock rules                                        */
   /* ------------------------------------------------------------------ */
   const { rows: metaRows } = await db.query(
-    `SELECT "manageStock"      AS "manageStock",
-            "allowBackorders"  AS "allowBackorders"
-       FROM products
-      WHERE id = $1`,
+    `SELECT "manageStock","allowBackorders"
+       FROM products            WHERE id = $1
+    UNION ALL
+     SELECT "manageStock","allowBackorders"
+       FROM "affiliateProducts" WHERE id = $1
+    LIMIT 1`,
     [productId],
   );
 
@@ -44,15 +46,16 @@ export async function adjustStock(
   const { rows: wsRows } = await db.query(
     `SELECT id, quantity
        FROM "warehouseStock"
-      WHERE "productId" = $1
-        AND country      = $2
+      WHERE (  "productId"          = $1
+            OR "affiliateProductId" = $1 )
+        AND country = $2
       ORDER BY "createdAt" ASC
       LIMIT 1`,
     [productId, country],
   );
 
   const current = wsRows[0];
-  const newQty  = (current?.quantity ?? 0) + delta;
+  let   newQty  = (current?.quantity ?? 0) + delta;   // may go below 0
 
   /* ------------------------------------------------------------------ */
   /* 3) over‑sell guard                                                 */
@@ -61,11 +64,17 @@ export async function adjustStock(
     throw new Error("Insufficient stock and back‑orders are disabled");
   }
 
+    /* back-order handling – never store negative numbers  */
+  if (newQty < 0) {
+    // we *could* store the back-ordered amount elsewhere; for now
+    // just clamp to zero so the CHECK constraint is satisfied.
+    newQty = 0;
+  }
+
   /* ------------------------------------------------------------------ */
   /* 4) write back                                                      */
   /* ------------------------------------------------------------------ */
   if (current) {
-    // just update the existing row
     await db.query(
       `UPDATE "warehouseStock"
           SET quantity   = $1,
@@ -74,14 +83,21 @@ export async function adjustStock(
       [newQty, current.id],
     );
   } else {
-    // first time we touch this (product,country) pair → insert stub row
     await db.query(
       `INSERT INTO "warehouseStock"
-       (id, "warehouseId", "productId", country,
-        quantity, "organizationId", "tenantId",
-        "createdAt", "updatedAt")
-       VALUES (gen_random_uuid(), NULL, $1, $2, $3, '', '', NOW(), NOW())`,
-      [productId, country, Math.max(0, newQty)],
+       (id,"warehouseId","productId","affiliateProductId",
+        country,quantity,"organizationId","tenantId",
+        "createdAt","updatedAt")
+       VALUES (gen_random_uuid(),NULL,
+               $1,                       -- productId  OR
+               $3,                       -- affiliateProductId
+               $2,$4,'','',NOW(),NOW())`,
+      [
+        meta ? productId : null,            // if metaRows came from products
+        country,
+        meta ? null       : productId,      // if metaRows came from affiliateProducts
+        Math.max(0, newQty),
+      ],
     );
   }
 }

@@ -528,12 +528,14 @@ interface DB {
   cartProducts: {
     id: string;
     cartId: string;
-    productId: string;
+    productId: string | null;          // nullable now
+    affiliateProductId: string | null; // NEW
     quantity: number;
-    unitPrice: number;
+    unitPrice: number;                 // pts OR €
     createdAt: Date;
     updatedAt: Date;
   }
+  
 
   orders: {
     id: string;

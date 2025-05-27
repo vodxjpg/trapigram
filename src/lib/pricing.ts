@@ -33,7 +33,7 @@ export async function assertAffiliateLevelAllowed(
 ) {
   if (!minLevelId) return;
   if (!clientLevelId)
-    throw new Error("Level too low for this product");
+    throw new Error("Customer's level too low for this product");
 
   const { rows } = await pool.query(
     `SELECT id,"requiredPoints" FROM "affiliateLevels" WHERE id IN ($1,$2)`,
@@ -42,7 +42,7 @@ export async function assertAffiliateLevelAllowed(
   const min = rows.find(r => r.id === minLevelId);
   const cur = rows.find(r => r.id === clientLevelId);
   if (!min || !cur || cur.requiredPoints < min.requiredPoints)
-    throw new Error("Level too low for this product");
+    throw new Error("Customer's level too low for this product");
 }
 
 export async function resolveUnitPrice(

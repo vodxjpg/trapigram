@@ -78,17 +78,19 @@ async function uniqueSku(base: string, orgId: string) {
 /*==================================================================
   GET
   =================================================================*/
-export async function GET(req: NextRequest) {
-  try {
+  export async function GET(req: NextRequest) {
+    // 1) resolve auth/context
     const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
     const { organizationId, tenantId } = ctx;
-
+  
+    // 2) pull pagination + filter params
     const { searchParams } = new URL(req.url);
     const limit  = Number(searchParams.get("limit")  || "50");
     const offset = Number(searchParams.get("offset") || "0");
     const search = searchParams.get("search") || "";
-
+  
+    // 3) fetch the base product rows
     const rows = await db
       .selectFrom("affiliateProducts")
       .select([
@@ -100,32 +102,53 @@ export async function GET(req: NextRequest) {
         "productType",
         "regularPoints",
         "salePoints",
+        "cost",
         "createdAt",
       ])
       .where("organizationId", "=", organizationId)
-      .where("tenantId", "=", tenantId)          /* FIX */
+      .where("tenantId", "=", tenantId)
       .$if(search, (qb) => qb.where("title", "ilike", `%${search}%`))
       .limit(limit)
       .offset(offset)
       .execute();
-
+  
+    // 4) pull all stock rows for those products in one go
+    const ids = rows.map((r) => r.id);
+    const stockRows = await db
+      .selectFrom("warehouseStock")
+      .select([
+        "affiliateProductId",
+        "warehouseId",
+        "country",
+        "quantity",
+      ])
+      .where("affiliateProductId", "in", ids)
+      .execute();
+  
+    // 5) build a nested stock map: { [prodId]: { [warehouse]: { [country]: qty } } }
+    const stockMap: Record<string, Record<string, Record<string, number>>> = {};
+    for (const { affiliateProductId, warehouseId, country, quantity } of stockRows) {
+      stockMap[affiliateProductId] ??= {};
+      stockMap[affiliateProductId][warehouseId] ??= {};
+      stockMap[affiliateProductId][warehouseId][country] = quantity;
+    }
+  
+    // 6) stitch it all together
     const products = rows.map((r) => ({
-      id: r.id,
-      title: r.title,
-      image: r.image,
-      sku: r.sku,
-      status: r.status,
-      productType: r.productType,
-      pointsPrice: mergePointsByLevel(r.regularPoints as any, r.salePoints as any),
-      createdAt: r.createdAt,
+      id:           r.id,
+      title:        r.title,
+      image:        r.image,
+      sku:          r.sku,
+      status:       r.status,
+      productType:  r.productType,
+      pointsPrice:  mergePointsByLevel(r.regularPoints as any, r.salePoints as any),
+      cost:         r.cost,
+      stock:        stockMap[r.id] ?? {},      // ← your per-product stock map
+      createdAt:    r.createdAt,
     }));
-
+  
     return NextResponse.json({ products });
-  } catch (err) {
-    console.error("[AFFILIATE_PRODUCTS_GET]", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
 
 /*==================================================================
   POST
