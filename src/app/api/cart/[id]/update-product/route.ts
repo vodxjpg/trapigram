@@ -20,32 +20,55 @@ export async function PATCH(
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { id: cartId } = params;
-  const { productId, action } = updateSchema.parse(await req.json());
+
+  const { id: cartId }           = params;
+  const { productId, action }    = updateSchema.parse(await req.json());
 
   const tx = await pool.connect();
-
   try {
     await tx.query("BEGIN");
 
-    /* ── 1) fetch rows for this product  ───────────────────────────
-       NOTE: newest-first order guarantees “subtract” undoes
-       the most recently added single-unit row (true inverse of “add”). */
+    /* ─────────────────────────────────────────────────────────────
+       1) Load all rows of *this* product already in the cart
+          (newest first so SUBTRACT pops the latest one)          */
     const { rows: existing } = await tx.query(
       `SELECT
-         cp.id         AS "lineId",
-         cp.quantity   AS qty,
-         cl.country    AS country,
-         cl."levelId"  AS "levelId"
+         cp.id                              AS "lineId",
+         cp.quantity                        AS qty,
+         cp."unitPrice"                     AS "unitPrice",
+         cp."affiliateProductId" IS NOT NULL AS "isAffiliate",
+         cl.id                              AS "clientId",
+         cl.country                         AS country,
+         cl."levelId"                       AS "levelId"
        FROM "cartProducts" cp
-       JOIN carts   c  ON c.id        = cp."cartId"
-       JOIN clients cl ON cl.id       = c."clientId"
+       JOIN carts   c  ON c.id  = cp."cartId"
+       JOIN clients cl ON cl.id = c."clientId"
        WHERE c.id = $1
          AND (cp."productId" = $2 OR cp."affiliateProductId" = $2)
-       ORDER BY cp."createdAt" DESC`,         /* ★ changed ASC ➜ DESC */
+       ORDER BY cp."createdAt" DESC`,
       [cartId, productId]
     );
 
+    /* we’ll need these three values in both ADD and SUBTRACT paths  */
+    let country   = existing[0]?.country;
+    let levelId   = existing[0]?.levelId;
+    let clientId  = existing[0]?.clientId;
+
+    /* if no prior rows, fetch client info directly from the cart   */
+    if (!country) {
+      const { rows: [cli] } = await tx.query(
+        `SELECT cl.id AS "clientId", cl.country, cl."levelId"
+           FROM clients cl
+           JOIN carts c ON c."clientId" = cl.id
+          WHERE c.id = $1`,
+        [cartId]
+      );
+      country  = cli.country;
+      levelId  = cli.levelId;
+      clientId = cli.clientId;
+    }
+
+    /*──────────────────────── 2) SUBTRACT ────────────────────────*/
     if (action === "subtract") {
       if (!existing.length) {
         await tx.query("ROLLBACK");
@@ -55,43 +78,135 @@ export async function PATCH(
         );
       }
 
-      /* remove exactly one unit, starting from the LIFO row list */
       let unitsToRemove = 1;
-
       for (const row of existing) {
         if (unitsToRemove <= 0) break;
 
         const removeQty = Math.min(row.qty, unitsToRemove);
 
+        /* 2a. lower quantity / delete later if hits zero            */
         await tx.query(
           `UPDATE "cartProducts"
-             SET quantity = quantity - $1,
+             SET quantity  = quantity - $1,
                  "updatedAt" = NOW()
            WHERE id = $2`,
           [removeQty, row.lineId]
         );
 
+        /* 2b. restock                                              */
         await adjustStock(tx, productId, row.country, +removeQty);
+
+        /* 2c. refund points if it was an affiliate line            */
+        if (row.isAffiliate) {
+          const pointsToCredit = Number(row.unitPrice) * removeQty;
+
+          /* ensure balance row exists & lock it */
+          await tx.query(
+            `INSERT INTO "affiliatePointBalances"
+               ("clientId","organizationId","pointsCurrent","pointsSpent","createdAt","updatedAt")
+             VALUES ($1,$2,0,0,NOW(),NOW())
+             ON CONFLICT ("clientId","organizationId") DO NOTHING`,
+            [row.clientId, ctx.organizationId]
+          );
+
+          await tx.query(
+            `UPDATE "affiliatePointBalances"
+               SET "pointsCurrent" = "pointsCurrent" + $1,
+                   "updatedAt"     = NOW()
+             WHERE "clientId" = $2 AND "organizationId" = $3`,
+            [pointsToCredit, row.clientId, ctx.organizationId]
+          );
+
+          await tx.query(
+            `INSERT INTO "affiliatePointLogs"
+               (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+             VALUES ($1,$2,$3,$4,'refund','Removed product from cart',NOW(),NOW())`,
+            [uuidv4(), ctx.organizationId, row.clientId, pointsToCredit]
+          );
+        }
+
         unitsToRemove -= removeQty;
       }
 
-      // purge zero-quantity lines
+      /* wipe zero-qty rows                                         */
       await tx.query(
-        `DELETE FROM "cartProducts"
-          WHERE "cartId" = $1 AND quantity = 0`,
+        `DELETE FROM "cartProducts" WHERE "cartId" = $1 AND quantity = 0`,
         [cartId]
       );
-    } else {
-      /* ── ADD branch unchanged (appends a 1-unit line) ─────────── */
-      const { country, levelId } = existing[0] ?? {};
+    }
+
+    /*──────────────────────── 3) ADD ─────────────────────────────*/
+    else {
+      /* 3a. look up price (€/pts) and affiliate flag               */
       const { price, isAffiliate } = await resolveUnitPrice(
         productId,
         country!,
         levelId!
       );
 
+      /*──────────────── affiliate validations ────────────────────*/
+      if (isAffiliate) {
+        /* ♦ level check                                            */
+        const { rows: [{ minLevelId }] } = await tx.query(
+          `SELECT "minLevelId" FROM "affiliateProducts" WHERE id = $1`,
+          [productId]
+        );
+        if (minLevelId && minLevelId !== levelId) {
+          await tx.query("ROLLBACK");
+          return NextResponse.json(
+            { error: "Client level is not high enough for this product" },
+            { status: 400 }
+          );
+        }
+
+        /* ♦ balance row (lock or create)                           */
+        const balRes = await tx.query(
+          `SELECT "pointsCurrent"
+             FROM "affiliatePointBalances"
+            WHERE "clientId" = $1 AND "organizationId" = $2
+            FOR UPDATE`,
+          [clientId, ctx.organizationId]
+        );
+        if (!balRes.rowCount) {
+          await tx.query(
+            `INSERT INTO "affiliatePointBalances"
+               ("clientId","organizationId","pointsCurrent","pointsSpent","createdAt","updatedAt")
+             VALUES ($1,$2,0,0,NOW(),NOW())
+             RETURNING "pointsCurrent"`,
+            [clientId, ctx.organizationId]
+          );
+        }
+        const currPts =
+          balRes.rowCount ? Number(balRes.rows[0].pointsCurrent) : 0;
+        if (currPts < price) {
+          await tx.query("ROLLBACK");
+          return NextResponse.json(
+            { error: "Insufficient points balance" },
+            { status: 400 }
+          );
+        }
+
+        /* ♦ reserve points                                         */
+        await tx.query(
+          `UPDATE "affiliatePointBalances"
+             SET "pointsCurrent" = "pointsCurrent" - $1,
+                 "pointsSpent"   = "pointsSpent"   + $1,
+                 "updatedAt"     = NOW()
+           WHERE "clientId" = $2 AND "organizationId" = $3`,
+          [price, clientId, ctx.organizationId]
+        );
+        await tx.query(
+          `INSERT INTO "affiliatePointLogs"
+             (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+           VALUES ($1,$2,$3,$4,'spend','Added product to cart',NOW(),NOW())`,
+          [uuidv4(), ctx.organizationId, clientId, price]
+        );
+      }
+
+      /* 3b. reserve stock (shared)                                 */
       await adjustStock(tx, productId, country!, -1);
 
+      /* 3c. insert new single-unit row (price in € or pts)         */
       await tx.query(
         `INSERT INTO "cartProducts"
            (id,"cartId","productId","affiliateProductId",quantity,"unitPrice","createdAt","updatedAt")
@@ -106,21 +221,23 @@ export async function PATCH(
       );
     }
 
+    /*──────────────────────── 4) done ────────────────────────────*/
     await tx.query("COMMIT");
-
-    // 2) return current cart snapshot
     const lines = await fetchLines(cartId);
     return NextResponse.json({ lines });
   } catch (err) {
     await tx.query("ROLLBACK");
     console.error(err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   } finally {
     tx.release();
   }
 }
 
-/* helper identical to GET handler */
+/*──────────────────────── helper (unchanged) ─────────────────────*/
 async function fetchLines(cartId: string) {
   const client = await pool.connect();
   try {
