@@ -34,7 +34,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-
+import { cn } from "@/lib/utils"; //
 /* ——————————————————— TYPES ——————————————————— */
 interface OrderFormWithFetchProps {
   orderId?: string;
@@ -53,6 +53,7 @@ interface Product {
 interface OrderItem {
   product: Product;
   quantity: number;
+  isAffiliate: boolean;
 }
 interface ShippingMethod {
   id: string;
@@ -65,6 +66,89 @@ interface ShippingCompany {
   name: string;
 }
 
+interface OrderItemLine {
+  id: string;
+  title: string;
+  sku: string;
+  description: string;
+  image: string;
+  unitPrice: number;
+  quantity: number;
+  isAffiliate: boolean;
+}
+
+//
+// mergeLinesByProduct:
+// when API returns one entry per history‐row, collapse them into a single
+// line per product, summing quantity & subtotal.
+//
+// src/app/(dashboard)/orders/[id]/edit/orderForm.tsx
+
+function mergeLinesByProduct(lines: Array<{
+  id: string
+  quantity: number
+  unitPrice: number
+  subtotal: number
+  isAffiliate: boolean
+  [key: string]: any
+}>) {
+  const map: Record<string, { quantity: number; subtotal: number; lines: typeof lines }> = {};
+
+  for (const line of lines) {
+    if (!map[line.id]) {
+      map[line.id] = {
+        quantity: 0,
+        subtotal: 0,
+        lines: [],
+      };
+    }
+    map[line.id].quantity += line.quantity;
+    map[line.id].subtotal += line.subtotal;
+    map[line.id].lines.push(line);
+  }
+
+  return Object.values(map).map(({ lines, quantity, subtotal }) => ({
+    ...lines[0], // Keep the first line’s metadata (title, sku, etc.)
+    quantity, // Summed quantity
+    subtotal, // Summed subtotal
+  }));
+}
+
+function groupByProduct(lines: OrderItemLine[]) {
+  return lines.reduce((acc, line) => {
+    let bucket = acc.find(b => b.id === line.id);
+    if (!bucket) {
+      bucket = {
+        id: line.id,
+        title: line.title,
+        sku: line.sku,
+        description: line.description,
+        image: line.image,
+        isAffiliate: line.isAffiliate,
+        priceBuckets: [] as { unitPrice: number, quantity: number }[]
+      };
+      acc.push(bucket);
+    }
+    // find the matching price‐bucket
+    const pb = bucket.priceBuckets.find(p => p.unitPrice === line.unitPrice);
+    if (pb) {
+      pb.quantity += line.quantity;
+    } else {
+      bucket.priceBuckets.push({ unitPrice: line.unitPrice, quantity: line.quantity });
+    }
+    return acc;
+  }, [] as Array<{
+    id: string;
+    title: string;
+    sku: string;
+    description: string;
+    image: string;
+    isAffiliate: boolean;
+    priceBuckets: { unitPrice: number; quantity: number }[];
+  }>);
+}
+
+
 export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
 
@@ -72,61 +156,114 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [orderData, setOrderData] = useState<any | null>(null);
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [subtotal, setSubtotal] = useState(0);
-  const [total, setTotal]       = useState(0);
+  const [total, setTotal] = useState(0);
   const [clientCountry, setClientCountry] = useState("");
   const [cartId, setCartId] = useState("");
 
   const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
 
   const [productsLoading, setProductsLoading] = useState(true);
-  const [products, setProducts]       = useState<Product[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
-  const [quantity, setQuantity]       = useState(1);
+  const [quantity, setQuantity] = useState(1);
 
-  const [addresses, setAddresses]     = useState<{ id: string; address: string }[]>([]);
+  const [addresses, setAddresses] = useState<{ id: string; address: string }[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
-  const [newAddress, setNewAddress]   = useState("");
+  const [newAddress, setNewAddress] = useState("");
 
   const [showNewCoupon, setShowNewCoupon] = useState(false);
-  const [newCoupon, setNewCoupon]     = useState("");
+  const [newCoupon, setNewCoupon] = useState("");
 
   const [couponApplied, setCouponApplied] = useState(false);
-  const [couponCode, setCouponCode]       = useState("");
+  const [couponCode, setCouponCode] = useState("");
 
   const [discountType, setDiscountType] = useState<"percentage" | "fixed">("fixed");
-  const [discount, setDiscount]         = useState<number>(0);   // ← number, never null
-  const [value, setValue]               = useState<number>(0);   // ← “
+  const [discount, setDiscount] = useState<number>(0);   // ← number, never null
+  const [value, setValue] = useState<number>(0);   // ← “
 
   const [shippingLoading, setShippingLoading] = useState(true);
   const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
   const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
-  const [selectedShippingMethod, setSelectedShippingMethod]   = useState("");
-
+  const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
+  const [rawLines, setRawLines] = useState<OrderItemLine[]>([]);
   /* ——————————————————— HELPERS ——————————————————— */
   const calcRowSubtotal = (p: Product, qty: number) =>
     (p.regularPrice[clientCountry] ?? p.price) * qty;
 
+
+  async function loadCart() {
+    try {
+      const res = await fetch(`/api/cart/${cartId}`, {
+        headers: { "Content-Type": "application/json" },
+      });
+      const { resultCartProducts } = await res.json();
+
+      // 1️⃣ update rawLines (for grouped UI)
+      setRawLines(resultCartProducts);
+
+      // 2️⃣ update orderItems (for subtotal/total logic)
+      setOrderItems(
+        resultCartProducts.map((l) => ({
+          product: {
+            id: l.id,
+            title: l.title,
+            sku: l.sku,
+            description: l.description,
+            image: l.image,
+            regularPrice: { [clientCountry]: l.unitPrice },
+            price: l.unitPrice,
+            subtotal: l.subtotal,
+            stockData: {},
+          },
+          quantity: l.quantity,
+          isAffiliate: l.isAffiliate,
+        }))
+      );
+    } catch (e: any) {
+      toast.error(e.message || "Failed loading cart");
+    }
+  }
+
   /* ——————————————————— EFFECTS ——————————————————— */
   useEffect(() => {
-    const sum = orderItems.reduce(
-      (acc, item) => acc + (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
-      0
-    );
+    const sum = orderItems
+      .filter(item => !item.isAffiliate)           // ← ignore affiliate lines
+      .reduce(
+        (acc, item) =>
+          acc + (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
+        0
+      );
     setSubtotal(sum);
   }, [orderItems, clientCountry]);
+
 
   // total recalculation
   useEffect(() => {
     if (!orderData) return;
-    const shipping      = orderData.shipping ?? 0;
-    const baseDiscount  = couponApplied ? discount : orderData.discount ?? 0;
-    const dType         = couponApplied ? discountType : orderData.discountType;
-    setDiscountType(dType);
-    setDiscount(Number(baseDiscount));
-    setTotal(subtotal + shipping - Number(baseDiscount));
-  }, [subtotal, orderData?.shipping, orderData?.discount, orderData?.discountType,
-      couponApplied, discountType]);
+    const shipping = orderData.shipping ?? 0;
+    const couponDisc = couponApplied ? discount : orderData.discount ?? 0;
+    const pointsDisc = orderData.pointsRedeemedAmount ?? 0;
+
+    setDiscountType(couponApplied ? discountType : orderData.discountType);
+    setDiscount(Number(couponDisc));
+
+    // include both coupon‐ and points‐discount
+    setTotal(
+      subtotal
+      + shipping
+      - Number(couponDisc)
+      - Number(pointsDisc)
+    );
+  }, [
+    subtotal,
+    orderData?.shipping,
+    orderData?.discount,
+    orderData?.pointsRedeemedAmount,
+    couponApplied,
+    discountType,
+  ]);
+
 
   /* ——————————————————— FETCH ORDER + ADDRESSES ——————————————————— */
   useEffect(() => {
@@ -144,7 +281,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         setSubtotal(data.subtotal);
         setTotal(data.total);
 
-        const addrRes  = await fetch(`/api/clients/${data.clientId}/address`);
+        const addrRes = await fetch(`/api/clients/${data.clientId}/address`);
         const addrData = await addrRes.json();
         setAddresses(addrData.addresses);
 
@@ -159,32 +296,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   /* ——————————————————— FETCH CART ITEMS ——————————————————— */
   useEffect(() => {
     if (!cartId) return;
-    (async () => {
-      try {
-        const res = await fetch(`/api/cart/${cartId}`, { headers: { "Content-Type": "application/json" } });
-        const { resultCartProducts } = await res.json();
-        setOrderItems(
-          resultCartProducts.map((r: any) => ({
-            product: {
-              id: r.id,
-              title: r.title,
-              sku: r.sku,
-              description: r.description,
-              image: r.image,
-              price: r.unitPrice,
-              regularPrice: {},
-              stockData: {},
-              subtotal: r.subtotal,
-            },
-            quantity: r.quantity,
-          }))
-        );
-        toast.success("Order Loaded!");
-      } catch (err: any) {
-        toast.error(err.message);
-      }
-    })();
-  }, [cartId]);
+    loadCart();
+  }, [cartId, clientCountry]);
+
+
+  const groupedItems = groupByProduct(rawLines);
 
   /* ——————————————————— LOAD STATIC DATA ——————————————————— */
   useEffect(() => {
@@ -203,26 +319,26 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       if (!normRes.ok || !affRes.ok) {
         throw new Error("Failed to fetch product lists");
       }
-  
+
       const { products: norm } = await normRes.json();   // [{ id,…, regularPrice, stockData, … }]
-      const { products: aff }  = await affRes.json();    // [{ id,…, pointsPrice, cost, stock?, … }]
-  
+      const { products: aff } = await affRes.json();    // [{ id,…, pointsPrice, cost, stock?, … }]
+
       // map both into our UI shape
       const all: Product[] = [
         // 1) real products
         ...norm.map(p => ({
-          id:          p.id,
-          title:       p.title,
-          sku:         p.sku,
+          id: p.id,
+          title: p.title,
+          sku: p.sku,
           description: p.description,
-          image:       p.image,
-          regularPrice:p.regularPrice,
+          image: p.image,
+          regularPrice: p.regularPrice,
           // use the first country’s salePrice or regularPrice as fallback price
-          price:       Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
-          stockData:   p.stockData,
-          subtotal:    0,
+          price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
+          stockData: p.stockData,
+          subtotal: 0,
         })),
-  
+
         // 2) affiliate products
         ...aff.map(a => {
           // pick “first” level then “first” country to derive a flat points → € price
@@ -232,27 +348,27 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             : [];
           const firstCountry = countryKeys[0] ?? "";
           const price = a.cost[firstCountry] ?? 0;
-  
+
           // build a regularPrice map so the UI can treat it the same:
           // use cost in every country as the “currency” price
-          const regularPrice: Record<string,number> = Object.fromEntries(
+          const regularPrice: Record<string, number> = Object.fromEntries(
             Object.entries(a.cost).map(([country, c]) => [country, c])
           );
-  
+
           return {
-            id:           a.id,
-            title:        a.title,
-            sku:          a.sku,
-            description:  a.description,
-            image:        a.image,
+            id: a.id,
+            title: a.title,
+            sku: a.sku,
+            description: a.description,
+            image: a.image,
             regularPrice,
             price,
-            stockData:    a.stock ?? {},
-            subtotal:     0,
+            stockData: a.stock ?? {},
+            subtotal: 0,
           };
         }),
       ];
-  
+
       setProducts(all);
     } catch (e: any) {
       console.error(e);
@@ -261,17 +377,17 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       setProductsLoading(false);
     }
   }
-  
+
   const countryProducts = products.filter(p => {
     // if no stockData at all (affiliate), show it
     if (!Object.keys(p.stockData).length) return true;
-  
+
     // otherwise only those with stock in this country
     const totalStock = Object.values(p.stockData)
-      .reduce((sum,e)=> sum + (e[clientCountry]||0), 0);
+      .reduce((sum, e) => sum + (e[clientCountry] || 0), 0);
     return totalStock > 0;
   });
-  
+
   const loadShipping = async () => {
     setShippingLoading(true);
     try {
@@ -420,28 +536,16 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           country: clientCountry,
         }),
       });
-        if (!res.ok) {
-            const body = await res.json().catch(() => ({}));
-            const msg = (body.error as string) ?? (body.message as string) ?? "Failed to add product";
-            throw new Error(msg);
-          }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const msg = (body.error as string) ?? (body.message as string) ?? "Failed to add product";
+        throw new Error(msg);
+      }
       const { product: added, quantity: qty } = await res.json();
       const subtotalRow = calcRowSubtotal(added, qty);
 
-      setOrderItems((prev) => {
-        if (prev.some((it) => it.product.id === added.id)) {
-          return prev.map((it) =>
-            it.product.id === added.id
-              ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
-              : it
-          );
-        }
-        return [
-          ...prev,
-          { product: { ...added, subtotal: subtotalRow }, quantity: qty },
-        ];
-      });
 
+      await loadCart();
       setSelectedProduct("");
       setQuantity(1);
       toast.success("Product added to cart!");
@@ -467,11 +571,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         body: JSON.stringify({ productId }),
       });
       if (!res.ok) {
-            const body = await res.json().catch(() => ({}));
-            const msg = (body.error as string) ?? (body.message as string) ?? "Failed to remove product";
-            throw new Error(msg);
-          }
-      setOrderItems((prev) => prev.filter((_, i) => i !== idx));
+        const body = await res.json().catch(() => ({}));
+        const msg = (body.error as string) ?? (body.message as string) ?? "Failed to remove product";
+        throw new Error(msg);
+      }
+      await loadCart();
       toast.success("Product removed from cart");
     } catch (error: any) {
       console.error("removeProduct error:", error);
@@ -480,38 +584,58 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   };
 
   // — Update product quantity
-  const updateQuantity = async (
-    productId: string,
-    action: "add" | "subtract",
-    qty: number
-  ) => {
-    if (!cartId) return toast.error("Cart hasn’t been created yet!");
-    try {
-      const res = await fetch(`/api/cart/${cartId}/update-product`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, action, quantity: qty }),
-      });
-          if (!res.ok) {
-              const body = await res.json().catch(() => ({}));
-              const msg = (body.error as string) ?? (body.message as string) ?? "Failed to update quantity";
-              throw new Error(msg);
-            }
-      const { product, quantity } = await res.json();
-      const subtotalRow = calcRowSubtotal(product, quantity);
+  // — Update product quantity
+  // src/app/(dashboard)/orders/[id]/edit/orderForm.tsx
 
-      setOrderItems((prev) =>
-        prev.map((it) =>
-          it.product.id === product.id
-            ? { product: { ...product, subtotal: subtotalRow }, quantity }
-            : it
-        )
-      );
-    } catch (err: any) {
-      toast.error(err.message || "Could not update qu|antity");
+const updateQuantity = async (productId: string, action: "add" | "subtract") => {
+  if (!cartId) {
+    toast.error("Cart hasn’t been created yet!");
+    return;
+  }
+  try {
+    const res = await fetch(`/api/cart/${cartId}/update-product`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ productId, action }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "Failed to update quantity");
     }
-  };
 
+    // 🎯 Consume the PATCH response and immediately update UI
+     // 🎯 consume the PATCH response
+ const { lines } = await res.json();
+
+ // 1️⃣ keep **all** rows so bucket-view can distinguish unit prices
+ setRawLines(lines);
+
+ // 2️⃣ aggregate only for sidebar math
+ const aggregated = mergeLinesByProduct(lines);
+ setOrderItems(
+   aggregated.map((l: any) => ({
+        product: {
+          id: l.id,
+          title: l.title,
+          sku: l.sku,
+          description: l.description,
+          image: l.image,
+          regularPrice: { [clientCountry]: l.unitPrice },
+          price: l.unitPrice,
+          subtotal: l.subtotal,
+          stockData: {},
+        },
+        quantity: l.quantity,
+        isAffiliate: l.isAffiliate,
+      }))
+    );
+
+    toast.success(`Quantity ${action === "add" ? "increased" : "decreased"}!`);
+  } catch (err: any) {
+    toast.error(err.message);
+  }
+};
+  
   // New: update order
   const handleUpdateOrder = async () => {
     if (!orderData?.id) return;
@@ -570,86 +694,64 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             <CardContent className="space-y-4">
               {orderItems.length > 0 && (
                 <div className="space-y-4 mb-4">
-                  {orderItems.map(({ product, quantity }, idx) => {
-                    const price =
-                      product.regularPrice[clientCountry] ?? product.price;
+                  {groupedItems.map((item) => {
+                    const totalQty = item.priceBuckets.reduce((a, p) => a + p.quantity, 0);
+                    const firstBucket = item.priceBuckets[0];
                     return (
-                      <div
-                        key={idx}
-                        className={
-                          "flex items-center gap-4 p-4 border rounded-lg" +
-                          (stockErrors[product.id] ? " border-red-500" : "")
-                        }
-                      >
-                        {product.image ? (
-                          <Image
-                            src={product.image}
-                            alt={product.title}
-                            width={80}
-                            height={80}
-                            className="rounded-md"
-                          />
-                        ) : (
-                          <div className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-500">
-                            No image
+                      <div key={item.id} className="border rounded-lg p-4">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center space-x-4">
+                            {item.image
+                              ? <Image src={item.image} alt={item.title} width={80} height={80} className="rounded-md" />
+                              : <div className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-400">No image</div>
+                            }
+                            <div>
+                              <h3 className="font-medium">{item.title}</h3>
+                              <p className="text-sm text-gray-500">SKU: {item.sku}</p>
+                              <div className="text-sm" dangerouslySetInnerHTML={{ __html: item.description }} />
+                            </div>
                           </div>
-                        )}
-                        <div className="flex-1">
-                          <div className="flex justify-between">
-                            <h3 className="font-medium">{product.title}</h3>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => removeProduct(product.id, idx)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                          <p className="text-sm text-muted-foreground">
-                            SKU: {product.sku}
-                          </p>
-                          <div
-                            className="text-sm"
-                            dangerouslySetInnerHTML={{
-                              __html: product.description,
-                            }}
-                          />
-                          <div className="flex items-center gap-2 mt-2">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() =>
-                                updateQuantity(product.id, "subtract", quantity)
-                              }
-                            >
-                              <Minus className="h-4 w-4" />
-                            </Button>
-                            <span className="font-medium">{quantity}</span>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() =>
-                                updateQuantity(product.id, "add", quantity)
-                              }
-                            >
+                          <Button variant="ghost" size="icon" onClick={() => removeProduct(item.id, /* idx not used */ 0)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+
+                        <div className="mt-4 flex justify-between items-center">
+                          {/* quantity controls */}
+                          <div className="flex items-center space-x-2">
+
+                              <Button size="icon" onClick={() => updateQuantity(item.id, "subtract")}>
+                            <Minus className="h-4 w-4" />
+                           </Button>
+                            <span className="font-medium">{totalQty} unit{totalQty > 1 ? "s" : ""}</span>
+                            <Button size="icon" onClick={() => updateQuantity(item.id, "add")}>
                               <Plus className="h-4 w-4" />
                             </Button>
                           </div>
-                          {stockErrors[product.id] && (
-                            <p className="text-red-600 text-sm mt-1">
-                              Only {stockErrors[product.id]} available
-                            </p>
-                          )}
-                          <div className="flex justify-between mt-2">
-                            <span className="font-medium">
-                              Unit Price: ${price.toFixed(2)}
-                            </span>
-                            <span className="font-medium">
-                              $
-                              {product.subtotal.toFixed(2) ??
-                                calcRowSubtotal(product, quantity)}
-                            </span>
-                          </div>
+                          {/* cheapest bucket price for header */}
+                          <span className="font-medium">
+                            ${firstBucket.unitPrice.toFixed(2)} each
+                          </span>
+                        </div>
+
+                        {/* breakdown of different unit prices */}
+                        {item.priceBuckets.length > 1 && (
+                          <ul className="mt-2 text-sm text-gray-600 space-y-1">
+                            {item.priceBuckets.map((pb) => (
+                              <li key={pb.unitPrice}>
+                                {pb.quantity} × ${pb.unitPrice.toFixed(2)}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {/* line subtotal */}
+                        <div className="mt-4 text-right font-medium">
+                          $
+                          {item.priceBuckets
+                            .reduce((sum, pb) => sum + pb.quantity * pb.unitPrice, 0)
+                            .toFixed(2)
+                          }
                         </div>
                       </div>
                     );
@@ -895,13 +997,27 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                 <div className="flex justify-between">
                   <span>Items:</span>
                   <span className="font-medium">
-                    {orderData?.products.length}
+                    {orderItems.reduce((sum, item) => sum + item.quantity, 0)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>Subtotal:</span>
                   <span className="font-medium">${subtotal.toFixed(2)}</span>
                 </div>
+
+                {orderData?.pointsRedeemed > 0 && (
+                  <div className="flex justify-between text-blue-600">
+                    <span>Points Redeemed:</span>
+                    <span className="font-medium">{orderData.pointsRedeemed} pts</span>
+                  </div>
+                )}
+
+                {orderData?.pointsRedeemedAmount > 0 && (
+                  <div className="flex justify-between text-green-600">
+                    <span>Points Discount:</span>
+                    <span className="font-medium">-${orderData.pointsRedeemedAmount.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-green-600">
                   <span>
                     Discount

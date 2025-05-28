@@ -53,7 +53,10 @@ interface Order {
   products: Product[];
   subtotal: number;
   coupon?: string;
-  discount: number;
+  discount: number;              // coupon discount
+  discountValue: number;         // points‐discount amount? keep as is
+  pointsRedeemed?: number;       // <— new
+  pointsRedeemedAmount?: number; // <— new
   shipping: number;
   total: number;
   shippingInfo: ShippingInfo;
@@ -73,6 +76,7 @@ export default function OrderView() {
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
+ 
 
   // Fetch order data, then fetch client to populate email & names
   useEffect(() => {
@@ -181,6 +185,15 @@ export default function OrderView() {
   const formatMessageTime = (date: Date) => {
     return format(date, "MMM d, h:mm a");
   };
+
+  const monetarySubtotal = order.products
+  .filter(p => !p.isAffiliate)
+  .reduce((acc, p) => acc + p.unitPrice * p.quantity, 0);
+
+  // and you can also compute:
+  const affiliatePointsTotal = order.products
+    .filter(p => p.isAffiliate)
+    .reduce((acc, p) => acc + p.unitPrice * p.quantity, 0);
 
   return (
     <div className="container mx-auto py-8 px-4">
@@ -303,7 +316,7 @@ export default function OrderView() {
               <div className="mt-6 space-y-2 border-t pt-4">
                 <div className="flex justify-between">
                   <span>Subtotal</span>
-                  <span>${order.subtotal.toFixed(2)}</span>
+                  <span>${monetarySubtotal.toFixed(2)}</span>
                 </div>
 
                 {order.coupon && (
@@ -319,6 +332,21 @@ export default function OrderView() {
                     <span>-${order.discount.toFixed(2)}</span>
                   </div>
                 )}
+
+{order.pointsRedeemed! > 0 && (
+  <div className="flex justify-between text-blue-600">
+    <span>Points Redeemed</span>
+    <span>{order.pointsRedeemed} pts</span>
+  </div>
+)}
+{order.pointsRedeemedAmount! > 0 && (
+  <div className="flex justify-between text-green-600">
+    <span>Points Discount</span>
+    <span>-${order.pointsRedeemedAmount.toFixed(2)}</span>
+  </div>
+)}
+
+
 
                 <div className="flex justify-between">
                   <span>Shipping</span>

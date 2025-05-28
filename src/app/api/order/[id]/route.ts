@@ -111,26 +111,30 @@ export async function GET(
     subtotal:    Number(r.unitPrice) * r.quantity,
   }));
 
-  // 6. Compute subtotal across both kinds
-  const subtotal = products.reduce((sum, p) => sum + p.subtotal, 0);
+// 6. Compute subtotal *only* across non-affiliate (monetary) items
+const subtotal = products
+  .filter(p => !p.isAffiliate)
+  .reduce((sum, p) => sum + p.subtotal, 0);
 
   // 7. Build full response
   const full = {
-    id: order.id,
-    orderKey: order.orderKey,
-    clientId: order.clientId,
-    cartId: order.cartId,
-    status: order.status,
-    country: order.country,
+    id:        order.id,
+    orderKey:  order.orderKey,
+    clientId:  order.clientId,
+    cartId:    order.cartId,
+    status:    order.status,
+    country:   order.country,
     products,
-    coupon: order.couponCode,
-    couponType: order.couponType,
-    discount: Number(order.discountTotal),
+    coupon:    order.couponCode,
+    couponType:    order.couponType,
+    discount:      Number(order.discountTotal),
     discountValue: Number(order.discountValue),
-    shipping: Number(order.shippingTotal),
+    shipping:      Number(order.shippingTotal),
     subtotal,
-    total: Number(order.totalAmount),
-    trackingNumber: order.trackingNumber,
+    total:         Number(order.totalAmount),
+    pointsRedeemed:        order.pointsRedeemed,
+    pointsRedeemedAmount:  Number(order.pointsRedeemedAmount),
+    trackingNumber:       order.trackingNumber,
     shippingInfo: {
       address: decryptSecretNode(order.address),
       company: order.shippingService,

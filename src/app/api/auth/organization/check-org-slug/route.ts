@@ -1,49 +1,39 @@
+// File: src/app/api/auth/organization/check-org-slug/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { getContext } from "@/lib/context";
 import { Pool } from "pg";
-import { auth } from "@/lib/auth";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
-
 export async function GET(req: NextRequest) {
+  // 1. Central auth: service key, API key or session cookie
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+
   try {
-    // 1) Check secret
-    const secret = req.headers.get("x-internal-secret");
-    if (secret !== INTERNAL_API_SECRET) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-    }
-
-    // 2) Check session
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // 3) Get slug from query
+    // 2. Extract slug
     const { searchParams } = new URL(req.url);
     const slug = searchParams.get("slug");
     if (!slug) {
       return NextResponse.json({ error: "No slug provided" }, { status: 400 });
     }
 
-    // 4) DB check
-    // We'll see if any row in "organization" has the same slug
+    // 3. DB check
     const result = await pool.query(
-      `SELECT 1 FROM organization WHERE slug=$1 LIMIT 1`,
+      `SELECT 1 FROM organization WHERE slug = $1 LIMIT 1`,
       [slug]
     );
-    if (result.rowCount > 0) {
-      // Slug is taken
-      return NextResponse.json({ available: false }, { status: 200 });
-    } else {
-      // Slug is free
-      return NextResponse.json({ available: true }, { status: 200 });
-    }
+    return NextResponse.json(
+      { available: result.rowCount === 0 },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error("[GET /api/internal/organization/check-org-slug] error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error("[GET /api/auth/organization/check-org-slug] error:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }

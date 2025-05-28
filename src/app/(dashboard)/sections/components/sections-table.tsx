@@ -144,7 +144,6 @@ export function SectionsTable() {
             <TableRow>
               <TableHead>Title</TableHead>
               <TableHead>Name</TableHead>
-              <TableHead>Video URL</TableHead>
               <TableHead>Updated</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -169,9 +168,6 @@ export function SectionsTable() {
                     <div style={{ paddingLeft: `${s.depth * 1.5}rem` }}>{s.title}</div>
                   </TableCell>
                   <TableCell>{s.name}</TableCell>
-                  <TableCell className="max-w-[180px] truncate">
-                    {s.videoUrl ?? "—"}
-                  </TableCell>
                   <TableCell>
                     {new Date(s.updatedAt).toLocaleString(undefined, {
                       dateStyle: "short",
@@ -191,13 +187,6 @@ export function SectionsTable() {
                         >
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onClick={() => setToDelete(s)}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>

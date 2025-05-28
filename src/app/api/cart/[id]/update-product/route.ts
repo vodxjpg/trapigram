@@ -1,194 +1,154 @@
 // src/app/api/cart/[id]/update-product/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { Pool, PoolClient } from "pg";
-import crypto from "crypto";
+import { Pool } from "pg";
+import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
+import { resolveUnitPrice } from "@/lib/pricing";
 import { adjustStock } from "@/lib/stock";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-const cartProductSchema = z.object({
+const updateSchema = z.object({
   productId: z.string(),
-  quantity: z.number(),
   action: z.enum(["add", "subtract"]),
 });
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-  const { id: cartId } = await params;
+  const { id: cartId } = params;
+  const { productId, action } = updateSchema.parse(await req.json());
+
+  const tx = await pool.connect();
 
   try {
-    const body = await req.json();
-    const data = cartProductSchema.parse(body);
+    await tx.query("BEGIN");
 
-    // 1) Fetch cart-item and client info
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
+    /* ── 1) fetch rows for this product  ───────────────────────────
+       NOTE: newest-first order guarantees “subtract” undoes
+       the most recently added single-unit row (true inverse of “add”). */
+    const { rows: existing } = await tx.query(
+      `SELECT
+         cp.id         AS "lineId",
+         cp.quantity   AS qty,
+         cl.country    AS country,
+         cl."levelId"  AS "levelId"
+       FROM "cartProducts" cp
+       JOIN carts   c  ON c.id        = cp."cartId"
+       JOIN clients cl ON cl.id       = c."clientId"
+       WHERE c.id = $1
+         AND (cp."productId" = $2 OR cp."affiliateProductId" = $2)
+       ORDER BY cp."createdAt" DESC`,         /* ★ changed ASC ➜ DESC */
+      [cartId, productId]
+    );
 
-      const { rows: cRows } = await client.query(
-        `SELECT cl.country, cl."levelId", cl.id AS "clientId", cp.quantity, cp."affiliateProductId"
-           FROM clients cl
-           JOIN carts ca ON ca."clientId" = cl.id
-           JOIN "cartProducts" cp ON cp."cartId" = ca.id
-          WHERE ca.id = $1
-            AND (cp."productId" = $2 OR cp."affiliateProductId" = $2)
-        `,
-        [cartId, data.productId]
-      );
-      if (!cRows.length) {
-        await client.query("ROLLBACK");
-        return NextResponse.json({ error: "Cart item not found" }, { status: 404 });
-      }
-      const {
-        country,
-        levelId,
-        clientId,
-        quantity: oldQty,
-        affiliateProductId,
-      } = cRows[0] as { country: string; levelId: string; clientId: string; quantity: number; affiliateProductId: string | null };
-      const isAffiliate = Boolean(affiliateProductId);
-
-      // compute new quantity
-      const newQty = data.action === "add" ? oldQty + 1 : oldQty - 1;
-      if (newQty < 0) {
-        await client.query("ROLLBACK");
-        return NextResponse.json({ error: "Quantity cannot be negative" }, { status: 400 });
-      }
-
-      let ptsNeeded = 0;
-      if (isAffiliate) {
-        // 2) fetch point prices
-        const { rows: apRows } = await client.query(
-          `SELECT "regularPoints", "salePoints"
-             FROM "affiliateProducts"
-            WHERE id = $1`,
-          [data.productId]
-        );
-        const { regularPoints, salePoints } = apRows[0] as { regularPoints: Record<string, Record<string, number>>; salePoints: Record<string, Record<string, number>> | null };
-        const countryReg = regularPoints[country] || {};
-        const countrySale = salePoints?.[country] || {};
-        const pointsPerUnit = countrySale[levelId] ?? countryReg[levelId] ?? 0;
-
-        const deltaQty = newQty - oldQty;
-        ptsNeeded = deltaQty > 0 ? deltaQty * pointsPerUnit : 0;
-
-        // 3) check balance
-        const { rows: balRows } = await client.query(
-          `SELECT "pointsCurrent"
-             FROM "affiliatePointBalances"
-            WHERE "organizationId" = $1 AND "clientId" = $2`,
-          [organizationId, clientId]
-        );
-        const pointsCurrent = balRows[0]?.pointsCurrent ?? 0;
-        if (ptsNeeded > pointsCurrent) {
-          await client.query("ROLLBACK");
-          return NextResponse.json(
-            {
-              error: "Insufficient affiliate points",
-              required: ptsNeeded,
-              available: pointsCurrent,
-            },
-            { status: 400 }
-          );
-        }
-
-        // 4) update balance
-        await client.query(
-          `UPDATE "affiliatePointBalances"
-             SET "pointsCurrent" = "pointsCurrent" - $1,
-                 "pointsSpent"   = "pointsSpent" + $1,
-                 "updatedAt"     = NOW()
-           WHERE "organizationId" = $2 AND "clientId" = $3`,
-          [ptsNeeded, organizationId, clientId]
-        );
-
-        // 5) log it
-        await client.query(
-          `INSERT INTO "affiliatePointLogs"
-             (id, "organizationId", "clientId", points, action, description, "createdAt", "updatedAt")
-           VALUES (gen_random_uuid(), $1, $2, $3, 'redeem', 'cart quantity update', NOW(), NOW())`,
-          [organizationId, clientId, -ptsNeeded]
+    if (action === "subtract") {
+      if (!existing.length) {
+        await tx.query("ROLLBACK");
+        return NextResponse.json(
+          { error: "Cannot subtract—no existing units" },
+          { status: 400 }
         );
       }
 
-      // 6) update cartProducts
-      const { rows: upd } = await client.query(
-        `UPDATE "cartProducts"
-           SET quantity   = $1,
-               "updatedAt" = NOW()
-         WHERE "cartId"   = $2
-           AND ("productId" = $3 OR "affiliateProductId" = $3)
-         RETURNING *`,
-        [newQty, cartId, data.productId]
-      );
-      const updatedRow = upd[0];
+      /* remove exactly one unit, starting from the LIFO row list */
+      let unitsToRemove = 1;
 
-      // 7) adjust stock
-      const deltaStock = data.action === "add" ? -1 : +1;
-      await adjustStock(client, data.productId, country, deltaStock);
+      for (const row of existing) {
+        if (unitsToRemove <= 0) break;
 
-      await client.query("COMMIT");
+        const removeQty = Math.min(row.qty, unitsToRemove);
 
-      // 8) fetch product details for response
-      let product: any;
-      if (isAffiliate) {
-        const { rows: pRows } = await pool.query(
-          `SELECT id, title, sku, description, image
-             FROM "affiliateProducts"
-            WHERE id = $1`,
-          [data.productId]
+        await tx.query(
+          `UPDATE "cartProducts"
+             SET quantity = quantity - $1,
+                 "updatedAt" = NOW()
+           WHERE id = $2`,
+          [removeQty, row.lineId]
         );
-        product = pRows[0];
-        product.price = updatedRow.unitPrice;
-        product.subtotal = updatedRow.unitPrice * updatedRow.quantity;
-        product.regularPrice = {};
-        product.stockData = {};
-        product.isAffiliate = true;
-      } else {
-        const { rows: pRows } = await pool.query(
-          `SELECT id, title, sku, description, image, "regularPrice"
-             FROM products
-            WHERE id = $1`,
-          [data.productId]
-        );
-        product = pRows[0];
-        product.price = updatedRow.unitPrice;
-        product.subtotal = updatedRow.unitPrice * updatedRow.quantity;
-        product.stockData = {};
-        product.isAffiliate = false;
+
+        await adjustStock(tx, productId, row.country, +removeQty);
+        unitsToRemove -= removeQty;
       }
 
-      // 9) update cart hash
-      const encryptedResponse = crypto
-        .createHash('sha256')
-        .update(JSON.stringify(updatedRow))
-        .digest('base64');
-      await pool.query(
-        `UPDATE carts SET "cartUpdatedHash" = $1, "updatedAt" = NOW() WHERE id = $2`,
-        [encryptedResponse, cartId]
+      // purge zero-quantity lines
+      await tx.query(
+        `DELETE FROM "cartProducts"
+          WHERE "cartId" = $1 AND quantity = 0`,
+        [cartId]
+      );
+    } else {
+      /* ── ADD branch unchanged (appends a 1-unit line) ─────────── */
+      const { country, levelId } = existing[0] ?? {};
+      const { price, isAffiliate } = await resolveUnitPrice(
+        productId,
+        country!,
+        levelId!
       );
 
-      return NextResponse.json(
-        { product, quantity: updatedRow.quantity },
-        { status: 200 }
+      await adjustStock(tx, productId, country!, -1);
+
+      await tx.query(
+        `INSERT INTO "cartProducts"
+           (id,"cartId","productId","affiliateProductId",quantity,"unitPrice","createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,1,$5,NOW(),NOW())`,
+        [
+          uuidv4(),
+          cartId,
+          isAffiliate ? null : productId,
+          isAffiliate ? productId : null,
+          price,
+        ]
       );
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
     }
-  } catch (err: any) {
-    console.error("[PATCH /api/cart/:id/update-product]", err);
-    if (err instanceof z.ZodError)
-      return NextResponse.json({ error: err.errors }, { status: 400 });
+
+    await tx.query("COMMIT");
+
+    // 2) return current cart snapshot
+    const lines = await fetchLines(cartId);
+    return NextResponse.json({ lines });
+  } catch (err) {
+    await tx.query("ROLLBACK");
+    console.error(err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } finally {
+    tx.release();
+  }
+}
+
+/* helper identical to GET handler */
+async function fetchLines(cartId: string) {
+  const client = await pool.connect();
+  try {
+    const [p, a] = await Promise.all([
+      client.query(
+        `SELECT p.id, p.title, p.description, p.image, p.sku,
+                cp.quantity, cp."unitPrice", false AS "isAffiliate"
+           FROM products p
+           JOIN "cartProducts" cp ON cp."productId" = p.id
+          WHERE cp."cartId" = $1`,
+        [cartId]
+      ),
+      client.query(
+        `SELECT ap.id, ap.title, ap.description, ap.image, ap.sku,
+                cp.quantity, cp."unitPrice", true AS "isAffiliate"
+           FROM "affiliateProducts" ap
+           JOIN "cartProducts" cp ON cp."affiliateProductId" = ap.id
+          WHERE cp."cartId" = $1`,
+        [cartId]
+      ),
+    ]);
+
+    return [...p.rows, ...a.rows].map((l: any) => ({
+      ...l,
+      unitPrice: Number(l.unitPrice),
+      subtotal: Number(l.unitPrice) * l.quantity,
+    }));
+  } finally {
+    client.release();
   }
 }

@@ -1,4 +1,4 @@
-// src/app/api/sections/route.ts
+// File: src/app/api/sections/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -9,7 +9,18 @@ const SectionSchema = z.object({
   name: z.string().min(1),
   title: z.string().min(1),
   content: z.string().min(1),
-  videoUrl: z.string().url().nullable().optional(),
+  videoUrl: z
+    .string()
+    .trim()
+    .nullable()
+    .optional()
+    .refine(
+      (v) =>
+        v === null ||
+        /^\/uploads\/.+/.test(v) ||
+        /^https?:\/\/.+/.test(v),
+      { message: "Invalid video URL" }
+    ),
   parentSectionId: z.string().uuid().nullable().optional(),
 });
 
@@ -20,7 +31,10 @@ export async function GET(req: NextRequest) {
 
   const depth = Number(new URL(req.url).searchParams.get("depth") ?? 0);
   if (Number.isNaN(depth) || depth < 0) {
-    return NextResponse.json({ error: "depth must be a positive integer" }, { status: 400 });
+    return NextResponse.json(
+      { error: "depth must be a positive integer" },
+      { status: 400 }
+    );
   }
 
   const rows = await db
@@ -30,20 +44,18 @@ export async function GET(req: NextRequest) {
         .selectAll()
         .where("organizationId", "=", ctx.organizationId)
         .where("parentSectionId", "is", null)
-        .unionAll(
+        .unionAll((qb) =>
           qb
             .selectFrom("sections")
             .innerJoin("tree", "tree.id", "sections.parentSectionId")
-            .selectAll("sections")               // ← fixed: produces "sections".*
-        ),
+            .selectAll("sections")
+        )
     )
     .selectFrom("tree")
     .selectAll()
     .execute();
 
-  const list =
-    depth === 0 ? rows.filter((r) => r.parentSectionId === null) : rows;
-
+  const list = depth === 0 ? rows.filter((r) => r.parentSectionId === null) : rows;
   return NextResponse.json({ sections: list });
 }
 
@@ -57,7 +69,8 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const { name, title, content, videoUrl = null, parentSectionId = null } = parsed.data;
+  const { name, title, content, videoUrl = null, parentSectionId = null } =
+    parsed.data;
 
   if (parentSectionId) {
     const ok = await db
@@ -69,7 +82,7 @@ export async function POST(req: NextRequest) {
     if (!ok) {
       return NextResponse.json(
         { error: "parentSectionId not found in your organization" },
-        { status: 400 },
+        { status: 400 }
       );
     }
   }

@@ -1,4 +1,4 @@
-// src/app/api/sections/[id]/route.ts
+// File: src/app/api/sections/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -19,9 +19,13 @@ const UpdateSchema = z
       .transform((v) => (v.length === 0 ? null : v))
       .nullable()
       .optional()
-      .refine((v) => v === null || /^https?:\/\//.test(v), {
-        message: "Invalid URL",
-      }),
+      .refine(
+        (v) =>
+          v === null ||
+          /^\/uploads\/.+/.test(v) ||
+          /^https?:\/\/.+/.test(v),
+        { message: "Invalid video URL" }
+      ),
     parentSectionId: z.string().uuid().nullable().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, {
@@ -31,14 +35,12 @@ const UpdateSchema = z
 /* ───────────────────────── GET /:id ─────────────────────────── */
 export async function GET(
   req: NextRequest,
-  context: { params: Promise<{ id: string }> },
+  context: { params: Promise<{ id: string }> }
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  const params = await context.params;
-  const { id } = ParamsSchema.parse(params);
-
+  const { id } = ParamsSchema.parse(await context.params);
   const section = await db
     .selectFrom("sections")
     .selectAll()
@@ -54,21 +56,19 @@ export async function GET(
 /* ───────────────────────── PUT /:id ─────────────────────────── */
 export async function PUT(
   req: NextRequest,
-  context: { params: Promise<{ id: string }> },
+  context: { params: Promise<{ id: string }> }
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
   const { id } = ParamsSchema.parse(await context.params);
-
   const body = await req.json().catch(() => null);
   const parsed = UpdateSchema.safeParse(body);
-  if (!parsed.success)
+  if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
 
   const data = parsed.data;
-
-  /* verify parent (if provided) */
   if (data.parentSectionId) {
     const ok = await db
       .selectFrom("sections")
@@ -76,11 +76,12 @@ export async function PUT(
       .where("id", "=", data.parentSectionId)
       .where("organizationId", "=", ctx.organizationId)
       .executeTakeFirst();
-    if (!ok)
+    if (!ok) {
       return NextResponse.json(
         { error: "parentSectionId not found in your organization" },
-        { status: 400 },
+        { status: 400 }
       );
+    }
   }
 
   const [section] = await db
@@ -106,13 +107,12 @@ export async function PUT(
 /* ──────────────────────── DELETE /:id ───────────────────────── */
 export async function DELETE(
   req: NextRequest,
-  context: { params: Promise<{ id: string }> },
+  context: { params: Promise<{ id: string }> }
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
   const { id } = ParamsSchema.parse(await context.params);
-
   await db
     .deleteFrom("sections")
     .where("id", "=", id)

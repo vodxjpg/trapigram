@@ -1,9 +1,10 @@
+// File: src/app/api/upload/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
-import { getContext } from "@/lib/context"
+import { getContext } from "@/lib/context";
 
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
@@ -19,14 +20,30 @@ export async function POST(req: NextRequest) {
     }
 
     // Validate file type
-    const validTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    const imageTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    const videoTypes = [
+      "video/mp4",
+      "video/webm",
+      "video/ogg",
+      "video/quicktime",
+      "video/x-msvideo",
+      "video/mpeg",
+    ];
+    const validTypes = [...imageTypes, ...videoTypes];
     if (!validTypes.includes(file.type)) {
       return NextResponse.json({ error: "Invalid file type" }, { status: 400 });
     }
 
-    // Validate file size (5MB max)
-    if (file.size > 5 * 1024 * 1024) {
-      return NextResponse.json({ error: "File too large (max 5MB)" }, { status: 400 });
+    // Determine max size: 5MB for images, 150MB for videos
+    const maxSize = imageTypes.includes(file.type)
+      ? 5 * 1024 * 1024
+      : 150 * 1024 * 1024;
+    if (file.size > maxSize) {
+      const sizeLabel = imageTypes.includes(file.type) ? "5MB" : "150MB";
+      return NextResponse.json(
+        { error: `File too large (max ${sizeLabel})` },
+        { status: 400 }
+      );
     }
 
     // Create unique filename
@@ -34,7 +51,14 @@ export async function POST(req: NextRequest) {
     const fileName = `${uuidv4()}.${fileExt}`;
 
     // Create tenant directory path
-    const uploadDir = join(process.cwd(), "public", "uploads", "tenants", organizationId, "categories");
+    const uploadDir = join(
+      process.cwd(),
+      "public",
+      "uploads",
+      "tenants",
+      organizationId,
+      "categories"
+    );
 
     // Ensure directory exists
     await mkdir(dirname(join(uploadDir, fileName)), { recursive: true });
@@ -46,10 +70,13 @@ export async function POST(req: NextRequest) {
     // Return the path to the file (relative to public directory)
     const filePath = `/uploads/tenants/${organizationId}/categories/${fileName}`;
 
-    return NextResponse.json({
-      success: true,
-      filePath,
-    }, { status: 200 });
+    return NextResponse.json(
+      {
+        success: true,
+        filePath,
+      },
+      { status: 200 }
+    );
   } catch (error) {
     console.error("[POST /api/upload] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

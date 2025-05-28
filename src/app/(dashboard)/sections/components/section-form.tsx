@@ -1,4 +1,4 @@
-// src/app/(dashboard)/sections/components/section-form.tsx
+// File: src/app/(dashboard)/sections/components/section-form.tsx
 "use client";
 
 import { useState } from "react";
@@ -7,7 +7,6 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import dynamic from "next/dynamic";
-import { Input } from "@/components/ui/input";
 import {
   Form,
   FormItem,
@@ -15,6 +14,7 @@ import {
   FormControl,
   FormMessage,
 } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
@@ -24,14 +24,13 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import { placeholderDefs } from "@/lib/placeholder-meta";   // ← now safe, no pg
+import { placeholderDefs } from "@/lib/placeholder-meta";
 import { toast } from "sonner";
 import { Upload, X } from "lucide-react";
 
 const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
 import "react-quill-new/dist/quill.snow.css";
 
-/* ─────────────────────────────────────────────────────────────── */
 const quillModules = {
   toolbar: [
     [{ header: [1, 2, false] }],
@@ -43,7 +42,6 @@ const quillModules = {
 };
 const quillFormats = ["header", "bold", "italic", "underline", "list", "link"];
 
-/* schema with empty-string → null for videoUrl */
 const schema = z.object({
   name: z.string().min(1),
   title: z.string().min(1),
@@ -55,8 +53,11 @@ const schema = z.object({
     .nullable()
     .optional()
     .refine(
-      (v) => v === null || /^https?:\/\//.test(v),
-      { message: "Invalid URL" },
+      (v) =>
+        v === null ||
+        /^\/uploads\/.+/.test(v) ||
+        /^https?:\/\/.+/.test(v),
+      { message: "Invalid video file URL" }
     ),
   parentSectionId: z.string().uuid().nullable().optional(),
 });
@@ -68,6 +69,11 @@ type Props = { initial?: Partial<Values> & { id?: string }; sections?: Opt[] };
 export function SectionForm({ initial, sections = [] }: Props) {
   const router = useRouter();
   const [isSubmitting, setSubmitting] = useState(false);
+
+  // Derive initial fileName from initial.videoUrl if present
+  const initialFileName =
+    initial?.videoUrl?.split("/").pop() ?? null;
+  const [fileName, setFileName] = useState<string | null>(initialFileName);
 
   const form = useForm<Values>({
     resolver: zodResolver(schema),
@@ -81,22 +87,23 @@ export function SectionForm({ initial, sections = [] }: Props) {
   });
   const selfId = initial?.id;
 
-  /* upload helper */
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    // show name immediately
+    setFileName(f.name);
     const fd = new FormData();
     fd.append("file", f);
     const res = await fetch("/api/upload", { method: "POST", body: fd });
     if (!res.ok) {
       toast.error("Upload failed");
+      setFileName(initialFileName);
       return;
     }
     const { filePath } = await res.json();
     form.setValue("videoUrl", filePath as any);
   };
 
-  /* submit */
   const onSubmit = async (raw: Values) => {
     setSubmitting(true);
     try {
@@ -119,7 +126,6 @@ export function SectionForm({ initial, sections = [] }: Props) {
     }
   };
 
-  /* parent options (exclude self) */
   const optionSections = sections.filter((s) => s.id !== selfId);
   const label = (s: Opt) => {
     let depth = 0;
@@ -197,42 +203,53 @@ export function SectionForm({ initial, sections = [] }: Props) {
                 <FormMessage />
               </FormItem>
               <FormItem>
-                <FormLabel>Video URL</FormLabel>
-                <div className="flex gap-2">
-                  <FormControl className="flex-1">
-                    <Input placeholder="https://…" {...form.register("videoUrl")} />
+                <FormLabel>Video File</FormLabel>
+                <div className="flex items-center gap-2">
+                  <FormControl>
+                    <input
+                      id="video-upl"
+                      type="file"
+                      accept="video/mp4,video/webm,video/ogg,video/quicktime,video/x-msvideo,video/mpeg"
+                      className="hidden"
+                      onChange={handleUpload}
+                    />
                   </FormControl>
-                  <Input
-                    type="file"
-                    accept="video/*"
-                    id="video-upl"
-                    className="hidden"
-                    onChange={handleUpload}
-                  />
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => document.getElementById("video-upl")?.click()}
+                    onClick={() =>
+                      document.getElementById("video-upl")?.click()
+                    }
                   >
-                    <Upload className="h-4 w-4" />
+                    <Upload className="h-4 w-4" /> Upload
                   </Button>
                   {form.watch("videoUrl") && (
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      onClick={() => form.setValue("videoUrl", null)}
+                      onClick={() => {
+                        form.setValue("videoUrl", null);
+                        setFileName(null);
+                      }}
                     >
                       <X className="h-4 w-4" />
                     </Button>
                   )}
                 </div>
+                {fileName && (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Selected file: {fileName}
+                  </p>
+                )}
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Max 150 MB. Formats: MP4, WebM, Ogg, QuickTime, AVI, MPEG
+                </p>
                 <FormMessage />
               </FormItem>
             </div>
-            {/* Placeholder hint */}
-            <PlaceholderHint />
 
+            <PlaceholderHint />
             {/* Quill */}
             <FormItem>
               <FormLabel>Content</FormLabel>

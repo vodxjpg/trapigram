@@ -1,4 +1,4 @@
-/* /src/app/(dashboard)/affiliates/settings/components/settings-form.tsx */
+// File: src/app/(dashboard)/affiliates/settings/components/settings-form.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -14,6 +14,7 @@ type Settings = {
   pointsPerReview: number;
   spendingNeeded: number;
   pointsPerSpending: number;
+  monetaryValuePerPoint: number;
 };
 type Group = {
   id: string;
@@ -29,6 +30,7 @@ export function SettingsForm() {
     pointsPerReview: 0,
     spendingNeeded: 0,
     pointsPerSpending: 0,
+    monetaryValuePerPoint: 0,
   });
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +56,7 @@ export function SettingsForm() {
           pointsPerReview: Number(sData.pointsPerReview),
           spendingNeeded: Number(sData.spendingNeeded),
           pointsPerSpending: Number(sData.pointsPerSpending),
+          monetaryValuePerPoint: Number(sData.monetaryValuePerPoint),
         });
         setGroups(gData.groups);
       } catch (e: any) {
@@ -69,38 +72,6 @@ export function SettingsForm() {
     (key: keyof Settings) =>
     (e: React.ChangeEvent<HTMLInputElement>) =>
       setSettings((p) => ({ ...p, [key]: Number(e.target.value) }));
-
-  /* save or delete a single group row */
-  const saveGroup = async (g: Group) => {
-    try {
-      const res = await fetch(`/api/affiliate/groups/${g.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
-        },
-        body: JSON.stringify({ points: g.points }),
-      });
-      if (!res.ok) throw new Error("Save failed");
-      toast.success("Saved");
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  };
-  const deleteGroup = async (id: string) => {
-    if (!confirm("Remove this group reward?")) return;
-    try {
-      const res = await fetch(`/api/affiliate/groups/${id}`, {
-        method: "DELETE",
-        headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" },
-      });
-      if (!res.ok) throw new Error("Delete failed");
-      setGroups((g) => g.filter((x) => x.id !== id));
-      toast.success("Removed");
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  };
 
   /* save global settings */
   const saveSettings = async () => {
@@ -123,8 +94,6 @@ export function SettingsForm() {
     }
   };
 
-
-  /*──────── JSX ────────*/
   return (
     <Card className="p-6 max-w-lg space-y-6 m-auto">
       {loading ? (
@@ -172,23 +141,36 @@ export function SettingsForm() {
                 min={0}
               />
             </label>
+            <label className="grid gap-1">
+              <span className="text-sm font-medium">
+                Monetary Value per Point <span className="font-mono">$</span>
+              </span>
+              <Input
+                type="number"
+                value={settings.monetaryValuePerPoint}
+                onChange={onChange("monetaryValuePerPoint")}
+                min={0}
+                step="0.01"
+              />
+            </label>
           </div>
 
           <Button onClick={saveSettings} disabled={saving}>
             {saving ? "Saving…" : "Save Settings"}
           </Button>
 
-           {/*─ group rewards ─*/}
-           <div className="space-y-2">
+          {/*─ group rewards ─*/}
+          <div className="space-y-2">
             <h2 className="font-semibold text-lg">Group Join Rewards</h2>
             <p className="text-sm text-muted-foreground">
-              Groups are registered by the Telegram bot.  Set the reward per join or use the
+              Groups are registered by the Telegram bot. Set the reward per join or use the
               ✕ button to disable.
             </p>
 
             {groups.length === 0 && (
               <p className="text-sm text-muted-foreground">
-                No groups registered yet—invite the bot first to any group, make it a visible admin and register the group using the command /affiliate_group
+                No groups registered yet—invite the bot first to any group, make it a visible admin,
+                and register the group using the command /affiliate_group
               </p>
             )}
 
@@ -215,10 +197,50 @@ export function SettingsForm() {
                   }
                   min={0}
                 />
-                <Button variant="outline" size="sm" onClick={() => saveGroup(g)}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`/api/affiliate/groups/${g.id}`, {
+                        method: "PATCH",
+                        headers: {
+                          "Content-Type": "application/json",
+                          "x-internal-secret":
+                            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
+                        },
+                        body: JSON.stringify({ points: g.points }),
+                      });
+                      if (!res.ok) throw new Error("Save failed");
+                      toast.success("Saved");
+                    } catch (e: any) {
+                      toast.error(e.message);
+                    }
+                  }}
+                >
                   Save
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => deleteGroup(g.id)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={async () => {
+                    if (!confirm("Remove this group reward?")) return;
+                    try {
+                      const res = await fetch(`/api/affiliate/groups/${g.id}`, {
+                        method: "DELETE",
+                        headers: {
+                          "x-internal-secret":
+                            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
+                        },
+                      });
+                      if (!res.ok) throw new Error("Delete failed");
+                      setGroups((gs) => gs.filter((x) => x.id !== g.id));
+                      toast.success("Removed");
+                    } catch (e: any) {
+                      toast.error(e.message);
+                    }
+                  }}
+                >
                   <X className="w-4 h-4" />
                 </Button>
               </div>

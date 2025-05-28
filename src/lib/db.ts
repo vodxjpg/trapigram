@@ -98,6 +98,7 @@ interface DB {
     pointsPerReview: number;
     spendingNeeded: string;      // matches NUMERIC in SQL (ts → string)
     pointsPerSpending: number;
+    monetaryValuePerPoint: string; 
     createdAt: Date;
     updatedAt: Date;
   };

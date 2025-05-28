@@ -1,4 +1,4 @@
-/* /home/zodx/Desktop/trapigram/src/app/api/affiliate/settings/route.ts */
+// File: src/app/api/affiliate/settings/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -9,6 +9,7 @@ const schema = z.object({
   pointsPerReview: z.coerce.number().int().min(0),
   spendingNeeded: z.coerce.number().min(0),
   pointsPerSpending: z.coerce.number().int().min(0),
+  monetaryValuePerPoint: z.coerce.number().min(0),
 });
 
 /*──────── GET – return org settings or defaults ────────*/
@@ -29,6 +30,7 @@ export async function GET(req: NextRequest) {
       pointsPerReview: 0,
       spendingNeeded: "0",
       pointsPerSpending: 0,
+      monetaryValuePerPoint: "0",
       createdAt: null,
       updatedAt: null,
     },
@@ -47,7 +49,11 @@ export async function PUT(req: NextRequest) {
       .insertInto("affiliateSettings")
       .values({
         organizationId: ctx.organizationId,
-        ...data,
+        pointsPerReferral: data.pointsPerReferral,
+        pointsPerReview: data.pointsPerReview,
+        spendingNeeded: data.spendingNeeded.toString(),
+        pointsPerSpending: data.pointsPerSpending,
+        monetaryValuePerPoint: data.monetaryValuePerPoint.toString(),
         createdAt: new Date(),
         updatedAt: new Date(),
       })
@@ -57,6 +63,7 @@ export async function PUT(req: NextRequest) {
           pointsPerReview: data.pointsPerReview,
           spendingNeeded: data.spendingNeeded.toString(),
           pointsPerSpending: data.pointsPerSpending,
+          monetaryValuePerPoint: data.monetaryValuePerPoint.toString(),
           updatedAt: new Date(),
         }),
       )
