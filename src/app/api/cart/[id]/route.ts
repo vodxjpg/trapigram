@@ -32,30 +32,51 @@ export async function GET(
     if (cart.country !== client.country) {
       const tx = await pool.connect();
       try {
+        const removedItems: { productId: string; reason: string }[] = [];
         await tx.query("BEGIN");
-        await tx.query(`UPDATE carts SET country=$1 WHERE id=$2`, [
-          client.country,
-          id,
-        ]);
+        await tx.query(
+          `UPDATE carts SET country=$1 WHERE id=$2`,
+          [client.country, id],
+        );
 
-        const { rows: lines } = await tx.query(
+        const { rows: lines } = await tx.query<{ id: string; productId: string }>(
           `SELECT id,"productId",quantity FROM "cartProducts" WHERE "cartId"=$1`,
-          [id]
+          [id],
         );
         for (const line of lines) {
-          const { price } = await resolveUnitPrice(
-            line.productId,
-            client.country,
-            client.levelId
-          );
-          await tx.query(
-            `UPDATE "cartProducts"
-             SET "unitPrice"=$1,"updatedAt"=NOW()
-             WHERE id=$2`,
-            [price, line.id]
-          );
+          try {
+            const { price } = await resolveUnitPrice(
+              line.productId,
+              client.country,
+              client.levelId,
+            );
+            await tx.query(
+              `UPDATE "cartProducts"
+                            SET "unitPrice" = $1, "updatedAt" = NOW()
+                          WHERE id = $2`,
+              [price, line.id],
+            );
+          } catch (err: any) {
+            if (err.message.startsWith("No money price for")) {
+              // remove the bad line and record it
+              await tx.query(
+                `DELETE FROM "cartProducts" WHERE id = $1`,
+                [line.id],
+              );
+              removedItems.push({
+                productId: line.productId,
+                reason: err.message,  // e.g. "No money price for GB"
+              });
+              continue;
+            }
+            // any other error: rollback everything
+            throw err;
+          }
         }
+
         await tx.query("COMMIT");
+        // stash removedItems in the transaction-scoped variable for later
+        ; (tx as any).removedItems = removedItems;
       } catch (e) {
         await tx.query("ROLLBACK");
         throw e;
@@ -64,8 +85,8 @@ export async function GET(
       }
     }
 
-     /* 3. Assemble normal + affiliate products */
-     const prodQ = `
+    /* 3. Assemble normal + affiliate products */
+    const prodQ = `
      SELECT
        p.id, p.title, p.description, p.image, p.sku,
        cp.quantity, cp."unitPrice",
@@ -75,7 +96,7 @@ export async function GET(
      JOIN "cartProducts" cp ON p.id = cp."productId"
      WHERE cp."cartId" = $1
    `;
-   const affQ = `
+    const affQ = `
      SELECT
        ap.id, ap.title, ap.description, ap.image, ap.sku,
        cp.quantity, cp."unitPrice",
@@ -86,26 +107,37 @@ export async function GET(
      WHERE cp."cartId" = $1
    `;
 
-   const [prod, aff] = await Promise.all([
-     pool.query(prodQ, [id]),
-     pool.query(affQ, [id]),
-   ]);
+    const [prod, aff] = await Promise.all([
+      pool.query(prodQ, [id]),
+      pool.query(affQ, [id]),
+    ]);
 
-   const lines = [...prod.rows, ...aff.rows]
-     .sort((a, b) => a.createdAt - b.createdAt)          /* NEW */
-     .map((l: any) => ({
-       ...l,
-       unitPrice: Number(l.unitPrice),
-       subtotal:  Number(l.unitPrice) * l.quantity,
-     }));
+    const lines = [...prod.rows, ...aff.rows]
+      .sort((a, b) => a.createdAt - b.createdAt)          /* NEW */
+      .map((l: any) => ({
+        ...l,
+        unitPrice: Number(l.unitPrice),
+        subtotal: Number(l.unitPrice) * l.quantity,
+      }));
 
-   /* 4. Return both legacy and new keys */
-   return NextResponse.json(
-     { resultCartProducts: lines, lines },
-     { status: 200 },
-   );
- } catch (error: any) {
-   console.error("[GET /api/cart/:id]", error);
-   return NextResponse.json({ error: "Internal server error" }, { status: 500 });
- }
+
+    // extract removedItems if we re-priced above
+    const removedItems =
+      // tx.removedItems only exists if we entered the country-change block
+      (await pool).removedItems as { productId: string; reason: string }[] ||
+      [];
+
+    /* 4. Return both legacy and new keys */
+    return NextResponse.json(
+      {
+        resultCartProducts: lines,
+        lines,
+        removedItems,      // caller can inspect this
+      },
+      { status: 200 },
+    );
+  } catch (error: any) {
+    console.error("[GET /api/cart/:id]", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }
