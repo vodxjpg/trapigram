@@ -5,13 +5,14 @@ import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { resolveUnitPrice } from "@/lib/pricing";
-import { adjustStock }   from "@/lib/stock";
+import { adjustStock } from "@/lib/stock";
+import { getStepsFor, getPriceForQuantity, tierPricing } from "@/lib/tier-pricing"
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const cartProductSchema = z.object({
   productId: z.string(),
-  quantity: z.number().int().positive()
+  quantity: z.number().int().positive(),
 });
 
 export async function POST(
@@ -20,10 +21,12 @@ export async function POST(
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
   try {
     const { id: cartId } = await params;
-    const body           = cartProductSchema.parse(await req.json());
+    const data = await req.json()
+    const body = cartProductSchema.parse(data);
 
     /* 1️⃣  client country + level */
     const { rows: clientRows } = await pool.query(
@@ -47,17 +50,27 @@ export async function POST(
     );
 
     /* 3️⃣  upsert cartProducts */
-      const existing = await pool.query(
-          `SELECT id, quantity
+    const existing = await pool.query(
+      `SELECT id, quantity
              FROM "cartProducts"
             WHERE "cartId" = $1
               AND ${isAffiliate ? `"affiliateProductId"` : `"productId"`} = $2`,
-          [cartId, body.productId]
-        );
+      [cartId, body.productId]
+    );
 
-    let quantity = body.quantity;
+    let quantity = data.quantity;
+    let tpprice
+
+    const tierPricings = await tierPricing(organizationId)
+    const tiers: Tier[] = tierPricings;
+    const steps = getStepsFor(tiers, country, body.productId);
+
     if (existing.rowCount) {
       quantity += existing.rows[0].quantity;
+      tpprice = getPriceForQuantity(steps, quantity);
+      if (tpprice === null) {
+        tpprice = price
+      }
       await pool.query(
         `UPDATE "cartProducts"
          SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
@@ -65,35 +78,39 @@ export async function POST(
         [quantity, price, existing.rows[0].id]
       );
     } else {
-           await pool.query(
-               `INSERT INTO "cartProducts"
+      tpprice = getPriceForQuantity(steps, quantity);
+      if (tpprice === null) {
+        tpprice = price
+      }
+      await pool.query(
+        `INSERT INTO "cartProducts"
                   (id,"cartId","productId","affiliateProductId",
                    quantity,"unitPrice","createdAt","updatedAt")
                 VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
-               [
-                 uuidv4(),
-                 cartId,
-                 isAffiliate ? null        : body.productId,
-                 isAffiliate ? body.productId : null,
-                 quantity,
-                 price
-               ]
-             );
+        [
+          uuidv4(),
+          cartId,
+          isAffiliate ? null : body.productId,
+          isAffiliate ? body.productId : null,
+          quantity,
+          price
+        ]
+      );
     }
     /* 3b️⃣  reserve the JUST-ADDED quantity */
     await adjustStock(pool, body.productId, country, -body.quantity);
 
     /* 4️⃣  refresh cart hash */
     const rowsHash = await pool.query(
-       `SELECT COALESCE("productId","affiliateProductId") AS pid,
+      `SELECT COALESCE("productId","affiliateProductId") AS pid,
        quantity,"unitPrice"
        FROM "cartProducts"
        WHERE "cartId"=$1`,
       [cartId]
     );
     const newHash = crypto.createHash("sha256")
-                          .update(JSON.stringify(rowsHash.rows))
-                          .digest("hex");
+      .update(JSON.stringify(rowsHash.rows))
+      .digest("hex");
     await pool.query(
       `UPDATE carts
        SET "cartUpdatedHash"=$1,"updatedAt"=NOW()
@@ -116,15 +133,15 @@ export async function POST(
     const base = prodRows[0];
 
     const product = {
-      id          : base.id,
-      title       : base.title,
-      sku         : base.sku,
-      description : base.description,
-      image       : base.image,
+      id: base.id,
+      title: base.title,
+      sku: base.sku,
+      description: base.description,
+      image: base.image,
       regularPrice: isAffiliate ? {} : base.regularPrice ?? {},
-      price       : Number(price),          // ← for UI fallback
-      stockData   : {},                     // satisfies component shape
-      subtotal    : Number(price) * quantity
+      price: tpprice,          // ← for UI fallback
+      stockData: {},                     // satisfies component shape
+      subtotal: Number(tpprice) * quantity
     };
 
     return NextResponse.json({ product, quantity }, { status: 201 });

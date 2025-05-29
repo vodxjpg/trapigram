@@ -125,8 +125,7 @@ export default function OrderForm() {
 
   const [subtotal, setSubtotal] = useState(0);
 
-  const calcRowSubtotal = (p: Product, qty: number) =>
-    (p.regularPrice[clientCountry] ?? p.price) * qty;
+  const calcRowSubtotal = (p: Product, qty: number) => p.price * qty;
 
   // Added useEffect to recalculate subtotal whenever orderItems change
   useEffect(() => {
@@ -349,7 +348,7 @@ export default function OrderForm() {
         body: JSON.stringify({
           productId: selectedProduct,
           quantity,
-          price: unitPrice,
+          unitPrice,
           country: clientCountry,
         }),
       });
@@ -684,8 +683,7 @@ export default function OrderForm() {
               {orderItems.length > 0 && (
                 <div className="space-y-4 mb-4">
                   {orderItems.map(({ product, quantity }, idx) => {
-                    const price =
-                      product.regularPrice[clientCountry] ?? product.price;
+                    const price = product.price;
                     return (
                       <div
                         key={idx}
