@@ -64,56 +64,48 @@ export async function GET(
       }
     }
 
-    /* 3. Assemble normal + affiliate products */
-       const prodQ = `
+     /* 3. Assemble normal + affiliate products */
+     const prodQ = `
      SELECT
-       p.id,
-       p.title,
-       p.description,
-       p.image,
-       p.sku,
-       cp.quantity,
-       cp."unitPrice",
+       p.id, p.title, p.description, p.image, p.sku,
+       cp.quantity, cp."unitPrice",
+       cp."createdAt",                     /* NEW */
        false AS "isAffiliate"
      FROM products p
-     JOIN "cartProducts" cp
-       ON p.id = cp."productId"
+     JOIN "cartProducts" cp ON p.id = cp."productId"
      WHERE cp."cartId" = $1
    `;
-      const affQ = `
+   const affQ = `
      SELECT
-       ap.id,
-       ap.title,
-       ap.description,
-       ap.image,
-       ap.sku,
-       cp.quantity,
-       cp."unitPrice",
+       ap.id, ap.title, ap.description, ap.image, ap.sku,
+       cp.quantity, cp."unitPrice",
+       cp."createdAt",                     /* NEW */
        true  AS "isAffiliate"
      FROM "affiliateProducts" ap
-     JOIN "cartProducts" cp
-       ON ap.id = cp."affiliateProductId"
+     JOIN "cartProducts" cp ON ap.id = cp."affiliateProductId"
      WHERE cp."cartId" = $1
    `;
 
-    const [prod, aff] = await Promise.all([
-      pool.query(prodQ, [id]),
-      pool.query(affQ, [id]),
-    ]);
+   const [prod, aff] = await Promise.all([
+     pool.query(prodQ, [id]),
+     pool.query(affQ, [id]),
+   ]);
 
-    const lines = [...prod.rows, ...aff.rows].map((l: any) => ({
-      ...l,
-      unitPrice: Number(l.unitPrice),
-      subtotal: Number(l.unitPrice) * l.quantity,
-    }));
+   const lines = [...prod.rows, ...aff.rows]
+     .sort((a, b) => a.createdAt - b.createdAt)          /* NEW */
+     .map((l: any) => ({
+       ...l,
+       unitPrice: Number(l.unitPrice),
+       subtotal:  Number(l.unitPrice) * l.quantity,
+     }));
 
-    /* 4. Return both legacy and new keys */
-    return NextResponse.json(
-      { resultCartProducts: lines, lines },
-      { status: 200 },
-    );
-  } catch (error: any) {
-    console.error("[GET /api/cart/:id]", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-  }
+   /* 4. Return both legacy and new keys */
+   return NextResponse.json(
+     { resultCartProducts: lines, lines },
+     { status: 200 },
+   );
+ } catch (error: any) {
+   console.error("[GET /api/cart/:id]", error);
+   return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+ }
 }

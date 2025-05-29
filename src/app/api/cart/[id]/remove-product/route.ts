@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Pool } from "pg";
 import crypto from "crypto"
 import { getContext } from "@/lib/context";
-import { adjustStock }   from "@/lib/stock";
+import { adjustStock } from "@/lib/stock";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || ""
@@ -60,21 +60,49 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
             data.productId
         ];
 
-             const result = await pool.query(insert, vals);   // gives us old quantity
-
-     /* country lookup (same query as other routes) */
-     const { rows: cRows } = await pool.query(
-       `SELECT clients.country
+        const result = await pool.query(insert, vals);
+        const deleted = result.rows[0]; // gives us old quantity
+        /* ---------- NEW: affiliate refund ---------- */
+        if (deleted?.affiliateProductId) {
+            const pointsToRollback = deleted.quantity * deleted.unitPrice;
+        
+            // clientId is on carts, fetch once
+            const { rows: clRows } = await pool.query(
+            `SELECT "clientId" FROM carts WHERE id = $1`, [id]
+            );
+            const clientId = clRows[0]?.clientId;
+        
+            if (clientId) {
+            await pool.query(
+                `UPDATE "affiliatePointBalances"
+                SET "pointsCurrent" = "pointsCurrent" + $1,
+                    "pointsSpent"   = GREATEST("pointsSpent" - $1, 0),
+                    "updatedAt"     = NOW()
+                WHERE "organizationId" = $2 AND "clientId" = $3`,
+                [pointsToRollback, ctx.organizationId, clientId]
+            );
+        
+            await pool.query(
+                `INSERT INTO "affiliatePointLogs"
+                (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+                VALUES (gen_random_uuid(),$1,$2,$3,'refund','cart line removed',NOW(),NOW())`,
+                [ctx.organizationId, clientId,  pointsToRollback]
+            );
+            }
+        }
+        /* country lookup (same query as other routes) */
+        const { rows: cRows } = await pool.query(
+            `SELECT clients.country
           FROM clients
           JOIN carts ON carts."clientId" = clients.id
          WHERE carts.id = $1`,
-       [id],
-     );
-     const country = cRows[0]?.country as string;
+            [id],
+        );
+        const country = cRows[0]?.country as string;
 
-     const released = result.rows[0]?.quantity ?? 0;
-     if (released)
-        await adjustStock(pool, data.productId, country, +released);
+        const released = result.rows[0]?.quantity ?? 0;
+        if (released)
+            await adjustStock(pool, data.productId, country, +released);
 
         const encryptedResponse = encryptSecretNode(JSON.stringify(result.rows[0]))
 

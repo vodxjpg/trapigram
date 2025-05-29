@@ -55,7 +55,7 @@ export async function PATCH(
 
         if (it.affiliateProductId) {
           const ptsSpent = it.unitPrice * it.quantity;
-          const logId   = uuidv4();
+          const logId = uuidv4();
           await client.query(
             `INSERT INTO "affiliatePointLogs"
                (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
@@ -99,8 +99,8 @@ export async function PATCH(
 
     /* 3️⃣ → "cancelled"/"failed": release & refund affiliate & redeemed */
     const mustReturn =
-      ["cancelled","failed"].includes(newStatus) &&
-      !["cancelled","failed"].includes(ord.status);
+      ["cancelled", "failed"].includes(newStatus) &&
+      !["cancelled", "failed"].includes(ord.status);
     if (mustReturn) {
       const { rows: items } = await client.query(
         `SELECT cp."productId", cp."affiliateProductId", cp.quantity, cp."unitPrice"
@@ -115,7 +115,7 @@ export async function PATCH(
 
         if (it.affiliateProductId) {
           const ptsRefund = it.unitPrice * it.quantity;
-          const logId    = uuidv4();
+          const logId = uuidv4();
           await client.query(
             `INSERT INTO "affiliatePointLogs"
                (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
@@ -127,9 +127,15 @@ export async function PATCH(
                ("clientId","organizationId","pointsCurrent","pointsSpent","createdAt","updatedAt")
              VALUES($1,$2,$3,$4,NOW(),NOW())
              ON CONFLICT("clientId","organizationId") DO UPDATE
-               SET "pointsCurrent" = "affiliatePointBalances"."pointsCurrent" + EXCLUDED."pointsCurrent",
-                   "pointsSpent"   = "affiliatePointBalances"."pointsSpent"   + EXCLUDED."pointsSpent",
-                   "updatedAt"     = NOW()`,
+  SET "pointsCurrent" = "affiliatePointBalances"."pointsCurrent"
+                        + EXCLUDED."pointsCurrent",
+      /* prevent negatives ↓ */
+      "pointsSpent"   = GREATEST(
+                          "affiliatePointBalances"."pointsSpent"
+                          + EXCLUDED."pointsSpent", 0
+                        ),
+      "updatedAt"     = NOW()
+`,
             [ord.clientId, organizationId, ptsRefund, -ptsRefund]
           );
         }
@@ -149,9 +155,15 @@ export async function PATCH(
              ("clientId","organizationId","pointsCurrent","pointsSpent","createdAt","updatedAt")
            VALUES($1,$2,$3,$4,NOW(),NOW())
            ON CONFLICT("clientId","organizationId") DO UPDATE
-             SET "pointsCurrent" = "affiliatePointBalances"."pointsCurrent" + EXCLUDED."pointsCurrent",
-                 "pointsSpent"   = "affiliatePointBalances"."pointsSpent"   + EXCLUDED."pointsSpent",
-                 "updatedAt"     = NOW()`,
+  SET "pointsCurrent" = "affiliatePointBalances"."pointsCurrent"
+                        + EXCLUDED."pointsCurrent",
+      /* prevent negatives ↓ */
+      "pointsSpent"   = GREATEST(
+                          "affiliatePointBalances"."pointsSpent"
+                          + EXCLUDED."pointsSpent", 0
+                        ),
+      "updatedAt"     = NOW()
+`,
           [ord.clientId, organizationId, ptsRedeemed, -ptsRedeemed]
         );
       }
