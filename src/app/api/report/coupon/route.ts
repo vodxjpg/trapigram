@@ -6,24 +6,26 @@ const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
 });
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest) {
     const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
     const { organizationId } = ctx;
 
     try {
-        const queryOrders = `SELECT * FROM carts WHERE "organizationId" = '${organizationId}'`
+        const { searchParams } = new URL(req.url)
+        const from = searchParams.get('from')
+        const to = searchParams.get('to')
+
+        const queryOrders = `SELECT * FROM orders WHERE "organizationId" = '${organizationId}' AND status = 'completed' AND "createdAt" BETWEEN '${from}' AND '${to}'`
         const resultorders = await pool.query(queryOrders);
         const orders = resultorders.rows.length
 
-        const queryCoupon = `SELECT code FROM coupons WHERE "organizationId" = '${organizationId}'`
+        const queryCoupon = `SELECT id, code, "createdAt" FROM coupons WHERE "organizationId" = '${organizationId}'`
         const resultCoupon = await pool.query(queryCoupon);
         const coupons = resultCoupon.rows
 
-        const month = "2025-05"
-
         const calcData = coupons.map(async (cp) => {
-            const queryCalc = `SELECT * FROM orders WHERE "organizationId" = '${organizationId}' AND "couponCode" = '${cp.code}' AND status = 'completed'`
+            const queryCalc = `SELECT * FROM orders WHERE "organizationId" = '${organizationId}' AND "couponCode" = '${cp.code}' AND status = 'completed' AND "createdAt" BETWEEN '${from}' AND '${to}'`
             const resultCalc = await pool.query(queryCalc);
             const result = resultCalc.rows
             let totalDiscount = 0
@@ -33,7 +35,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
                 revenueAfterDiscount = (Number(result[i].subtotal) - Number(result[i].discountTotal)) + revenueAfterDiscount
             }
             return {
-                month,
+                id: cp.id,
+                month: cp.createdAt,
                 couponCode: cp.code,
                 redemptions: result.length,
                 totalOrders: orders,

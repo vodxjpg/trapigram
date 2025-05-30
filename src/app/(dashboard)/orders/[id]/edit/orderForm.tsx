@@ -59,7 +59,11 @@ interface ShippingMethod {
   id: string;
   title: string;
   description: string;
-  costs: Array<{ minOrderCost: number; maxOrderCost: number; shipmentCost: number }>;
+  costs: Array<{
+    minOrderCost: number;
+    maxOrderCost: number;
+    shipmentCost: number;
+  }>;
 }
 interface ShippingCompany {
   id: string;
@@ -84,15 +88,20 @@ interface OrderItemLine {
 //
 // src/app/(dashboard)/orders/[id]/edit/orderForm.tsx
 
-function mergeLinesByProduct(lines: Array<{
-  id: string
-  quantity: number
-  unitPrice: number
-  subtotal: number
-  isAffiliate: boolean
-  [key: string]: any
-}>) {
-  const map: Record<string, { quantity: number; subtotal: number; lines: typeof lines }> = {};
+function mergeLinesByProduct(
+  lines: Array<{
+    id: string;
+    quantity: number;
+    unitPrice: number;
+    subtotal: number;
+    isAffiliate: boolean;
+    [key: string]: any;
+  }>
+) {
+  const map: Record<
+    string,
+    { quantity: number; subtotal: number; lines: typeof lines }
+  > = {};
 
   for (const line of lines) {
     if (!map[line.id]) {
@@ -115,39 +124,46 @@ function mergeLinesByProduct(lines: Array<{
 }
 
 function groupByProduct(lines: OrderItemLine[]) {
-  return lines.reduce((acc, line) => {
-    let bucket = acc.find(b => b.id === line.id);
-    if (!bucket) {
-      bucket = {
-        id: line.id,
-        title: line.title,
-        sku: line.sku,
-        description: line.description,
-        image: line.image,
-        isAffiliate: line.isAffiliate,
-        priceBuckets: [] as { unitPrice: number, quantity: number }[]
-      };
-      acc.push(bucket);
-    }
-    // find the matching price‐bucket
-    const pb = bucket.priceBuckets.find(p => p.unitPrice === line.unitPrice);
-    if (pb) {
-      pb.quantity += line.quantity;
-    } else {
-      bucket.priceBuckets.push({ unitPrice: line.unitPrice, quantity: line.quantity });
-    }
-    return acc;
-  }, [] as Array<{
-    id: string;
-    title: string;
-    sku: string;
-    description: string;
-    image: string;
-    isAffiliate: boolean;
-    priceBuckets: { unitPrice: number; quantity: number }[];
-  }>);
+  return lines.reduce(
+    (acc, line) => {
+      let bucket = acc.find((b) => b.id === line.id);
+      if (!bucket) {
+        bucket = {
+          id: line.id,
+          title: line.title,
+          sku: line.sku,
+          description: line.description,
+          image: line.image,
+          isAffiliate: line.isAffiliate,
+          priceBuckets: [] as { unitPrice: number; quantity: number }[],
+        };
+        acc.push(bucket);
+      }
+      // find the matching price‐bucket
+      const pb = bucket.priceBuckets.find(
+        (p) => p.unitPrice === line.unitPrice
+      );
+      if (pb) {
+        pb.quantity += line.quantity;
+      } else {
+        bucket.priceBuckets.push({
+          unitPrice: line.unitPrice,
+          quantity: line.quantity,
+        });
+      }
+      return acc;
+    },
+    [] as Array<{
+      id: string;
+      title: string;
+      sku: string;
+      description: string;
+      image: string;
+      isAffiliate: boolean;
+      priceBuckets: { unitPrice: number; quantity: number }[];
+    }>
+  );
 }
-
 
 export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
@@ -167,8 +183,12 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [selectedProduct, setSelectedProduct] = useState("");
   const [quantity, setQuantity] = useState(1);
 
-  const [addresses, setAddresses] = useState<{ id: string; address: string }[]>([]);
-  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [addresses, setAddresses] = useState<{ id: string; address: string }[]>(
+    []
+  );
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(
+    null
+  );
   const [newAddress, setNewAddress] = useState("");
 
   const [showNewCoupon, setShowNewCoupon] = useState(false);
@@ -177,20 +197,23 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [couponApplied, setCouponApplied] = useState(false);
   const [couponCode, setCouponCode] = useState("");
 
-  const [discountType, setDiscountType] = useState<"percentage" | "fixed">("fixed");
-  const [discount, setDiscount] = useState<number>(0);   // ← number, never null
-  const [value, setValue] = useState<number>(0);   // ← “
+  const [discountType, setDiscountType] = useState<"percentage" | "fixed">(
+    "fixed"
+  );
+  const [discount, setDiscount] = useState<number>(0); // ← number, never null
+  const [value, setValue] = useState<number>(0); // ← “
 
   const [shippingLoading, setShippingLoading] = useState(true);
   const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
+    []
+  );
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
   const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
   const [rawLines, setRawLines] = useState<OrderItemLine[]>([]);
   /* ——————————————————— HELPERS ——————————————————— */
   const calcRowSubtotal = (p: Product, qty: number) =>
     (p.regularPrice[clientCountry] ?? p.price) * qty;
-
 
   async function loadCart() {
     try {
@@ -228,33 +251,29 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   /* ——————————————————— EFFECTS ——————————————————— */
   useEffect(() => {
     const sum = orderItems
-      .filter(item => !item.isAffiliate)           // ← ignore affiliate lines
+      .filter((item) => !item.isAffiliate) // ← ignore affiliate lines
       .reduce(
         (acc, item) =>
-          acc + (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
+          acc +
+          (item.product.subtotal ??
+            calcRowSubtotal(item.product, item.quantity)),
         0
       );
     setSubtotal(sum);
   }, [orderItems, clientCountry]);
 
-
   // total recalculation
   useEffect(() => {
     if (!orderData) return;
     const shipping = orderData.shipping ?? 0;
-    const couponDisc = couponApplied ? discount : orderData.discount ?? 0;
+    const couponDisc = couponApplied ? discount : (orderData.discount ?? 0);
     const pointsDisc = orderData.pointsRedeemedAmount ?? 0;
 
     setDiscountType(couponApplied ? discountType : orderData.discountType);
     setDiscount(Number(couponDisc));
 
     // include both coupon‐ and points‐discount
-    setTotal(
-      subtotal
-      + shipping
-      - Number(couponDisc)
-      - Number(pointsDisc)
-    );
+    setTotal(subtotal + shipping - Number(couponDisc) - Number(pointsDisc));
   }, [
     subtotal,
     orderData?.shipping,
@@ -263,7 +282,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     couponApplied,
     discountType,
   ]);
-
 
   /* ——————————————————— FETCH ORDER + ADDRESSES ——————————————————— */
   useEffect(() => {
@@ -285,7 +303,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         const addrData = await addrRes.json();
         setAddresses(addrData.addresses);
 
-        const match = addrData.addresses.find((a: any) => a.address === data.shippingInfo.address);
+        const match = addrData.addresses.find(
+          (a: any) => a.address === data.shippingInfo.address
+        );
         if (match) setSelectedAddressId(match.id);
       } catch {
         toast.error("Failed to load order or addresses");
@@ -298,7 +318,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     if (!cartId) return;
     loadCart();
   }, [cartId, clientCountry]);
-
 
   const groupedItems = groupByProduct(rawLines);
 
@@ -320,13 +339,13 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         throw new Error("Failed to fetch product lists");
       }
 
-      const { products: norm } = await normRes.json();   // [{ id,…, regularPrice, stockData, … }]
-      const { products: aff } = await affRes.json();    // [{ id,…, pointsPrice, cost, stock?, … }]
+      const { products: norm } = await normRes.json(); // [{ id,…, regularPrice, stockData, … }]
+      const { products: aff } = await affRes.json(); // [{ id,…, pointsPrice, cost, stock?, … }]
 
       // map both into our UI shape
       const all: Product[] = [
         // 1) real products
-        ...norm.map(p => ({
+        ...norm.map((p) => ({
           id: p.id,
           title: p.title,
           sku: p.sku,
@@ -340,7 +359,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         })),
 
         // 2) affiliate products
-        ...aff.map(a => {
+        ...aff.map((a) => {
           // pick “first” level then “first” country to derive a flat points → € price
           const lvlKeys = Object.keys(a.pointsPrice);
           const countryKeys = lvlKeys.length
@@ -378,13 +397,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     }
   }
 
-  const countryProducts = products.filter(p => {
+  const countryProducts = products.filter((p) => {
     // if no stockData at all (affiliate), show it
     if (!Object.keys(p.stockData).length) return true;
 
     // otherwise only those with stock in this country
-    const totalStock = Object.values(p.stockData)
-      .reduce((sum, e) => sum + (e[clientCountry] || 0), 0);
+    const totalStock = Object.values(p.stockData).reduce(
+      (sum, e) => sum + (e[clientCountry] || 0),
+      0
+    );
     return totalStock > 0;
   });
 
@@ -538,12 +559,14 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        const msg = (body.error as string) ?? (body.message as string) ?? "Failed to add product";
+        const msg =
+          (body.error as string) ??
+          (body.message as string) ??
+          "Failed to add product";
         throw new Error(msg);
       }
       const { product: added, quantity: qty } = await res.json();
       const subtotalRow = calcRowSubtotal(added, qty);
-
 
       await loadCart();
       setSelectedProduct("");
@@ -572,7 +595,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        const msg = (body.error as string) ?? (body.message as string) ?? "Failed to remove product";
+        const msg =
+          (body.error as string) ??
+          (body.message as string) ??
+          "Failed to remove product";
         throw new Error(msg);
       }
       await loadCart();
@@ -587,55 +613,60 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   // — Update product quantity
   // src/app/(dashboard)/orders/[id]/edit/orderForm.tsx
 
-const updateQuantity = async (productId: string, action: "add" | "subtract") => {
-  if (!cartId) {
-    toast.error("Cart hasn’t been created yet!");
-    return;
-  }
-  try {
-    const res = await fetch(`/api/cart/${cartId}/update-product`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ productId, action }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || "Failed to update quantity");
+  const updateQuantity = async (
+    productId: string,
+    action: "add" | "subtract"
+  ) => {
+    if (!cartId) {
+      toast.error("Cart hasn’t been created yet!");
+      return;
     }
+    try {
+      const res = await fetch(`/api/cart/${cartId}/update-product`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId, action }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to update quantity");
+      }
 
-    // 🎯 Consume the PATCH response and immediately update UI
-     // 🎯 consume the PATCH response
- const { lines } = await res.json();
+      // 🎯 Consume the PATCH response and immediately update UI
+      // 🎯 consume the PATCH response
+      const { lines } = await res.json();
 
- // 1️⃣ keep **all** rows so bucket-view can distinguish unit prices
- setRawLines(lines);
+      // 1️⃣ keep **all** rows so bucket-view can distinguish unit prices
+      setRawLines(lines);
 
- // 2️⃣ aggregate only for sidebar math
- const aggregated = mergeLinesByProduct(lines);
- setOrderItems(
-   aggregated.map((l: any) => ({
-        product: {
-          id: l.id,
-          title: l.title,
-          sku: l.sku,
-          description: l.description,
-          image: l.image,
-          regularPrice: { [clientCountry]: l.unitPrice },
-          price: l.unitPrice,
-          subtotal: l.subtotal,
-          stockData: {},
-        },
-        quantity: l.quantity,
-        isAffiliate: l.isAffiliate,
-      }))
-    );
+      // 2️⃣ aggregate only for sidebar math
+      const aggregated = mergeLinesByProduct(lines);
+      setOrderItems(
+        aggregated.map((l: any) => ({
+          product: {
+            id: l.id,
+            title: l.title,
+            sku: l.sku,
+            description: l.description,
+            image: l.image,
+            regularPrice: { [clientCountry]: l.unitPrice },
+            price: l.unitPrice,
+            subtotal: l.subtotal,
+            stockData: {},
+          },
+          quantity: l.quantity,
+          isAffiliate: l.isAffiliate,
+        }))
+      );
 
-    toast.success(`Quantity ${action === "add" ? "increased" : "decreased"}!`);
-  } catch (err: any) {
-    toast.error(err.message);
-  }
-};
-  
+      toast.success(
+        `Quantity ${action === "add" ? "increased" : "decreased"}!`
+      );
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
   // New: update order
   const handleUpdateOrder = async () => {
     if (!orderData?.id) return;
@@ -695,23 +726,48 @@ const updateQuantity = async (productId: string, action: "add" | "subtract") => 
               {orderItems.length > 0 && (
                 <div className="space-y-4 mb-4">
                   {groupedItems.map((item) => {
-                    const totalQty = item.priceBuckets.reduce((a, p) => a + p.quantity, 0);
+                    const totalQty = item.priceBuckets.reduce(
+                      (a, p) => a + p.quantity,
+                      0
+                    );
                     const firstBucket = item.priceBuckets[0];
                     return (
                       <div key={item.id} className="border rounded-lg p-4">
                         <div className="flex justify-between items-center">
                           <div className="flex items-center space-x-4">
-                            {item.image
-                              ? <Image src={item.image} alt={item.title} width={80} height={80} className="rounded-md" />
-                              : <div className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-400">No image</div>
-                            }
+                            {item.image ? (
+                              <Image
+                                src={item.image}
+                                alt={item.title}
+                                width={80}
+                                height={80}
+                                className="rounded-md"
+                              />
+                            ) : (
+                              <div className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-400">
+                                No image
+                              </div>
+                            )}
                             <div>
                               <h3 className="font-medium">{item.title}</h3>
-                              <p className="text-sm text-gray-500">SKU: {item.sku}</p>
-                              <div className="text-sm" dangerouslySetInnerHTML={{ __html: item.description }} />
+                              <p className="text-sm text-gray-500">
+                                SKU: {item.sku}
+                              </p>
+                              <div
+                                className="text-sm"
+                                dangerouslySetInnerHTML={{
+                                  __html: item.description,
+                                }}
+                              />
                             </div>
                           </div>
-                          <Button variant="ghost" size="icon" onClick={() => removeProduct(item.id, /* idx not used */ 0)}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() =>
+                              removeProduct(item.id, /* idx not used */ 0)
+                            }
+                          >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -719,12 +775,21 @@ const updateQuantity = async (productId: string, action: "add" | "subtract") => 
                         <div className="mt-4 flex justify-between items-center">
                           {/* quantity controls */}
                           <div className="flex items-center space-x-2">
-
-                              <Button size="icon" onClick={() => updateQuantity(item.id, "subtract")}>
-                            <Minus className="h-4 w-4" />
-                           </Button>
-                            <span className="font-medium">{totalQty} unit{totalQty > 1 ? "s" : ""}</span>
-                            <Button size="icon" onClick={() => updateQuantity(item.id, "add")}>
+                            <Button
+                              size="icon"
+                              onClick={() =>
+                                updateQuantity(item.id, "subtract")
+                              }
+                            >
+                              <Minus className="h-4 w-4" />
+                            </Button>
+                            <span className="font-medium">
+                              {totalQty} unit{totalQty > 1 ? "s" : ""}
+                            </span>
+                            <Button
+                              size="icon"
+                              onClick={() => updateQuantity(item.id, "add")}
+                            >
                               <Plus className="h-4 w-4" />
                             </Button>
                           </div>
@@ -749,9 +814,11 @@ const updateQuantity = async (productId: string, action: "add" | "subtract") => 
                         <div className="mt-4 text-right font-medium">
                           $
                           {item.priceBuckets
-                            .reduce((sum, pb) => sum + pb.quantity * pb.unitPrice, 0)
-                            .toFixed(2)
-                          }
+                            .reduce(
+                              (sum, pb) => sum + pb.quantity * pb.unitPrice,
+                              0
+                            )
+                            .toFixed(2)}
                         </div>
                       </div>
                     );
@@ -1008,14 +1075,18 @@ const updateQuantity = async (productId: string, action: "add" | "subtract") => 
                 {orderData?.pointsRedeemed > 0 && (
                   <div className="flex justify-between text-blue-600">
                     <span>Points Redeemed:</span>
-                    <span className="font-medium">{orderData.pointsRedeemed} pts</span>
+                    <span className="font-medium">
+                      {orderData.pointsRedeemed} pts
+                    </span>
                   </div>
                 )}
 
                 {orderData?.pointsRedeemedAmount > 0 && (
                   <div className="flex justify-between text-green-600">
                     <span>Points Discount:</span>
-                    <span className="font-medium">-${orderData.pointsRedeemedAmount.toFixed(2)}</span>
+                    <span className="font-medium">
+                      -${orderData.pointsRedeemedAmount.toFixed(2)}
+                    </span>
                   </div>
                 )}
                 <div className="flex justify-between text-green-600">
