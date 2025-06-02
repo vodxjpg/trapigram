@@ -14,10 +14,11 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const ACTIVE   = ["open", "paid", "completed"]; // stock & points RESERVED
 const INACTIVE = ["cancelled", "failed"];       // stock & points RELEASED
 const orderStatusSchema        = z.object({ status: z.string() });
+
 /**
  * Statuses that should trigger exactly one notification per order
- * life-cycle – paid & completed behave as before.  Cancelled is
- * always announced (even if paid/completed was already sent).
+ * life-cycle – “paid” & “completed“ behave as before.
+ * “cancelled” is always announced.
  */
 const FIRST_NOTIFY_STATUSES = ["paid", "completed"] as const;
 
@@ -222,10 +223,16 @@ export async function PATCH(
      *  Notification logic
      * ───────────────────────────────────────────── */
     let shouldNotify = false;
-    if (FIRST_NOTIFY_STATUSES.includes(newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
-      shouldNotify = !ord.notifiedPaidOrCompleted; // one-off for paid/completed
+
+    /* —— NEW order placed check —— */               // NEW ⬅︎
+    if (newStatus === "open" && ord.status !== "open") { // NEW ⬅︎
+      shouldNotify = true;                              // NEW ⬅︎
+    }                                                   // NEW ⬅︎
+    else if (FIRST_NOTIFY_STATUSES.includes(            // existing logic
+             newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
+      shouldNotify = !ord.notifiedPaidOrCompleted;
     } else if (newStatus === "cancelled") {
-      shouldNotify = true; // always announce cancellation
+      shouldNotify = true;
     }
 
     if (shouldNotify) {
@@ -243,6 +250,7 @@ export async function PATCH(
 
       /* map status → notification type */
       const notifTypeMap: Record<string, NotificationType> = {
+        open:       "order_placed",   // NEW ⬅︎
         paid:       "order_paid",
         completed:  "order_completed",
         cancelled:  "order_cancelled",
@@ -263,7 +271,8 @@ export async function PATCH(
       });
 
       /* mark as sent for paid/completed so we don’t double-notify */
-      if (FIRST_NOTIFY_STATUSES.includes(newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
+      if (FIRST_NOTIFY_STATUSES.includes(
+            newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
         await client.query(
           `UPDATE orders
               SET "notifiedPaidOrCompleted" = true,
