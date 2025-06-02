@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 
+
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* ------------------------------------------------------------------ */
@@ -300,6 +301,9 @@ export async function POST(req: NextRequest) {
     /* =============================================================== */
     const r = await pool.query(insertSQL, insertValues);
     await pool.query("COMMIT");
+
+   
+
     return NextResponse.json(r.rows[0], { status: 201 });
   } catch (err) {
     await pool.query("ROLLBACK");

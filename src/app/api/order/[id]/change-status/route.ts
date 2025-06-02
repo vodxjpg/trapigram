@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
+import { sendNotification } from "@/lib/notifications";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -12,6 +13,8 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const ACTIVE  = ["open", "paid", "completed"];     // stock & points RESERVED
 const INACTIVE = ["cancelled", "failed"];          // stock & points RELEASED
 const orderStatusSchema = z.object({ status: z.string() });
+const FIRST_NOTIFY_STATUSES = ["paid", "completed"] as const;
+
 
 const isActive   = (s: string) => ACTIVE.includes(s);
 const isInactive = (s: string) => INACTIVE.includes(s);
@@ -83,13 +86,19 @@ export async function PATCH(
 
     /* 1️⃣ lock order row */
     const { rows: [ord] } = await client.query(
-      `SELECT status, country, "cartId", "clientId",
+      `SELECT status,
+              country,
+              "cartId",
+              "clientId",
+              "orderKey",
+              "notifiedPaidOrCompleted",               --  ← NEW
               COALESCE("pointsRedeemed",0) AS "pointsRedeemed"
          FROM orders
         WHERE id = $1
           FOR UPDATE`,
       [id]
     );
+    
     if (!ord) {
       await client.query("ROLLBACK");
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
@@ -194,6 +203,53 @@ export async function PATCH(
         WHERE id = $2`,
       [newStatus, id]
     );
+
+
+    /* ───────────────────────────────────────────── */
+/*  Notification (only once)                    */
+/* ───────────────────────────────────────────── */
+const shouldNotify =
+!ord.notifiedPaidOrCompleted &&
+FIRST_NOTIFY_STATUSES.includes(newStatus);
+
+if (shouldNotify) {
+/* build product list */
+const { rows: prodRows } = await client.query(
+  `SELECT cp.quantity, p.title
+     FROM "cartProducts" cp
+     JOIN products p ON p.id = cp."productId"
+    WHERE cp."cartId" = $1`,
+  [ord.cartId]
+);
+
+const productList = prodRows
+  .map(pr => `x${pr.quantity} ${pr.title}`)
+  .join("<br>");
+
+/* send */
+await sendNotification({
+  organizationId,
+  type: "order_ready",
+  subject: `Order #${ord.orderKey} ready`,
+  message: "Your order is now ready:<br>{product_list}",
+  country: ord.country,
+  trigger: "order_status_change",
+  channels: ["email", "in_app", "telegram"],  // <── just add it
+  clientId: ord.clientId,
+  variables: { product_list: productList, order_key: ord.orderKey },
+});
+
+
+/* mark as sent */
+await client.query(
+  `UPDATE orders
+      SET "notifiedPaidOrCompleted" = true,
+          "updatedAt" = NOW()
+    WHERE id = $1`,
+  [id]
+);
+}
+
 
     await client.query("COMMIT");
     return NextResponse.json({ id, status: newStatus });

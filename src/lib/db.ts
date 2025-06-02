@@ -562,6 +562,7 @@ interface DB {
     datePaid: Date;
     dateCompleted: Date;
     dateCancelled: Date;
+    notifiedPaidOrCompleted: boolean;
     createdAt: Date;
     updatedAt: Date;
   }
@@ -612,6 +613,55 @@ interface DB {
     title: string;
     content: string;
     videoUrl: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  notifications: {
+    id: string;
+    organizationId: string;
+    type: string;                    // e.g. 'order_placed'
+    trigger: string | null;          // origin route / event
+    message: string;                 // final text sent
+    channels: string;                // JSON array ['email','in_app',…]
+    country: string | null;
+    targetUserId: string | null;
+    targetClientId: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  notificationTemplates: {
+    id: string;
+    organizationId: string;
+    type: string;                    // same as notifications.type
+    role: "admin" | "user";
+    countries: string; 
+    subject: string | null;
+    message: string;                 // template body – may include {{ }}
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  inAppNotifications: {
+    id: string;
+    organizationId: string;
+    userId: string | null;
+    clientId: string | null;
+    title: string;
+    message: string;
+    country: string | null;
+    read: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
+  notificationGroups: {
+    id: string;
+    groupId:  string;
+    organizationId: string;
+    name: string;
+    countries: string;          // JSON-stringified array ["ES","IT",…]
     createdAt: Date;
     updatedAt: Date;
   };

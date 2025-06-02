@@ -4,7 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
 import { ProfileForm } from "@/components/settings/profile-form"
 import { AccountForm } from "@/components/settings/account-form"
-import { NotificationsForm } from "@/components/settings/notifications-form"
+//import { NotificationsForm } from "@/components/settings/notifications-form"
 import { useEffect } from "react"
 import { ApiKeyGenerator } from "@/components/settings/api-key-input"
 
@@ -29,7 +29,6 @@ export default function SettingsClientPage() {
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="account">Account</TabsTrigger>
           <TabsTrigger value="apikey">API Key Configuration</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
         </TabsList>
         <div className="mt-6">
           <TabsContent value="profile" className="space-y-6">
@@ -40,9 +39,6 @@ export default function SettingsClientPage() {
           </TabsContent>
           <TabsContent value="apikey" className="space-y-6">
             <ApiKeyGenerator />
-          </TabsContent>
-          <TabsContent value="notifications" className="space-y-6">
-            <NotificationsForm />
           </TabsContent>
         </div>
       </Tabs>
