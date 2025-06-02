@@ -5,28 +5,53 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 
-export type NotificationChannel = "email" | "in_app" | "webhook" | "telegram";
-";
+/** ──────────────────────────────────────────────────────────────
+ * Keep this list in sync everywhere (forms, API routes, etc.)
+ * ──────────────────────────────────────────────────────────── */
+export type NotificationType =
+  | "order_placed"
+  | "order_paid"
+  | "order_completed"
+  | "order_ready"
+  | "order_cancelled";          // ← NEW
+
+export type NotificationChannel =
+  | "email"
+  | "in_app"
+  | "webhook"
+  | "telegram";
 
 export interface SendNotificationParams {
   organizationId: string;
-  type: "order_placed";                 // extend as you add more
-  message: string;                      // fallback body
-  subject?: string;                     // fallback subject
-  variables?: Record<string, string>;   // { product_list: …, order_key: … }
+  type: NotificationType;
+  message: string;                                // fallback body
+  subject?: string;                               // fallback subject
+  variables?: Record<string, string>;
   country?: string | null;
   trigger?: string | null;
   channels: NotificationChannel[];
-  userId?: string | null;               // explicit admin/user (optional)
-  clientId?: string | null;             // explicit client (optional)
+  userId?: string | null;                         // explicit admin target
+  clientId?: string | null;                       // explicit user/client target
 }
 
-/* ————————————————— helpers ————————————————— */
+/* ───────────────── helpers ───────────────── */
 const applyVars = (txt: string, vars: Record<string, string>) =>
   Object.entries(vars).reduce(
     (acc, [k, v]) => acc.replace(new RegExp(`{${k}}`, "g"), v),
     txt,
   );
+
+/** HTML → Telegram-safe subset (<b>, <i>, <u>, <s>, <code>, <br>, etc.) */
+const toTelegramHtml = (html: string) =>
+  html
+    .replace(/<\s*p[^>]*>/gi, "")
+    .replace(/<\/\s*p\s*>/gi, "\n")
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\s*strong\s*>/gi, "<b>")
+    .replace(/<\s*\/\s*strong\s*>/gi, "</b>")
+    .replace(/<\s*em\s*>/gi, "<i>")
+    .replace(/<\s*\/\s*em\s*>/gi, "</i>")
+    .trim();
 
 const pickTemplate = (
   role: "admin" | "user",
@@ -38,7 +63,6 @@ const pickTemplate = (
     countries: string;
   }[],
 ) => {
-  // first try exact-country match → then country-agnostic
   const exact = templates.find((t) => {
     if (t.role !== role) return false;
     const arr: string[] = Array.isArray(t.countries)
@@ -48,10 +72,12 @@ const pickTemplate = (
   });
   if (exact) return exact;
 
-  return templates.find((t) => t.role === role && JSON.parse(t.countries || "[]").length === 0);
+  return templates.find(
+    (t) => t.role === role && JSON.parse(t.countries || "[]").length === 0,
+  );
 };
 
-/* ————————————————— main dispatcher ————————————————— */
+/* ───────────────── main dispatcher ───────────────── */
 export async function sendNotification(params: SendNotificationParams) {
   const {
     organizationId,
@@ -66,9 +92,7 @@ export async function sendNotification(params: SendNotificationParams) {
     clientId = null,
   } = params;
 
-  /* ------------------------------------------------------------ */
-  /* 1. Fetch ALL templates for this org/type (both roles)        */
-  /* ------------------------------------------------------------ */
+  /* 1️⃣ templates */
   const templates = await db
     .selectFrom("notificationTemplates")
     .select(["role", "subject", "message", "countries"])
@@ -79,22 +103,21 @@ export async function sendNotification(params: SendNotificationParams) {
   const tplUser  = pickTemplate("user",  country, templates);
   const tplAdmin = pickTemplate("admin", country, templates);
 
-  /* ------------------------------------------------------------ */
-  /* 2. Build subjects & bodies                                   */
-  /* ------------------------------------------------------------ */
+  const hasUserTpl  = !!tplUser;
+  const hasAdminTpl = !!tplAdmin;
+
+  /* 2️⃣ subjects & bodies (with variable substitution) */
   const subjectUser  = (tplUser?.subject  || subject || type).trim().replace(/_/g, " ");
   const subjectAdmin = (tplAdmin?.subject || subject || type).trim().replace(/_/g, " ");
 
   const bodyUser  = applyVars(tplUser?.message  || message, variables);
   const bodyAdmin = applyVars(tplAdmin?.message || message, variables);
 
-  /* ------------------------------------------------------------ */
-  /* 3. Resolve e-mail recipients                                 */
-  /* ------------------------------------------------------------ */
+  /* 3️⃣ e-mail targets */
   const adminEmails: string[] = [];
-  const userEmails: string[]  = [];
+  const userEmails:  string[] = [];
 
-  /* explicit userId gets classified as admin                     */
+  /* explicit admin */
   if (userId) {
     const u = await db
       .selectFrom("user")
@@ -104,7 +127,7 @@ export async function sendNotification(params: SendNotificationParams) {
     if (u?.email) adminEmails.push(u.email);
   }
 
-  /* owners of the organization (member table)                    */
+  /* owners */
   const ownerRows = await db
     .selectFrom("member")
     .select(["userId"])
@@ -121,17 +144,18 @@ export async function sendNotification(params: SendNotificationParams) {
     owners.forEach((o) => o.email && adminEmails.push(o.email));
   }
 
-  /* client / end-user                                            */
+  /* client */
+  let clientRow: { email: string | null; userId: string | null } | null = null;
   if (clientId) {
-    const c = await db
+    clientRow = await db
       .selectFrom("clients")
-      .select(["email"])
+      .select(["email", "userId"])
       .where("id", "=", clientId)
       .executeTakeFirst();
-    if (c?.email) userEmails.push(c.email);
+    if (clientRow?.email) userEmails.push(clientRow.email);
   }
 
-  /* last-resort: org support address (acts like admin)           */
+  /* fallback support e-mail */
   if (!adminEmails.length) {
     const sup = await db
       .selectFrom("organizationSupportEmail")
@@ -144,9 +168,7 @@ export async function sendNotification(params: SendNotificationParams) {
     if (sup?.email) adminEmails.push(sup.email);
   }
 
-  /* ------------------------------------------------------------ */
-  /* 4. Persist master log                                        */
-  /* ------------------------------------------------------------ */
+  /* 4️⃣ master log */
   await db
     .insertInto("notifications")
     .values({
@@ -154,7 +176,7 @@ export async function sendNotification(params: SendNotificationParams) {
       organizationId,
       type,
       trigger,
-      message: bodyUser,           // store *some* body – user one is fine
+      message: bodyUser,
       channels: JSON.stringify(channels),
       country,
       targetUserId: userId,
@@ -164,17 +186,27 @@ export async function sendNotification(params: SendNotificationParams) {
     })
     .execute();
 
-  /* ------------------------------------------------------------ */
-  /* 5. Fan-out by channel                                        */
-  /* ------------------------------------------------------------ */
+  /* 5️⃣ channel fan-out — respect template presence */
+  /* — EMAIL — */
   if (channels.includes("email")) {
-    await Promise.all([
-      ...adminEmails.map((addr) => sendEmail({ to: addr, subject: subjectAdmin, text: bodyAdmin })),
-      ...userEmails.map((addr) => sendEmail({ to: addr, subject: subjectUser,  text: bodyUser  })),
-    ]);
+    const promises: Promise<unknown>[] = [];
+    if (hasAdminTpl)
+      promises.push(
+        ...adminEmails.map((addr) =>
+          sendEmail({ to: addr, subject: subjectAdmin, text: bodyAdmin }),
+        ),
+      );
+    if (hasUserTpl)
+      promises.push(
+        ...userEmails.map((addr) =>
+          sendEmail({ to: addr, subject: subjectUser, text: bodyUser }),
+        ),
+      );
+    await Promise.all(promises);
   }
 
-  if (channels.includes("in_app")) {
+  /* — IN-APP (only if a user template exists) — */
+  if (channels.includes("in_app") && hasUserTpl) {
     await dispatchInApp({
       organizationId,
       userId,
@@ -184,22 +216,26 @@ export async function sendNotification(params: SendNotificationParams) {
     });
   }
 
+  /* — WEBHOOK — always fires */
   if (channels.includes("webhook")) {
     await dispatchWebhook({ organizationId, type, message: bodyUser });
   }
 
+  /* — TELEGRAM — */
   if (channels.includes("telegram")) {
-     await dispatchTelegram({
-       organizationId,
-       clientId,
-       country,
-       bodyUser,
-       bodyAdmin,
-     });
-    }
+    await dispatchTelegram({
+      organizationId,
+      type,
+      country,
+      bodyAdmin: hasAdminTpl ? bodyAdmin : "",
+      bodyUser: hasUserTpl ? bodyUser : "",
+      adminUserIds: [],             // owners reach via groups
+      clientUserId: clientRow?.userId || null,
+    });
+  }
 }
 
-/* ————————— in-app & webhook (unchanged) ————————— */
+/* ───────── in-app & webhook helpers (unchanged) ───────── */
 async function dispatchInApp(opts: {
   organizationId: string;
   userId: string | null;
@@ -250,60 +286,76 @@ async function dispatchWebhook(opts: {
 
 async function dispatchTelegram(opts: {
   organizationId: string;
-  clientId: string | null;
+  type: string;
   country: string | null;
-  bodyUser: string;
   bodyAdmin: string;
+  bodyUser: string;
+  adminUserIds: string[];
+  clientUserId: string | null;
 }) {
-  const { organizationId, clientId, country, bodyUser, bodyAdmin } = opts;
-  const BOT = process.env.TG_BOT_TOKEN!;
-  if (!BOT) return;                    // skip if token not set
+  const {
+    organizationId,
+    country,
+    bodyAdmin,
+    bodyUser,
+    adminUserIds,
+    clientUserId,
+  } = opts;
 
-  /* ── 1) private DM to the client ── */
-  if (clientId) {
-    const c = await db
-      .selectFrom("clients")
-      .select(["userId"])
-      .where("id", "=", clientId)
-      .executeTakeFirst();
-    if (c?.userId)
-      await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: c.userId,
-          text: bodyUser.replace(/<br>/g, "\n"),
-          parse_mode: "HTML",
-        }),
-      });
-  }
+  /* 1. bot token */
+  const row = await db
+    .selectFrom("organizationPlatformKey")
+    .select(["apiKey"])
+    .where("organizationId", "=", organizationId)
+    .where("platform", "=", "telegram")
+    .executeTakeFirst();
+  if (!row) return;
 
-  /* ── 2) country-matching groups ── */
-  const rows = await db
+  const BOT = `https://api.telegram.org/bot${row.apiKey}/sendMessage`;
+
+  /* 2. groups */
+  const groupRows = await db
     .selectFrom("notificationGroups")
     .select(["groupId", "countries"])
     .where("organizationId", "=", organizationId)
     .execute();
 
+  const groupIds = groupRows
+    .filter((g) => {
+      const arr: string[] = Array.isArray(g.countries)
+        ? (g.countries as unknown as string[])
+        : JSON.parse(g.countries || "[]");
+      return country ? arr.includes(country) : true;
+    })
+    .map((g) => g.groupId);
+
+  /* 3. targets (skip roles w/o template) */
+  const targets: { chatId: string; text: string }[] = [];
+
+  if (bodyAdmin.trim()) {
+    const safeAdmin = toTelegramHtml(bodyAdmin);
+    targets.push(
+      ...adminUserIds.map((id) => ({ chatId: id, text: safeAdmin })),
+      ...groupIds.map((id) => ({ chatId: id, text: safeAdmin })),
+    );
+  }
+
+  if (clientUserId && bodyUser.trim()) {
+    targets.push({ chatId: clientUserId, text: toTelegramHtml(bodyUser) });
+  }
+
   await Promise.all(
-    rows
-      .filter((r) => {
-        const arr: string[] = Array.isArray(r.countries)
-          ? (r.countries as unknown as string[])
-          : JSON.parse(r.countries || "[]");
-        return country ? arr.includes(country) : true;
-      })
-      .map((r) =>
-        fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: r.groupId,
-            text: bodyAdmin.replace(/<br>/g, "\n"),
-            parse_mode: "HTML",
-          }),
+    targets.map((t) =>
+      fetch(BOT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: t.chatId,
+          text: t.text,
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
         }),
-      ),
+      }).catch(() => null),
+    ),
   );
 }
-

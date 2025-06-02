@@ -4,12 +4,23 @@ import { z } from "zod";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { db } from "@/lib/db";
+import type { NotificationType } from "@/lib/notifications";
 
-const NOTIF_TYPES = ["order_placed"] as const;
+// Keep this list in sync with NotificationType (imported above)
+const NOTIF_TYPES: Readonly<NotificationType[]> = [
+  "order_placed",
+  "order_paid",
+  "order_completed",
+  "order_ready",
+  "order_cancelled",   // ← NEW
+] as const;
+
 const createSchema = z.object({
   type: z.enum(NOTIF_TYPES),
   role: z.enum(["admin", "user"]),
-  countries: z.array(z.string().length(2)).min(1, "Select at least one country"),
+  countries: z
+    .array(z.string().length(2))
+    .min(1, "Select at least one country"),
   subject: z.string().min(1),
   message: z.string().min(1),
 });
@@ -27,7 +38,9 @@ export async function GET(req: NextRequest) {
   /* parse to array for client */
   const parsed = rows.map((r) => ({
     ...r,
-    countries: Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]"),
+    countries: Array.isArray(r.countries)
+      ? r.countries
+      : JSON.parse(r.countries || "[]"),
   }));
 
   return NextResponse.json(parsed, { status: 200 });

@@ -25,6 +25,17 @@ import en from "i18n-iso-countries/langs/en.json";
 import { getCountries } from "libphonenumber-js";
 import ReactCountryFlag from "react-country-flag";
 
+/* ──────────────────────────────────────────────────────────────
+ * Constants must stay in sync with backend NotificationType union
+ * ────────────────────────────────────────────────────────────── */
+const NOTIF_TYPES = [
+  "order_placed",
+  "order_paid",
+  "order_completed",
+  "order_ready",
+  "order_cancelled",  // ← NEW
+] as const;
+
 countriesLib.registerLocale(en);
 const allCountries = getCountries().map((c) => ({
   code: c,
@@ -35,17 +46,19 @@ const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
 import "react-quill-new/dist/quill.snow.css";
 
 /* -------------------- schema -------------------- */
-const NOTIF_TYPES = ["order_placed"] as const;
 const schema = z.object({
   type: z.enum(NOTIF_TYPES, { errorMap: () => ({ message: "Select a type" }) }),
   role: z.enum(["admin", "user"]),
-  countries: z.array(z.string().length(2)).min(1, "Select at least one country"),
+  countries: z
+    .array(z.string().length(2))
+    .min(1, "Select at least one country"),
   subject: z.string().min(1, "Subject is required"),
   message: z.string().min(1, "Body is required"),
 });
+
 type FormValues = z.infer<typeof schema>;
 
-type Props = { id?: string; initial?: any | null }; // `any` to accept the raw record
+type Props = { id?: string; initial?: any | null };
 
 /* -------------------- component -------------------- */
 export function NotificationTemplateForm({ id, initial }: Props) {
@@ -72,14 +85,18 @@ export function NotificationTemplateForm({ id, initial }: Props) {
   useEffect(() => {
     if (!initial) return;
     const countries =
-      Array.isArray(initial.countries) ? initial.countries : JSON.parse(initial.countries || "[]");
+      Array.isArray(initial.countries)
+        ? initial.countries
+        : JSON.parse(initial.countries || "[]");
     form.reset({ ...initial, countries });
   }, [initial, form]);
 
   /* ---------- fetch organisation countries ---------- */
   useEffect(() => {
     fetch("/api/organizations/countries", {
-      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+      },
     })
       .then((r) => {
         if (!r.ok) throw new Error("Failed to fetch organization countries");
@@ -97,7 +114,7 @@ export function NotificationTemplateForm({ id, initial }: Props) {
           })),
         );
       })
-      .catch((err) => toast.error(err.message));
+      .catch((err) => toast.error((err as Error).message));
   }, []);
 
   /* ---------- submit ---------- */
@@ -148,7 +165,11 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                   <FormLabel>Notification Type *</FormLabel>
                   <FormControl>
                     <select {...field} className="border rounded p-2">
-                      <option value="order_placed">order_placed</option>
+                      {NOTIF_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
                     </select>
                   </FormControl>
                   <FormMessage />
@@ -187,7 +208,7 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                       options={countryOptions}
                       placeholder="Select country(s)"
                       value={countryOptions.filter((o) => field.value.includes(o.value))}
-                      onChange={(opts) => field.onChange(opts.map((o: any) => o.value))}
+                      onChange={(opts) => field.onChange((opts as any[]).map((o) => o.value))}
                       formatOptionLabel={(o: { value: string; label: string }) => (
                         <div className="flex items-center gap-2">
                           <ReactCountryFlag countryCode={o.value} svg style={{ width: 20 }} />
@@ -239,7 +260,13 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                 Cancel
               </Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? (isEditing ? "Updating…" : "Creating…") : isEditing ? "Update" : "Create"}
+                {submitting
+                  ? isEditing
+                    ? "Updating…"
+                    : "Creating…"
+                  : isEditing
+                  ? "Update"
+                  : "Create"}
               </Button>
             </div>
           </form>

@@ -6,17 +6,17 @@ import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
 import { sendNotification } from "@/lib/notifications";
+import type { NotificationType } from "@/lib/notifications";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* ───────── helpers ───────── */
-const ACTIVE  = ["open", "paid", "completed"];     // stock & points RESERVED
-const INACTIVE = ["cancelled", "failed"];          // stock & points RELEASED
+const ACTIVE = ["open", "paid", "completed"];
+const INACTIVE = ["cancelled", "failed"];
 const orderStatusSchema = z.object({ status: z.string() });
 const FIRST_NOTIFY_STATUSES = ["paid", "completed"] as const;
 
-
-const isActive   = (s: string) => ACTIVE.includes(s);
+const isActive = (s: string) => ACTIVE.includes(s);
 const isInactive = (s: string) => INACTIVE.includes(s);
 
 /**
@@ -27,11 +27,16 @@ const isInactive = (s: string) => INACTIVE.includes(s);
  */
 async function applyItemEffects(
   c: Pool,
-  effectSign: 1 | -1,          // +1 refund || -1 charge
+  effectSign: 1 | -1,
   country: string,
   organizationId: string,
   clientId: string,
-  item: { productId: string | null; affiliateProductId: string | null; quantity: number; unitPrice: number; },
+  item: {
+    productId: string | null;
+    affiliateProductId: string | null;
+    quantity: number;
+    unitPrice: number;
+  },
   actionForLog: string,
   descrForLog: string,
 ) {
@@ -206,50 +211,54 @@ export async function PATCH(
 
 
     /* ───────────────────────────────────────────── */
-/*  Notification (only once)                    */
-/* ───────────────────────────────────────────── */
+    /*  Notification (only once)                    */
+    /* ───────────────────────────────────────────── */
 const shouldNotify =
-!ord.notifiedPaidOrCompleted &&
-FIRST_NOTIFY_STATUSES.includes(newStatus);
+      !ord.notifiedPaidOrCompleted && FIRST_NOTIFY_STATUSES.includes(newStatus as typeof FIRST_NOTIFY_STATUSES[number]);
 
-if (shouldNotify) {
-/* build product list */
-const { rows: prodRows } = await client.query(
-  `SELECT cp.quantity, p.title
-     FROM "cartProducts" cp
-     JOIN products p ON p.id = cp."productId"
-    WHERE cp."cartId" = $1`,
-  [ord.cartId]
-);
+    if (shouldNotify) {
+      /* build product list */
+      const { rows: prodRows } = await client.query(
+        `SELECT cp.quantity, p.title
+           FROM "cartProducts" cp
+           JOIN products p ON p.id = cp."productId"
+          WHERE cp."cartId" = $1`,
+        [ord.cartId],
+      );
 
-const productList = prodRows
-  .map(pr => `x${pr.quantity} ${pr.title}`)
-  .join("<br>");
+      const productList = prodRows
+        .map((pr) => `x${pr.quantity} ${pr.title}`)
+        .join("<br>");
 
-/* send */
-await sendNotification({
-  organizationId,
-  type: "order_ready",
-  subject: `Order #${ord.orderKey} ready`,
-  message: "Your order is now ready:<br>{product_list}",
-  country: ord.country,
-  trigger: "order_status_change",
-  channels: ["email", "in_app", "telegram"],  // <── just add it
-  clientId: ord.clientId,
-  variables: { product_list: productList, order_key: ord.orderKey },
-});
+      /* choose dynamic notification type */
+      const notifType: NotificationType =
+        newStatus === "paid"
+          ? "order_paid"
+          : newStatus === "completed"
+          ? "order_completed"
+          : "order_ready"; // fallback – shouldn’t happen
 
+      await sendNotification({
+        organizationId,
+        type: notifType,
+        subject: `Order #${ord.orderKey} ${newStatus}`,
+        message: "Your order status is now <b>" + newStatus + "</b><br>{product_list}",
+        country: ord.country,
+        trigger: "order_status_change",
+        channels: ["email", "in_app", "telegram"],
+        clientId: ord.clientId,
+        variables: { product_list: productList, order_key: ord.orderKey },
+      });
 
-/* mark as sent */
-await client.query(
-  `UPDATE orders
-      SET "notifiedPaidOrCompleted" = true,
-          "updatedAt" = NOW()
-    WHERE id = $1`,
-  [id]
-);
-}
-
+      /* mark as sent */
+      await client.query(
+        `UPDATE orders
+            SET "notifiedPaidOrCompleted" = true,
+                "updatedAt" = NOW()
+          WHERE id = $1`,
+        [id],
+      );
+    }
 
     await client.query("COMMIT");
     return NextResponse.json({ id, status: newStatus });
