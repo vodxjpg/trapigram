@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
     `;
     const resultCart = await pool.query(activeCartQ, [clientId]);
     const cart = resultCart.rows[0];
+    console.log(cart)
 
     if (cart) {
       return NextResponse.json({ newCart: cart }, { status: 201 });

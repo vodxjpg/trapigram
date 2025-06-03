@@ -32,25 +32,25 @@ function encryptSecretNode(plain: string): string {
 /* ------------------------------------------------------------------ */
 const orderSchema = z.object({
   organization: z.string(),
-  clientId:      z.string().uuid(),
-  cartId:        z.string().uuid(),
-  country:       z.string().length(2),
+  clientId: z.string().uuid(),
+  cartId: z.string().uuid(),
+  country: z.string().length(2),
   paymentMethod: z.string().min(1),
-  shippingAmount:            z.coerce.number().min(0),
-  shippingMethodTitle:       z.string(),
+  shippingAmount: z.coerce.number().min(0),
+  shippingMethodTitle: z.string(),
   shippingMethodDescription: z.string(),
   discountAmount: z.coerce.number().min(0),
-  totalAmount:    z.coerce.number().min(0),
-  subtotal:       z.coerce.number().min(0),
-  couponCode:     z.string().nullable().optional(),
-  couponType:     z.string().nullable().optional(),
-  counponType:    z.string().nullable().optional(), // legacy typo
+  totalAmount: z.coerce.number().min(0),
+  subtotal: z.coerce.number().min(0),
+  couponCode: z.string().nullable().optional(),
+  couponType: z.string().nullable().optional(),
+  counponType: z.string().nullable().optional(), // legacy typo
   shippingCompany: z.string().nullable().optional(),
-  address:        z.string().min(1),
+  address: z.string().min(1),
   trackingNumber: z.string().nullable().optional(),
-  discountValue:           z.coerce.number().min(0),
-  pointsRedeemed:          z.coerce.number().min(0).optional(),
-  pointsRedeemedAmount:    z.coerce.number().min(0).optional(),
+  discountValue: z.coerce.number().min(0),
+  pointsRedeemed: z.coerce.number().min(0).optional(),
+  pointsRedeemedAmount: z.coerce.number().min(0).optional(),
 });
 type OrderPayload = z.infer<typeof orderSchema>;
 
@@ -62,8 +62,8 @@ export async function GET(req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
   const { searchParams } = new URL(req.url);
-  const filterOrderKey  = searchParams.get("orderKey");
-  const filterClientId  = searchParams.get("clientId");
+  const filterOrderKey = searchParams.get("orderKey");
+  const filterClientId = searchParams.get("clientId");
 
   try {
     /* 1) Single order ------------------------------------------------- */
@@ -91,16 +91,16 @@ export async function GET(req: NextRequest) {
       `;
       const r = await pool.query(sql, [organizationId, filterClientId]);
       const orders = r.rows.map(o => ({
-        id:             o.id,
-        orderKey:       o.orderKey,
-        status:         o.status,
-        createdAt:      o.createdAt,
-        total:          Number(o.totalAmount),
+        id: o.id,
+        orderKey: o.orderKey,
+        status: o.status,
+        createdAt: o.createdAt,
+        total: Number(o.totalAmount),
         trackingNumber: o.trackingNumber,
-        firstName:      o.firstName,
-        lastName:       o.lastName,
-        username:       o.username,
-        email:          o.email,
+        firstName: o.firstName,
+        lastName: o.lastName,
+        username: o.username,
+        email: o.email,
       }));
       return NextResponse.json(orders, { status: 200 });
     }
@@ -114,16 +114,16 @@ export async function GET(req: NextRequest) {
     `;
     const r = await pool.query(listSql, [organizationId]);
     const orders = r.rows.map(o => ({
-      id:             o.id,
-      orderKey:       o.orderKey,
-      status:         o.status,
-      createdAt:      o.createdAt,
-      total:          Number(o.totalAmount),
+      id: o.id,
+      orderKey: o.orderKey,
+      status: o.status,
+      createdAt: o.createdAt,
+      total: Number(o.totalAmount),
       trackingNumber: o.trackingNumber,
-      firstName:      o.firstName,
-      lastName:       o.lastName,
-      username:       o.username,
-      email:          o.email,
+      firstName: o.firstName,
+      lastName: o.lastName,
+      username: o.username,
+      email: o.email,
     }));
     return NextResponse.json(orders, { status: 200 });
   } catch (err) {
@@ -142,7 +142,7 @@ export async function POST(req: NextRequest) {
   let payload: OrderPayload;
   try {
     const body = await req.json();
-    body.organization  = organizationId;
+    body.organization = organizationId;
     body.totalAmount = body.subtotal - body.discountAmount - (body.pointsRedeemedAmount ?? 0) + body.shippingAmount;
     const normalRows = await pool.query(
       `SELECT cp.quantity, cp."unitPrice"
@@ -153,14 +153,14 @@ export async function POST(req: NextRequest) {
     );
     const monetarySubtotal = normalRows.rows
       .reduce((acc, r) => acc + Number(r.unitPrice) * r.quantity, 0);
-      const discountAmt  = Number(body.discountAmount ?? 0);
-      const pointsAmt    = Number(body.pointsRedeemedAmount ?? 0);
-      const shippingAmt  = Number(body.shippingAmount ?? 0);
-      body.subtotal    = monetarySubtotal;
+    const discountAmt = Number(body.discountAmount ?? 0);
+    const pointsAmt = Number(body.pointsRedeemedAmount ?? 0);
+    const shippingAmt = Number(body.shippingAmount ?? 0);
+    body.subtotal = monetarySubtotal;
     body.totalAmount = monetarySubtotal
-                     - discountAmt
-                     - pointsAmt
-                     + shippingAmt;
+      - discountAmt
+      - pointsAmt
+      + shippingAmt;
     console.log(
       "🧮  Calculated totalAmount:",
       body.subtotal,
@@ -195,7 +195,7 @@ export async function POST(req: NextRequest) {
     trackingNumber = null,
     subtotal,
     discountValue,
-    pointsRedeemed       = 0,
+    pointsRedeemed = 0,
     pointsRedeemedAmount = 0,
   } = payload;
   const couponTypeResolved = couponType ?? counponType ?? null;
@@ -208,9 +208,9 @@ export async function POST(req: NextRequest) {
   const orderKey = String(Number(seq.rows[0].seq)).padStart(3, "0");
 
   const encryptedAddress = encryptSecretNode(address);
-  const shippingMethod   = `${shippingMethodTitle} - ${shippingMethodDescription}`;
-  const orderStatus      = "open";
-  const cartStatus       = false;
+  const shippingMethod = `${shippingMethodTitle} - ${shippingMethodDescription}`;
+  const orderStatus = "open";
+  const cartStatus = false;
 
   const baseValues: unknown[] = [
     orderId, organization, clientId, cartId, country, paymentMethod,
@@ -242,7 +242,7 @@ export async function POST(req: NextRequest) {
     RETURNING *
   `;
 
-  const updCartSQL  = `
+  const updCartSQL = `
     UPDATE carts SET status = $1, "updatedAt" = NOW(), "cartHash" = $2 WHERE id = $3
   `;
   const updCartVals = [cartStatus, cartHash, cartId];
@@ -259,10 +259,10 @@ export async function POST(req: NextRequest) {
       WHERE  cp."cartId" = $1
     `;
     const { rows: cartLines } = await pool.query(lineSql, [cartId]);
-    
+
     for (const ln of cartLines) {
-      if (!ln.manageStock) continue;                
-      let qtyLeft = ln.quantity;   
+      if (!ln.manageStock) continue;
+      let qtyLeft = ln.quantity;
       /* fetch every stock row that can serve this country            */
       const { rows: whRows } = await pool.query(
         `SELECT id, quantity
@@ -274,7 +274,7 @@ export async function POST(req: NextRequest) {
           FOR UPDATE`,
         [ln.productId, country],
       );
-    
+
       for (const wh of whRows) {
         const take = Math.min(wh.quantity, qtyLeft);
         await pool.query(
@@ -287,7 +287,7 @@ export async function POST(req: NextRequest) {
         qtyLeft -= take;
         if (qtyLeft === 0) break;
       }
-    
+
       /* not enough units and back-orders are disabled → abort */
       if (qtyLeft > 0 && !ln.allowBackorders) {
         await pool.query("ROLLBACK");
@@ -300,6 +300,16 @@ export async function POST(req: NextRequest) {
     /* =============================================================== */
     const r = await pool.query(insertSQL, insertValues);
     await pool.query("COMMIT");
+
+    const sharedprds = await pool.query(`SELECT * FROM "cartProducts" WHERE "cartId" = '${cartId}'`)
+    const isShared = sharedprds.rows.map(async (prd) => {
+      console.log(prd)
+      const shared = await pool.query(`SELECT * FROM "sharedProduct" WHERE "productId" = '${prd.productId}'`)
+      return shared
+    })
+    const holis = await Promise.all(isShared)
+    console.log(holis.rows)
+
     return NextResponse.json(r.rows[0], { status: 201 });
   } catch (err) {
     await pool.query("ROLLBACK");
