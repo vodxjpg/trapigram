@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 
+
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* ------------------------------------------------------------------ */
@@ -301,6 +302,7 @@ export async function POST(req: NextRequest) {
     const r = await pool.query(insertSQL, insertValues);
     await pool.query("COMMIT");
 
+<<<<<<< HEAD
     const sharedprds = await pool.query(`SELECT * FROM "cartProducts" WHERE "cartId" = '${cartId}'`)
     const isShared = sharedprds.rows.map(async (prd) => {
       console.log(prd)
@@ -309,6 +311,9 @@ export async function POST(req: NextRequest) {
     })
     const holis = await Promise.all(isShared)
     console.log(holis.rows)
+=======
+   
+>>>>>>> d670d89ef3f868c4fcddbb77ec18995b962b86a5
 
     return NextResponse.json(r.rows[0], { status: 201 });
   } catch (err) {

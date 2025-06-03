@@ -173,7 +173,7 @@ export function NavUser() {
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
-                <Link href="/notifications" className="flex items-center">
+                <Link href="/notification-templates" className="flex items-center">
                   <IconNotification className="mr-2 h-4 w-4" />
                   <span>Notifications</span>
                 </Link>
