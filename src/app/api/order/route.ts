@@ -302,18 +302,127 @@ export async function POST(req: NextRequest) {
     const r = await pool.query(insertSQL, insertValues);
     await pool.query("COMMIT");
 
-<<<<<<< HEAD
-    const sharedprds = await pool.query(`SELECT * FROM "cartProducts" WHERE "cartId" = '${cartId}'`)
-    const isShared = sharedprds.rows.map(async (prd) => {
-      console.log(prd)
-      const shared = await pool.query(`SELECT * FROM "sharedProduct" WHERE "productId" = '${prd.productId}'`)
-      return shared
-    })
-    const holis = await Promise.all(isShared)
-    console.log(holis.rows)
-=======
-   
->>>>>>> d670d89ef3f868c4fcddbb77ec18995b962b86a5
+    if (r.rows[0]) {
+
+      const oldOrder = await pool.query(`SELECT * FROM "orders" WHERE id = '${r.rows[0].id}'`)
+      const oldCart = await pool.query(`SELECT * FROM "carts" WHERE id = '${oldOrder.rows[0].cartId}'`)
+      const oldCartProduct = await pool.query(`SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}'`)
+      const oldClient = await pool.query(`SELECT * FROM "clients" WHERE "id" = '${oldOrder.rows[0].clientId}'`)
+
+      const oneProducts = oldCartProduct.rows
+
+      const array: {
+        organizationId: string
+        productId: string
+      }[] = []
+
+      let newOrganization = ""
+
+      for (let i = 0; i < oneProducts.length; i++) {
+        const two = await pool.query(`SELECT * FROM "sharedProductMapping" WHERE "targetProductId" = '${oneProducts[i].productId}'`)
+        if (two.rows[0]) {
+          const orgTwo = await pool.query(`SELECT "organizationId" FROM "products" WHERE "id" = '${two.rows[0].sourceProductId}'`)
+          newOrganization = orgTwo.rows[0].organizationId
+
+          array.push({
+            organizationId: newOrganization,
+            productId: two.rows[0].sourceProductId
+          })
+        }
+      }
+
+      if (array.length > 0) {
+        const groupedMap = array.reduce<Record<string, string[]>>((acc, { organizationId, productId }) => {
+          if (!acc[organizationId]) {
+            acc[organizationId] = []
+          }
+          acc[organizationId].push(productId)
+          return acc
+        }, {})
+
+        const groupedArray = Object.entries(groupedMap).map(([organizationId, productIds]) => ({
+          organizationId,
+          productIds
+        }))
+
+        let subtotal = 0
+
+        for (let i = 0; i < groupedArray.length; i++) {
+
+          const newCartId = uuidv4()
+          const newStatus = false
+
+          const newCart = await pool.query(`INSERT INTO "carts" (id, "clientId", country, "shippingMethod", status, "organizationId", "createdAt", "updatedAt") 
+          VALUES ('${newCartId}', '${oldCart.rows[0].clientId}', '${oldCart.rows[0].country}', '${oldCart.rows[0].shippingMethod}', ${newStatus}, '${groupedArray[i].organizationId}', NOW(), NOW()) 
+          RETURNING *`)
+          await pool.query("COMMIT");
+
+          for (let j = 0; j < groupedArray[i].productIds.length; j++) {
+
+            const product = await pool.query(`SELECT * FROM "products" WHERE id = '${groupedArray[i].productIds[j]}'`)
+            const oldCartProductInfo = await pool.query(`SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}' AND "productId" = '${oneProducts[i].productId}'`)
+
+            const newCPId = uuidv4()
+
+            const newCartProduct = await pool.query(`INSERT INTO "cartProducts" (id, "cartId", "productId", "quantity", "unitPrice", "affiliateProductId")
+            VALUES ('${newCPId}', '${newCartId}', '${groupedArray[i].productIds[j]}', ${oldCartProductInfo.rows[0].quantity}, ${product.rows[0].cost[oldCart.rows[0].country]}, ${oldCartProductInfo.rows[0].affiliateProductId})
+            RETURNING *`)
+            await pool.query("COMMIT");
+
+            subtotal = product.rows[0].cost[oldCart.rows[0].country] + subtotal
+
+          }
+
+
+          const newClientId = uuidv4()
+          const newClient = await pool.query(`INSERT INTO "clients" (id, "userId", "organizationId", username, "firstName", "lastName", email, "phoneNumber", country, "createdAt", "updatedAt")
+            VALUES ('${newClientId}', '${oldClient.rows[0].userId}', '${newOrganization}', '${oldClient.rows[0].username}', '${oldClient.rows[0].firstName}','${oldClient.rows[0].lastName}', '${oldClient.rows[0].email}', '${oldClient.rows[0].phoneNumber}', '${oldClient.rows[0].country}', NOW(), NOW())
+            RETURNING *`)
+
+          await pool.query("COMMIT");
+
+          const newOrderId = uuidv4()
+          const orderKey = String(Number(seq.rows[0].seq)).padStart(3, "0");
+          const newOrder = `
+          INSERT INTO orders
+            (id, "organizationId","clientId","cartId",country,"paymentMethod",
+            "shippingTotal", "totalAmount","shippingService","shippingMethod",
+            address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
+            "dateCreated","createdAt","updatedAt","orderKey", "discountTotal")
+          VALUES
+            ($1, $2, $3, $4,$5, $6,
+            $7, $8, $9,
+            $10, $11, $12, $13,
+            $14,$15,
+            NOW(),NOW(),NOW(),$16, $17)
+          RETURNING *
+        `;
+
+          const newOrderValues = [
+            newOrderId,
+            groupedArray[i].organizationId,
+            newClientId,
+            newCartId,
+            oldCart.rows[0].country,
+            oldOrder.rows[0].paymentMethod,
+            oldOrder.rows[0].shippingTotal,
+            oldOrder.rows[0].shippingTotal + subtotal,
+            oldOrder.rows[0].shippingService,
+            oldOrder.rows[0].shippingMethod,
+            oldOrder.rows[0].address,
+            oldOrder.rows[0].status,
+            subtotal,
+            oldOrder.rows[0].pointsRedeemed,
+            oldOrder.rows[0].pointsRedeemedAmount,
+            orderKey,
+            0
+          ]
+
+          const newOrderResult = await pool.query(newOrder, newOrderValues)
+        }
+      }
+
+    }
 
     return NextResponse.json(r.rows[0], { status: 201 });
   } catch (err) {
