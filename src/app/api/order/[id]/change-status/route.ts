@@ -14,7 +14,13 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const ACTIVE   = ["open", "paid", "completed"]; // stock & points RESERVED
 const INACTIVE = ["cancelled", "failed", "refunded"];      // stock & points RELEASED
 const orderStatusSchema        = z.object({ status: z.string() });
-
+/* record-the-date helper */
+const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
+  paid:       "datePaid",
+  completed:  "dateCompleted",
+  cancelled:  "dateCancelled",
+  refunded:   "dateCancelled",   // choose whatever fits your flow
+};
 /**
  * Statuses that should trigger exactly one notification per order
  * life-cycle – “paid” & “completed“ behave as before.
@@ -211,13 +217,26 @@ export async function PATCH(
     }
 
     /* 6️⃣ finally update order status */
+    const dateCol = DATE_COL_FOR_STATUS[newStatus];
+
+    /* build the dynamic SET-clause */
+    const sets: string[] = [
+      `status = $1`,
+      `"updatedAt" = NOW()`,
+    ];
+    if (dateCol) {
+      sets.splice(1, 0, `"${dateCol}" = COALESCE("${dateCol}", NOW())`);
+      // COALESCE keeps an existing timestamp if it was already set
+    }
+
     await client.query(
       `UPDATE orders
-          SET status = $1,
-              "updatedAt" = NOW()
+          SET ${sets.join(", ")}
         WHERE id = $2`,
       [newStatus, id],
     );
+
+
 
     /* ─────────────────────────────────────────────
      *  Notification logic
