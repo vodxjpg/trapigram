@@ -69,15 +69,12 @@ export function ApiKeyGenerator() {
       if (error) {
         toast.error(error.message || "Failed to generate API key.");
       } else if (data) {
-        setApiKey(data.key); // Show full key temporarily
+        // Keep both in state permanently
+        setApiKey(data.key);
         setCurrentKeyId(data.id);
         setFullKeys((prev) => ({ ...prev, [data.id]: data.key }));
         await fetchApiKeys();
         toast.success("API key generated successfully!");
-        // Clear inputs
-        setApiKey("");
-        setApiKeyName("");
-        setCurrentKeyId(null);
       }
     } catch (err) {
       toast.error("An unexpected error occurred while generating API key.");
