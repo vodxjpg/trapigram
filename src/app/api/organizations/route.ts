@@ -7,10 +7,9 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const SERVICE_API_KEY = process.env.SERVICE_API_KEY ?? "";
 
 export async function GET(req: NextRequest) {
-  /* 1 — check for the service API-key */
   const isService = req.headers.get("x-api-key") === SERVICE_API_KEY;
 
-  /* 2 — Service account ⇒ return **all** organisations */
+  // Service account: return all orgs with member counts
   if (isService) {
     try {
       const { rows } = await pool.query(`
@@ -22,42 +21,41 @@ export async function GET(req: NextRequest) {
           o.countries,
           o.metadata,
           o."encryptedSecret",
-          COUNT(DISTINCT m."userId") AS "memberCount"
+          COUNT(m."userId") AS "memberCount"
         FROM organization o
-        LEFT JOIN member m ON o.id = m."organizationId"
+        LEFT JOIN member m
+          ON m."organizationId" = o.id
         GROUP BY
           o.id, o.name, o.slug, o.logo,
           o.countries, o.metadata, o."encryptedSecret"
       `);
 
-      const organizations = rows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        slug: row.slug,
-        logo: row.logo || null,
-        countries: row.countries,
-        metadata: row.metadata,
-        encryptedSecret: row.encryptedSecret,
-        memberCount: parseInt(row.membercount, 10),
-        userRole: null,                          // service account isn’t a member
+      const organizations = rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        logo: r.logo,
+        countries: r.countries,
+        metadata: r.metadata,
+        encryptedSecret: r.encryptedSecret,
+        memberCount: Number(r.memberCount),
+        userRole: null,
       }));
 
-      return NextResponse.json({ organizations }, { status: 200 });
-    } catch (error) {
-      /* eslint-disable no-console */
-      console.error("[SERVICE GET /api/organizations]", error);
+      return NextResponse.json({ organizations });
+    } catch (err) {
+      console.error("[SERVICE GET /api/organizations]", err);
       return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
   }
 
-  /* 3 — Normal user flow (unchanged) */
+  // Normal user flow: only orgs where they’re a member
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { userId } = ctx;
 
   try {
-    const { rows } = await pool.query(
-      `
+    const { rows } = await pool.query(`
       SELECT
         o.id,
         o.name,
@@ -66,34 +64,34 @@ export async function GET(req: NextRequest) {
         o.countries,
         o.metadata,
         o."encryptedSecret",
-        m.role           AS "userRole",
-        COUNT(DISTINCT m2."userId") AS "memberCount"
+        m.role          AS "userRole",
+        COUNT(m2."userId") AS "memberCount"
       FROM organization o
-      JOIN   member m  ON o.id = m."organizationId"
-      LEFT   JOIN member m2 ON o.id = m2."organizationId"
-      WHERE  m."userId" = $1
-      GROUP  BY
+      JOIN member m
+        ON m."organizationId" = o.id
+      LEFT JOIN member m2
+        ON m2."organizationId" = o.id
+      WHERE m."userId" = $1
+      GROUP BY
         o.id, o.name, o.slug, o.logo,
         o.countries, o.metadata, o."encryptedSecret", m.role
-      `,
-      [userId],
-    );
+    `, [userId]);
 
-    const organizations = rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      logo: row.logo || null,
-      countries: row.countries,
-      metadata: row.metadata,
-      encryptedSecret: row.encryptedSecret,
-      memberCount: parseInt(row.membercount, 10),
-      userRole: row.userrole,
+    const organizations = rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      slug: r.slug,
+      logo: r.logo,
+      countries: r.countries,
+      metadata: r.metadata,
+      encryptedSecret: r.encryptedSecret,
+      memberCount: Number(r.memberCount),
+      userRole: r.userRole,
     }));
 
-    return NextResponse.json({ organizations }, { status: 200 });
-  } catch (error) {
-    console.error("[GET /api/organizations] error:", error);
+    return NextResponse.json({ organizations });
+  } catch (err) {
+    console.error("[GET /api/organizations] error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

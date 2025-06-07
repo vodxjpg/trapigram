@@ -8,9 +8,10 @@ const pool = new Pool({
 });
 
 export async function GET(
-  req: NextRequest, { params }: { params: Promise<{ slug: string }> }
+  req: NextRequest,
+  { params }: { params: { identifier: string } }    // ← use "identifier"
 ) {
-  const { slug } = await params;
+  const slug = params.identifier;                    // ← grab it here
 
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -19,13 +20,12 @@ export async function GET(
   try {
     // Check organization and membership
     const orgQuery = `
-      SELECT o.id, o.slug, m."userId", m."organizationId"
-      FROM organization o
-      JOIN member m ON o.id = m."organizationId"
-      WHERE o.slug = $1 AND m."userId" = $2
-    `;
-    console.log("Executing query:", orgQuery, "with params:", [slug, userId]);
-    const { rows: orgRows } = await pool.query(orgQuery, [slug, userId]);
+    SELECT o.id, o.slug, m."userId"
+    FROM organization o
+    JOIN member m ON o.id = m."organizationId"
+    WHERE o.slug = $1 AND m."userId" = $2
+  `;
+  const { rows: orgRows } = await pool.query(orgQuery, [slug, userId]);
     console.log("Organization query result:", orgRows);
 
     if (orgRows.length === 0) {

@@ -18,6 +18,7 @@ export default function OrganizationsPage() {
         <p className="text-muted-foreground">Manage your organizations and their members.</p>
       </div>
       <OrganizationTable />
+      
     </div>
   )
 }

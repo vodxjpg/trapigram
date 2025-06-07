@@ -27,6 +27,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { OrganizationDrawer } from "./organization-drawer"
 import { Badge } from "@/components/ui/badge"
 
+// Define the shape of an organization
+
 type Organization = {
   id: string
   name: string
@@ -49,36 +51,38 @@ export function OrganizationTable() {
   const [sortColumn, setSortColumn] = useState<string>("name")
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 
+  // Fetch organizations from our API
   const fetchOrganizations = async () => {
-    setLoading(true);
+    setLoading(true)
     try {
       const response = await fetch("/api/organizations", {
         headers: {
           "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
         },
-      });
+      })
       if (!response.ok) {
-        throw new Error(`Failed to fetch organizations: ${response.statusText}`);
+        throw new Error(`Failed to fetch organizations: ${response.statusText}`)
       }
-      const { organizations: fetchedOrgs } = await response.json();
-  
+      const { organizations: fetchedOrgs } = await response.json()
+
+      // Apply our search filter
       const filtered = searchQuery
         ? fetchedOrgs.filter(
             (org: Organization) =>
               org.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
               org.slug.toLowerCase().includes(searchQuery.toLowerCase())
           )
-        : fetchedOrgs;
-  
-      setOrganizations(filtered);
-      setTotalPages(Math.ceil(filtered.length / pageSize));
+        : fetchedOrgs
+
+      setOrganizations(filtered)
+      setTotalPages(Math.ceil(filtered.length / pageSize))
     } catch (error) {
-      console.error("Error fetching organizations:", error);
-      toast.error("Failed to load organizations");
+      console.error("Error fetching organizations:", error)
+      toast.error("Failed to load organizations")
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   useEffect(() => {
     fetchOrganizations()
@@ -99,18 +103,31 @@ export function OrganizationTable() {
     }
   }
 
+  // Sort in-memory
   const sortedOrganizations = [...organizations].sort((a, b) => {
     if (sortColumn === "name") {
-      return sortDirection === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
+      return sortDirection === "asc"
+        ? a.name.localeCompare(b.name)
+        : b.name.localeCompare(a.name)
     } else if (sortColumn === "members") {
-      return sortDirection === "asc" ? a.memberCount - b.memberCount : b.memberCount - a.memberCount
+      return sortDirection === "asc"
+        ? a.memberCount - b.memberCount
+        : b.memberCount - a.memberCount
     }
     return 0
   })
 
-  const paginatedOrganizations = sortedOrganizations.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  // Paginate in-memory
+  const paginatedOrganizations = sortedOrganizations.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  )
 
   const handleDelete = async (id: string) => {
+    if (organizations.length <= 1) {
+      toast.error("You must belong to at least one organization.")
+      return
+    }
     if (!confirm("Are you sure you want to delete this organization?")) return
     try {
       await authClient.organization.delete({ organizationId: id })
@@ -168,11 +185,17 @@ export function OrganizationTable() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
+              <TableHead
+                className="cursor-pointer"
+                onClick={() => handleSort("name")}
+              >
                 Name {sortColumn === "name" && (sortDirection === "asc" ? "↑" : "↓")}
               </TableHead>
               <TableHead>Slug</TableHead>
-              <TableHead className="cursor-pointer" onClick={() => handleSort("members")}>
+              <TableHead
+                className="cursor-pointer"
+                onClick={() => handleSort("members")}
+              >
                 Members {sortColumn === "members" && (sortDirection === "asc" ? "↑" : "↓")}
               </TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -192,50 +215,57 @@ export function OrganizationTable() {
                 </TableCell>
               </TableRow>
             ) : (
-              paginatedOrganizations.map((organization) => (
-                <TableRow key={organization.id}>
-                  <TableCell
-                    className="font-medium cursor-pointer hover:underline"
-                    onClick={() => navigateToOrganization(organization.slug)}
-                  >
-                    {organization.name}
-                  </TableCell>
-                  <TableCell>{organization.slug}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="flex items-center gap-1 w-fit">
-                      <Users className="h-3 w-3" />
-                      {organization.memberCount}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                          <span className="sr-only">Open menu</span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {organization.userRole === "owner" && (
-                          <>
-                            <DropdownMenuItem onClick={() => handleEdit(organization)}>
-                              <Edit className="mr-2 h-4 w-4" />
-                              Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleDelete(organization.id)}
-                              className="text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
+              paginatedOrganizations.map((org) => {
+                // Derive roles array from comma-separated userRole
+                const roles = (org.userRole ?? "")
+                  .toLowerCase()
+                  .split(",")
+                  .map((r) => r.trim())
+                const canManage = roles.includes("owner") || roles.includes("admin")
+
+                return (
+                  <TableRow key={org.id}>
+                    <TableCell
+                      className="font-medium cursor-pointer hover:underline"
+                      onClick={() => navigateToOrganization(org.slug)}
+                    >
+                      {org.name}
+                    </TableCell>
+                    <TableCell>{org.slug}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="flex items-center gap-1 w-fit">
+                        <Users className="h-3 w-3" /> {org.memberCount}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="h-4 w-4" />
+                            <span className="sr-only">Open menu</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {canManage && (
+                            <>
+                              <DropdownMenuItem onClick={() => handleEdit(org)}>
+                                <Edit className="mr-2 h-4 w-4" /> Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleDelete(org.id)}
+                                disabled={organizations.length <= 1}
+                                className="text-destructive focus:text-destructive"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
             )}
           </TableBody>
         </Table>
