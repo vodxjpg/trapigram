@@ -411,31 +411,39 @@ export default function OrderForm() {
 
   // — Update product quantity
   const updateQuantity = async (
-    productId: string,
-    action: "add" | "subtract",
-    qty: number
-  ) => {
+      productId: string,
+      action: "add" | "subtract"
+    ) => {
     if (!cartId) return toast.error("Cart hasn’t been created yet!");
     try {
       const res = await fetch(`/api/cart/${cartId}/update-product`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, action, quantity: qty }),
+        body: JSON.stringify({ productId, action }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => null);
         throw new Error(err?.message || "Failed to update quantity");
       }
-      const { product: updated, quantity } = await res.json();
-      const subtotalRow = calcRowSubtotal(updated, quantity);
+          // 🔸 NEW: API now returns { lines: […] }
+    const { lines } = await res.json();
 
-      setOrderItems((prev) =>
-        prev.map((it) =>
-          it.product.id === updated.id
-            ? { product: { ...updated, subtotal: subtotalRow }, quantity }
-            : it
-        )
-      );
+    const mapped: OrderItem[] = lines.map((l: any) => ({
+      product: {
+        id:           l.id,
+        title:        l.title,
+        sku:          l.sku,
+        description:  l.description,
+        image:        l.image,
+        price:        l.unitPrice,
+        regularPrice: { [clientCountry]: l.unitPrice },
+        stockData:    {},
+        subtotal:     l.subtotal,
+      },
+      quantity: l.quantity,
+    }));
+
+    setOrderItems(mapped);
     } catch (err: any) {
       toast.error(err.message || "Could not update quantity");
     }
@@ -723,9 +731,7 @@ export default function OrderForm() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() =>
-                                updateQuantity(product.id, "subtract", quantity)
-                              }
+                              onClick={() => updateQuantity(product.id, "subtract")}
                             >
                               <Minus className="h-4 w-4" />
                             </Button>
@@ -733,9 +739,7 @@ export default function OrderForm() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() =>
-                                updateQuantity(product.id, "add", quantity)
-                              }
+                              onClick={() => updateQuantity(product.id, "add")}
                             >
                               <Plus className="h-4 w-4" />
                             </Button>

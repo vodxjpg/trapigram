@@ -11,15 +11,15 @@ import type { NotificationType } from "@/lib/notifications";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* ───────── helpers ───────── */
-const ACTIVE   = ["open", "paid", "completed"]; // stock & points RESERVED
+const ACTIVE = ["open", "paid", "completed"]; // stock & points RESERVED
 const INACTIVE = ["cancelled", "failed", "refunded"];      // stock & points RELEASED
-const orderStatusSchema        = z.object({ status: z.string() });
+const orderStatusSchema = z.object({ status: z.string() });
 /* record-the-date helper */
 const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
-  paid:       "datePaid",
-  completed:  "dateCompleted",
-  cancelled:  "dateCancelled",
-  refunded:   "dateCancelled",   // choose whatever fits your flow
+  paid: "datePaid",
+  completed: "dateCompleted",
+  cancelled: "dateCancelled",
+  refunded: "dateCancelled",   // choose whatever fits your flow
 };
 /**
  * Statuses that should trigger exactly one notification per order
@@ -28,7 +28,7 @@ const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
  */
 const FIRST_NOTIFY_STATUSES = ["paid", "completed"] as const;
 
-const isActive   = (s: string) => ACTIVE.includes(s);
+const isActive = (s: string) => ACTIVE.includes(s);
 const isInactive = (s: string) => INACTIVE.includes(s);
 
 /* ——— stock / points helper (unchanged) ——— */
@@ -69,8 +69,8 @@ async function applyItemEffects(
       [logId, organizationId, clientId, pts, actionForLog, descrForLog],
     );
 
-    const deltaCurrent =  pts;  // same sign as pts
-    const deltaSpent   = -pts;  // opposite sign
+    const deltaCurrent = pts;  // same sign as pts
+    const deltaSpent = -pts;  // opposite sign
     await c.query(
       `INSERT INTO "affiliatePointBalances"
          ("clientId","organizationId","pointsCurrent","pointsSpent","createdAt","updatedAt")
@@ -111,6 +111,8 @@ export async function PATCH(
               "cartId",
               "clientId",
               "orderKey",
+              "dateCreated",
+              "shippingMethod",
               "notifiedPaidOrCompleted",
               COALESCE("pointsRedeemed",0) AS "pointsRedeemed"
          FROM orders
@@ -125,8 +127,8 @@ export async function PATCH(
     }
 
     /* 2️⃣ determine transition */
-    const becameActive   =  isActive(newStatus)   && !isActive(ord.status);
-    const becameInactive =  isInactive(newStatus) && !isInactive(ord.status);
+    const becameActive = isActive(newStatus) && !isActive(ord.status);
+    const becameInactive = isInactive(newStatus) && !isInactive(ord.status);
 
     /* 3️⃣ fetch cart lines once (if needed) */
     let lines: any[] = [];
@@ -156,7 +158,7 @@ export async function PATCH(
 
       /* redeem-discount points (charge) */
       if (ord.pointsRedeemed > 0) {
-        const pts   = -ord.pointsRedeemed;
+        const pts = -ord.pointsRedeemed;
         const logId = uuidv4();
         await client.query(
           `INSERT INTO "affiliatePointLogs"
@@ -248,51 +250,83 @@ export async function PATCH(
       shouldNotify = true;                              // NEW ⬅︎
     }                                                   // NEW ⬅︎
     else if (FIRST_NOTIFY_STATUSES.includes(            // existing logic
-             newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
+      newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
       shouldNotify = !ord.notifiedPaidOrCompleted;
     } else if (newStatus === "cancelled" || newStatus === "refunded") {
       shouldNotify = true;
     }
 
     if (shouldNotify) {
-      /* build product list */
+      /* build product list (normal and  affiliate) */
       const { rows: prodRows } = await client.query(
-        `SELECT cp.quantity, p.title
-           FROM "cartProducts" cp
-           JOIN products p ON p.id = cp."productId"
-          WHERE cp."cartId" = $1`,
+        `
+      SELECT
+        cp.quantity,
+        COALESCE(p.title, ap.title)                             AS title,
+        COALESCE(cat.name, 'Uncategorised')                     AS category
+      FROM "cartProducts" cp
+      /* normal products ---------------------------------------- */
+      LEFT JOIN products p              ON p.id  = cp."productId"
+      /* affiliate products ------------------------------------- */
+      LEFT JOIN "affiliateProducts" ap  ON ap.id = cp."affiliateProductId"
+      /* category (first one found) ----------------------------- */
+      LEFT JOIN "productCategory" pc    ON pc."productId" = COALESCE(p.id, ap.id)
+      LEFT JOIN "productCategories" cat ON cat.id = pc."categoryId"
+      WHERE cp."cartId" = $1
+      ORDER BY category, title
+    `,
         [ord.cartId],
       );
-      const productList = prodRows
-        .map((pr) => `x${pr.quantity} ${pr.title}`)
-        .join("<br>");
+      /* ✨ group by category */
+      const grouped: Record<string, { q: number; t: string }[]> = {};
+      for (const r of prodRows) {
+        grouped[r.category] ??= [];
+        grouped[r.category].push({ q: r.quantity, t: r.title });
+      }
+
+      const productList = Object.entries(grouped)
+        .map(([cat, items]) => {
+          const lines = items
+            .map((it) => `- x${it.q} ${it.t}`)
+            .join("<br>");
+          return `<b>${cat.toUpperCase()}</b><br>${lines}`;
+        })
+        .join("<br><br>");
 
       /* map status → notification type */
       const notifTypeMap: Record<string, NotificationType> = {
-        open:       "order_placed",   // NEW ⬅︎
-        paid:       "order_paid",
-        completed:  "order_completed",
-        cancelled:  "order_cancelled",
-        refunded:  "order_refunded",
+        open: "order_placed",   // NEW ⬅︎
+        paid: "order_paid",
+        completed: "order_completed",
+        cancelled: "order_cancelled",
+        refunded: "order_refunded",
       } as const;
       const notifType: NotificationType =
         notifTypeMap[newStatus] || "order_ready";
+
+      const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
 
       await sendNotification({
         organizationId,
         type: notifType,
         subject: `Order #${ord.orderKey} ${newStatus}`,
-        message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+        message:
+          `Your order status is now <b>${newStatus}</b><br>{product_list}`,
         country: ord.country,
         trigger: "order_status_change",
         channels: ["email", "in_app", "telegram"],
         clientId: ord.clientId,
-        variables: { product_list: productList, order_key: ord.orderKey },
+        variables: {
+          product_list: productList,
+          order_number: ord.orderKey,
+          order_date: orderDate,
+          order_shipping_method: ord.shippingMethod ?? "-",
+        },
       });
 
       /* mark as sent for paid/completed so we don’t double-notify */
       if (FIRST_NOTIFY_STATUSES.includes(
-            newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
+        newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
         await client.query(
           `UPDATE orders
               SET "notifiedPaidOrCompleted" = true,

@@ -33,7 +33,8 @@ const NOTIF_TYPES = [
   "order_paid",
   "order_completed",
   "order_ready",
-  "order_cancelled",  // ← NEW
+  "order_cancelled",
+  "order_refunded",  // ← NEW
 ] as const;
 
 countriesLib.registerLocale(en);
@@ -244,7 +245,11 @@ export function NotificationTemplateForm({ id, initial }: Props) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>
-                    Use <code className="text-xs">{`{product_list}`}</code> to list products
+                    Available placeholders:&nbsp;
+                    <code className="text-xs">{`{product_list}`}</code>,&nbsp;
+                    <code className="text-xs">{`{order_number}`}</code>,&nbsp;
+                    <code className="text-xs">{`{order_date}`}</code>,&nbsp;
+                    <code className="text-xs">{`{order_shipping_method}`}</code>
                   </FormLabel>
                   <FormControl>
                     <ReactQuill theme="snow" value={field.value} onChange={field.onChange} modules={quillModules} />
@@ -265,8 +270,8 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                     ? "Updating…"
                     : "Creating…"
                   : isEditing
-                  ? "Update"
-                  : "Create"}
+                    ? "Update"
+                    : "Create"}
               </Button>
             </div>
           </form>
