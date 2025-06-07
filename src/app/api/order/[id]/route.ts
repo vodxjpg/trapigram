@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
-
+import { z } from "zod";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* ─── encryption helpers ─────────────────────────────────────── */
@@ -166,6 +166,16 @@ export async function PATCH(
 
   const fields: string[] = [];
   const values: any[] = [];
+
+  // ── 1. orderMeta  (expects array) ────────────────────────────
+if ("orderMeta" in body) {
+  const metaArr = z.array(z.any()).parse(body.orderMeta);          // basic guard
+  /*  jsonb concatenation: existing || new_chunk  */
+  fields.push(
+    `"orderMeta" = COALESCE("orderMeta",'[]'::jsonb) || $${fields.length + 1}::jsonb`
+  );
+  values.push(JSON.stringify(metaArr));
+}
 
   if ("discount" in body) {
     fields.push(`"discountTotal" = $${fields.length + 1}`);

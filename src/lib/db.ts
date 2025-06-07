@@ -563,6 +563,7 @@ interface DB {
     dateCompleted: Date;
     dateCancelled: Date;
     notifiedPaidOrCompleted: boolean;
+    orderMeta: Record<string, any> | null;
     createdAt: Date;
     updatedAt: Date;
   }

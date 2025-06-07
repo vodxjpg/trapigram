@@ -39,7 +39,7 @@ import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 import { toast } from "sonner";
 
 // Define order status types
-type OrderStatus = "open" | "paid" | "cancelled" | "completed";
+type OrderStatus = "open" | "paid" | "cancelled" | "refunded" | "completed";
 
 // Define order interface
 interface Order {
@@ -148,6 +148,8 @@ export default function OrdersPage() {
         return "bg-green-500";
       case "cancelled":
         return "bg-red-500";
+      case "refunded":
+          return "bg-red-500";
       case "completed":
         return "bg-purple-500";
       default:
@@ -403,6 +405,14 @@ export default function OrdersPage() {
                             >
                               <Badge className={getStatusColor("cancelled")}>
                                 Cancelled
+                              </Badge>
+                            </SelectItem>
+                            <SelectItem
+                              value="refunded"
+                              className="w-auto flex justify-left"
+                            >
+                              <Badge className={getStatusColor("refunded")}>
+                                Refunded
                               </Badge>
                             </SelectItem>
                           </SelectContent>

@@ -12,7 +12,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* ───────── helpers ───────── */
 const ACTIVE   = ["open", "paid", "completed"]; // stock & points RESERVED
-const INACTIVE = ["cancelled", "failed"];       // stock & points RELEASED
+const INACTIVE = ["cancelled", "failed", "refunded"];      // stock & points RELEASED
 const orderStatusSchema        = z.object({ status: z.string() });
 
 /**
@@ -231,7 +231,7 @@ export async function PATCH(
     else if (FIRST_NOTIFY_STATUSES.includes(            // existing logic
              newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
       shouldNotify = !ord.notifiedPaidOrCompleted;
-    } else if (newStatus === "cancelled") {
+    } else if (newStatus === "cancelled" || newStatus === "refunded") {
       shouldNotify = true;
     }
 
@@ -254,6 +254,7 @@ export async function PATCH(
         paid:       "order_paid",
         completed:  "order_completed",
         cancelled:  "order_cancelled",
+        refunded:  "order_refunded",
       } as const;
       const notifType: NotificationType =
         notifTypeMap[newStatus] || "order_ready";
