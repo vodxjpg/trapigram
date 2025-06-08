@@ -374,13 +374,21 @@ export async function POST(req: NextRequest) {
 
           }
 
+          const checkClient = await pool.query(`SELECT id FROM clients WHERE "userId" = '${oldClient.rows[0].userId}' AND "organizationId" = '${groupedArray[i].organizationId}'`)
 
-          const newClientId = uuidv4()
-          const newClient = await pool.query(`INSERT INTO "clients" (id, "userId", "organizationId", username, "firstName", "lastName", email, "phoneNumber", country, "createdAt", "updatedAt")
+          let newClientId = ""
+
+          if (checkClient.rows.length > 0) {
+            newClientId = checkClient.rows[0].id
+          } else {
+            newClientId = uuidv4()
+
+            const newClient = await pool.query(`INSERT INTO "clients" (id, "userId", "organizationId", username, "firstName", "lastName", email, "phoneNumber", country, "createdAt", "updatedAt")
             VALUES ('${newClientId}', '${oldClient.rows[0].userId}', '${newOrganization}', '${oldClient.rows[0].username}', '${oldClient.rows[0].firstName}','${oldClient.rows[0].lastName}', '${oldClient.rows[0].email}', '${oldClient.rows[0].phoneNumber}', '${oldClient.rows[0].country}', NOW(), NOW())
             RETURNING *`)
 
-          await pool.query("COMMIT");
+            await pool.query("COMMIT");
+          }
 
           const newOrderId = uuidv4()
           const orderKey = String(Number(seq.rows[0].seq)).padStart(3, "0");
