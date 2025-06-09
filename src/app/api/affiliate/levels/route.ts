@@ -12,7 +12,7 @@ const levelSchema = z.object({
   name: z.string().min(1),
   image: z.string().optional().nullable(),
   levelUpMessage: z.string().optional().nullable(),
-  description: z.string().optional().nullable(),
+  levelUpMessageGroup: z.string().optional().nullable(), 
   requiredPoints: z.number().int().nonnegative(),
 });
 
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     const { rows } = await pool.query(
       `
       INSERT INTO "affiliateLevels"(
-        id,"organizationId",name,image,"levelUpMessage",description,"requiredPoints",
+        id,"organizationId",name,image,"levelUpMessage","levelUpMessageGroup","requiredPoints",
         "createdAt","updatedAt"
       ) VALUES($1,$2,$3,$4,$5,$6,$7,NOW(),NOW()) RETURNING *`,
       [

@@ -10,7 +10,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const levelSchema = z.object({
   name:            z.string().min(1).optional(),
   levelUpMessage:  z.string().nullable().optional(),
-  description:     z.string().nullable().optional(),
+  levelUpMessageGroup:    z.string().nullable().optional(),
   requiredPoints:  z.number().int().nonnegative().optional(),
 });
 
