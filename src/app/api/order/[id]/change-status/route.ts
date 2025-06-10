@@ -231,12 +231,16 @@ export async function PATCH(
       // COALESCE keeps an existing timestamp if it was already set
     }
 
+    console.log(`Updating order ${id} from ${ord.status} to ${newStatus}`);
     await client.query(
       `UPDATE orders
-          SET ${sets.join(", ")}
-        WHERE id = $2`,
+      SET ${sets.join(", ")}
+    WHERE id = $2`,
       [newStatus, id],
     );
+    console.log(`Order ${id} updated to ${newStatus}`);
+    await client.query("COMMIT");
+    console.log(`Transaction committed for order ${id}`);
 
 
 
