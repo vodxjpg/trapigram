@@ -39,7 +39,13 @@ import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 import { toast } from "sonner";
 
 // Define order status types
-type OrderStatus = "open" | "paid" | "cancelled" | "refunded" | "completed";
+type OrderStatus =
+  | "open"
+  | "underpaid"
+  | "paid"
+  | "cancelled"
+  | "refunded"
+  | "completed";
 
 // Define order interface
 interface Order {
@@ -150,6 +156,8 @@ export default function OrdersPage() {
         return "bg-red-500";
       case "refunded":
           return "bg-red-500";
+      case "underpaid":
+            return "bg-orange-500";
       case "completed":
         return "bg-purple-500";
       default:
@@ -266,6 +274,7 @@ export default function OrdersPage() {
                 <SelectItem value="all">All Statuses</SelectItem>
                 <SelectItem value="open">Open</SelectItem>
                 <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="underpaid">Underpaid</SelectItem>
                 <SelectItem value="completed">Completed</SelectItem>
                 <SelectItem value="cancelled">Cancelled</SelectItem>
               </SelectContent>
@@ -381,6 +390,14 @@ export default function OrdersPage() {
                             >
                               <Badge className={getStatusColor("open")}>
                                 Open
+                              </Badge>
+                            </SelectItem>
+                            <SelectItem
+                              value="underpaid"
+                              className="w-auto flex justify-left"
+                            >
+                              <Badge className={getStatusColor("underpaid")}>
+                                Partially paid
                               </Badge>
                             </SelectItem>
                             <SelectItem

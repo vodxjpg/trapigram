@@ -11,11 +11,13 @@ import type { NotificationType } from "@/lib/notifications";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* ───────── helpers ───────── */
-const ACTIVE = ["open", "paid", "completed"]; // stock & points RESERVED
+/** Stock & points stay RESERVED while the order is *underpaid*. */
+const ACTIVE = ["open", "underpaid", "paid", "completed"]; // stock & points RESERVED
 const INACTIVE = ["cancelled", "failed", "refunded"];      // stock & points RELEASED
 const orderStatusSchema = z.object({ status: z.string() });
 /* record-the-date helper */
 const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
+  underpaid: "dateUnderpaid",
   paid: "datePaid",
   completed: "dateCompleted",
   cancelled: "dateCancelled",
@@ -26,8 +28,7 @@ const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
  * life-cycle – “paid” & “completed“ behave as before.
  * “cancelled” is always announced.
  */
-const FIRST_NOTIFY_STATUSES = ["paid", "completed"] as const;
-
+const FIRST_NOTIFY_STATUSES = ["paid", "completed"] as const
 const isActive = (s: string) => ACTIVE.includes(s);
 const isInactive = (s: string) => INACTIVE.includes(s);
 
@@ -253,8 +254,10 @@ export async function PATCH(
     if (newStatus === "open" && ord.status !== "open") { // NEW ⬅︎
       shouldNotify = true;                              // NEW ⬅︎
     }                                                   // NEW ⬅︎
-    else if (FIRST_NOTIFY_STATUSES.includes(            // existing logic
-      newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
+      else if (newStatus === "underpaid") {
+          shouldNotify = true;                     // notify always on first underpaid
+        } else if (FIRST_NOTIFY_STATUSES.includes(
+          newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
       shouldNotify = !ord.notifiedPaidOrCompleted;
     } else if (newStatus === "cancelled" || newStatus === "refunded") {
       shouldNotify = true;
@@ -299,7 +302,8 @@ export async function PATCH(
 
       /* map status → notification type */
       const notifTypeMap: Record<string, NotificationType> = {
-        open: "order_placed",   // NEW ⬅︎
+        open: "order_placed",
+        underpaid:  "order_partially_paid",   // NEW ⬅︎
         paid: "order_paid",
         completed: "order_completed",
         cancelled: "order_cancelled",
@@ -328,9 +332,8 @@ export async function PATCH(
         },
       });
 
-      /* mark as sent for paid/completed so we don’t double-notify */
-      if (FIRST_NOTIFY_STATUSES.includes(
-        newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
+      /* mark flag only for paid / completed (NOT underpaid) */
+      if (newStatus === "paid" || newStatus === "completed") {
         await client.query(
           `UPDATE orders
               SET "notifiedPaidOrCompleted" = true,

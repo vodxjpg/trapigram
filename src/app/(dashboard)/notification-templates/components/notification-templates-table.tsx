@@ -1,11 +1,18 @@
-// src/app/(dashboard)/notification-templates/notification-templates-table.tsx
+// src/app/(dashboard)/notification-templates/components/notification-templates-table.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import { MoreVertical } from "lucide-react";
 
 interface TemplateRow {
   id: string;
@@ -24,7 +31,10 @@ export function NotificationTemplatesTable() {
     (async () => {
       try {
         const r = await fetch("/api/notification-templates", {
-          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
+          headers: {
+            "x-internal-secret":
+              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+          },
         });
         if (!r.ok) throw new Error((await r.json()).error || "fetch failed");
         setRows(await r.json());
@@ -35,6 +45,24 @@ export function NotificationTemplatesTable() {
       }
     })();
   }, []);
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this template? This cannot be undone.")) return;
+    try {
+      const r = await fetch(`/api/notification-templates/${id}`, {
+        method: "DELETE",
+        headers: {
+          "x-internal-secret":
+            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+        },
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "delete failed");
+      setRows((prev) => prev.filter((t) => t.id !== id));
+      toast.success("Template deleted");
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
 
   if (loading) return <div>Loading…</div>;
 
@@ -59,15 +87,35 @@ export function NotificationTemplatesTable() {
                 <td className="p-3">{r.country ?? "—"}</td>
                 <td className="p-3">{r.subject ?? "—"}</td>
                 <td className="p-3 text-right">
-                  <Button variant="link" asChild className="px-1">
-                    <Link href={`/notification-templates/${r.id}/edit`}>Edit</Link>
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <MoreVertical className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem asChild>
+                        <Link href={`/notification-templates/${r.id}/edit`}>
+                          Edit
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => handleDelete(r.id)}
+                        className="text-destructive"
+                      >
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </td>
               </tr>
             ))}
             {!rows.length && (
               <tr>
-                <td colSpan={5} className="p-4 text-center text-muted-foreground">
+                <td
+                  colSpan={5}
+                  className="p-4 text-center text-muted-foreground"
+                >
                   No templates yet
                 </td>
               </tr>

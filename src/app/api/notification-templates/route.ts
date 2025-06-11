@@ -15,6 +15,7 @@ const NOTIF_TYPES: Readonly<NotificationType[]> = [
   "order_cancelled",
   "order_refunded",
   "order_refunded",
+  "order_partially_paid",
 ] as const;
 
 const createSchema = z.object({
