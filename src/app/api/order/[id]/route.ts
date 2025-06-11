@@ -212,3 +212,39 @@ if ("orderMeta" in body) {
 
   return NextResponse.json(r.rows[0], { status: 200 });
 }
+
+/* ================================================================= */
+/*  PUT – replace orderMeta array (used by bot upsert)               */
+/* ================================================================= */
+
+const putSchema = z.object({
+  orderMeta: z.array(z.any()),
+});
+
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { id } = await params;
+
+  /* validate body */
+  let body: z.infer<typeof putSchema>;
+  try {
+    body = putSchema.parse(await req.json());
+  } catch {
+    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+  }
+
+  await pool.query(
+    `UPDATE orders
+        SET "orderMeta" = $1::jsonb,
+            "updatedAt" = NOW()
+      WHERE id = $2
+        AND "organizationId" = $3`,
+    [JSON.stringify(body.orderMeta), id, ctx.organizationId],
+  );
+
+  return NextResponse.json({ ok: true }, { status: 200 });
+}
