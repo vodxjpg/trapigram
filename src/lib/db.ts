@@ -98,7 +98,7 @@ interface DB {
     pointsPerReview: number;
     spendingNeeded: string;      // matches NUMERIC in SQL (ts → string)
     pointsPerSpending: number;
-    monetaryValuePerPoint: string; 
+    monetaryValuePerPoint: string;
     createdAt: Date;
     updatedAt: Date;
   };
@@ -536,7 +536,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   }
-  
+
 
   orders: {
     id: string;
@@ -566,6 +566,15 @@ interface DB {
     orderMeta: Record<string, any> | null;
     createdAt: Date;
     updatedAt: Date;
+  }
+
+  orderRevenue: {
+    id: string,
+    orderId: string,
+    amount: number,
+    currency: number,
+    createdAt: Date,
+    updatedAt: Date
   }
 
   orderMessages: {
@@ -637,7 +646,7 @@ interface DB {
     organizationId: string;
     type: string;                    // same as notifications.type
     role: "admin" | "user";
-    countries: string; 
+    countries: string;
     subject: string | null;
     message: string;                 // template body – may include {{ }}
     createdAt: Date;
@@ -659,7 +668,7 @@ interface DB {
 
   notificationGroups: {
     id: string;
-    groupId:  string;
+    groupId: string;
     organizationId: string;
     name: string;
     countries: string;          // JSON-stringified array ["ES","IT",…]
