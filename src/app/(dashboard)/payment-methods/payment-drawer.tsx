@@ -1,20 +1,22 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
+import { toast } from "sonner";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   Drawer,
   DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
   DrawerDescription,
   DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
 } from "@/components/ui/drawer";
-import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 
+/* ---------- types ---------- */
 export interface PaymentMethod {
   id: string;
   name: string;
@@ -26,18 +28,28 @@ export interface PaymentMethod {
 interface Props {
   open: boolean;
   onClose: (refresh?: boolean) => void;
+  mode: "coinx" | "custom";
   method: PaymentMethod | null;
 }
 
-export function PaymentMethodDrawer({ open, onClose, method }: Props) {
-  const [name, setName] = useState("");
+/* ---------- component ---------- */
+export function PaymentMethodDrawer({
+  open,
+  onClose,
+  mode,
+  method,
+}: Props) {
+  const isCoinx = mode === "coinx";
+
+  /* form state */
+  const [name, setName] = useState(isCoinx ? "CoinX" : "");
   const [active, setActive] = useState(true);
-  const [apiKey, setApiKey] = useState<string>("");
-  const [secretKey, setSecretKey] = useState<string>("");
+  const [apiKey, setApiKey] = useState("");
+  const [secretKey, setSecretKey] = useState("");
   const [saving, setSaving] = useState(false);
   const isMobile = useIsMobile();
 
-  // preload on edit
+  /* preload when editing */
   useEffect(() => {
     if (method) {
       setName(method.name);
@@ -45,13 +57,14 @@ export function PaymentMethodDrawer({ open, onClose, method }: Props) {
       setApiKey(method.apiKey ?? "");
       setSecretKey(method.secretKey ?? "");
     } else {
-      setName("");
+      setName(isCoinx ? "CoinX" : "");
       setActive(true);
       setApiKey("");
       setSecretKey("");
     }
-  }, [method]);
+  }, [method, mode]);
 
+  /* ---------- save ---------- */
   const handleSave = async () => {
     if (!name.trim()) {
       toast.error("Name is required");
@@ -60,36 +73,21 @@ export function PaymentMethodDrawer({ open, onClose, method }: Props) {
     setSaving(true);
     try {
       const payload = {
-        name,
+        name: isCoinx ? "CoinX" : name.trim(),
         active,
         apiKey: apiKey.trim() || null,
         secretKey: secretKey.trim() || null,
       };
 
-      let res: Response;
-      if (method) {
-        // edit
-        res = await fetch(`/api/payment-methods/${method.id}`, {
-          method: "PATCH",
+      const res = await fetch(
+        method ? `/api/payment-methods/${method.id}` : "/api/payment-methods",
+        {
+          method: method ? "PATCH" : "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
-        });
-      } else {
-        // create
-        res = await fetch(`/api/payment-methods`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      }
+        },
+      );
       if (!res.ok) throw new Error();
-
-      // reset fields
-      setName("");
-      setActive(true);
-      setApiKey("");
-      setSecretKey("");
-
       toast.success(method ? "Updated" : "Created");
       onClose(true);
     } catch {
@@ -99,6 +97,7 @@ export function PaymentMethodDrawer({ open, onClose, method }: Props) {
     }
   };
 
+  /* ---------- render ---------- */
   return (
     <Drawer
       open={open}
@@ -108,29 +107,36 @@ export function PaymentMethodDrawer({ open, onClose, method }: Props) {
       <DrawerContent side="right">
         <DrawerHeader>
           <DrawerTitle>
-            {method ? "Edit Payment Method" : "New Payment Method"}
+            {method
+              ? isCoinx
+                ? "Configure CoinX"
+                : "Edit payment method"
+              : isCoinx
+              ? "Configure CoinX"
+              : "New payment method"}
           </DrawerTitle>
           <DrawerDescription>
-            {method
-              ? "Update the fields of this payment method."
-              : "Add a new payment method and set its active status."}
+            {isCoinx
+              ? "Enter your CoinX credentials."
+              : "Fill in the details of the payment method."}
           </DrawerDescription>
         </DrawerHeader>
 
         <div className="px-4 space-y-4">
-          {/* Name */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Name</label>
-            <Input
-              placeholder="Payment name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full"
-              disabled={saving}
-            />
-          </div>
+          {/* name (hidden/locked for CoinX) */}
+          {!isCoinx && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Name</label>
+              <Input
+                placeholder="Payment name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={saving}
+              />
+            </div>
+          )}
 
-          {/* Active Switch */}
+          {/* active */}
           <div>
             <label className="block text-sm font-medium mb-1">Active</label>
             <div className="flex items-center space-x-2">
@@ -143,26 +149,26 @@ export function PaymentMethodDrawer({ open, onClose, method }: Props) {
             </div>
           </div>
 
-          {/* API Key */}
+          {/* API key */}
           <div>
-            <label className="block text-sm font-medium mb-1">API Key</label>
+            <label className="block text-sm font-medium mb-1">API key</label>
             <Input
-              placeholder="API Key (optional)"
+              placeholder="Optional"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              className="w-full"
               disabled={saving}
             />
           </div>
 
-          {/* Secret Key */}
+          {/* secret key */}
           <div>
-            <label className="block text-sm font-medium mb-1">Secret Key</label>
+            <label className="block text-sm font-medium mb-1">
+              Secret key
+            </label>
             <Input
-              placeholder="Secret Key (optional)"
+              placeholder="Optional"
               value={secretKey}
               onChange={(e) => setSecretKey(e.target.value)}
-              className="w-full"
               disabled={saving}
             />
           </div>
