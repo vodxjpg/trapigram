@@ -82,15 +82,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(r.rows[0], { status: 200 });
     }
 
-    /* 2) Orders by client -------------------------------------------- */
-    if (filterClientId) {
-      const sql = `
-        SELECT o.*, c."firstName", c."lastName", c."username", c.email
-        FROM   orders o
-        JOIN   clients c ON c.id = o."clientId"
-        WHERE  o."organizationId" = $1 AND o."clientId" = $2
-      `;
-      const r = await pool.query(sql, [organizationId, filterClientId]);
+  /* 2) Orders by client – newest first */
+if (filterClientId) {
+  const sql = `
+    SELECT o.*, c."firstName", c."lastName", c."username", c.email
+    FROM   orders o
+    JOIN   clients c ON c.id = o."clientId"
+    WHERE  o."organizationId" = $1
+      AND  o."clientId"       = $2
+    ORDER BY o."dateCreated" DESC
+  `;
+  const r = await pool.query(sql, [organizationId, filterClientId]);
       const orders = r.rows.map(o => ({
         id: o.id,
         orderKey: o.orderKey,
@@ -108,12 +110,13 @@ export async function GET(req: NextRequest) {
 
     /* 3) Full list ---------------------------------------------------- */
     const listSql = `
-      SELECT o.*, c."firstName", c."lastName", c."username", c.email
-      FROM   orders o
-      JOIN   clients c ON c.id = o."clientId"
-      WHERE  o."organizationId" = $1
-    `;
-    const r = await pool.query(listSql, [organizationId]);
+  SELECT o.*, c."firstName", c."lastName", c."username", c.email
+  FROM   orders o
+  JOIN   clients c ON c.id = o."clientId"
+  WHERE  o."organizationId" = $1
+  ORDER BY o."dateCreated" DESC
+`;
+const r = await pool.query(listSql, [organizationId]);
     const orders = r.rows.map(o => ({
       id: o.id,
       orderKey: o.orderKey,
