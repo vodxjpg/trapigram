@@ -559,6 +559,7 @@ interface DB {
     shippingService: string;
     address: string;
     dateCreated: Date;
+    dateUnderpaid: Date;
     datePaid: Date;
     dateCompleted: Date;
     dateCancelled: Date;

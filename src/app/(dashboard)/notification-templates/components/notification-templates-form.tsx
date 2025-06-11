@@ -247,11 +247,14 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                 <FormItem>
                   <FormLabel>
                     Available placeholders:&nbsp;
-                    <code className="text-xs">{`{product_list}`}</code>,&nbsp;
-                    <code className="text-xs">{`{order_number}`}</code>,&nbsp;
-                    <code className="text-xs">{`{order_date}`}</code>,&nbsp;
-                    <code className="text-xs">{`{order_shipping_method}`}</code>
                   </FormLabel>
+                  <div> <span className="text-xs">{`{product_list}`}</span>,&nbsp;
+                    <span className="text-xs">{`{order_number}`}</span>,&nbsp;
+                    <span className="text-xs">{`{order_date}`}</span>,&nbsp;
+                    <span className="text-xs">{`{order_shipping_method}`}</span>,&nbsp;
+                    <span className="text-xs">{`{expected_amt}`}</span>,&nbsp;
+                    <span className="text-xs">{`{received_amt}`}</span>,&nbsp;
+                    <span className="text-xs">{`{asset}`}</span></div>
                   <FormControl>
                     <ReactQuill theme="snow" value={field.value} onChange={field.onChange} modules={quillModules} />
                   </FormControl>

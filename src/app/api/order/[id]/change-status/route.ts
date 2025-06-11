@@ -115,6 +115,7 @@ export async function PATCH(
               "dateCreated",
               "shippingMethod",
               "notifiedPaidOrCompleted",
+              "orderMeta",
               COALESCE("pointsRedeemed",0) AS "pointsRedeemed"
          FROM orders
         WHERE id = $1
@@ -301,6 +302,30 @@ export async function PATCH(
         .join("<br><br>");
 
       /* map status → notification type */
+          /* ── gather extra variables for the “underpaid” e-mail ───────────── */
+    let receivedAmt = "";
+    let expectedAmt = "";
+    let assetSymbol  = "";
+    if (newStatus === "underpaid") {
+        try {
+          /* orderMeta can arrive as JSON **object** (pg-json) or string — normalise */
+          const metaArr =
+            Array.isArray(ord.orderMeta)
+              ? ord.orderMeta
+              : JSON.parse(ord.orderMeta ?? "[]");
+      
+          const latest = [...metaArr]
+             .reverse()
+             .find((m: any) => (m.event ?? "").toLowerCase() === "underpaid");
+      
+          receivedAmt = latest?.order?.received ?? "";
+          expectedAmt = latest?.order?.expected ?? "";
+          assetSymbol  = latest?.order?.asset     ?? "";
+        } catch {
+          /* leave placeholders empty on malformed data */
+        }
+      }
+
       const notifTypeMap: Record<string, NotificationType> = {
         open: "order_placed",
         underpaid:  "order_partially_paid",   // NEW ⬅︎
@@ -329,6 +354,9 @@ export async function PATCH(
           order_number: ord.orderKey,
           order_date: orderDate,
           order_shipping_method: ord.shippingMethod ?? "-",
+          expected_amt: expectedAmt,        // ★ NEW
+          received_amt: receivedAmt,
+          asset:        assetSymbol,        // ★ NEW
         },
       });
 
