@@ -34,9 +34,18 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Search, CalendarIcon, MoreVertical, Mail } from "lucide-react";
+import { Search, CalendarIcon, MoreVertical, Mail, Truck } from "lucide-react";
 import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 import { toast } from "sonner";
+
+// **New imports for the dialog/modal**
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 // Define order status types
 type OrderStatus =
@@ -47,7 +56,7 @@ type OrderStatus =
   | "refunded"
   | "completed";
 
-// Define order interface
+// **Extend Order to include trackingNumber**
 interface Order {
   id: string;
   orderKey: string;
@@ -58,6 +67,7 @@ interface Order {
   status: OrderStatus;
   createdAt: string; // incoming ISO string
   total: number;
+  trackingNumber?: string;
 }
 
 // Date filter options
@@ -70,6 +80,11 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // **Modal state**
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [draftTracking, setDraftTracking] = useState("");
 
   // ◼︎ filters & UI state
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([]);
@@ -93,9 +108,8 @@ export default function OrdersPage() {
         if (!res.ok) throw new Error("Failed to fetch orders");
         return res.json();
       })
-         .then((data: Order[]) => {
-             // data should already include `orderKey` alongside `id`
-             setOrders(data);
+      .then((data: Order[]) => {
+        setOrders(data);
         setError(null);
       })
       .catch((err: Error) => setError(err.message))
@@ -111,11 +125,11 @@ export default function OrdersPage() {
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-           result = result.filter(
-               (o) =>
-                 o.orderKey.toLowerCase().includes(q) ||
-                 o.email.toLowerCase().includes(q)
-             );
+      result = result.filter(
+        (o) =>
+          o.orderKey.toLowerCase().includes(q) ||
+          o.email.toLowerCase().includes(q)
+      );
     }
 
     if (statusFilter !== "all") {
@@ -143,7 +157,7 @@ export default function OrdersPage() {
     }
 
     setFilteredOrders(result);
-    setCurrentPage(1); // reset to first page when filters change
+    setCurrentPage(1);
   }, [orders, searchQuery, statusFilter, dateFilter, dateRange]);
 
   const getStatusColor = (s: OrderStatus) => {
@@ -155,9 +169,9 @@ export default function OrdersPage() {
       case "cancelled":
         return "bg-red-500";
       case "refunded":
-          return "bg-red-500";
+        return "bg-red-500";
       case "underpaid":
-            return "bg-orange-500";
+        return "bg-orange-500";
       case "completed":
         return "bg-purple-500";
       default:
@@ -176,10 +190,7 @@ export default function OrdersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (!res.ok) {
-        throw new Error("Failed to update status");
-      }
-      // Optimistically update UI
+      if (!res.ok) throw new Error("Failed to update status");
       setOrders((prev) =>
         prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
       );
@@ -203,38 +214,65 @@ export default function OrdersPage() {
     }
   };
 
+  // **Open the tracking modal**
+  const handleTracking = (orderId: string) => {
+    const order = orders.find((o) => o.id === orderId);
+    setSelectedOrderId(orderId);
+    setDraftTracking(order?.trackingNumber ?? "");
+    setDialogOpen(true);
+  };
+
+  // **Save tracking to API**
+  const saveTracking = async () => {
+    if (!selectedOrderId) return;
+    try {
+      const res = await fetch(`/api/order/${selectedOrderId}/tracking-number`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackingNumber: draftTracking }),
+      });
+      if (!res.ok) throw new Error("Failed to save tracking number");
+      // Optimistically update UI
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === selectedOrderId ? { ...o, trackingNumber: draftTracking } : o
+        )
+      );
+      toast.success("Tracking number saved");
+      setDialogOpen(false);
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not save tracking");
+    }
+  };
+
   const formatDate = (dateStr: string) =>
     format(new Date(dateStr), "MMM dd, yyyy");
 
   const handleDateFilterChange = (value: DateFilterOption) => {
     setDateFilter(value);
-    if (value !== "custom") {
-      setDateRange({ from: undefined, to: undefined });
-    }
+    if (value !== "custom") setDateRange({ from: undefined, to: undefined });
   };
 
-  // ◼︎ derive the orders to show on this page
+  // paginate
   const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
   const paginatedOrders = filteredOrders.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
 
-  if (loading) {
+  if (loading)
     return (
       <div className="container mx-auto py-8 px-4 text-center">
         Loading orders…
       </div>
     );
-  }
-
-  if (error) {
+  if (error)
     return (
       <div className="container mx-auto py-8 px-4 text-center text-red-600">
         Error loading orders: {error}
       </div>
     );
-  }
 
   return (
     <div className="container mx-auto py-8 px-4">
@@ -344,7 +382,7 @@ export default function OrdersPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                <TableHead>Order #</TableHead>
+                  <TableHead>Order #</TableHead>
                   <TableHead>User</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Date</TableHead>
@@ -466,6 +504,12 @@ export default function OrdersPage() {
                               <Mail className="mr-2 h-4 w-4" />
                               <span>Send Payment Notification</span>
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleTracking(order.id)}
+                            >
+                              <Truck className="mr-2 h-4 w-4" />
+                              <span>Set tracking number</span>
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -515,6 +559,33 @@ export default function OrdersPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* — Tracking Number Dialog — */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {selectedOrderId &&
+              orders.find((o) => o.id === selectedOrderId)?.trackingNumber
+                ? "Edit Tracking Number"
+                : "Set Tracking Number"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <Input
+              placeholder="Enter tracking number"
+              value={draftTracking}
+              onChange={(e) => setDraftTracking(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={saveTracking}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
