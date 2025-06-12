@@ -32,11 +32,10 @@ export default function OrganizationDetailsPage() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const response = await fetch(`/api/organizations/${params.slug}`, {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-          },
-        });
+        const response = await fetch(
+            `/api/organizations/${params.identifier}`,
+            { credentials: "include" }
+          );
         if (!response.ok) {
           throw new Error(`Failed to fetch organization: ${response.statusText}`);
         }
@@ -52,7 +51,7 @@ export default function OrganizationDetailsPage() {
       }
     };
 
-    if (params.slug) fetchData();
+    if (params.identifier) fetchData();
   }, [params.slug, setHeaderTitle]);
 
   if (loading) {

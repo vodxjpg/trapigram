@@ -119,15 +119,13 @@ export function WarehouseDrawer({ open, onClose, warehouse }: WarehouseDrawerPro
 
   const fetchOrganizations = async () => {
     try {
-      const response = await fetch("/api/organizations", {
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
-        },
-      });
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to fetch organizations: ${response.status} - ${errorText}`);
-      }
+     // AFTER
+const response = await fetch("/api/organizations", {
+  credentials: "include",
+})
+if (!response.ok) {
+  throw new Error(`Failed to fetch organizations: ${response.statusText}`)
+}
       const data = await response.json();
       const transformedOrganizations = data.organizations.map((org: any) => ({
         ...org,

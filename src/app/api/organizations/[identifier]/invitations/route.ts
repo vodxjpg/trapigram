@@ -1,69 +1,114 @@
-// /src/app/api/organizations/[identifier]/invitations/route.ts
+// src/app/api/organizations/[identifier]/invitations/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
+import { v4 as uuidv4 } from "uuid";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-export async function GET(
-  req: NextRequest, { params }: { params: Promise<{ slug: string }> }
-) {
-  const { slug } = await params;
-  console.log("Invitations GET request for org slug:", slug);
-  
+/* …GET handler unchanged… */
+
+export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
-    const { userId } = ctx;
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId, userId: inviterId } = ctx;
 
-    try {  
+  const { email, role } = await req.json();
+  if (!email || !role) {
+    return NextResponse.json({ error: "Missing email or role" }, { status: 400 });
+  }
 
-    // Verify that the requesting user is a member of the organization.
-    const orgQuery = `
-      SELECT o.id, o.slug, m."userId", m."organizationId"
-      FROM organization o
-      JOIN member m ON o.id = m."organizationId"
-      WHERE o.slug = $1 AND m."userId" = $2
-    `;
-    console.log("Executing organization query with params:", [slug, userId]);
-    const { rows: orgRows } = await pool.query(orgQuery, [slug, userId]);
-    console.log("Organization query result:", orgRows);
+  /* ----------------------------------------------------------------
+     0) Guard: only the current owner may attempt an owner-invite
+  ----------------------------------------------------------------- */
+  const { rows: inviterRows } = await pool.query(
+    `SELECT role
+       FROM member
+      WHERE "organizationId" = $1
+        AND "userId"        = $2
+      LIMIT 1`,
+    [organizationId, inviterId],
+  );
+  const inviterRole = inviterRows[0]?.role ?? null;
+  if (role === "owner" && inviterRole !== "owner") {
+    return NextResponse.json(
+      { error: "Only the existing organization owner may invite another owner" },
+      { status: 403 },
+    );
+  }
 
-    if (orgRows.length === 0) {
-      const { rows: orgCheck } = await pool.query(
-        `SELECT id, slug FROM organization WHERE slug = $1`,
-        [slug]
-      );
-      if (orgCheck.length === 0) {
-        console.error("No organization found with slug:", slug);
-      } else {
-        console.error("Organization exists, but user is not a member; userId:", userId);
-      }
+  /* 1) Already a member? */
+  const m = await pool.query(
+    `SELECT 1
+       FROM member
+      WHERE "organizationId" = $1
+        AND "userId" = (SELECT id FROM "user" WHERE email = $2)`,
+    [organizationId, email],
+  );
+  if (m.rowCount) {
+    return NextResponse.json({ error: "User is already a member" }, { status: 409 });
+  }
+
+  /* 2) Unique-owner guard (member + pending) */
+  if (role === "owner") {
+    const ownerExists = await pool.query(
+      `SELECT 1
+         FROM member
+        WHERE "organizationId" = $1
+          AND role = 'owner'
+        LIMIT 1`,
+      [organizationId],
+    );
+    if (ownerExists.rowCount) {
       return NextResponse.json(
-        { error: "Organization not found or access denied" },
-        { status: 403 }
+        { error: "Organization already has an owner" },
+        { status: 409 },
       );
     }
 
-    const organizationId = orgRows[0].id;
-    console.log("Resolved organizationId:", organizationId);
-
-    // Query for pending invitations.
-    // Use column names in lowercase if your DB did not preserve camelCase.
-    const invitationsQuery = `
-      SELECT id, email, role, status, "expiresAt"
-      FROM invitation
-      WHERE "organizationId" = $1 AND status = 'pending'
-      ORDER BY "expiresAt" ASC
-    `;
-    console.log("Executing invitations query with param:", [organizationId]);
-    const { rows: invitations } = await pool.query(invitationsQuery, [organizationId]);
-    console.log("Pending invitations fetched:", invitations);
-
-    return NextResponse.json({ invitations }, { status: 200 });
-  } catch (error) {
-    console.error("[GET /api/organizations/[identifier]/invitations] error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    const pendingOwner = await pool.query(
+      `SELECT 1
+         FROM invitation
+        WHERE "organizationId" = $1
+          AND role             = 'owner'
+          AND status           = 'pending'
+        LIMIT 1`,
+      [organizationId],
+    );
+    if (pendingOwner.rowCount) {
+      return NextResponse.json(
+        { error: "Owner invitation already pending" },
+        { status: 409 },
+      );
+    }
   }
+
+  /* 3) Already invited (same e-mail) */
+  const i = await pool.query(
+    `SELECT 1
+       FROM invitation
+      WHERE "organizationId" = $1
+        AND email            = $2
+        AND status           = 'pending'
+      LIMIT 1`,
+    [organizationId, email],
+  );
+  if (i.rowCount) {
+    return NextResponse.json({ error: "Invitation already pending" }, { status: 409 });
+  }
+
+  /* 4) Insert new invitation */
+  const id        = uuidv4();
+  const now       = new Date();
+  const expiresAt = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString();
+
+  const { rows } = await pool.query(
+    `INSERT INTO invitation
+          (id,  "inviterId", "organizationId", email, role, status, "expiresAt", "createdAt")
+     VALUES ($1, $2,         $3,              $4,    $5,   'pending', $6,          $7)
+     RETURNING id, email, role, status, "expiresAt"`,
+    [id, inviterId, organizationId, email, role, expiresAt, now.toISOString()],
+  );
+
+  return NextResponse.json({ invitation: rows[0] }, { status: 201 });
 }

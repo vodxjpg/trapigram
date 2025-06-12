@@ -1,4 +1,4 @@
-// src/app/(auth)/set-password/SetPasswordForm.tsx
+// src/components/auth/set-password-form.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -12,32 +12,44 @@ import { Label } from "@/components/ui/label";
 export default function SetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-
-  // If you passed "invitationId" in the query, grab it:
   const invitationId = searchParams.get("invitationId");
 
-  const { data: session, isLoading } = authClient.useSession();
+  /* ----------------------------------------------------------------
+     Better-Auth renamed “isLoading” → “isPending”.
+     We consume both so the code keeps working on any library version.
+  ----------------------------------------------------------------- */
+  const {
+    data: session,
+    isPending,
+    isLoading,
+  } = authClient.useSession() as {
+    data: any;
+    isPending?: boolean;
+    isLoading?: boolean;
+  };
+
+  const loading = isPending ?? isLoading ?? false;
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
+  /* Redirect only when the session query has finished && no session */
   useEffect(() => {
-    if (!isLoading && !session) {
-      // If there's no session at all, push to /login
+    if (!loading && !session) {
       router.push("/login");
     }
-  }, [isLoading, session, router]);
+  }, [loading, session, router]);
 
-  if (isLoading) {
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        Checking session...
+        Checking session…
       </div>
     );
   }
 
-  // If user *is* logged in, but not a guest, they presumably have a password
+  /* User already completed onboarding → nothing to do */
   if (session && !session.user.is_guest) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -52,10 +64,9 @@ export default function SetPasswordForm() {
       toast.error("Passwords do not match");
       return;
     }
-    setLoading(true);
 
+    setSaving(true);
     try {
-      // We'll call your internal route to set the password
       const res = await fetch("/api/internal/set-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -64,25 +75,22 @@ export default function SetPasswordForm() {
 
       if (!res.ok) {
         const errorData = await res.json();
-        throw new Error(errorData.error || "Failed to set password");
+        throw new Error(errorData.error ?? "Failed to set password");
       }
 
       toast.success("Password set successfully!");
 
-      // Now that user has a password and is_guest = false, 
-      // we want to let them accept the invitation if needed:
+      /* If the flow started from an invitation, finish it */
       if (invitationId) {
-        // Go back to the invitation route to finalize acceptance
         router.push(`/accept-invitation/${invitationId}`);
       } else {
-        // If no invitation, do your normal flow
-        router.push("/dashboard"); 
+        router.push("/dashboard");
       }
-    } catch (error: any) {
-      console.error("Error setting password:", error);
-      toast.error(error.message || "Failed to set password");
+    } catch (err: any) {
+      console.error("Error setting password:", err);
+      toast.error(err.message ?? "Failed to set password");
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
 
@@ -112,8 +120,8 @@ export default function SetPasswordForm() {
         />
       </div>
 
-      <Button type="submit" disabled={loading} className="w-full">
-        {loading ? "Saving..." : "Set Password"}
+      <Button type="submit" disabled={saving} className="w-full">
+        {saving ? "Saving…" : "Set Password"}
       </Button>
     </form>
   );

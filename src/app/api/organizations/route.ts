@@ -9,22 +9,16 @@ const SERVICE_API_KEY = process.env.SERVICE_API_KEY ?? "";
 export async function GET(req: NextRequest) {
   const isService = req.headers.get("x-api-key") === SERVICE_API_KEY;
 
-  // Service account: return all orgs with member counts
+  // 1) Service account: return ALL orgs
   if (isService) {
     try {
       const { rows } = await pool.query(`
         SELECT
-          o.id,
-          o.name,
-          o.slug,
-          o.logo,
-          o.countries,
-          o.metadata,
-          o."encryptedSecret",
+          o.id, o.name, o.slug, o.logo,
+          o.countries, o.metadata, o."encryptedSecret",
           COUNT(m."userId") AS "memberCount"
         FROM organization o
-        LEFT JOIN member m
-          ON m."organizationId" = o.id
+        LEFT JOIN member m ON m."organizationId" = o.id
         GROUP BY
           o.id, o.name, o.slug, o.logo,
           o.countries, o.metadata, o."encryptedSecret"
@@ -45,27 +39,26 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ organizations });
     } catch (err) {
       console.error("[SERVICE GET /api/organizations]", err);
-      return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Internal server error" },
+        { status: 500 }
+      );
     }
   }
 
-  // Normal user flow: only orgs where they’re a member
+  // 2) Normal user: only orgs where they’re a member
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { userId } = ctx;
 
   try {
-    const { rows } = await pool.query(`
+    const { rows } = await pool.query(
+      `
       SELECT
-        o.id,
-        o.name,
-        o.slug,
-        o.logo,
-        o.countries,
-        o.metadata,
-        o."encryptedSecret",
-        m.role          AS "userRole",
-        COUNT(m2."userId") AS "memberCount"
+        o.id, o.name, o.slug, o.logo,
+        o.countries, o.metadata, o."encryptedSecret",
+        m.role               AS "userRole",
+        COUNT(m2."userId")   AS "memberCount"
       FROM organization o
       JOIN member m
         ON m."organizationId" = o.id
@@ -75,7 +68,9 @@ export async function GET(req: NextRequest) {
       GROUP BY
         o.id, o.name, o.slug, o.logo,
         o.countries, o.metadata, o."encryptedSecret", m.role
-    `, [userId]);
+      `,
+      [userId]
+    );
 
     const organizations = rows.map(r => ({
       id: r.id,
@@ -92,6 +87,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ organizations });
   } catch (err) {
     console.error("[GET /api/organizations] error:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }

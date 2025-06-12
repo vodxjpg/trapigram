@@ -56,10 +56,13 @@ export function OrganizationTable() {
     setLoading(true)
     try {
       const response = await fetch("/api/organizations", {
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-        },
+        credentials: "include",
       })
+      if (!response.ok) {
+        throw new Error(`Failed to fetch organizations: ${response.statusText}`)
+      }
+    
+      
       if (!response.ok) {
         throw new Error(`Failed to fetch organizations: ${response.statusText}`)
       }

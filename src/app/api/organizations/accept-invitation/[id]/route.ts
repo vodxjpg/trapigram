@@ -1,178 +1,175 @@
-// /home/zodx/Desktop/trapigram/src/app/api/organizations/accept-invitation/[id]/route.ts
-export const runtime = "nodejs";
+// src/app/api/organizations/accept-invitation/[id]/route.ts
+export const runtime = "nodejs";              // If Node is available, use it
+export const dynamic = "force-dynamic";       // Disable edge-cache for safety
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { auth }  from "@/lib/auth";
+import { db }    from "@/lib/db";
+import crypto    from "crypto";
+
+/* helper – works with Edge (Promise params) or Node (plain object) */
+async function extractId(
+  params: { id: string } | Promise<{ id: string }>
+): Promise<string | null> {
+  const p: any = params;
+  if (typeof p?.then === "function") {
+    const { id } = await p;
+    return id ?? null;
+  }
+  return (p as any)?.id ?? null;
+}
 
 export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  req: NextRequest,
+  ctx: { params: { id: string } } | { params: Promise<{ id: string }> }
 ) {
-  const { id: invitationId } = await context.params;
+  const invitationId = await extractId(ctx.params);
   if (!invitationId) {
     return NextResponse.json(
       { error: "Invitation ID is required" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
-  try {
-    // 1) Retrieve the invitation from DB
-    const invitation = await db
-      .selectFrom("invitation")
-      .selectAll()
-      .where("id", "=", invitationId)
-      .executeTakeFirst();
+  /* ────────────────────────────────────────────────────────────────
+     1 — Load invitation
+     ──────────────────────────────────────────────────────────────── */
+  const invite = await db
+    .selectFrom("invitation")
+    .selectAll()
+    .where("id", "=", invitationId)
+    .executeTakeFirst();
 
-    if (!invitation) {
-      return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
-    }
-    if (invitation.status !== "pending") {
+  if (!invite) {
+    return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
+  }
+
+  /* 1a – reject only *invalid* states; allow idempotent “accepted” */
+  if (invite.status !== "pending" && invite.status !== "accepted") {
+    return NextResponse.json(
+      { error: `Invitation status is ${invite.status}` },
+      { status: 400 },
+    );
+  }
+
+  /* ────────────────────────────────────────────────────────────────
+     2 — If the caller is already signed-in …
+     ──────────────────────────────────────────────────────────────── */
+  const session = await auth.api.getSession({ headers: req.headers });
+
+  if (session) {
+    if (session.user.email?.toLowerCase() !== invite.email.toLowerCase()) {
       return NextResponse.json(
-        { error: `Invitation status is ${invitation.status}` },
-        { status: 400 }
+        {
+          error: `Logged-in as ${session.user.email}, but invite is for ${invite.email}`,
+        },
+        { status: 403 },
       );
     }
 
-    // 2) Try to get a session (if the user is logged in)
-    const session = await auth.api.getSession({ headers: request.headers });
-
-    // 3) If session exists AND the email matches => normal acceptance
-    if (session) {
-      const sessionEmail = session.user.email?.toLowerCase();
-      const inviteEmail = invitation.email.toLowerCase();
-
-      if (sessionEmail === inviteEmail) {
-        // Mark invitation as accepted
-        await db
+    await db.transaction().execute(async (trx) => {
+      /* 2a – mark accepted once (harmless if already accepted) */
+      if (invite.status === "pending") {
+        await trx
           .updateTable("invitation")
           .set({ status: "accepted" })
           .where("id", "=", invitationId)
           .executeTakeFirst();
-
-        // Create the "member" row if it doesn't exist
-        const existingMember = await db
-          .selectFrom("member")
-          .select(["id"])
-          .where("userId", "=", session.user.id)
-          .where("organizationId", "=", invitation.organizationId!)
-          .executeTakeFirst();
-
-        if (!existingMember) {
-          await db.insertInto("member").values({
-            id: session.user.id,
-            userId: session.user.id,
-            organizationId: invitation.organizationId!,
-            role: invitation.role,
-            createdAt: new Date(),
-          }).execute();
-        }
-
-        // Optionally set activeOrganizationId if not already set
-        if (!session.session.activeOrganizationId) {
-          await db
-            .updateTable("session")
-            .set({ activeOrganizationId: invitation.organizationId! })
-            .where("id", "=", session.session.id)
-            .executeTakeFirst();
-        }
-
-        // Decide redirect based on whether the user has a password
-        // If the user has no password, redirect to the set-password page WITH the invitationId parameter
-        const redirect = session.user.hasPassword
-          ? "/dashboard"
-          : `/set-password?invitationId=${invitationId}`;
-
-        return NextResponse.json({ success: true, redirect });
       }
 
-      return NextResponse.json(
-        {
-          error: `You are logged in as ${session.user.email}, but this invite is for ${invitation.email}`
-        },
-        { status: 403 }
-      );
+      /* 2b – ensure membership */
+      const exists = await trx
+        .selectFrom("member")
+        .select("id")
+        .where("userId", "=", session.user.id)
+        .where("organizationId", "=", invite.organizationId!)
+        .executeTakeFirst();
+
+      if (!exists) {
+        await trx.insertInto("member").values({
+          id:             crypto.randomUUID(),
+          userId:         session.user.id,
+          organizationId: invite.organizationId!,
+          role:           invite.role,
+          createdAt:      new Date(),
+        }).execute();
+      }
+    });
+
+    /* 2c – ensure activeOrganizationId */
+    if (!session.session.activeOrganizationId) {
+      await db
+        .updateTable("session")
+        .set({ activeOrganizationId: invite.organizationId! })
+        .where("id", "=", session.session.id)
+        .executeTakeFirst();
     }
 
-    // 4) No session => Manual Acceptance Flow (bypass auth requirement)
-    // 4a) Check if user exists by that email
-    const existingUser = await db
-      .selectFrom("user")
-      .selectAll()
-      .where("email", "=", invitation.email)
-      .executeTakeFirst();
+    const redirect = session.user.hasPassword
+      ? "/dashboard"
+      : `/set-password?invitationId=${invitationId}`;
 
-    let userId: string;
-    if (!existingUser) {
-      // 4b) Create user as a guest
-      const ctx = await auth.$context;
-      const defaultName = invitation.email.split("@")[0] || "NewUser";
-      const newUser = await ctx.internalAdapter.createUser({
-        name: defaultName,
-        email: invitation.email,
-        emailVerified: false,
-        phone: null,
-        country: null,
-        is_guest: true,
-      });
-      userId = newUser.id;
-    } else {
-      userId = existingUser.id;
-    }
+    return NextResponse.json({ success: true, redirect });
+  }
 
-    // 4c) Create membership if needed
-    const existingMember = await db
-      .selectFrom("member")
-      .select(["id"])
-      .where("userId", "=", userId)
-      .where("organizationId", "=", invitation.organizationId!)
-      .executeTakeFirst();
+  /* ────────────────────────────────────────────────────────────────
+     3 — Guest / first-time user
+     ──────────────────────────────────────────────────────────────── */
+  const existingUser = await db
+    .selectFrom("user")
+    .selectAll()
+    .where("email", "=", invite.email)
+    .executeTakeFirst();
 
-    if (!existingMember) {
-      await db.insertInto("member").values({
-        id: userId,
-        userId: userId,
-        organizationId: invitation.organizationId!,
-        role: invitation.role,
-        createdAt: new Date(),
-      }).execute();
-    }
+  const userId = existingUser
+    ? existingUser.id
+    : (
+        await (await auth.$context).internalAdapter.createUser({
+          name: invite.email.split("@")[0] ?? "User",
+          email: invite.email,
+          emailVerified: false,
+          phone: null,
+          country: null,
+          is_guest: true,
+        })
+      ).id;
 
-    // 4d) Mark the invitation as accepted
+  /* membership – ignore duplicate-key errors gracefully */
+  try {
+    await db.insertInto("member").values({
+      id:             crypto.randomUUID(),
+      userId,
+      organizationId: invite.organizationId!,
+      role:           invite.role,
+      createdAt:      new Date(),
+    }).execute();
+  } catch (e: any) {
+    if (e?.code !== "23505") throw e; // silence only “duplicate key”
+  }
+
+  /* mark accepted (idempotent) */
+  if (invite.status === "pending") {
     await db
       .updateTable("invitation")
       .set({ status: "accepted" })
       .where("id", "=", invitationId)
       .executeTakeFirst();
-
-    // 4e) For non‑existing users, send them a magic link before redirecting to check-email.
-    // Append the invitationId as a query parameter to the callback URL.
-    const callbackUrl = `${process.env.NEXT_PUBLIC_APP_URL}/accept-invitation/${invitationId}?invitationId=${invitationId}`;
-
-    const magicLinkResp = await auth.api.signInMagicLink({
-      headers: request.headers,
-      body: {
-        email: invitation.email,
-        callbackURL: callbackUrl,
-      },
-    });
-
-    if (magicLinkResp.error) {
-      console.error("Error sending magic link:", magicLinkResp.error.message);
-      return NextResponse.json(
-        { error: magicLinkResp.error.message },
-        { status: 500 }
-      );
-    }
-
-    // 4f) Redirect them to /check-email so they know to check their inbox
-    return NextResponse.json({ success: true, redirect: "/check-email" });
-  } catch (error) {
-    console.error("Error processing invitation:", error);
-    return NextResponse.json(
-      { error: "Failed to process invitation" },
-      { status: 500 }
-    );
   }
+
+  /* send magic link */
+  const callbackURL =
+    `${process.env.NEXT_PUBLIC_APP_URL}` +
+    `/accept-invitation/${invitationId}?invitationId=${invitationId}`;
+
+  const ml = await auth.api.signInMagicLink({
+    headers: req.headers,
+    body: { email: invite.email, callbackURL },
+  });
+
+  if (ml.error) {
+    console.error("Magic link error:", ml.error.message);
+    return NextResponse.json({ error: ml.error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true, redirect: "/check-email" });
 }

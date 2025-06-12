@@ -1,41 +1,55 @@
-// /home/zodx/Desktop/trapigram/src/app/api/internal/organization/[id]/update-countries/route.ts
+// src/app/api/organizations/[identifier]/update-countries/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
+import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
-  try {
-    const secret = req.headers.get("x-internal-secret");
-    if (secret !== INTERNAL_API_SECRET) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-    }
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { identifier: string } }
+) {
+  // 1) session-cookie auth & get org
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId: ctxOrg } = ctx;
+  const orgId = params.identifier;
+  if (ctxOrg !== orgId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
-    const { id } = await context.params;
-    if (!id) {
-      return NextResponse.json({ error: "No organization ID provided" }, { status: 400 });
-    }
-
-    const { countries } = await req.json();
-    if (!countries) {
-      return NextResponse.json({ error: "Countries data is required" }, { status: 400 });
-    }
-
-    const { rowCount } = await pool.query(
-      `UPDATE organization SET countries = $1 WHERE id = $2`,
-      [countries, id]
+  // 2) parse and validate body
+  const { countries } = await req.json();
+  if (!Array.isArray(countries) || countries.some(c => typeof c !== 'string')) {
+    return NextResponse.json(
+      { error: "Countries must be an array of country codes" },
+      { status: 400 }
     );
+  }
 
-    if (rowCount === 0) {
-      return NextResponse.json({ error: "Organization not found" }, { status: 404 });
+  // 3) update database
+  try {
+    const result = await pool.query(
+      `UPDATE organization
+         SET countries = $1
+       WHERE id = $2`,
+      [JSON.stringify(countries), orgId]
+    );
+    if (result.rowCount === 0) {
+      return NextResponse.json(
+        { error: "Organization not found" },
+        { status: 404 }
+      );
     }
-
-    return NextResponse.json({ message: "Countries updated successfully" }, { status: 200 });
-  } catch (error) {
-    console.error("[POST /api/internal/organization/[id]/update-countries] error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { message: "Countries updated successfully" },
+      { status: 200 }
+    );
+  } catch (err) {
+    console.error("[POST /api/organizations/:identifier/update-countries] error:", err);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }

@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/(dashboard)/organizations/[slug]/invite-member-form.tsx
+// src/app/(dashboard)/organizations/[identifier]/invite-member-form.tsx
 "use client";
 
 import { useState } from "react";
@@ -9,20 +9,26 @@ import { toast } from "sonner";
 import { Loader2, Send } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
-import { Form, FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
+import {
+  Form, FormControl, FormField, FormItem, FormMessage,
+} from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  Card, CardContent, CardHeader, CardTitle, CardDescription,
+} from "@/components/ui/card";
 
 const formSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
-  role: z.string().min(1, "Please select a role"),
+  role:  z.string().min(1, "Please select a role"),
 });
 
 type FormValues = z.infer<typeof formSchema>;
 
 interface InviteMemberFormProps {
-  organizationId: string;
+  organizationId:  string;
   currentUserRole: string | null;
 }
 
@@ -34,25 +40,28 @@ export function InviteMemberForm({ organizationId, currentUserRole }: InviteMemb
     defaultValues: { email: "", role: "" },
   });
 
-  const getInviteRoles = () => {
-    if (currentUserRole === "owner") return ["owner", "manager", "accountant", "employee"];
-    if (currentUserRole === "manager") return ["manager", "accountant", "employee"];
-    return [];
-  };
+  /* ----- roles: “owner” removed, transfer handled elsewhere ------- */
+  const getInviteRoles = () => ["manager", "accountant", "employee"];
 
   const onSubmit = async (values: FormValues) => {
+    if (values.role === "owner") {
+      toast.error("Inviting an additional owner is not allowed");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await authClient.organization.inviteMember({
         email: values.email,
-        role: values.role,
+        role:  values.role,
         organizationId,
       });
+
       toast.success(`Invitation sent to ${values.email}`);
       form.reset();
-    } catch (error) {
-      console.error("Error inviting member:", error);
-      toast.error("Failed to send invitation");
+    } catch (err: any) {
+      console.error("Error sending invite:", err);
+      toast.error(err?.message ?? "Failed to send invitation");
     } finally {
       setIsSubmitting(false);
     }
@@ -84,20 +93,20 @@ export function InviteMemberForm({ organizationId, currentUserRole }: InviteMemb
               name="role"
               render={({ field }) => (
                 <FormItem className="w-full sm:w-[180px]">
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl>
+                  <FormControl>
+                    <Select onValueChange={field.onChange} value={field.value}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select role" />
                       </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {getInviteRoles().map((role) => (
-                        <SelectItem key={role} value={role}>
-                          {role.charAt(0).toUpperCase() + role.slice(1)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                      <SelectContent>
+                        {getInviteRoles().map((r) => (
+                          <SelectItem key={r} value={r}>
+                            {r.charAt(0).toUpperCase() + r.slice(1)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

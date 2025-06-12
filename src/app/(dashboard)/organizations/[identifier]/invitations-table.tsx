@@ -47,11 +47,11 @@ export function InvitationsTable({ organizationId, organizationSlug, currentUser
     }
     setLoading(true);
     try {
-      const response = await fetch(`/api/organizations/${organizationSlug}/invitations`, {
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-        },
-      });
+            const response = await fetch(
+                `/api/organizations/${organizationSlug}/invitations?organizationId=${organizationId}`,
+                { credentials: "include" }
+              );
+        
       if (!response.ok) {
         throw new Error(`Failed to fetch invitations: ${response.status} ${response.statusText}`);
       }
@@ -81,7 +81,14 @@ export function InvitationsTable({ organizationId, organizationSlug, currentUser
   const handleCancelInvitation = async (invitationId: string, email: string) => {
     if (!confirm(`Are you sure you want to cancel the invitation to ${email}?`)) return;
     try {
-      await authClient.organization.cancelInvitation({ invitationId });
+           const resp = await fetch(
+               `/api/organizations/${organizationSlug}/invitations/${invitationId}?organizationId=${organizationId}`,
+               {
+                 method: "DELETE",
+                 credentials: "include",
+               }
+             );
+             if (!resp.ok) throw new Error("Cancel failed");
       toast.success(`Invitation to ${email} canceled`);
       fetchInvitations();
     } catch (error) {
