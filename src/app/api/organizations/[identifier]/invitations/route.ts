@@ -2,15 +2,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
+import { requirePermission } from "@/lib/perm-server";
 import { v4 as uuidv4 } from "uuid";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// GET pending invitations
+export async function GET(req: NextRequest) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
-/* …GET handler unchanged… */
+  const { rows: invitations } = await pool.query(
+    `SELECT id, email, role, status, "expiresAt"
+       FROM invitation
+      WHERE "organizationId" = $1 AND status = 'pending'
+      ORDER BY "expiresAt" ASC`,
+    [organizationId]
+  );
+  return NextResponse.json({ invitations });
+}
 
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
+    // enforce member:invite
+  const guard = await requirePermission(req, { invitation: ["create"] });
+  if (guard) return guard;
   const { organizationId, userId: inviterId } = ctx;
 
   const { email, role } = await req.json();
@@ -30,10 +47,19 @@ export async function POST(req: NextRequest) {
     [organizationId, inviterId],
   );
   const inviterRole = inviterRows[0]?.role ?? null;
+
+  if (role === inviterRole) {
+    return NextResponse.json(
+      { error: "You cannot invite someone to your own role" },
+      { status: 403 }
+    );
+  }
+
+  // 0b) Only an owner may invite another owner
   if (role === "owner" && inviterRole !== "owner") {
     return NextResponse.json(
       { error: "Only the existing organization owner may invite another owner" },
-      { status: 403 },
+      { status: 403 }
     );
   }
 

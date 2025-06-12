@@ -4,39 +4,27 @@
 import { useState, useEffect } from "react";
 import { MoreVertical, Trash2, UserCircle } from "lucide-react";
 import { toast } from "sonner";
-import { authClient } from "@/lib/auth-client";
+import { usePermission } from "@/hooks/use-permission";
+import { useOrgRoles } from "@/hooks/use-org-roles";
 import { Button } from "@/components/ui/button";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
 
 type Member = {
   id: string;
-  userId: string;
   role: string;
-  user: { id: string; name: string; email: string };
+  user: { name: string; email: string };
 };
 
-interface MembersTableProps {
+interface Props {
   organizationId: string;
   organizationSlug: string;
   currentUserRole: string | null;
@@ -46,56 +34,51 @@ export function MembersTable({
   organizationId,
   organizationSlug,
   currentUserRole,
-}: MembersTableProps) {
+}: Props) {
+  const can = usePermission();
+  const { roles, isLoading: rolesLoading } = useOrgRoles(organizationId);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchMembers = async () => {
+  // fetchMembers is async, but we wrap its call in a non-async effect callback
+  async function fetchMembers() {
     setLoading(true);
     try {
-      const resp = await fetch(
+      const res = await fetch(
         `/api/organizations/${organizationSlug}/members?organizationId=${organizationId}`,
         { credentials: "include" }
       );
-      if (!resp.ok) throw new Error(resp.statusText);
-      const { members } = await resp.json();
-      setMembers(members);
-     
+      if (!res.ok) throw new Error("Failed to load members");
+      const { members: data } = await res.json();
+      setMembers(data);
     } catch (err) {
       console.error(err);
       toast.error("Failed to load members");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   useEffect(() => {
-    if (organizationSlug) fetchMembers();
-  }, [organizationSlug]);
+    fetchMembers();
+  }, [organizationSlug]); // <-- no async on the callback itself
 
-    // owner can touch any non-owner; manager can touch any non-owner
-    const canChangeRole = (m: Member) => {
-      if (currentUserRole === "owner")   return m.role !== "owner";
-      if (currentUserRole === "manager") return m.role !== "owner";
-      return false;
-    };
-    const canRemoveMember = canChangeRole;
+  const canUpdate = currentUserRole === "owner" || can({ member: ["update_role"] });
+  const canDelete = currentUserRole === "owner" || can({ member: ["delete"] });
 
-  const getSelectableRoles = () => {
-    if (currentUserRole === "owner") {
-      const alreadyOwner = members.some((m) => m.role === "owner");
-      return alreadyOwner
-        ? ["manager", "accountant", "employee"]
-        : ["owner", "manager", "accountant", "employee"];
-    }
-    if (currentUserRole === "manager")
-      return ["manager", "accountant", "employee"];
-    return [];
-  };
+  // NEW – only the roles this Org actually has
+  const allRoles = [
+    "owner",               // every Org always has an owner
+    ...roles.map((r) => r.name),
+  ];
 
-  const handleRoleChange = async (memberId: string, newRole: string) => {
+
+  const badgeVariant = (role: string) =>
+    role === "owner" ? "default" : role === "manager" ? "secondary" : "outline";
+
+  async function handleRoleChange(memberId: string, newRole: string) {
     try {
-      const resp = await fetch(
+      const res = await fetch(
         `/api/organizations/${organizationSlug}/members/${memberId}?organizationId=${organizationId}`,
         {
           method: "PATCH",
@@ -104,50 +87,47 @@ export function MembersTable({
           body: JSON.stringify({ role: newRole }),
         }
       );
-      if (!resp.ok) {
-        const { error } = await resp.json().catch(() => ({}));
-        throw new Error(error || resp.statusText);
+      if (res.status === 403) {
+        toast.error("You don’t have permission to change roles");
+        return;
+      }
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({}));
+        throw new Error(error || res.statusText);
       }
       toast.success("Role updated");
       fetchMembers();
     } catch (err: any) {
       console.error(err);
-      toast.error("Failed to update role: " + err.message);
+      toast.error(err.message || "Failed to update role");
     }
-  };
+  }
 
-  const handleRemoveMember = async (memberId: string, email: string) => {
+  async function handleRemove(memberId: string, email: string) {
     if (!confirm(`Remove ${email}?`)) return;
+    const prev = members;
+    setMembers(ms => ms.filter(m => m.id !== memberId));
     try {
-      const resp = await fetch(
+      const res = await fetch(
         `/api/organizations/${organizationSlug}/members/${memberId}?organizationId=${organizationId}`,
-        {
-          method: "DELETE",
-          credentials: "include",
-        }
+        { method: "DELETE", credentials: "include" }
       );
-      if (!resp.ok) {
-        const { error } = await resp.json().catch(() => ({}));
-        throw new Error(error || resp.statusText);
+      if (res.status === 403) {
+        toast.error("You don’t have permission to remove members");
+        setMembers(prev);
+        return;
       }
-      toast.success(`Removed ${email}`);
-      fetchMembers();
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({}));
+        throw new Error(error || res.statusText);
+      }
+      toast.success("Member removed");
     } catch (err: any) {
       console.error(err);
-      toast.error("Failed to remove member: " + err.message);
+      setMembers(prev);
+      toast.error(err.message || "Failed to remove member");
     }
-  };
-
-  const badgeVariant = (role: string) => {
-    switch (role) {
-      case "owner":
-        return "default";
-      case "manager":
-        return "secondary";
-      default:
-        return "outline";
-    }
-  };
+  }
 
   return (
     <div className="rounded-md border">
@@ -176,36 +156,31 @@ export function MembersTable({
           ) : (
             members.map((m) => (
               <TableRow key={m.id}>
-                <TableCell className="font-medium flex items-center gap-2">
+                <TableCell className="flex items-center gap-2">
                   <UserCircle className="h-5 w-5 text-muted-foreground" />
                   {m.user.name}
                 </TableCell>
                 <TableCell>{m.user.email}</TableCell>
                 <TableCell>
-                  {canChangeRole(m) ? (
-                    <Select
-                      value={m.role}
-                      onValueChange={(v) => handleRoleChange(m.id, v)}
-                    >
-                      <SelectTrigger className="w-[120px]">
-                        <SelectValue />
-                      </SelectTrigger>
+                  {canUpdate && m.role !== currentUserRole && m.role !== "owner" ? (
+                    <Select value={m.role} onValueChange={(v) => handleRoleChange(m.id, v)}>
+                      <SelectTrigger className="w-[140px]"><SelectValue/></SelectTrigger>
                       <SelectContent>
-                        {getSelectableRoles().map((r) => (
-                          <SelectItem key={r} value={r}>
-                            {r.charAt(0).toUpperCase() + r.slice(1)}
-                          </SelectItem>
-                        ))}
+                        {allRoles
+                          .filter((r) => r !== "owner" && r !== currentUserRole)
+                          .map((r) => (
+                            <SelectItem key={r} value={r}>
+                              {r.charAt(0).toUpperCase() + r.slice(1)}
+                            </SelectItem>
+                          ))}
                       </SelectContent>
                     </Select>
                   ) : (
-                    <Badge variant={badgeVariant(m.role)}>
-                      {m.role}
-                    </Badge>
+                    <Badge variant={badgeVariant(m.role)}>{m.role}</Badge>
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  {canRemoveMember(m) && (
+                  {canDelete && m.role !== currentUserRole && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon">
@@ -214,10 +189,8 @@ export function MembersTable({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
-                          onClick={() =>
-                            handleRemoveMember(m.id, m.user.email)
-                          }
                           className="text-destructive"
+                          onClick={() => handleRemove(m.id, m.user.email)}
                         >
                           <Trash2 className="mr-2 h-4 w-4" /> Remove
                         </DropdownMenuItem>

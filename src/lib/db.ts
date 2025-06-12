@@ -268,6 +268,15 @@ interface DB {
     createdAt: Date;
   };
 
+  orgRole: {
+    id: string;
+    organizationId: string;
+    name: string; 
+    permissions: Record<string, string[]>;
+    createdAt: Date;
+    updatedAt: Date | null;
+  };
+
   announcements: {
     id: string;
     organizationId: string;

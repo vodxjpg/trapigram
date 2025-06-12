@@ -1,40 +1,41 @@
-// /home/zodx/Desktop/trapigram/src/lib/permissions.ts
+// src/lib/permissions.ts
 import { createAccessControl } from "better-auth/plugins/access";
-import { defaultStatements } from "better-auth/plugins/organization/access";
+import {
+  defaultStatements,
+  ownerAc,
+} from "better-auth/plugins/organization/access";
 
-const customStatements = {
-  ...defaultStatements,
-  organization: ["update", "delete"],
-  member: ["create", "update", "delete"],
-  invitation: ["create", "cancel"],
-  financialData: ["read"],  // For Accountant
-  projectData: ["read"],   // For Employee
-} as const;
+/* ─────────────── extra resources your app understands ─────────────── */
+const domainStatements /*  ← NO  “as const” here!  */ = {
+  ticket : ["view", "update"],
+  order  : ["view_pricing", "view_no_pricing", "update_tracking"],
+  chat   : ["view"],
+  stock  : ["update"],
+  coupon : ["register", "manage"],
+  revenue: ["view"],
+  payment: ["manage"],
+  invitation  : ["create", "cancel"],      // ← add this
+  member      : ["delete", "update_role"], 
+  platformKey: ["view","create","update","delete"],
+};
 
-const ac = createAccessControl(customStatements);
+/* merge Better-Auth defaults with your own resources */
+export const statements: Record<string, string[]> = {
+  // spread-copy because defaultStatements’ arrays are readonly
+  ...Object.fromEntries(
+    Object.entries(defaultStatements).map(([k, v]) => [k, [...v]])
+  ),
+  ...domainStatements,
+};
 
-const owner = ac.newRole({
-  organization: ["update", "delete"],
-  member: ["create", "update", "delete"],
-  invitation: ["create", "cancel"],
-  financialData: ["read"],
-  projectData: ["read"],
+/* access-control engine */
+export const ac = createAccessControl(statements);
+
+/* the **only built-in** role we keep */
+export const owner = ac.newRole({
+  ...ownerAc.statements,
+  ...domainStatements,      // full power on every custom resource
 });
 
-const manager = ac.newRole({
-  organization: ["update"],
-  member: ["create", "update", "delete"], // Restrictions handled in UI logic
-  invitation: ["create", "cancel"],
-  financialData: ["read"],
-  projectData: ["read"],
-});
-
-const accountant = ac.newRole({
-  financialData: ["read"],
-});
-
-const employee = ac.newRole({
-  projectData: ["read"],
-});
-
-export { ac, owner, manager, accountant, employee };
+/* helper for the settings / roles UI */
+export const builtinRoles = { owner };

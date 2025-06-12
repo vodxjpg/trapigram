@@ -7,116 +7,142 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import { Loader2, Send } from "lucide-react";
+
 import { authClient } from "@/lib/auth-client";
+import { useOrgRoles } from "@/hooks/use-org-roles";
+import { usePermission } from "@/hooks/use-permission";
+
 import { Button } from "@/components/ui/button";
 import {
-  Form, FormControl, FormField, FormItem, FormMessage,
+  Form, FormField, FormItem, FormControl, FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
 import {
-  Card, CardContent, CardHeader, CardTitle, CardDescription,
+  Card, CardHeader, CardTitle, CardDescription, CardContent,
 } from "@/components/ui/card";
 
-const formSchema = z.object({
+const schema = z.object({
   email: z.string().email("Please enter a valid email address"),
   role:  z.string().min(1, "Please select a role"),
 });
+type FormValues = z.infer<typeof schema>;
 
-type FormValues = z.infer<typeof formSchema>;
-
-interface InviteMemberFormProps {
-  organizationId:  string;
-  currentUserRole: string | null;
+interface Props {
+  organizationId: string;
 }
 
-export function InviteMemberForm({ organizationId, currentUserRole }: InviteMemberFormProps) {
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
+export function InviteMemberForm({ organizationId }: Props) {
+  const can = usePermission();
+  const { roles, isLoading: rolesLoading } = useOrgRoles(organizationId);
+  const [submitting, setSubmitting] = useState(false);
   const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
+    resolver: zodResolver(schema),
     defaultValues: { email: "", role: "" },
   });
 
-  /* ----- roles: “owner” removed, transfer handled elsewhere ------- */
-  const getInviteRoles = () => ["manager", "accountant", "employee"];
+  // only render if they have the `invitation:create` permission
+  if (!can({ invitation: ["create"] })) {
+    return null;
+  }
 
-  const onSubmit = async (values: FormValues) => {
-    if (values.role === "owner") {
-      toast.error("Inviting an additional owner is not allowed");
-      return;
-    }
-
-    setIsSubmitting(true);
+  async function onSubmit(values: FormValues) {
+    setSubmitting(true);
     try {
       await authClient.organization.inviteMember({
+        organizationId,
         email: values.email,
         role:  values.role,
-        organizationId,
       });
-
       toast.success(`Invitation sent to ${values.email}`);
       form.reset();
-    } catch (err: any) {
-      console.error("Error sending invite:", err);
-      toast.error(err?.message ?? "Failed to send invitation");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to send invitation");
     } finally {
-      setIsSubmitting(false);
+      setSubmitting(false);
     }
-  };
+  }
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Invite Members</CardTitle>
-        <CardDescription>Invite new members to join this organization.</CardDescription>
+        <CardDescription>
+          Send an email invitation with a role you’ve created.
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col sm:flex-row gap-4">
-            <FormField
-              control={form.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem className="flex-1">
-                  <FormControl>
-                    <Input {...field} placeholder="Email address" type="email" />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="role"
-              render={({ field }) => (
-                <FormItem className="w-full sm:w-[180px]">
-                  <FormControl>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {getInviteRoles().map((r) => (
-                          <SelectItem key={r} value={r}>
-                            {r.charAt(0).toUpperCase() + r.slice(1)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <Button type="submit" disabled={isSubmitting} className="w-full sm:w-auto">
-              {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              <Send className="mr-2 h-4 w-4" /> Send Invite
-            </Button>
-          </form>
-        </Form>
+        {rolesLoading ? (
+          <p className="text-sm text-muted-foreground">Loading roles…</p>
+        ) : roles.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            You haven’t created any roles yet. Create one in{" "}
+            <strong>Settings → Roles</strong> before inviting members.
+          </p>
+        ) : (
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit(onSubmit)}
+              className="flex flex-col sm:flex-row gap-4"
+            >
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem className="flex-1">
+                    <FormControl>
+                      <Input
+                        type="email"
+                        placeholder="Email address"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="role"
+                render={({ field }) => (
+                  <FormItem className="w-full sm:w-[200px]">
+                    <FormControl>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select role" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {roles.map((r) => (
+                            <SelectItem key={r.name} value={r.name}>
+                              {r.name.charAt(0).toUpperCase() + r.name.slice(1)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <Button
+                type="submit"
+                disabled={submitting}
+                className="w-full sm:w-auto"
+              >
+                {submitting && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                <Send className="mr-2 h-4 w-4" />
+                Send Invite
+              </Button>
+            </form>
+          </Form>
+        )}
       </CardContent>
     </Card>
   );

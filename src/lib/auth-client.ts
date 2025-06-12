@@ -7,7 +7,7 @@ import { organizationClient } from "better-auth/client/plugins";
 import { magicLinkClient } from "better-auth/client/plugins";
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
 import { apiKeyClient } from "better-auth/client/plugins";
-import { ac, owner, manager, accountant, employee } from "@/lib/permissions";
+import { ac, owner} from "@/lib/permissions";
 
 /* ──────────────────────────────── TYPES ──────────────────────────────────── */
 declare module "better-auth/react" {
@@ -121,7 +121,7 @@ export const authClient = createAuthClient({
     apiKeyClient(),
     organizationClient({
       ac,
-      roles: { owner, manager, accountant, employee },
+      roles: { owner},
     }),
     subscriptionClientPlugin,
     magicLinkClient(),

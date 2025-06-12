@@ -4,7 +4,7 @@ import { z } from "zod";
 import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
-
+import { requirePermission } from "@/lib/perm-server";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* -------------------------------------------------------------------------- */
@@ -24,7 +24,9 @@ export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
-
+   /* enforce ticket:view */
+   const guard = await requirePermission(req, { ticket: ["view"] });
+   if (guard) return guard;                              // ⇒ 403 if not allow
   try {
 
     /* --- 2.2  Pagination + search ----------------------------------------- */

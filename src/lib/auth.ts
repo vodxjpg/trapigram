@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
 import { apiKey } from "better-auth/plugins";
-import { ac, owner, manager, accountant, employee } from "@/lib/permissions";
+import { ac, owner } from "@/lib/permissions";
 import { createAuthMiddleware } from "better-auth/api";
 import { v4 as uuidv4 } from "uuid";
 
@@ -313,9 +313,6 @@ export const auth = betterAuth({
       ac,
       roles: {
         owner,
-        manager,
-        accountant,
-        employee,
       },
       async sendInvitationEmail(data) {
         const { id, email, role, organization, inviter } = data;
