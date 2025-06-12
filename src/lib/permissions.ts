@@ -5,37 +5,43 @@ import {
   ownerAc,
 } from "better-auth/plugins/organization/access";
 
-/* ─────────────── extra resources your app understands ─────────────── */
-const domainStatements /*  ← NO  “as const” here!  */ = {
-  ticket : ["view", "update"],
-  order  : ["view_pricing", "view_no_pricing", "update_tracking"],
-  chat   : ["view"],
-  stock  : ["update"],
-  coupon : ["register", "manage"],
-  revenue: ["view"],
-  payment: ["manage"],
-  invitation  : ["create", "cancel"],      // ← add this
-  member      : ["delete", "update_role"], 
+/** The extra, _only_ resources we actually care about in our app */
+const domainStatements: Record<string, string[]> = {
+  member     : ["delete", "update_role"],
+  invitation : ["create", "cancel"],
   platformKey: ["view","create","update","delete"],
+  ticket     : ["view", "update"],
+  order      : ["view_pricing", "view_no_pricing", "update_tracking"],
+  chat       : ["view"],
+  stock      : ["update"],
+  coupon     : ["register", "manage"],
+  revenue    : ["view"],
+  payment    : ["manage"],
 };
 
-/* merge Better-Auth defaults with your own resources */
+// 1) Filter out “team” (or any other you don’t want) from defaultStatements
+const filteredDefaults: Record<string, string[]> = Object.fromEntries(
+  Object.entries(defaultStatements)
+    .filter(([resource]) => resource !== "team")    // <-- drop “team”
+    .map(([resource, perms]) => [resource, [...perms]])
+);
+
+// 2) Build your statements by merging filtered defaults + your domain
 export const statements: Record<string, string[]> = {
-  // spread-copy because defaultStatements’ arrays are readonly
-  ...Object.fromEntries(
-    Object.entries(defaultStatements).map(([k, v]) => [k, [...v]])
-  ),
+  ...filteredDefaults,
   ...domainStatements,
 };
 
-/* access-control engine */
+// 3) Build your access-control engine
 export const ac = createAccessControl(statements);
 
-/* the **only built-in** role we keep */
+// 4) Make your owner role grant *all* of your wanted statements,
+//    but filter out “team” from ownerAc as well:
+const { team: _dropped, ...ownerDefaults } = ownerAc.statements;
+
 export const owner = ac.newRole({
-  ...ownerAc.statements,
-  ...domainStatements,      // full power on every custom resource
+  ...ownerDefaults,      // everything except “team”
+  ...domainStatements,   // plus full power on your own resources
 });
 
-/* helper for the settings / roles UI */
 export const builtinRoles = { owner };
