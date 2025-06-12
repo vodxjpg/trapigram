@@ -10,7 +10,7 @@ const domainStatements: Record<string, string[]> = {
   member     : ["delete", "update_role"],
   invitation : ["create", "cancel"],
   platformKey: ["view","create","update","delete"],
-  ticket     : ["view", "update"],
+  ticket      : ["view", "update"], 
   order      : ["view_pricing", "view_no_pricing", "update_tracking"],
   chat       : ["view"],
   stock      : ["update"],

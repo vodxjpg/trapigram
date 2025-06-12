@@ -1,148 +1,158 @@
+// src/app/api/tickets/[id]/tags/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
+import { requirePermission } from "@/lib/perm-server";
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-const tagSchema = z.object({
-    description: z.string().min(1, { message: "Description is required." }),
-});
-
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
-
-    try {
-        const { id } = await params;
-
-        // Updated SELECT query to include "expendingMinimum"
-        const tagsQuery = `
-            SELECT
-            t.description
-            FROM tags AS t
-            JOIN "ticketTags" AS tt
-            ON tt."tagId" = t.id
-            WHERE tt."ticketId" = $1;
-  `;
-        const values = [id];
-        const allTag = `SELECT description FROM tags`
-
-        const countResult = await pool.query(tagsQuery, values);
-        const allTags = await pool.query(allTag)
-
-        const tags = countResult.rows;
-        const tagList = allTags.rows;
-
-        return NextResponse.json({
-            tags,
-            tagList
-        });
-    } catch (error: any) {
-        console.error("[GET /api/tickets/:id/tags] error:", error);
-        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-    }
+/** Helper to check if the caller is the org owner */
+async function isOwner(organizationId: string, userId: string) {
+  const { rowCount } = await pool.query(
+    `SELECT 1
+       FROM member
+      WHERE "organizationId" = $1
+        AND "userId"        = $2
+        AND role            = 'owner'
+      LIMIT 1`,
+    [organizationId, userId]
+  );
+  return rowCount > 0;
 }
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const apiKey = req.headers.get("x-api-key");
-    const internalSecret = req.headers.get("x-internal-secret");
-    let organizationId: string;
+// Body schema for POST
+const tagListSchema = z.object({
+  tags: z.array(z.string().min(1, "Tag cannot be empty")),
+});
 
-    const { searchParams } = new URL(req.url);
-    const explicitOrgId = searchParams.get("organizationId");
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  // 1) context + view guard
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId, userId } = ctx;
 
-    // Case 1: Check for session (UI requests)
-    const session = await auth.api.getSession({ headers: req.headers });
-    if (session) {
-        organizationId = explicitOrgId || session.session.activeOrganizationId;
-        if (!organizationId) {
-            return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
-        }
+  if (!(await isOwner(organizationId, userId))) {
+    const guard = await requirePermission(req, { ticket: ["view"] });
+    if (guard) {
+      return NextResponse.json(
+        { error: "You don’t have permission to view tags" },
+        { status: 403 }
+      );
     }
-    // Case 2: External API request with API key
-    else if (apiKey) {
-        const { valid, error, key } = await auth.api.verifyApiKey({ body: { key: apiKey } });
-        if (!valid || !key) {
-            return NextResponse.json({ error: error?.message || "Invalid API key" }, { status: 401 });
-        }
-        organizationId = explicitOrgId || "";
-        if (!organizationId) {
-            return NextResponse.json({ error: "Organization ID is required in query parameters" }, { status: 400 });
-        }
-    }
-    // Case 3: Internal request with secret
-    else if (internalSecret === INTERNAL_API_SECRET) {
-        const internalSession = await auth.api.getSession({ headers: req.headers });
-        if (!internalSession) {
-            return NextResponse.json({ error: "Unauthorized session" }, { status: 401 });
-        }
-        organizationId = explicitOrgId || internalSession.session.activeOrganizationId;
-        if (!organizationId) {
-            return NextResponse.json({ error: "No active organization in session" }, { status: 400 });
-        }
-    } else {
-        return NextResponse.json({ error: "Unauthorized: Provide a valid session, API key, or internal secret" }, { status: 403 });
-    }
+  }
 
+  try {
     const { id } = await params;
+    // fetch assigned tags
+    const tagsRes = await pool.query(
+      `SELECT t.description
+         FROM tags AS t
+         JOIN "ticketTags" AS tt
+           ON tt."tagId" = t.id
+        WHERE tt."ticketId" = $1`,
+      [id]
+    );
+    // fetch all possible tags
+    const allRes = await pool.query(`SELECT description FROM tags`);
+    return NextResponse.json(
+      { tags: tagsRes.rows, tagList: allRes.rows },
+      { status: 200 }
+    );
+  } catch (err) {
+    console.error("[GET /api/tickets/:id/tags]", err);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
+}
 
-    const updateTags = `DELETE FROM "ticketTags" WHERE "ticketId"='${id}'`
-    await pool.query(updateTags);
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  // 1) context + update guard
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId, userId } = ctx;
 
-    try {
-        const body = await req.json();
-        body.tags.map(async (tag) => {
-
-            const checkTags = `
-            SELECT * FROM tags WHERE description = '${tag}'
-            `
-            const checked = await pool.query(checkTags);
-            if (checked.rowCount === 0) {
-
-                const tagId = uuidv4();
-                const insertQuery = `
-                INSERT INTO tags(id, description, "createdAt", "updatedAt")
-                VALUES($1, $2, NOW(), NOW())
-                RETURNING *
-                `;
-                const values = [
-                    tagId,
-                    tag,
-                ];
-
-                await pool.query(insertQuery, values);
-            }
-
-            const newTag = `
-            SELECT id FROM tags WHERE description = '${tag}'
-            `
-            const nTag = await pool.query(newTag);
-            const tagId = nTag.rows[0].id
-            const ticketTagId = uuidv4();
-            const insertTagQuery = `
-                INSERT INTO "ticketTags"(id, "ticketId", "tagId", "createdAt", "updatedAt")
-                VALUES($1, $2, $3, NOW(), NOW())
-                RETURNING *
-                `;
-
-            const tagValues = [
-                ticketTagId,
-                id,
-                tagId
-            ]
-
-            await pool.query(insertTagQuery, tagValues);
-        })
-        return NextResponse.json({ status: 201 });
-    } catch (error: any) {
-        console.error("[POST /api/tickets/:id/tags] error:", error);
-        if (error instanceof z.ZodError) {
-            return NextResponse.json({ error: error.errors }, { status: 400 });
-        }
-        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  if (!(await isOwner(organizationId, userId))) {
+    const guard = await requirePermission(req, { ticket: ["update"] });
+    if (guard) {
+      return NextResponse.json(
+        { error: "You don’t have permission to update tags" },
+        { status: 403 }
+      );
     }
+  }
+
+  // 2) parse & validate body
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const parse = tagListSchema.safeParse(body);
+  if (!parse.success) {
+    return NextResponse.json(
+      { error: parse.error.errors.map((e) => e.message).join(", ") },
+      { status: 400 }
+    );
+  }
+  const { tags } = parse.data;
+  const { id } = await params;
+
+  // 3) update ticketTags in a transaction
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // remove existing
+    await client.query(
+      `DELETE FROM "ticketTags" WHERE "ticketId" = $1`,
+      [id]
+    );
+
+    for (const description of tags) {
+      // ensure tag exists
+      const tagRes = await client.query(
+        `SELECT id FROM tags WHERE description = $1`,
+        [description]
+      );
+      let tagId: string;
+      if (tagRes.rowCount) {
+        tagId = tagRes.rows[0].id;
+      } else {
+        tagId = uuidv4();
+        await client.query(
+          `INSERT INTO tags(id, description, "createdAt", "updatedAt")
+           VALUES($1, $2, NOW(), NOW())`,
+          [tagId, description]
+        );
+      }
+      // link
+      await client.query(
+        `INSERT INTO "ticketTags"(id, "ticketId", "tagId", "createdAt", "updatedAt")
+         VALUES($1, $2, $3, NOW(), NOW())`,
+        [uuidv4(), id, tagId]
+      );
+    }
+
+    await client.query("COMMIT");
+    return NextResponse.json({ status: 201 });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[POST /api/tickets/:id/tags]", err);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  } finally {
+    client.release();
+  }
 }

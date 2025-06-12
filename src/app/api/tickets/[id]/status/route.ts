@@ -1,18 +1,46 @@
+// src/app/api/tickets/[id]/status/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
+import { requirePermission } from "@/lib/perm-server";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-const statusTicketSchema = z.object({ status: z.string() });
+/** Helper to check if the caller is the org owner */
+async function isOwner(organizationId: string, userId: string) {
+  const { rowCount } = await pool.query(
+    `SELECT 1
+       FROM member
+      WHERE "organizationId" = $1
+        AND "userId"        = $2
+        AND role            = 'owner'
+      LIMIT 1`,
+    [organizationId, userId]
+  );
+  return rowCount > 0;
+}
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+const statusTicketSchema = z.object({
+  status: z.enum(["open", "in-progress", "closed"])
+});
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
+  const { organizationId, userId } = ctx;
 
-  // 1) parse & validate JSON
-  let body: any;
+  // owner bypass
+  if (!(await isOwner(organizationId, userId))) {
+    const guard = await requirePermission(req, { ticket: ["update"] });
+    if (guard) return guard;
+  }
+
+  // parse & validate JSON
+  let body: unknown;
   try {
     body = await req.json();
   } catch {
@@ -20,17 +48,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   const { status } = statusTicketSchema.parse(body);
 
-  // 2) get the id
+  // get the ticket ID
   const { id } = await params;
 
-  // 3) run the update
+  // perform update
   const updateQuery = `
-    UPDATE "tickets"
-    SET status = $1
-    WHERE id = $2
-    RETURNING *
+    UPDATE tickets
+       SET status = $1,
+           "updatedAt" = NOW()
+     WHERE id = $2
+       AND "organizationId" = $3
+    RETURNING *;
   `;
-  const { rows } = await pool.query(updateQuery, [status, id]);
+  const { rows } = await pool.query(updateQuery, [status, id, organizationId]);
   if (rows.length === 0) {
     return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
   }

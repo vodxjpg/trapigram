@@ -1,18 +1,32 @@
-// /src/app/api/tickets/[id]/messages/route.ts
-
+// src/app/api/tickets/[id]/messages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
+import { requirePermission } from "@/lib/perm-server";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-// Messages schema 
+/** Helper to check if the caller is the org owner */
+async function isOwner(organizationId: string, userId: string) {
+  const { rowCount } = await pool.query(
+    `SELECT 1
+       FROM member
+      WHERE "organizationId" = $1
+        AND "userId"        = $2
+        AND role            = 'owner'
+      LIMIT 1`,
+    [organizationId, userId]
+  );
+  return rowCount > 0;
+}
+
+// Zod schema for validating incoming message
 const messagesSchema = z.object({
-  message: z.string().min(1, { message: "Message is required." }),
+  message: z.string().min(1, "Message is required."),
   attachments: z.string(),
   isInternal: z.boolean(),
 });
@@ -21,74 +35,98 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // 1) context + update guard
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  try {
-    const { id } = await params;
-    const internalHeader = req.headers.get("x-is-internal");
-    const raw = await req.json();
+  const { organizationId, userId } = ctx;
 
-    // Normalize message: accept either `raw.message` or `raw.text`
-    const messageText =
-    typeof raw.message === "string"  ? raw.message.trim()  :
-    typeof raw.text    === "string"  ? raw.text.trim()     :
-    typeof raw.content === "string"  ? raw.content.trim()  :
-    "";
-  
-  if (!messageText) {
-    return NextResponse.json(
-      { error: "Message is required in the request body." },
-      { status: 400 }
-    );
+  if (!(await isOwner(organizationId, userId))) {
+    const guard = await requirePermission(req, { ticket: ["update"] });
+    if (guard) {
+      return NextResponse.json(
+        { error: "You don’t have permission to post messages" },
+        { status: 403 }
+      );
+    }
   }
 
-    // Ensure attachments is a JSON string
-    const attachments = typeof raw.attachments === "string"
-      ? raw.attachments
-      : JSON.stringify(raw.attachments ?? []);
+  try {
+    const { id } = await params;
 
-    // Derive isInternal from header
-    const isInternal = internalHeader === "true";
+    // 2) normalize inputs
+    const raw = await req.json();
+    const messageText =
+      typeof raw.message === "string"
+        ? raw.message.trim()
+        : typeof raw.text === "string"
+        ? raw.text.trim()
+        : typeof raw.content === "string"
+        ? raw.content.trim()
+        : "";
 
-    // Zod parse
-    const { message, attachments: atts, isInternal: internalFlag } =
-      messagesSchema.parse({ message: messageText, attachments, isInternal });
+    if (!messageText) {
+      return NextResponse.json(
+        { error: "Message is required in the request body." },
+        { status: 400 }
+      );
+    }
 
-    // --- 3) Insert into DB ---
+    const attachmentsStr =
+      typeof raw.attachments === "string"
+        ? raw.attachments
+        : JSON.stringify(raw.attachments ?? []);
+
+    const isInternal = req.headers.get("x-is-internal") === "true";
+
+    // 3) validate schema
+    const parsed = messagesSchema.parse({
+      message: messageText,
+      attachments: attachmentsStr,
+      isInternal,
+    });
+
+    // 4) insert
     const messageId = uuidv4();
-    const insertQuery = `
+    const result = await pool.query(
+      `
       INSERT INTO "ticketMessages"
         (id, "ticketId", message, attachments, "isInternal", "createdAt", "updatedAt")
       VALUES
         ($1, $2, $3, $4, $5, NOW(), NOW())
       RETURNING *;
-    `;
-    const values = [messageId, id, message, atts, internalFlag];
-    const result = await pool.query(insertQuery, values);
+      `,
+      [
+        messageId,
+        id,
+        parsed.message,
+        parsed.attachments,
+        parsed.isInternal,
+      ]
+    );
+
     const saved = result.rows[0];
+    // parse attachments JSON back to array
     saved.attachments = JSON.parse(saved.attachments);
 
-    // If this is the *second* (or later) message, bump ticket to in-progress
+    // 5) bump ticket to in-progress if not first message
     const countRes = await pool.query(
       `SELECT COUNT(*) FROM "ticketMessages" WHERE "ticketId" = $1`,
       [id]
     );
-    const count = Number(countRes.rows[0].count);
-    if (count > 1) {
+    if (Number(countRes.rows[0].count) > 1) {
       await pool.query(
-        `UPDATE "tickets" SET status = 'in-progress' WHERE id = $1`,
+        `UPDATE tickets SET status = 'in-progress' WHERE id = $1`,
         [id]
       );
     }
 
     return NextResponse.json(saved, { status: 201 });
-
   } catch (err: any) {
     console.error("[POST /api/tickets/[id]/messages] error:", err);
-    // If it was a ZodError, return 400
     if (err instanceof z.ZodError) {
+      // send validation errors
       return NextResponse.json(
-        { error: err.errors.map(e => e.message).join("; ") },
+        { error: err.errors.map((e) => e.message).join("; ") },
         { status: 400 }
       );
     }
