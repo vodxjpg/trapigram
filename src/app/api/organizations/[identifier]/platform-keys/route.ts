@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getContext } from "@/lib/context";
-import { requirePermission } from "@/lib/perm-server";
+import { requireOrgPermission } from "@/lib/perm-server";
 
 // helper to check if the caller is the org owner
 async function isOwner(organizationId: string, userId: string) {
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest, { params }) {
     const { organizationId, userId } = ctx;
   
     if (!(await isOwner(organizationId, userId))) {
-      const guard = await requirePermission(req, { platformKey: ["create"] });
+      const guard = await requireOrgPermission(req, { platformKey: ["create"] });
       if (guard) return guard;
     }
   
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest, { params }) {
     const { organizationId, userId } = ctx;
   
     if (!(await isOwner(organizationId, userId))) {
-      const guard = await requirePermission(req, { platformKey: ["update"] });
+      const guard = await requireOrgPermission(req, { platformKey: ["update"] });
       if (guard) return guard;
     }
   
@@ -132,7 +132,7 @@ export async function DELETE(req: NextRequest, { params }) {
   const { organizationId, userId } = ctx;
 
   if (!(await isOwner(organizationId, userId))) {
-    const guard = await requirePermission(req, { platformKey: ["delete"] });
+    const guard = await requireOrgPermission(req, { platformKey: ["delete"] });
     if (guard) return guard;
   }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
-import { requirePermission } from "@/lib/perm-server";
+import { requireOrgPermission } from "@/lib/perm-server";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -9,7 +9,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { invitationId: string } }
 ) {
-  const guard = await requirePermission(req, { invitation: ["cancel"] });
+  const guard = await requireOrgPermission(req, { invitation: ["cancel"] });
   if (guard) return guard;
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;

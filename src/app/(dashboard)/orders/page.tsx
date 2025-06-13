@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { usePermission } from "@/hooks/use-permission";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Edit } from "lucide-react";
@@ -74,6 +75,7 @@ interface Order {
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
 
 export default function OrdersPage() {
+  const can = usePermission();
   const router = useRouter();
 
   // ◼︎ state for all orders via API
@@ -116,6 +118,20 @@ export default function OrdersPage() {
       .finally(() => setLoading(false));
   }, []);
 
+
+   // client‐side guard
+    useEffect(() => {
+       // only run the redirect *after* our hook has loaded the real role
+       if (can.loading) return;
+       if (!can({ order: ["view"] })) {
+         router.replace("/403");
+       }
+     }, [can, router]);
+
+    // don’t render anything while we’re still figuring out your role...
+    if (can.loading) return null;
+    if (!can({ order: ["view"] })) return null;
+     
   // — apply filters whenever inputs or orders change
   useEffect(() => {
     let result = orders.map((o) => ({

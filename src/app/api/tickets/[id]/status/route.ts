@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
-import { requirePermission } from "@/lib/perm-server";
+import { requireOrgPermission } from "@/lib/perm-server";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -35,7 +35,7 @@ export async function PATCH(
 
   // owner bypass
   if (!(await isOwner(organizationId, userId))) {
-    const guard = await requirePermission(req, { ticket: ["update"] });
+    const guard = await requireOrgPermission(req, { ticket: ["update"] });
     if (guard) return guard;
   }
 

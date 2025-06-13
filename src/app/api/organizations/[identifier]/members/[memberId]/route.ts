@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
-import { requirePermission } from "@/lib/perm-server";
+import { requireOrgPermission } from "@/lib/perm-server";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -108,7 +108,7 @@ export async function DELETE(
 
   // 3) non-owners must have member:delete
   if (callerRole !== "owner") {
-    const guard = await requirePermission(req, { member: ["delete"] });
+    const guard = await requireOrgPermission(req, { member: ["delete"] });
     if (guard) return guard;
   }
 

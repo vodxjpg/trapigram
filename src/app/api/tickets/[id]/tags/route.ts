@@ -4,7 +4,7 @@ import { z } from "zod";
 import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
-import { requirePermission } from "@/lib/perm-server";
+import { requireOrgPermission } from "@/lib/perm-server";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -37,7 +37,7 @@ export async function GET(
   const { organizationId, userId } = ctx;
 
   if (!(await isOwner(organizationId, userId))) {
-    const guard = await requirePermission(req, { ticket: ["view"] });
+    const guard = await requireOrgPermission(req, { ticket: ["view"] });
     if (guard) {
       return NextResponse.json(
         { error: "You don’t have permission to view tags" },
@@ -82,7 +82,7 @@ export async function POST(
   const { organizationId, userId } = ctx;
 
   if (!(await isOwner(organizationId, userId))) {
-    const guard = await requirePermission(req, { ticket: ["update"] });
+    const guard = await requireOrgPermission(req, { ticket: ["update"] });
     if (guard) {
       return NextResponse.json(
         { error: "You don’t have permission to update tags" },

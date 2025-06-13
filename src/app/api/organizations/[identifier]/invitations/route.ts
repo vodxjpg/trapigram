@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
-import { requirePermission } from "@/lib/perm-server";
+import { requireOrgPermission } from "@/lib/perm-server";
 import { v4 as uuidv4 } from "uuid";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
     // enforce member:invite
-  const guard = await requirePermission(req, { invitation: ["create"] });
+  const guard = await requireOrgPermission(req, { invitation: ["create"] });
   if (guard) return guard;
   const { organizationId, userId: inviterId } = ctx;
 

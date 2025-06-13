@@ -11,8 +11,15 @@ const domainStatements: Record<string, string[]> = {
   invitation : ["create", "cancel"],
   platformKey: ["view","create","update","delete"],
   ticket      : ["view", "update"], 
-  order      : ["view_pricing", "view_no_pricing", "update_tracking"],
-  chat       : ["view"],
+  order          : [
+    "view",
+    "update",
+    "update_status",
+    "view_pricing",
+    "update_tracking",
+  ],
+  // Chat within orders
+  orderChat      : ["view"],
   stock      : ["update"],
   coupon     : ["register", "manage"],
   revenue    : ["view"],

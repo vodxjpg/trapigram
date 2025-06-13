@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
+import { requireOrgPermission } from "@/lib/perm-server";
 
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -62,6 +63,8 @@ export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
+  const guard = await requireOrgPermission(req, { order: ["view"] });
+  if (guard) return guard;
   const { searchParams } = new URL(req.url);
   const filterOrderKey = searchParams.get("orderKey");
   const filterClientId = searchParams.get("clientId");

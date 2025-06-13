@@ -4,7 +4,7 @@ import { z } from "zod";
 import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
-import { requirePermission } from "@/lib/perm-server";
+import { requireOrgPermission } from "@/lib/perm-server";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 // helper to check if caller is owner
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
 
   // only check permission for non-owners
   if (!(await isOwner(organizationId, userId))) {
-    const guard = await requirePermission(req, { ticket: ["view"] });
+    const guard = await requireOrgPermission(req, { ticket: ["view"] });
     if (guard) return guard;
   }
 
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
 
   // owner bypass for create
   if (!(await isOwner(organizationId, userId))) {
-    const guard = await requirePermission(req, { ticket: ["create"] });
+    const guard = await requireOrgPermission(req, { ticket: ["create"] });
     if (guard) return guard;
   }
 
