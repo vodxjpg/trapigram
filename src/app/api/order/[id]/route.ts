@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { z } from "zod";
+import { requireOrgPermission } from "@/lib/perm-server";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /* ─── encryption helpers ─────────────────────────────────────── */
@@ -161,6 +162,9 @@ export async function PATCH(
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
+    // enforce order:update
+  const forbid = await requireOrgPermission(req, { order: ["update"] });
+  if (forbid) return forbid;
   const { id } = await params;
   const body = await req.json();
 

@@ -119,19 +119,19 @@ export default function OrdersPage() {
   }, []);
 
 
-   // client‐side guard
-    useEffect(() => {
-       // only run the redirect *after* our hook has loaded the real role
-       if (can.loading) return;
-       if (!can({ order: ["view"] })) {
-         router.replace("/403");
-       }
-     }, [can, router]);
+  // client‐side guard
+  useEffect(() => {
+    // only run the redirect *after* our hook has loaded the real role
+    if (can.loading) return;
+    if (!can({ order: ["view"] })) {
+      router.replace("/403");
+    }
+  }, [can, router]);
 
-    // don’t render anything while we’re still figuring out your role...
-    if (can.loading) return null;
-    if (!can({ order: ["view"] })) return null;
-     
+  // don’t render anything while we’re still figuring out your role...
+  if (can.loading) return null;
+  if (!can({ order: ["view"] })) return null;
+
   // — apply filters whenever inputs or orders change
   useEffect(() => {
     let result = orders.map((o) => ({
@@ -423,72 +423,68 @@ export default function OrdersPage() {
                         {order.firstName} {order.lastName} — {order.username} (
                         {order.email})
                       </TableCell>
-                      {/* Status Select showing only badges */}
+                      {/* Status Select showing only badges or editable based on permission */}
                       <TableCell>
-                        <Select
-                          value={order.status}
-                          onValueChange={(v) =>
-                            handleStatusChange(order.id, v as OrderStatus)
-                          }
-                        >
-                          <SelectTrigger className="w-auto flex justify-center">
-                            <Badge className={getStatusColor(order.status)}>
-                              {order.status.charAt(0).toUpperCase() +
-                                order.status.slice(1)}
-                            </Badge>
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem
-                              value="open"
-                              className="w-auto flex justify-left"
-                            >
-                              <Badge className={getStatusColor("open")}>
-                                Open
+                        {can({ order: ["update_status"] }) ? (
+                          <Select
+                            value={order.status}
+                            onValueChange={(v) =>
+                              handleStatusChange(order.id, v as OrderStatus)
+                            }
+                          >
+                            <SelectTrigger className="w-auto flex justify-center">
+                              <Badge className={getStatusColor(order.status)}>
+                                {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                               </Badge>
-                            </SelectItem>
-                            <SelectItem
-                              value="underpaid"
-                              className="w-auto flex justify-left"
-                            >
-                              <Badge className={getStatusColor("underpaid")}>
-                                Partially paid
-                              </Badge>
-                            </SelectItem>
-                            <SelectItem
-                              value="paid"
-                              className="w-auto flex justify-left"
-                            >
-                              <Badge className={getStatusColor("paid")}>
-                                Paid
-                              </Badge>
-                            </SelectItem>
-                            <SelectItem
-                              value="completed"
-                              className="w-auto flex justify-left"
-                            >
-                              <Badge className={getStatusColor("completed")}>
-                                Completed
-                              </Badge>
-                            </SelectItem>
-                            <SelectItem
-                              value="cancelled"
-                              className="w-auto flex justify-left"
-                            >
-                              <Badge className={getStatusColor("cancelled")}>
-                                Cancelled
-                              </Badge>
-                            </SelectItem>
-                            <SelectItem
-                              value="refunded"
-                              className="w-auto flex justify-left"
-                            >
-                              <Badge className={getStatusColor("refunded")}>
-                                Refunded
-                              </Badge>
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="open" className="w-auto flex justify-left">
+                                <Badge className={getStatusColor("open")}>Open</Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="underpaid"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("underpaid")}>
+                                  Partially paid
+                                </Badge>
+                              </SelectItem>
+                              <SelectItem value="paid" className="w-auto flex justify-left">
+                                <Badge className={getStatusColor("paid")}>Paid</Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="completed"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("completed")}>
+                                  Completed
+                                </Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="cancelled"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("cancelled")}>
+                                  Cancelled
+                                </Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="refunded"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("refunded")}>
+                                  Refunded
+                                </Badge>
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge className={getStatusColor(order.status)}>
+                            {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                          </Badge>
+                        )}
                       </TableCell>
+
                       <TableCell>{formatDate(order.createdAt)}</TableCell>
                       <TableCell>${order.total.toFixed(2)}</TableCell>
                       <TableCell className="text-right">
@@ -582,7 +578,7 @@ export default function OrdersPage() {
           <DialogHeader>
             <DialogTitle>
               {selectedOrderId &&
-              orders.find((o) => o.id === selectedOrderId)?.trackingNumber
+                orders.find((o) => o.id === selectedOrderId)?.trackingNumber
                 ? "Edit Tracking Number"
                 : "Set Tracking Number"}
             </DialogTitle>

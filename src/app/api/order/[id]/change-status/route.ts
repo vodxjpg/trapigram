@@ -7,6 +7,8 @@ import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
 import { sendNotification } from "@/lib/notifications";
 import type { NotificationType } from "@/lib/notifications";
+import { requireOrgPermission } from "@/lib/perm-server";
+
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -93,8 +95,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
+    // 1) context + permission guard
+  const { requireOrgPermission } = await import('@/lib/perm-server');
+  const ctxOrRes = await requireOrgPermission(req, { order: ['update_status'] });
+  if (ctxOrRes) return ctxOrRes;
+  const ctx = await getContext(req) as { organizationId: string };
   const { organizationId } = ctx;
   const { id } = await params;
   const { status: newStatus } = orderStatusSchema.parse(await req.json());
