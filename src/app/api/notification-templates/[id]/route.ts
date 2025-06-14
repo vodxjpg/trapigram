@@ -12,7 +12,9 @@ const NOTIF_TYPES: Readonly<NotificationType[]> = [
   "order_ready",
   "order_cancelled",
   "order_refunded",
-  "order_partially_paid"   // ← NEW
+  "order_partially_paid",
+  "order_shipped"     
+    // ← NEW
 ] as const;
 
 

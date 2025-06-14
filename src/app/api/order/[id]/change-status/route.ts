@@ -114,6 +114,7 @@ export async function PATCH(
     } = await client.query(
       `SELECT status,
               country,
+              "trackingNumber"
               "cartId",
               "clientId",
               "orderKey",
@@ -359,6 +360,7 @@ export async function PATCH(
           order_number: ord.orderKey,
           order_date: orderDate,
           order_shipping_method: ord.shippingMethod ?? "-",
+          tracking_number: ord.trackingNumber ?? "",
           expected_amt: expectedAmt,        // ★ NEW
           received_amt: receivedAmt,
           asset:        assetSymbol,        // ★ NEW
