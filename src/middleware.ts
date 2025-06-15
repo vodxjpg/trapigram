@@ -1,6 +1,12 @@
 // src/middleware.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
+
+const ALLOWED_ORIGINS = [
+  "https://trapyfy.com",
+  "https://www.trapyfy.com",
+];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -9,12 +15,15 @@ export async function middleware(request: NextRequest) {
   // 1) CORS for /api/* (preflight + real requests)
   // ────────────────────────────────────────────────────────
   if (pathname.startsWith("/api/")) {
+    const origin = request.headers.get("origin") ?? "";
+    const allowOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : "";
+
     // Handle preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
         headers: {
-          "Access-Control-Allow-Origin":      "https://trapyfy.com",
+          "Access-Control-Allow-Origin":      allowOrigin,
           "Access-Control-Allow-Methods":     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
           "Access-Control-Allow-Headers":     "Content-Type,Authorization",
           "Access-Control-Allow-Credentials": "true",
@@ -25,10 +34,12 @@ export async function middleware(request: NextRequest) {
 
     // Attach CORS headers to real requests
     const res = NextResponse.next();
-    res.headers.set("Access-Control-Allow-Origin",      "https://trapyfy.com");
-    res.headers.set("Access-Control-Allow-Methods",     "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-    res.headers.set("Access-Control-Allow-Headers",     "Content-Type,Authorization");
-    res.headers.set("Access-Control-Allow-Credentials", "true");
+    if (allowOrigin) {
+      res.headers.set("Access-Control-Allow-Origin",      allowOrigin);
+      res.headers.set("Access-Control-Allow-Methods",     "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+      res.headers.set("Access-Control-Allow-Headers",     "Content-Type,Authorization");
+      res.headers.set("Access-Control-Allow-Credentials", "true");
+    }
     return res;
   }
 
@@ -113,9 +124,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // must include API so our CORS branch runs
     "/api/:path*",
-    // keep your original non-API matcher
     "/((?!_next/static|_next/image|favicon.ico).*)",
   ],
 };
