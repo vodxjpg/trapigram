@@ -1,18 +1,46 @@
 // src/middleware.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
 
 export async function middleware(request: NextRequest) {
-  console.log("Middleware triggered for:", request.nextUrl.pathname);
+  const { pathname } = request.nextUrl;
+
+  // ────────────────────────────────────────────────────────
+  // 1) CORS for /api/* (preflight + real requests)
+  // ────────────────────────────────────────────────────────
+  if (pathname.startsWith("/api/")) {
+    // Handle preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin":      "https://toto.com",
+          "Access-Control-Allow-Methods":     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+          "Access-Control-Allow-Headers":     "Content-Type,Authorization",
+          "Access-Control-Allow-Credentials": "true",
+          "Access-Control-Max-Age":           "86400",
+        },
+      });
+    }
+
+    // Attach CORS headers to real requests
+    const res = NextResponse.next();
+    res.headers.set("Access-Control-Allow-Origin",      "https://toto.com");
+    res.headers.set("Access-Control-Allow-Methods",     "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    res.headers.set("Access-Control-Allow-Headers",     "Content-Type,Authorization");
+    res.headers.set("Access-Control-Allow-Credentials", "true");
+    return res;
+  }
+
+  // ────────────────────────────────────────────────────────
+  // 2) Your existing auth middleware for non-API paths
+  // ────────────────────────────────────────────────────────
+  console.log("Middleware triggered for:", pathname);
 
   const sessionCookie = getSessionCookie(request);
   console.log("Session cookie:", sessionCookie);
 
-  // ---------------------------------------------------------
-  // Define your public paths. Any of these should always
-  // be allowed through—even if a session cookie exists.
-  // ---------------------------------------------------------
+  // Define your public paths
   const publicPaths = [
     "/",
     "/login",
@@ -22,7 +50,6 @@ export async function middleware(request: NextRequest) {
     "/accept-invitation/:path*",
     "/check-email",
   ];
-  const pathname = request.nextUrl.pathname;
   const isPublicPath = publicPaths.some((path) =>
     path === "/"
       ? pathname === "/"
@@ -32,7 +59,6 @@ export async function middleware(request: NextRequest) {
   );
   console.log("Is public path:", isPublicPath);
 
-  // Always allow public paths, regardless of session cookie
   if (isPublicPath) {
     console.log("Public path, proceeding without auth check");
     return NextResponse.next();
@@ -55,10 +81,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // ---------------------------------------------------------
-  // For any remaining (protected) path with a session cookie,
-  // perform the /api/auth/check-status flow.
-  // ---------------------------------------------------------
+  // Check-status flow
   const originalPath = pathname;
   const checkStatusUrl = new URL("/api/auth/check-status", request.url);
   checkStatusUrl.searchParams.set("originalPath", originalPath);
@@ -79,7 +102,6 @@ export async function middleware(request: NextRequest) {
   const { redirect } = checkStatusData;
   console.log("Redirect target:", redirect);
 
-  // If checkStatus says to redirect (and it's not the same page), do it
   if (redirect && redirect !== originalPath) {
     console.log(`Redirecting from ${originalPath} to ${redirect}`);
     return NextResponse.redirect(new URL(redirect, request.url));
@@ -90,5 +112,10 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  matcher: [
+    // must include API so our CORS branch runs
+    "/api/:path*",
+    // keep your original non-API matcher
+    "/((?!_next/static|_next/image|favicon.ico).*)",
+  ],
 };
