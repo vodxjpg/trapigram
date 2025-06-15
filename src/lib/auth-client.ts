@@ -9,6 +9,8 @@ import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plug
 import { apiKeyClient } from "better-auth/client/plugins";
 import { ac, owner} from "@/lib/permissions";
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
+
 /* ──────────────────────────────── TYPES ──────────────────────────────────── */
 declare module "better-auth/react" {
   interface AuthClient {
@@ -116,7 +118,10 @@ declare module "better-auth/react" {
 
 /* ─────────────────────────── CLIENT INSTANCE ───────────────────────────── */
 export const authClient = createAuthClient({
-  baseURL: process.env.NEXT_PUBLIC_APP_URL + '/api/auth' || "https://trapyfy.com/api/auth",
+  
+  baseURL: APP_URL
+    ? `${APP_URL.replace(/\/$/, '')}/api/auth`
+    : 'https://trapyfy.com/api/auth',
   plugins: [
     apiKeyClient(),
     organizationClient({
