@@ -14,7 +14,7 @@ export async function middleware(request: NextRequest) {
       return new Response(null, {
         status: 204,
         headers: {
-          "Access-Control-Allow-Origin":      "https://toto.com",
+          "Access-Control-Allow-Origin":      "https://trapyfy.com",
           "Access-Control-Allow-Methods":     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
           "Access-Control-Allow-Headers":     "Content-Type,Authorization",
           "Access-Control-Allow-Credentials": "true",
@@ -25,7 +25,7 @@ export async function middleware(request: NextRequest) {
 
     // Attach CORS headers to real requests
     const res = NextResponse.next();
-    res.headers.set("Access-Control-Allow-Origin",      "https://toto.com");
+    res.headers.set("Access-Control-Allow-Origin",      "https://trapyfy.com");
     res.headers.set("Access-Control-Allow-Methods",     "GET,POST,PUT,PATCH,DELETE,OPTIONS");
     res.headers.set("Access-Control-Allow-Headers",     "Content-Type,Authorization");
     res.headers.set("Access-Control-Allow-Credentials", "true");
