@@ -1,38 +1,50 @@
 // src/lib/email.ts
-import { Resend } from 'resend'
-
 /**
- * Very-light sanity check – avoids hitting the API with an empty /
- * obviously-bad address.
+ * A very light sanity check – avoids hitting the API with an empty /
+ * obviously-bad address (which would 4xx on Resend).
  */
 const isPlausibleEmail = (addr: string | undefined | null): addr is string =>
   !!addr && /.+@.+\..+/.test(addr)
 
-const resend = new Resend(process.env.RESEND_API_KEY!)
-
 export async function sendEmail({
   to,
   subject,
+  text,
   html,
 }: {
   to: string
   subject: string
-  html: string
+  text?: string
+  html?: string
 }) {
-  if (!/.+@.+\..+/.test(to)) return
+  if (!isPlausibleEmail(to)) {
+    console.warn('[sendEmail] skipped – no valid recipient')
+    return
+  }
 
+  // Build a payload that includes text or html (or both)
+  const payload: Record<string, any> = {
+    from: 'no-reply@trapyfy.com',
+    to,
+    subject,
+  }
+  if (text) payload.text = text
+  if (html) payload.html = html
+
+  // Make sure we have at least one
+  if (!payload.text && !payload.html) {
+    console.error('[sendEmail] failed – neither text nor html was provided')
+    return
+  }
+
+  // Fire off the REST call
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
     },
-    body: JSON.stringify({
-      from: 'no-reply@trapyfy.com',
-      to,
-      subject,
-      html,
-    }),
+    body: JSON.stringify(payload),
   })
 
   if (!res.ok) {

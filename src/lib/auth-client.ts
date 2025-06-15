@@ -121,7 +121,7 @@ export const authClient = createAuthClient({
   
   baseURL: APP_URL
     ? `${APP_URL.replace(/\/$/, '')}/api/auth`
-    : 'https://trapyfy.com/api/auth',
+    : 'https://www.trapyfy.com/api/auth',
   plugins: [
     apiKeyClient(),
     organizationClient({
