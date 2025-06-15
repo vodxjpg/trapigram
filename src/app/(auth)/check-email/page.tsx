@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/(auth)/check-email/page.tsx
+// /home/zodx/Desktop/Trapyfy/src/app/(auth)/check-email/page.tsx
 "use client";
 
 export default function CheckEmail() {

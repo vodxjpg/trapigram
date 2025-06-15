@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/(auth)/subscribe/page.tsx
+// /home/zodx/Desktop/Trapyfy/src/app/(auth)/subscribe/page.tsx
 "use client";
 
 import { useEffect } from "react";

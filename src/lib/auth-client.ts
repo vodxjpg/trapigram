@@ -1,5 +1,5 @@
 /* -------------------------------------------------------------------------- */
-/*  /home/zodx/Desktop/trapigram/src/lib/auth-client.ts                       */
+/*  /home/zodx/Desktop/Trapyfy/src/lib/auth-client.ts                       */
 /* -------------------------------------------------------------------------- */
 
 import { createAuthClient } from "better-auth/react";

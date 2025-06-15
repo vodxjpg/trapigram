@@ -28,7 +28,7 @@ export async function sendEmail({
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: 'no-reply@trapigram.com',
+      from: 'no-reply@trapyfy.com',
       to,
       subject,
       html,

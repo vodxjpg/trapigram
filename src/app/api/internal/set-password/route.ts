@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/api/internal/set-password/route.ts
+// /home/zodx/Desktop/Trapyfy/src/app/api/internal/set-password/route.ts
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 

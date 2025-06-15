@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/(dashboard)/announcements/[id]/page.tsx
+// /home/zodx/Desktop/Trapyfy/src/app/(dashboard)/announcements/[id]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";

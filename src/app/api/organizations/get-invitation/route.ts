@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/api/organizations/get-invitation/route.ts
+// /home/zodx/Desktop/Trapyfy/src/app/api/organizations/get-invitation/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 

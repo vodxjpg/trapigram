@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/lib/auth.ts
+// /home/zodx/Desktop/Trapyfy/src/lib/auth.ts
 import { Pool } from "pg";
 import { betterAuth } from "better-auth";
 import { magicLink, organization } from "better-auth/plugins";
@@ -58,7 +58,7 @@ export const auth = betterAuth({
     sendResetPassword: async ({ user, url }) => {
       await sendEmail({
         to: user.email,
-        subject: "Reset Your Trapigram Password",
+        subject: "Reset Your Trapyfy Password",
         text: `Click this link to reset your password: ${url}`,
       });
     },
@@ -67,7 +67,7 @@ export const auth = betterAuth({
     sendVerificationEmail: async ({ user, url }) => {
       await sendEmail({
         to: user.email,
-        subject: "Verify Your Trapigram Account",
+        subject: "Verify Your Trapyfy Account",
         text: `Click this link to verify your email: ${url}`,
       });
     },
@@ -302,7 +302,7 @@ export const auth = betterAuth({
         console.log(`sendMagicLink: Sending to ${email}, URL: ${url}`);
         await sendEmail({
           to: email,
-          subject: "Complete Your Trapigram Sign-In",
+          subject: "Complete Your Trapyfy Sign-In",
           text: `Hey! Click here to sign in: ${url}`,
         });
       },
@@ -333,7 +333,7 @@ ${inviteLink}
 If the link doesn’t work, copy and paste it into your browser.
 
 Regards,
-The Trapigram Team
+The Trapyfy Team
           `,
         });
 

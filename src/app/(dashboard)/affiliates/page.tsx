@@ -1,4 +1,4 @@
-/* /home/zodx/Desktop/trapigram/src/app/(dashboard)/affiliates/page.tsx */
+/* /home/zodx/Desktop/Trapyfy/src/app/(dashboard)/affiliates/page.tsx */
 import Link from "next/link";
 import { Suspense } from "react";
 import { Button } from "@/components/ui/button";

@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/lib/send-announcements.ts
+// /home/zodx/Desktop/Trapyfy/src/lib/send-announcements.ts
 import cron from "node-cron";
 import { pool } from "./db";
 

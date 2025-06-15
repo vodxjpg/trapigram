@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/lib/plugins/subscription-client-plugin.ts
+// /home/zodx/Desktop/Trapyfy/src/lib/plugins/subscription-client-plugin.ts
 import { BetterAuthClientPlugin } from "better-auth/client";
 import { subscriptionPlugin } from "./subscription-plugin";
 

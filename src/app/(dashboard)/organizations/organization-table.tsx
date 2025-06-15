@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/(dashboard)/organizations/organization-table.tsx
+// /home/zodx/Desktop/Trapyfy/src/app/(dashboard)/organizations/organization-table.tsx
 "use client"
 
 import type React from "react"
