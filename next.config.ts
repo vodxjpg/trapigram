@@ -7,7 +7,7 @@ const nextConfig = {
         source: '/api/:path*',
         headers: [
           // Only allow your exact front-end origins
-          { key: 'Access-Control-Allow-Origin',      value: 'https://trapyfy.com' },
+          { key: 'Access-Control-Allow-Origin',      value: 'https://www.trapyfy.com' },
           { key: 'Access-Control-Allow-Methods',     value: 'GET,POST,PUT,PATCH,DELETE,OPTIONS' },
           { key: 'Access-Control-Allow-Headers',     value: 'Content-Type,Authorization' },
           { key: 'Access-Control-Allow-Credentials', value: 'true' },
