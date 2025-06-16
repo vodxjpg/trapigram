@@ -10,60 +10,7 @@ export default function Hero() {
     return (
         <div className="bg-gray-800 min-h-screen">
             <div className="bg-gray-200 rounded-3xl mx-4 md:mx-8 pt-8">
-                {/* Navigation */}
-                <nav className="flex items-center justify-between px-6 md:px-12 py-4">
-                    <div className="text-2xl font-bold text-black">Trapify</div>
-
-                    {/* Desktop Navigation */}
-                    <div className="hidden md:flex items-center space-x-8">
-                        <a href="#features" className="text-gray-700 hover:text-black">
-                            Features
-                        </a>
-                        <a href="#pricing" className="text-gray-700 hover:text-black">
-                            Pricing
-                        </a>
-                        <a href="#" className="text-gray-700 hover:text-black">
-                            Contact us us
-                        </a>
-                    </div>
-
-                    {/* Desktop CTA Button */}
-                    <Button className="hidden md:block bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full">
-                        Start now →
-                    </Button>
-
-                    <Button className="hidden md:block bg-black hover:bg-blue-700 text-white px-6 py-2 rounded-full">
-                        Login
-                    </Button>
-
-                    {/* Mobile Menu Button */}
-                    <button className="md:hidden p-2" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
-                        {isMobileMenuOpen ? <X className="w-6 h-6 text-black" /> : <Menu className="w-6 h-6 text-black" />}
-                    </button>
-                </nav>
-
-                {/* Mobile Menu */}
-                {isMobileMenuOpen && (
-                    <div className="md:hidden bg-white mx-6 rounded-2xl shadow-lg mb-4">
-                        <div className="flex flex-col space-y-4 p-6">
-                            <a href="#features" className="text-gray-700 hover:text-black py-2">
-                                Features
-                            </a>
-                            <a href="#pricing" className="text-gray-700 hover:text-black py-2">
-                                Pricing
-                            </a>
-                            <a href="#" className="text-gray-700 hover:text-black py-2">
-                                Contact us
-                            </a>
-                            <Button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full mt-4">
-                                Start now →
-                            </Button>
-                            <Button className="bg-black hover:bg-blue-700 text-white px-6 py-2 rounded-full mt-4">
-                                Login
-                            </Button>
-                        </div>
-                    </div>
-                )}
+             
 
                 {/* Hero Content */}
                 <div className="px-6 md:px-12 py-12 md:py-20">
@@ -150,7 +97,7 @@ export default function Hero() {
                                 Choose from handcrafted templates or build your own look with our drag-and-drop editor.
                             </p>
                         </div>
-  div className="bg-gradient-to-br from-purple-600 to-purple-700 p-6 rounded-2xl text-white">
+  <div className="bg-gradient-to-br from-purple-600 to-purple-700 p-6 rounded-2xl text-white">
                         <div className="text-sm opacity-80 mb-2">Built-in Security</div>
                         <h3 className="text-2xl font-bold mb-4">Secure Checkout</h3>
                         <div className="bg-purple-500 rounded-lg p-4 h-32 flex items-center justify-center">
@@ -175,5 +122,6 @@ export default function Hero() {
                 </div>
             </div>
         </div>
+    </div >
   )
 }

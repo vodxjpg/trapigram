@@ -5,54 +5,49 @@ export default function Pricing() {
   const pricingTiers = [
     {
       name: "Starter",
-      price: "$2,995",
+      price: "$29",
       period: "/month",
-      description: "Perfect for small businesses and startups",
+      description: "Ideal for solo entrepreneurs starting out",
       features: [
-        "One request at a time",
-        "Average 48 hour delivery",
-        "Unlimited brands",
-        "Unlimited users",
-        "Design & development",
-        "Slack communication",
+        "1 Telegram shop",
+        "Basic API access",
+        "Limited products",
+        "Email support",
+        "Auto-scaling infrastructure",
       ],
       gradient: "from-blue-500 to-blue-600",
       popular: false,
     },
     {
       name: "Professional",
-      price: "$4,995",
+      price: "$99",
       period: "/month",
-      description: "Most popular for growing companies",
+      description: "Best for growing businesses",
       features: [
-        "Two requests at a time",
-        "Average 24 hour delivery",
-        "Unlimited brands",
-        "Unlimited users",
-        "Design & development",
-        "Slack communication",
-        "Priority support",
-        "Custom integrations",
+        "Up to 5 Telegram shops",
+        "Advanced API endpoints",
+        "Unlmited products",
+        "24/7 chat support",
+        "Priority SLA (99.9% uptime)",
+        "Analytics dashboard",
+        "Webhooks & integrations",
       ],
       gradient: "from-purple-500 to-purple-600",
       popular: true,
     },
     {
       name: "Enterprise",
-      price: "$7,995",
-      period: "/month",
-      description: "For large teams and complex projects",
+      price: "Custom",
+      period: "",
+      description: "For large teams and custom requirements",
       features: [
-        "Unlimited requests",
-        "Average 12 hour delivery",
-        "Unlimited brands",
-        "Unlimited users",
-        "Design & development",
-        "Slack communication",
-        "Priority support",
-        "Custom integrations",
+        "Unlimited shops & bots",
+        "Dedicated API SLA",
+        "Unlmited products",
+        "Custom integrations & workflows",
         "Dedicated account manager",
-        "Custom workflows",
+        "Onboarding & training",
+        "Uptime & performance guarantees",
       ],
       gradient: "from-emerald-500 to-emerald-600",
       popular: false,
@@ -82,7 +77,7 @@ export default function Pricing() {
               <p className="text-gray-600 text-sm mb-4">{tier.description}</p>
               <div className="flex items-baseline justify-center">
                 <span className="text-4xl font-bold text-black">{tier.price}</span>
-                <span className="text-gray-600 ml-1">{tier.period}</span>
+                {tier.period && <span className="text-gray-600 ml-1">{tier.period}</span>}
               </div>
             </div>
 
@@ -102,7 +97,7 @@ export default function Pricing() {
                   : "bg-gray-100 hover:bg-gray-200 text-black"
               }`}
             >
-              Get Started
+              {tier.popular ? "Get Started" : "Select Plan"}
             </Button>
 
             <div className="text-center mt-4">
@@ -113,7 +108,7 @@ export default function Pricing() {
       </div>
 
       <div className="text-center mt-12">
-        <p className="text-gray-600 mb-4">Need a custom plan? We'd love to hear from you.</p>
+        <p className="text-gray-600 mb-4">Need a custom plan? We’d love to hear from you.</p>
         <Button variant="outline" className="border-gray-400 text-gray-700 hover:bg-gray-100">
           Contact Sales
         </Button>
