@@ -136,10 +136,12 @@ export default function SubscribePage() {
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <h1 className="text-3xl font-bold mb-6">Choose Your Subscription Plan</h1>
       <Pricing onSelectTier={handleSelectTier} />
+      <div className="mt-5 flex flex-col items-center justify-center">
       <Button variant="link" onClick={handleLogout} className="mt-4">
         <IconLogout className="mr-2 h-4 w-4" />
         Log out
       </Button>
+      </div>
     </div>
   );
 }
