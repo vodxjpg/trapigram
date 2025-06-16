@@ -360,7 +360,7 @@ export default function OnboardingPage() {
       return
     }
     try {
-      const resp = await fetch(`/api/auth/organization/check-org-slug?slug=${slug}`, {
+      const resp = await fetch(`/api/internal/organization/check-org-slug?slug=${slug}`, {
         method: "GET",
         headers: {
           "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
