@@ -1,46 +1,23 @@
-import Hero from "@/components/Hero";
-import Testimonials from "@/components/Testimonials";
-import Pricing from "@/components/Pricing/Pricing";
-import FAQ from "@/components/FAQ";
-import Logos from "@/components/Logos";
-import Benefits from "@/components/Benefits/Benefits";
-import Container from "@/components/Container";
-import Section from "@/components/Section";
-import Stats from "@/components/Stats";
-import CTA from "@/components/CTA";
+import Hero from "@/components/Hero"
+import Features from "@/components/Features"
+import Pricing from "@/components/Pricing"
+import Container from "@/components/Container"
+import Section from "@/components/Section"
 
-const HomePage: React.FC = () => {
+export default function HomePage() {
   return (
-    <>
+    <div className="min-h-screen bg-gray-800">
       <Hero />
-      <Logos />
-      <Container>
-        <Benefits />
 
-        <Section
-          id="pricing"
-          title="Pricing"
-          description="Simple, transparent pricing. No surprises."
-        >
+      <Container>
+        <Section id="features" title="Why Choose Us" description="Discover what makes us different">
+          <Features />
+        </Section>
+
+        <Section id="pricing" title="Simple, Transparent Pricing" description="Choose the plan that works best for you">
           <Pricing />
         </Section>
-
-        <Section
-          id="testimonials"
-          title="What Our Clients Say"
-          description="Hear from those who have partnered with us."
-        >
-          <Testimonials />
-        </Section>
-
-        <FAQ />
-
-        <Stats />
-        
-        <CTA />
       </Container>
-    </>
-  );
-};
-
-export default HomePage;
+    </div>
+  )
+}
