@@ -37,8 +37,8 @@ export default function Pricing() {
     },
     {
       name: "Enterprise",
-      price: "Custom",
-      period: "",
+      price: "$150",
+      period: "/month",
       description: "For large teams and custom requirements",
       features: [
         "Unlimited shops",

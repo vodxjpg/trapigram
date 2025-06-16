@@ -37,7 +37,7 @@ const Header: React.FC = () => {
         <nav className="flex items-center justify-between py-4 md:py-6">
           {/* Logo */}
           <Link href="/" className="text-2xl font-bold text-black">
-            Trapify
+            Trapyfy
           </Link>
 
           {/* Desktop Nav */}
@@ -52,10 +52,14 @@ const Header: React.FC = () => {
               Contact Us
             </a>
             <Button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full">
+            <a href="/sign-up">
               Start now →
+              </a>
             </Button>
             <Button className="bg-black hover:bg-gray-800 text-white px-6 py-2 rounded-full">
+            <a href="/login">
               Login
+              </a>
             </Button>
           </div>
 
