@@ -5,7 +5,8 @@ import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import Pricing from "@/components/Pricing/Pricing";
-
+import { IconLogout } from "@tabler/icons-react";
+import { Button } from "@/components/ui/button";
 interface SessionResponse {
   data?: {
     session: {
@@ -39,6 +40,18 @@ interface SessionResponse {
 
 export default function SubscribePage() {
   const router = useRouter();
+
+
+  async function handleLogout() {
+    try {
+      await authClient.signOut();
+      toast.success("Logged out successfully!");
+      router.push("/login");
+    } catch (err) {
+      console.error("Error during logout:", err);
+      toast.error("Failed to log out.");
+    }
+  }
 
   useEffect(() => {
     const checkSubscription = async () => {
@@ -123,6 +136,10 @@ export default function SubscribePage() {
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <h1 className="text-3xl font-bold mb-6">Choose Your Subscription Plan</h1>
       <Pricing onSelectTier={handleSelectTier} />
+      <Button variant="link" onClick={handleLogout} className="mt-4">
+        <IconLogout className="mr-2 h-4 w-4" />
+        Log out
+      </Button>
     </div>
   );
 }
