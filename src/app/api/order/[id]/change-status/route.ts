@@ -332,6 +332,11 @@ export async function PATCH(
         }
       }
 
+      const pendingAmt =
+      receivedAmt && expectedAmt
+        ? String(Number(expectedAmt) - Number(receivedAmt))
+        : "";
+
       const notifTypeMap: Record<string, NotificationType> = {
         open: "order_placed",
         underpaid:  "order_partially_paid",   // NEW ⬅︎
@@ -363,6 +368,7 @@ export async function PATCH(
           tracking_number: ord.trackingNumber ?? "",
           expected_amt: expectedAmt,        // ★ NEW
           received_amt: receivedAmt,
+          pending_amt: pendingAmt,
           asset:        assetSymbol,        // ★ NEW
         },
       });
