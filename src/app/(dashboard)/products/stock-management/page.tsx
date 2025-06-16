@@ -7,7 +7,7 @@ import { StockManagementDataTable } from "../components/stock-management-data-ta
 
 export default function StockManagementPage() {
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <PageHeader
         title="Stock Management"
         description="Quickly view and update stock across warehouses and countries"

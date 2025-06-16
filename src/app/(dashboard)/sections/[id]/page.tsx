@@ -27,7 +27,7 @@ export default function EditSectionPage() {
   if (!section) return <p className="p-8">Loading…</p>;
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <Button variant="ghost" onClick={() => router.back()}>
         <ChevronLeft className="mr-2 h-4 w-4" />
         Back to Sections

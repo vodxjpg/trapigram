@@ -10,7 +10,7 @@ export const metadata = {
 
 export default function AffiliatesDashboardPage() {
   return (
-    <div className="container mx-auto py-6 space-y-6 px-3">
+    <div className="container mx-auto py-6 px-6 space-y-6 px-3">
       {/* heading */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Affiliates</h1>

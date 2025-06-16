@@ -20,7 +20,7 @@ export default function NewSectionPage() {
   }, []);
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <Button variant="ghost" onClick={() => router.back()}>
         <ChevronLeft className="mr-2 h-4 w-4" />
         Back to Sections
