@@ -1,17 +1,38 @@
 'use client';
 
 import Link from 'next/link';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Transition } from '@headlessui/react';
 import { Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const Header: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
+
   const toggleMenu = () => setIsOpen(!isOpen);
 
+  useEffect(() => {
+    const onScroll = () => {
+      // You can tweak the threshold (here 20px) as needed
+      setIsScrolled(window.scrollY > 20);
+    };
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    // run on mount in case user refreshes mid‐page
+    onScroll();
+
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, []);
+
   return (
-    <header className="bg-transparent fixed top-0 left-0 right-0 z-50 w-full">
+    <header
+      className={`fixed top-0 left-0 right-0 z-50 w-full transition-colors duration-300 ${
+        isScrolled ? 'bg-gray-200 shadow-md' : 'bg-transparent'
+      }`}
+    >
       <div className="mx-auto px-5 md:px-12">
         <nav className="flex items-center justify-between py-4 md:py-6">
           {/* Logo */}

@@ -10,7 +10,7 @@ export default function Hero() {
     return (
         <div className="bg-gray-800 min-h-screen">
             <div className="bg-gray-200 rounded-3xl mx-4 md:mx-8 pt-8">
-             
+
 
                 {/* Hero Content */}
                 <div className="px-6 md:px-12 py-12 md:py-20">
@@ -21,15 +21,21 @@ export default function Hero() {
                                 <br />
                                 in minutes
                                 <br />
-                                without<span className="text-orange-500">any</span> <span className="text-pink-500">coding</span>
+                                without <span className="text-orange-500">any</span> <span className="text-pink-500">coding</span>
                                 <span className="text-purple-600">skills</span>
                                 <span className="text-blue-600">.</span>
                             </h1>
 
                             <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-4 sm:space-y-0 sm:space-x-4 mb-8">
                                 <div className="flex items-center space-x-2">
-                                    <img src="/placeholder.svg?height=40&width=40" alt="Profile" className="w-10 h-10 rounded-full" />
-                                    <span className="text-black font-medium">Book a Free Call</span>
+                                    {/*<img src="/placeholder.svg?height=40&width=40" alt="Profile" className="w-10 h-10 rounded-full" /> */}
+                                    <Button
+                                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full mt-4"
+
+                                    >
+                                        Book a Free Call →
+                                    </Button>
+
                                 </div>
                                 {/* <dSZiv className="flex items-center space-x-2">
                   <span className="text-sm text-gray-600">REVIEWED ON</span>
@@ -46,7 +52,7 @@ export default function Hero() {
 
                         <div className="text-left md:text-right">
                             <div className="flex justify-start md:justify-end items-center space-x-2 mb-8">
-                                <div className="flex -space-x-2">
+                                {/*  <div className="flex -space-x-2">
                                     {[...Array(5)].map((_, i) => (
                                         <img
                                             key={i}
@@ -54,8 +60,8 @@ export default function Hero() {
                                             alt="Avatar"
                                             className="w-8 h-8 rounded-full border-2 border-white"
                                         />
-                                    ))}
-                                </div>
+                                    ))} 
+                                </div>*/}
                                 <div className="text-sm">
                                     <div className="font-medium">Loved by 500+</div>
                                     <div className="text-gray-600">Businesses worldwide</div>
@@ -65,13 +71,13 @@ export default function Hero() {
                     </div>
 
                     {/* Client Logos */}
-                    <div className="flex flex-wrap justify-center items-center gap-4 md:gap-8 mt-16 opacity-60">
+                    {/*  <div className="flex flex-wrap justify-center items-center gap-4 md:gap-8 mt-16 opacity-60">
                         {["Mavis", "Combinator", "Kodezi", "Mavis", "Mavis", "oppa travel", "Medical Student AI"].map((logo, i) => (
                             <div key={i} className="text-gray-500 font-medium text-sm">
                                 {logo}
                             </div>
                         ))}
-                    </div>
+                    </div>*/}
 
                     {/* Service Cards */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-16">
@@ -87,41 +93,41 @@ export default function Hero() {
                             </p>
                         </div>
                         <div className="bg-gradient-to-br from-teal-600 to-teal-700 p-6 rounded-2xl text-white">
-                            <div className="text-sm opacity-80 mb-2">Customize & Brand</div>
-                            <h3 className="text-2xl font-bold mb-4">Theme Editor</h3>
+                            <div className="text-sm opacity-80 mb-2">Marketing & Branding</div>
+                            <h3 className="text-2xl font-bold mb-4">Easy grow</h3>
                             <div className="bg-teal-500 rounded-lg p-4 h-32 flex items-center justify-center">
                                 {/* Replace with icon or screenshot */}
                                 <span className="text-sm text-white">🎨</span>
                             </div>
                             <p className="mt-4 text-sm opacity-80">
-                                Choose from handcrafted templates or build your own look with our drag-and-drop editor.
+                                We provide you tools to increase your sales and customer's loyalty.
                             </p>
                         </div>
-  <div className="bg-gradient-to-br from-purple-600 to-purple-700 p-6 rounded-2xl text-white">
-                        <div className="text-sm opacity-80 mb-2">Built-in Security</div>
-                        <h3 className="text-2xl font-bold mb-4">Secure Checkout</h3>
-                        <div className="bg-purple-500 rounded-lg p-4 h-32 flex items-center justify-center">
-                            {/* Replace with icon or screenshot */}
-                            <span className="text-sm text-white">🔒</span>
+                        <div className="bg-gradient-to-br from-purple-600 to-purple-700 p-6 rounded-2xl text-white">
+                            <div className="text-sm opacity-80 mb-2">Built-in Security</div>
+                            <h3 className="text-2xl font-bold mb-4">Secure Checkout</h3>
+                            <div className="bg-purple-500 rounded-lg p-4 h-32 flex items-center justify-center">
+                                {/* Replace with icon or screenshot */}
+                                <span className="text-sm text-white">🔒</span>
+                            </div>
+                            <p className="mt-4 text-sm opacity-80">
+                                PCI-compliant payments, encrypted data, and fraud protection keep you and your customers safe.
+                            </p>
                         </div>
-                        <p className="mt-4 text-sm opacity-80">
-                            PCI-compliant payments, encrypted data, and fraud protection keep you and your customers safe.
-                        </p>
-                    </div>
-                    <div className="bg-gradient-to-br from-orange-500 to-red-500 p-6 rounded-2xl text-white">
-                        <div className="text-sm opacity-80 mb-2">Insights & Help</div>
-                        <h3 className="text-2xl font-bold mb-4">Analytics & Support</h3>
-                        <div className="bg-orange-400 rounded-lg p-4 h-32 flex items-center justify-center">
-                            {/* Replace with icon or screenshot */}
-                            <span className="text-sm text-white">📊</span>
+                        <div className="bg-gradient-to-br from-orange-500 to-red-500 p-6 rounded-2xl text-white">
+                            <div className="text-sm opacity-80 mb-2">Insights & Help</div>
+                            <h3 className="text-2xl font-bold mb-4">Analytics & Support</h3>
+                            <div className="bg-orange-400 rounded-lg p-4 h-32 flex items-center justify-center">
+                                {/* Replace with icon or screenshot */}
+                                <span className="text-sm text-white">📊</span>
+                            </div>
+                            <p className="mt-4 text-sm opacity-80">
+                                Track sales in real time and get 24/7 support from our expert team—so you never miss a beat.
+                            </p>
                         </div>
-                        <p className="mt-4 text-sm opacity-80">
-                            Track sales in real time and get 24/7 support from our expert team—so you never miss a beat.
-                        </p>
                     </div>
                 </div>
             </div>
-        </div>
-    </div >
-  )
+        </div >
+    )
 }

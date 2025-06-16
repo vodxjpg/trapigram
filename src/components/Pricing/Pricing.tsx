@@ -1,14 +1,24 @@
-import PricingColumn from "./PricingColumn";
-import { plans } from "@/data/plans";
+import React from 'react'
+import PricingColumn from './PricingColumn'
+import { plans } from '@/data/plans'
 
-const Pricing: React.FC = () => {
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-      {plans.map((tier, index) => (
-        <PricingColumn key={tier.name} tier={tier} highlight={index === 1} />
-      ))}
-    </div>
-  );
-};
+export interface PricingProps {
+  /** optional callback for when a tier is “selected” */
+  onSelectTier?: (plan: string) => void
+}
 
-export default Pricing;
+const Pricing: React.FC<PricingProps> = ({ onSelectTier }) => (
+  <div className="grid lg:grid-cols-3 gap-8">
+    {plans.map((tier, i) => (
+      <PricingColumn
+        key={tier.name}
+        tier={tier}
+        highlight={i === 1}
+        /** only pass an onSelect handler if the parent gave us one */
+        onSelect={onSelectTier ? () => onSelectTier(tier.name) : undefined}
+      />
+    ))}
+  </div>
+)
+
+export default Pricing

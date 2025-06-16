@@ -1,49 +1,74 @@
-import clsx from "clsx";
-import { BsFillCheckCircleFill } from "react-icons/bs";
-import Link from "next/link";
+import React from 'react'
+import clsx from 'clsx'
+import { BsFillCheckCircleFill } from 'react-icons/bs'
+import Link from 'next/link'
 
-interface Props {
-  tier: {
-    name: string;
-    price: number;
-    trialDays: number;
-    limits: { projects: number; storage: number };
-    features: string[];
-  };
-  highlight?: boolean;
+interface Tier {
+  name: string
+  price: string
+  period: string
+  description: string
+  features: string[]
+  popular: boolean
 }
 
-const PricingColumn: React.FC<Props> = ({ tier, highlight }: Props) => {
-  const { name, price, features } = tier;
+interface Props {
+  tier: Tier
+  highlight?: boolean
+  /** If provided, we’ll render a <button> and call this on click;
+   * otherwise we fall back to a <Link> to the sign-up page. */
+  onSelect?: () => void
+}
+
+const PricingColumn: React.FC<Props> = ({ tier, highlight, onSelect }) => {
+  const btnStyles = clsx(
+    'w-full py-3 rounded-full transition-colors',
+    highlight
+      ? 'bg-primary text-white hover:bg-primary-accent'
+      : 'bg-gray-200 text-black hover:bg-black hover:text-white'
+  )
 
   return (
-    <div className={clsx("w-full max-w-sm mx-auto bg-white rounded-xl border border-gray-200 lg:max-w-full", { "shadow-lg": highlight })}>
-      <div className="p-6 border-b border-gray-200 rounded-t-xl">
-        <h3 className="text-2xl font-semibold mb-4">{name.charAt(0).toUpperCase() + name.slice(1)}</h3>
-        <p className="text-3xl md:text-5xl font-bold mb-6">
-          <span className={clsx({ "text-black": highlight })}>${price}</span>
-          <span className="text-lg font-normal text-black">/mo</span>
-        </p>
-        <Link href={`/sign-up?tier=${name}`}>
-          <button className={clsx("w-full py-3 px-4 rounded-full transition-colors", { " text-white bg-primary hover:bg-primary-accent": highlight, "bg-gray-200 hover:bg-black hover:text-white": !highlight })}>
-            Get Started
-          </button>
-        </Link>
+    <div
+      className={clsx(
+        'bg-white rounded-xl border border-gray-200',
+        highlight && 'shadow-lg ring-2 ring-purple-500 scale-105'
+      )}
+    >
+      <div className="p-6 border-b border-gray-200">
+        <h3 className="text-2xl font-semibold mb-2">{tier.name}</h3>
+        <p className="text-gray-600 text-sm mb-4">{tier.description}</p>
+        <div className="flex items-baseline">
+          <span className="text-4xl font-bold">{tier.price}</span>
+          {tier.period && (
+            <span className="ml-1 text-lg text-gray-600">{tier.period}</span>
+          )}
+        </div>
       </div>
-      <div className="p-6 mt-1">
-        <p className="font-bold mb-0">FEATURES</p>
-        <p className="text-foreground-accent mb-5">Everything in basic, plus...</p>
-        <ul className="space-y-4 mb-8">
-          {features.map((feature, index) => (
-            <li key={index} className="flex items-center">
+      <div className="p-6">
+        <ul className="space-y-4 mb-6">
+          {tier.features.map((f) => (
+            <li key={f} className="flex items-center">
               <BsFillCheckCircleFill className="h-5 w-5 text-secondary mr-2" />
-              <span className="text-foreground-accent">{feature}</span>
+              <span>{f}</span>
             </li>
           ))}
         </ul>
+
+        {onSelect ? (
+          <button onClick={onSelect} className={btnStyles}>
+            {highlight ? 'Get Started' : 'Select Plan'}
+          </button>
+        ) : (
+          <Link href={`/sign-up?tier=${tier.name.toLowerCase()}`}>
+            <a className={btnStyles}>
+              {highlight ? 'Get Started' : 'Select Plan'}
+            </a>
+          </Link>
+        )}
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default PricingColumn;
+export default PricingColumn
