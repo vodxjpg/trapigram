@@ -1,11 +1,11 @@
 // File: src/app/api/internal/secret-phrase/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getContext } from "@/lib/context";
 import { db } from "@/lib/db";
 import crypto from "crypto";
 
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET;
 
 function getKeyIv() {
   const key = Buffer.from(ENC_KEY_B64, "base64");
@@ -25,12 +25,13 @@ function encryptSecret(plain: string) {
 }
 
 export async function POST(req: NextRequest) {
-  // 1. Central auth: service key, API key or session cookie
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-
   try {
+    // 1. Internal secret check
+    const secret = req.headers.get("x-internal-secret");
+    if (secret !== INTERNAL_API_SECRET) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    }
+
     // 2. Parse client-sent secretPhrase
     const { secretPhrase } = (await req.json()) as { secretPhrase?: string };
     if (!secretPhrase) {
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
     await db
       .updateTable("organization")
       .set({ encryptedSecret: encrypted })
-      .where("id", "=", organizationId)
+      .where("id", "=", /* your org ID here? or pass via body */ req.headers.get("x-organization-id")!)
       .execute();
 
     return NextResponse.json(
