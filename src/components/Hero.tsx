@@ -19,9 +19,9 @@ export default function Hero() {
                             <h1 className="text-4xl md:text-6xl font-bold text-black leading-tight mb-6">
                                 Launch your Telegram Bot Shop
                                 <br />
-                                in minutes
+                                in minutes,
                                 <br />
-                                without <span className="text-orange-500">any</span> <span className="text-pink-500">coding</span>
+                                without <span className="text-orange-500">any</span> <span className="text-pink-500">coding </span>
                                 <span className="text-purple-600">skills</span>
                                 <span className="text-blue-600">.</span>
                             </h1>
