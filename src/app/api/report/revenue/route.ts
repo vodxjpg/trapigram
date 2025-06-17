@@ -1,7 +1,7 @@
 // app/api/report/revenue/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
-// import { getContext } from "@/lib/context"; // you can re-enable once you have multi-tenant context
+import { getContext } from "@/lib/context";
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -19,8 +19,9 @@ export async function GET(req: NextRequest) {
         );
     }
 
-    // TODO: swap this static ID for your real context once getContext is wired up
-    const organizationId = "W0duzyHA23ezm9Mcvso1y32KPko4XjRn";
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId } = ctx;
 
     try {
         const revenueQuery = `
