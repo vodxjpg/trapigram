@@ -271,7 +271,7 @@ interface DB {
   orgRole: {
     id: string;
     organizationId: string;
-    name: string; 
+    name: string;
     permissions: Record<string, string[]>;
     createdAt: Date;
     updatedAt: Date | null;
@@ -581,8 +581,11 @@ interface DB {
   orderRevenue: {
     id: string,
     orderId: string,
-    amount: number,
-    currency: number,
+    total: number,
+    discount: number,
+    shipping: number,
+    cost: number,
+    organizationId: string,
     createdAt: Date,
     updatedAt: Date
   }
