@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/middleware.ts
+// /home/zodx/Desktop/Trapyfy/src/middleware.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";

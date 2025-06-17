@@ -43,7 +43,7 @@ export default function EditClientPage() {
   }, [params.id, router]);
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex items-center gap-2">
         <Link href="/coupons">
           <Button variant="ghost" size="icon">

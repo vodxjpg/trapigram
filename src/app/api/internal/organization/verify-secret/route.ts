@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/api/internal/organization/verify-secret/route.ts
+// /home/zodx/Desktop/Trapyfy/src/app/api/internal/organization/verify-secret/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { auth } from "@/lib/auth";

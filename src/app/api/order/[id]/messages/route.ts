@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
+import { requireOrgPermission } from "@/lib/perm-server";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -19,7 +20,9 @@ const messagesSchema = z.object({
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-
+  // authorization: only owners or those with orderChat:view
+const guard = await requireOrgPermission(req, { orderChat: ["view"] });
+if (guard) return guard;
   try {
     const { id } = await params;
 
@@ -57,6 +60,9 @@ export async function POST(
   if (ctx instanceof NextResponse) return ctx;
 
   try {
+        // authorization: reuse same view permission (or define write, but using view)
+    const guard = await requireOrgPermission(req, { orderChat: ["view"] });
+    if (guard) return guard;
     const { id } = await params;
     const internalHeader = req.headers.get("x-is-internal");
     const isInternal = internalHeader === "true";

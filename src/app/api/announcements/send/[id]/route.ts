@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/api/announcements/send/[id]/route.ts
+// /home/zodx/Desktop/Trapyfy/src/app/api/announcements/send/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";

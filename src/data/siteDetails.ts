@@ -1,9 +1,9 @@
 export const siteDetails = {
-    siteName: 'Trapigram',
-    siteUrl: 'https://trapigram.com/',
+    siteName: 'Trapyfy',
+    siteUrl: 'https://trapyfy.com/',
     metadata: {
-        title: 'Trapigram - A bot to rule them all',
-        description: 'Trapigram empowers businesses with cutting-edge technology solutions to drive success and efficiency workflow.',
+        title: 'Trapyfy - A bot to rule them all',
+        description: 'Trapyfy empowers businesses with cutting-edge technology solutions to drive success and efficiency workflow.',
     },
     language: 'en-us',
     locale: 'en-US',

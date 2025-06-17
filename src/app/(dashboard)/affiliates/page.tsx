@@ -1,4 +1,4 @@
-/* /home/zodx/Desktop/trapigram/src/app/(dashboard)/affiliates/page.tsx */
+/* /home/zodx/Desktop/Trapyfy/src/app/(dashboard)/affiliates/page.tsx */
 import Link from "next/link";
 import { Suspense } from "react";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ export const metadata = {
 
 export default function AffiliatesDashboardPage() {
   return (
-    <div className="container mx-auto py-6 space-y-6 px-3">
+    <div className="container mx-auto py-6 px-6 space-y-6 px-3">
       {/* heading */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Affiliates</h1>

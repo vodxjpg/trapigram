@@ -10,7 +10,7 @@ export const metadata = {
 
 export default function AffiliateSettingsPage() {
   return (
-    <div className="container mx-auto py-6 space-y-6 px-3">
+    <div className="container mx-auto py-6 px-6 space-y-6 px-3">
       <div className="flex items-center gap-2">
       <Link href="/affiliates">
           <Button variant="ghost" size="icon">

@@ -1,99 +1,117 @@
 'use client';
 
 import Link from 'next/link';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Transition } from '@headlessui/react';
-import { HiOutlineXMark, HiBars3 } from 'react-icons/hi2';
-import { FaFingerprint } from 'react-icons/fa';
-
-import Container from './Container';
-import { siteDetails } from '@/data/siteDetails';
-import { menuItems } from '@/data/menuItems';
+import { Menu, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 const Header: React.FC = () => {
-    const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
 
-    const toggleMenu = () => {
-        setIsOpen(!isOpen);
+  const toggleMenu = () => setIsOpen(!isOpen);
+
+  useEffect(() => {
+    const onScroll = () => {
+      // You can tweak the threshold (here 20px) as needed
+      setIsScrolled(window.scrollY > 20);
     };
 
-    return (
-        <header className="bg-transparent fixed top-0 left-0 right-0 md:absolute z-50 mx-auto w-full">
-            <Container className="!px-0">
-                <nav className="shadow-md md:shadow-none bg-white md:bg-transparent mx-auto flex justify-between items-center py-2 px-5 md:py-10">
-                    {/* Logo */}
-                    <Link href="/" className="flex items-center gap-2">
-                        <FaFingerprint className="text-foreground min-w-fit w-7 h-7" />
-                        <span className="manrope text-xl font-semibold text-foreground cursor-pointer">
-                            {siteDetails.siteName}
-                        </span>
-                    </Link>
+    window.addEventListener('scroll', onScroll, { passive: true });
+    // run on mount in case user refreshes mid‐page
+    onScroll();
 
-                    {/* Desktop Menu */}
-                    <ul className="hidden md:flex space-x-6">
-                        {menuItems.map(item => (
-                            <li key={item.text}>
-                                <Link href={item.url} className="text-foreground hover:text-foreground-accent transition-colors">
-                                    {item.text}
-                                </Link>
-                            </li>
-                        ))}
-                        <li>
-                            <Link href="#cta" className="text-black bg-primary hover:bg-primary-accent px-8 py-3 rounded-full transition-colors">
-                                Download
-                            </Link>
-                        </li>
-                    </ul>
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, []);
 
-                    {/* Mobile Menu Button */}
-                    <div className="md:hidden flex items-center">
-                        <button
-                            onClick={toggleMenu}
-                            type="button"
-                            className="bg-primary text-black focus:outline-none rounded-full w-10 h-10 flex items-center justify-center"
-                            aria-controls="mobile-menu"
-                            aria-expanded={isOpen}
-                        >
-                            {isOpen ? (
-                                <HiOutlineXMark className="h-6 w-6" aria-hidden="true" />
-                            ) : (
-                                <HiBars3 className="h-6 w-6" aria-hidden="true" />
-                            )}
-                            <span className="sr-only">Toggle navigation</span>
-                        </button>
-                    </div>
-                </nav>
-            </Container>
+  return (
+    <header
+      className={`fixed top-0 left-0 right-0 z-50 w-full transition-colors duration-300 ${
+        isScrolled ? 'bg-gray-200 shadow-md' : 'bg-transparent'
+      }`}
+    >
+      <div className="mx-auto px-5 md:px-12">
+        <nav className="flex items-center justify-between py-4 md:py-6">
+          {/* Logo */}
+          <Link href="/" className="text-2xl font-bold text-black">
+            Trapyfy
+          </Link>
 
-            {/* Mobile Menu with Transition */}
-            <Transition
-                show={isOpen}
-                enter="transition ease-out duration-200 transform"
-                enterFrom="opacity-0 scale-95"
-                enterTo="opacity-100 scale-100"
-                leave="transition ease-in duration-75 transform"
-                leaveFrom="opacity-100 scale-100"
-                leaveTo="opacity-0 scale-95"
+          {/* Desktop Nav */}
+          <div className="hidden md:flex items-center space-x-8">
+            <a href="#features" className="text-gray-700 hover:text-black">
+              Features
+            </a>
+            <a href="#pricing" className="text-gray-700 hover:text-black">
+              Pricing
+            </a>
+            <a href="#contact" className="text-gray-700 hover:text-black">
+              Contact Us
+            </a>
+            <Button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full">
+            <a href="/sign-up">
+              Start now →
+              </a>
+            </Button>
+            <Button className="bg-black hover:bg-gray-800 text-white px-6 py-2 rounded-full">
+            <a href="/login">
+              Login
+              </a>
+            </Button>
+          </div>
+
+          {/* Mobile Menu Button */}
+          <button
+            onClick={toggleMenu}
+            className="md:hidden p-2 text-black"
+            aria-label="Toggle menu"
+          >
+            {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+        </nav>
+      </div>
+
+      {/* Mobile Menu */}
+      <Transition
+        show={isOpen}
+        enter="transition ease-out duration-200 transform"
+        enterFrom="opacity-0 scale-95"
+        enterTo="opacity-100 scale-100"
+        leave="transition ease-in duration-150 transform"
+        leaveFrom="opacity-100 scale-100"
+        leaveTo="opacity-0 scale-95"
+      >
+        <div className="md:hidden bg-white mx-6 rounded-2xl shadow-lg mb-4">
+          <div className="flex flex-col space-y-4 p-6">
+            <a href="#features" className="text-gray-700 hover:text-black py-2" onClick={toggleMenu}>
+              Features
+            </a>
+            <a href="#pricing" className="text-gray-700 hover:text-black py-2" onClick={toggleMenu}>
+              Pricing
+            </a>
+            <a href="#contact" className="text-gray-700 hover:text-black py-2" onClick={toggleMenu}>
+              Contact Us
+            </a>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full mt-4"
+              onClick={toggleMenu}
             >
-                <div id="mobile-menu" className="md:hidden bg-white shadow-lg">
-                    <ul className="flex flex-col space-y-4 pt-1 pb-6 px-6">
-                        {menuItems.map(item => (
-                            <li key={item.text}>
-                                <Link href={item.url} className="text-foreground hover:text-primary block" onClick={toggleMenu}>
-                                    {item.text}
-                                </Link>
-                            </li>
-                        ))}
-                        <li>
-                            <Link href="#cta" className="text-black bg-primary hover:bg-primary-accent px-5 py-2 rounded-full block w-fit" onClick={toggleMenu}>
-                                Get Started
-                            </Link>
-                        </li>
-                    </ul>
-                </div>
-            </Transition>
-        </header>
-    );
+              Start now →
+            </Button>
+            <Button
+              className="bg-black hover:bg-gray-800 text-white px-6 py-2 rounded-full mt-4"
+              onClick={toggleMenu}
+            >
+              Login
+            </Button>
+          </div>
+        </div>
+      </Transition>
+    </header>
+  );
 };
 
 export default Header;

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
 import { getContext } from "@/lib/context";
-import { requirePermission } from "@/lib/perm-server";
+import { requireOrgPermission } from "@/lib/perm-server";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -37,7 +37,7 @@ export async function PATCH(
   const { organizationId, userId } = ctx;
 
   if (!(await isOwner(organizationId, userId))) {
-    const guard = await requirePermission(req, { ticket: ["update"] });
+    const guard = await requireOrgPermission(req, { ticket: ["update"] });
     if (guard) {
       // return a clear 403 with message for the frontend toast
       return NextResponse.json({ error: "You don’t have permission to change ticket priority" }, { status: 403 });

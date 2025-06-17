@@ -9,7 +9,7 @@ import { AffiliateProductForm } from '../components/affiliate-product-form'
 export default function NewAffiliateProductPage() {
   const router = useRouter()
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <Button variant="ghost" className="mb-6" onClick={() => router.back()}>
         <ChevronLeft className="h-4 w-4 mr-2" />
         Back to Affiliate Products

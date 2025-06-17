@@ -15,7 +15,8 @@ export type NotificationType =
   | "order_ready"
   | "order_cancelled"
   | "order_refunded"
-  | "order_partially_paid"            // ← NEW
+  | "order_partially_paid"
+  | "order_shipped"            // ← NEW
 
 export type NotificationChannel =
   | "email"

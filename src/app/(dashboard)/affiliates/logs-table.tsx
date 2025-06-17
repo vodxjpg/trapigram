@@ -1,7 +1,8 @@
-// /home/zodx/Desktop/trapigram/src/app/(dashboard)/affiliates/logs-table.tsx
+// /src/app/(dashboard)/affiliates/logs-table.tsx
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Table,
   TableBody,
@@ -51,7 +52,12 @@ export function LogsTable() {
     try {
       const r = await fetch(
         `/api/affiliate/points?page=${page}&pageSize=${pageSize}`,
-        { headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" } },
+        {
+          headers: {
+            "x-internal-secret":
+              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
+          },
+        }
       );
       if (!r.ok) throw new Error((await r.json()).error || "Fetch failed");
       const { logs, totalPages, currentPage } = await r.json();
@@ -70,18 +76,22 @@ export function LogsTable() {
           unseen.map(async (id) => {
             try {
               const res = await fetch(`/api/clients/${id}`, {
-                headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" },
+                headers: {
+                  "x-internal-secret":
+                    process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
+                },
               });
               if (!res.ok) throw new Error();
               const client: ClientBrief = await res.json();
               fetched[id] =
                 client.username ||
-                `${client.firstName ?? ""} ${client.lastName ?? ""}`.trim() ||
+                `${client.firstName ?? ""} ${client.lastName ?? ""}`
+                  .trim() ||
                 id;
             } catch {
               fetched[id] = id; // fallback
             }
-          }),
+          })
         );
         setLabels((prev) => ({ ...prev, ...fetched }));
       }
@@ -129,21 +139,39 @@ export function LogsTable() {
             ) : (
               logs.map((l) => (
                 <TableRow key={l.id}>
-                  <TableCell className="font-mono text-xs">{l.id.slice(0, 8)}…</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {l.id.slice(0, 8)}…
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
                       <Clock className="h-4 w-4 opacity-70" />
                       {new Date(l.createdAt).toLocaleString()}
                     </div>
                   </TableCell>
-                  <TableCell>{labelFor(l.clientId)}</TableCell>
-                  <TableCell className={l.points >= 0 ? "text-green-600" : "text-red-600"}>
+                  <TableCell className="font-mono text-xs">
+                    <Link href={`/clients/${l.clientId}`}>
+                      {l.clientId.slice(0, 8)}…
+                    </Link>
+                  </TableCell>
+                  <TableCell
+                    className={
+                      l.points >= 0 ? "text-green-600" : "text-red-600"
+                    }
+                  >
                     {l.points > 0 ? "+" : ""}
                     {l.points}
                   </TableCell>
                   <TableCell>{l.action}</TableCell>
                   <TableCell>{l.description ?? "-"}</TableCell>
-                  <TableCell>{labelFor(l.sourceClientId)}</TableCell>
+                  <TableCell>
+                    {l.sourceClientId ? (
+                      <Link href={`/clients/${l.sourceClientId}`}>
+                        {labelFor(l.sourceClientId)}
+                      </Link>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
                 </TableRow>
               ))
             )}

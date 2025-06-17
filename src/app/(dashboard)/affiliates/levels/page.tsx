@@ -7,7 +7,7 @@ export const metadata = { title: "Affiliate Levels" };
 
 export default function AffiliateLevelsPage() {
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex items-center gap-3">
         <Link href="/affiliates">
           <Button variant="ghost" size="icon">

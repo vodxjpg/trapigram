@@ -1,57 +1,56 @@
 // src/lib/email.ts
-import nodemailer from "nodemailer";
-
 /**
- * Very-light sanity check – avoids hitting nodemailer with an empty /
- * obviously-bad address (which raises EENVELOPE).
+ * A very light sanity check – avoids hitting the API with an empty /
+ * obviously-bad address (which would 4xx on Resend).
  */
 const isPlausibleEmail = (addr: string | undefined | null): addr is string =>
-  !!addr && /.+@.+\..+/.test(addr);
+  !!addr && /.+@.+\..+/.test(addr)
 
 export async function sendEmail({
   to,
   subject,
   text,
+  html,
 }: {
-  to: string;
-  subject: string;
-  text: string;
+  to: string
+  subject: string
+  text?: string
+  html?: string
 }) {
-  /* -------------------------------------------------------------- */
-  /* guard-rail – skip when no usable “to”                           */
-  /* -------------------------------------------------------------- */
   if (!isPlausibleEmail(to)) {
-    console.warn("[sendEmail] skipped – no valid recipient");
-    return;
+    console.warn('[sendEmail] skipped – no valid recipient')
+    return
   }
 
-  // Create a test account with Ethereal
-  const testAccount = await nodemailer.createTestAccount();
+  // Build a payload that includes text or html (or both)
+  const payload: Record<string, any> = {
+    from: 'no-reply@trapyfy.com',
+    to,
+    subject,
+  }
+  if (text) payload.text = text
+  if (html) payload.html = html
 
-  // Set up the transporter using Ethereal's SMTP while we are in local.
-  const transporter = nodemailer.createTransport({
-    host: "smtp.ethereal.email",
-    port: 587,
-    secure: false, // Use TLS
-    auth: {
-      user: testAccount.user, // Ethereal test user
-      pass: testAccount.pass, // Ethereal test password
+  // Make sure we have at least one
+  if (!payload.text && !payload.html) {
+    console.error('[sendEmail] failed – neither text nor html was provided')
+    return
+  }
+
+  // Fire off the REST call
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
     },
-  });
+    body: JSON.stringify(payload),
+  })
 
-  try {
-    // Send the email
-    const info = await transporter.sendMail({
-      from: '"Trapigram" <no-reply@trapigram.com>',
-      to,
-      subject,
-      text,
-    });
-
-    // Log the preview URL to view the sent email
-    console.log("Preview URL: %s", nodemailer.getTestMessageUrl(info));
-  } catch (err) {
-    /* swallow bad-address errors so they never bubble to /api/order  */
-    console.error("[sendEmail] nodemailer error:", err);
+  if (!res.ok) {
+    console.error('[sendEmail] failed', await res.text())
+    return
   }
+
+  console.log('[sendEmail] success', await res.json())
 }

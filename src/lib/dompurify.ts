@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/lib/dompurify.ts
+// /home/zodx/Desktop/Trapyfy/src/lib/dompurify.ts
 import DOMPurify from "dompurify";
 import { JSDOM } from "jsdom";
 

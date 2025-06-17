@@ -21,6 +21,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { usePermission } from "@/hooks/use-permission";
 
 /* ——————————————————— TYPES ——————————————————— */
 interface Product {
@@ -104,6 +105,7 @@ function groupByProduct(lines: Product[]) {
 
 export default function OrderView() {
   const { id } = useParams();
+  const can = usePermission();
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -140,14 +142,20 @@ export default function OrderView() {
     })();
   }, [id]);
 
-  /* ————————— fetch messages ————————— */
-  useEffect(() => {
-    if (!id || !order) return;
-    fetch(`/api/order/${id}/messages`)
-      .then((r) => r.json())
-      .then((d) => setMessages(d.messages))
-      .catch(console.error);
-  }, [id, order]);
+/* ————————— fetch messages ————————— */
+useEffect(() => {
+  if (!id || !order) return;
+  // only fetch if user can view orderChat
+  if (!can({ orderChat: ["view"] })) return;
+  fetch(`/api/order/${id}/messages`)
+    .then((r) => {
+      if (!r.ok) throw new Error("Forbidden");
+      return r.json();
+    })
+    .then((d) => setMessages(d.messages))
+    .catch(console.error);
+}, [id, order, can]);
+
 
   if (loading) return <div className="container mx-auto py-8 text-center">Loading order…</div>;
   if (error || !order)
@@ -421,7 +429,7 @@ export default function OrderView() {
             <CardContent className="flex-grow flex flex-col h-[500px]">
               <ScrollArea className="flex-1">
                 <div className="p-2">
-                  {messages.map((m) => (
+                {can({ orderChat: ["view"] }) && messages.map((m) => (
                     <div key={m.id} className={`flex ${m.isInternal ? "justify-end" : "justify-start"}`}>
                       <div className="max-w-[80%]">
                         <div className={`flex items-start gap-2 ${m.isInternal ? "flex-row-reverse" : ""}`}>
@@ -441,18 +449,20 @@ export default function OrderView() {
                 </div>
               </ScrollArea>
 
-              <div className="flex gap-2 mt-2">
-                <Input
-                  value={newMessage}
-                  placeholder="Type a message…"
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                />
-                <Button size="icon" onClick={sendMessage}>
-                  <Send className="h-4 w-4" />
-                  <span className="sr-only">Send</span>
-                </Button>
-              </div>
+                       {can({ orderChat: ["view"] }) && (
+           <div className="flex gap-2 mt-2">
+             <Input
+               value={newMessage}
+               placeholder="Type a message…"
+               onChange={(e) => setNewMessage(e.target.value)}
+               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+             />
+             <Button size="icon" onClick={sendMessage}>
+               <Send className="h-4 w-4" />
+               <span className="sr-only">Send</span>
+             </Button>
+           </div>
+         )}
             </CardContent>
           </Card>
         </div>

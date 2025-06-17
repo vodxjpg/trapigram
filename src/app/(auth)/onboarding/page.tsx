@@ -204,35 +204,44 @@ export default function OnboardingPage() {
     }
   }
 
-  const onStep3Submit = async (data: Step3Form) => {
-    try {
-      if (!orgId) {
-        toast.error("No organization ID found!")
-        return
-      }
-      const resp = await fetch("/api/internal/platform-keys", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
-        },
-        body: JSON.stringify({
-          organizationId: orgId,
-          platform: data.platform,
-          apiKey: data.apiKey
-        })
-      })
-      if (!resp.ok) {
-        const e = await resp.json()
-        throw new Error(e.error || "Failed to save API key")
-      }
-      await updateStep(4)
-      toast.success("API key step completed!")
-    } catch (err) {
-      console.error(err)
-      toast.error("Failed to complete step3")
+ // inside OnboardingPage, replace onStep3Submit with:
+
+const onStep3Submit = async (data: Step3Form) => {
+  try {
+    if (!orgId) {
+      toast.error("No organization ID found!")
+      return
     }
+    const resp = await fetch("/api/internal/platform-keys", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+      },
+      body: JSON.stringify({
+        organizationId: orgId,
+        platform: data.platform,
+        apiKey: data.apiKey,
+      }),
+    })
+
+    // parse JSON in all cases
+    const body = await resp.json()
+
+    if (!resp.ok) {
+      // If 409, body.error will be your duplicate-key message
+      throw new Error(body.error || "Failed to save API key")
+    }
+
+    await updateStep(4)
+    toast.success("API key step completed!")
+  } catch (err: any) {
+    console.error("[Step3] error:", err)
+    // show the actual error message
+    toast.error(err.message || "Failed to complete step 3")
   }
+}
+
 
   const onStep4Submit = async (data: Step4Form) => {
     try {
@@ -360,7 +369,7 @@ export default function OnboardingPage() {
       return
     }
     try {
-      const resp = await fetch(`/api/auth/organization/check-org-slug?slug=${slug}`, {
+      const resp = await fetch(`/api/internal/organization/check-org-slug?slug=${slug}`, {
         method: "GET",
         headers: {
           "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,

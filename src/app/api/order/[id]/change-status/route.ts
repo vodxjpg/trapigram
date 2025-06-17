@@ -7,6 +7,8 @@ import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
 import { sendNotification } from "@/lib/notifications";
 import type { NotificationType } from "@/lib/notifications";
+import { requireOrgPermission } from "@/lib/perm-server";
+
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -93,8 +95,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
+    // 1) context + permission guard
+  const { requireOrgPermission } = await import('@/lib/perm-server');
+  const ctxOrRes = await requireOrgPermission(req, { order: ['update_status'] });
+  if (ctxOrRes) return ctxOrRes;
+  const ctx = await getContext(req) as { organizationId: string };
   const { organizationId } = ctx;
   const { id } = await params;
   const { status: newStatus } = orderStatusSchema.parse(await req.json());
@@ -109,6 +114,7 @@ export async function PATCH(
     } = await client.query(
       `SELECT status,
               country,
+              "trackingNumber"
               "cartId",
               "clientId",
               "orderKey",
@@ -326,6 +332,11 @@ export async function PATCH(
         }
       }
 
+      const pendingAmt =
+      receivedAmt && expectedAmt
+        ? String(Number(expectedAmt) - Number(receivedAmt))
+        : "";
+
       const notifTypeMap: Record<string, NotificationType> = {
         open: "order_placed",
         underpaid:  "order_partially_paid",   // NEW ⬅︎
@@ -354,8 +365,10 @@ export async function PATCH(
           order_number: ord.orderKey,
           order_date: orderDate,
           order_shipping_method: ord.shippingMethod ?? "-",
+          tracking_number: ord.trackingNumber ?? "",
           expected_amt: expectedAmt,        // ★ NEW
           received_amt: receivedAmt,
+          pending_amt: pendingAmt,
           asset:        assetSymbol,        // ★ NEW
         },
       });

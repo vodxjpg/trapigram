@@ -18,7 +18,7 @@ export default function ProductsPage() {
   }
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <PageHeader
         title="Products"
         description="Manage your product catalog"

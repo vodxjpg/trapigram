@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/(dashboard)/announcements/[id]/page.tsx
+// /home/zodx/Desktop/Trapyfy/src/app/(dashboard)/announcements/[id]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -45,7 +45,7 @@ export default function EditAnnouncementPage() {
   }, [params.id, router]);
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex items-center gap-2">
         <Link href="/announcements">
           <Button variant="ghost" size="icon">

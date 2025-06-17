@@ -54,11 +54,19 @@ export async function POST(req: NextRequest) {
     `
     const values = [id, organizationId, platform, apiKey]
     const result = await pool.query(text, values)
-    const row = result.rows[0]
+    return NextResponse.json({ success: true, record: result.rows[0] }, { status: 200 })
 
-    return NextResponse.json({ success: true, record: row }, { status: 200 })
-  } catch (err) {
+  } catch (err: any) {
     console.error("[POST /api/internal/platform-keys] error:", err)
+
+    // Handle duplicate-key on apiKey
+    if (err.code === "23505" && err.constraint === "organizationPlatformKey_apiKey_key") {
+      return NextResponse.json(
+        { error: "This API key is already in use. Please choose a different key." },
+        { status: 409 }
+      )
+    }
+
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

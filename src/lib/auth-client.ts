@@ -1,5 +1,5 @@
 /* -------------------------------------------------------------------------- */
-/*  /home/zodx/Desktop/trapigram/src/lib/auth-client.ts                       */
+/*  /home/zodx/Desktop/Trapyfy/src/lib/auth-client.ts                       */
 /* -------------------------------------------------------------------------- */
 
 import { createAuthClient } from "better-auth/react";
@@ -8,6 +8,8 @@ import { magicLinkClient } from "better-auth/client/plugins";
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
 import { apiKeyClient } from "better-auth/client/plugins";
 import { ac, owner} from "@/lib/permissions";
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
 
 /* ──────────────────────────────── TYPES ──────────────────────────────────── */
 declare module "better-auth/react" {
@@ -116,7 +118,10 @@ declare module "better-auth/react" {
 
 /* ─────────────────────────── CLIENT INSTANCE ───────────────────────────── */
 export const authClient = createAuthClient({
-  baseURL: process.env.NEXT_PUBLIC_APP_URL + '/api/auth' || "https://trapigram.vercel.app/api/auth",
+  
+  baseURL: APP_URL
+    ? `${APP_URL.replace(/\/$/, '')}/api/auth`
+    : 'https://www.trapyfy.com/api/auth',
   plugins: [
     apiKeyClient(),
     organizationClient({

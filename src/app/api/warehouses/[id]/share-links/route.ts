@@ -201,7 +201,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       {
         shareLinkId,
         token,
-        url: `http://localhost:3000/share/${token}`,
+        url: `https://trapyfy.com/share/${token}`,
         products,
       },
       { status: 201 }
