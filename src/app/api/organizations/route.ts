@@ -1,8 +1,7 @@
 // src/app/api/organizations/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
-import { getContext } from "@/lib/context";
-
+import { auth } from "@/lib/auth";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const SERVICE_API_KEY = process.env.SERVICE_API_KEY ?? "";
 
@@ -47,9 +46,11 @@ export async function GET(req: NextRequest) {
   }
 
   // 2) Normal user: only orgs where they’re a member
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { userId } = ctx;
+  const session = await auth.api.getSession({ headers: req.headers });
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const userId = session.user.id;
 
   try {
     const { rows } = await pool.query(
@@ -65,6 +66,7 @@ export async function GET(req: NextRequest) {
       LEFT JOIN member m2
         ON m2."organizationId" = o.id
       WHERE m."userId" = $1
+      AND m.role      = 'owner'
       GROUP BY
         o.id, o.name, o.slug, o.logo,
         o.countries, o.metadata, o."encryptedSecret", m.role

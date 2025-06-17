@@ -78,6 +78,14 @@ export default function OrdersPage() {
   const can = usePermission();
   const router = useRouter();
 
+  /* ──────────────────────────────────────────────────────────────
+ *  Permission flags (computed once role is known)
+ * ────────────────────────────────────────────────────────────── */
+  const canViewDetail = !can.loading && can({ order: ["view"] });
+  const canViewPricing = !can.loading && can({ order: ["view_pricing"] });
+  const canUpdate = !can.loading && can({ order: ["update"] });
+  const canUpdateTracking = !can.loading && can({ order: ["update_tracking"] });
+
   // ◼︎ state for all orders via API
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,18 +127,7 @@ export default function OrdersPage() {
   }, []);
 
 
-  // client‐side guard
-  useEffect(() => {
-    // only run the redirect *after* our hook has loaded the real role
-    if (can.loading) return;
-    if (!can({ order: ["view"] })) {
-      router.replace("/403");
-    }
-  }, [can, router]);
-
-  // don’t render anything while we’re still figuring out your role...
   if (can.loading) return null;
-  if (!can({ order: ["view"] })) return null;
 
   // — apply filters whenever inputs or orders change
   useEffect(() => {
@@ -402,7 +399,7 @@ export default function OrdersPage() {
                   <TableHead>User</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead>Total</TableHead>
+                  {canViewPricing && <TableHead>Total</TableHead>}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -411,13 +408,19 @@ export default function OrdersPage() {
                   paginatedOrders.map((order) => (
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">
-                        <Button
-                          variant="link"
-                          className="p-0 h-auto font-medium"
-                          onClick={() => router.push(`/orders/${order.id}`)}
-                        >
-                          {order.orderKey}
-                        </Button>
+                        {canViewDetail ? (
+                          <Button
+                            variant="link"
+                            className="p-0 h-auto font-medium"
+                            onClick={() => router.push(`/orders/${order.id}`)}
+                          >
+                            {order.orderKey}
+                          </Button>
+                        ) : (
+                          <span className="font-medium text-muted-foreground cursor-not-allowed">
+                            {order.orderKey}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         {order.firstName} {order.lastName} — {order.username} (
@@ -486,7 +489,11 @@ export default function OrdersPage() {
                       </TableCell>
 
                       <TableCell>{formatDate(order.createdAt)}</TableCell>
-                      <TableCell>${order.total.toFixed(2)}</TableCell>
+                      {canViewPricing && (
+                        <TableCell>
+                          ${order.total.toFixed(2)}
+                        </TableCell>
+                      )}
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -496,14 +503,16 @@ export default function OrdersPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={() =>
-                                router.push(`/orders/${order.id}/edit`)
-                              }
-                            >
-                              <Edit className="mr-2 h-4 w-4" />
-                              Edit
-                            </DropdownMenuItem>
+                            {canUpdate && (
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  router.push(`/orders/${order.id}/edit`)
+                                }
+                              >
+                                <Edit className="mr-2 h-4 w-4" />
+                                Edit
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                               onClick={() =>
                                 handleOrderAction(order.id, "send-notification")
@@ -516,12 +525,14 @@ export default function OrdersPage() {
                               <Mail className="mr-2 h-4 w-4" />
                               <span>Send Payment Notification</span>
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleTracking(order.id)}
-                            >
-                              <Truck className="mr-2 h-4 w-4" />
-                              <span>Set tracking number</span>
-                            </DropdownMenuItem>
+                            {canUpdateTracking && (
+                              <DropdownMenuItem
+                                onClick={() => handleTracking(order.id)}
+                              >
+                                <Truck className="mr-2 h-4 w-4" />
+                                <span>Set tracking number</span>
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -529,7 +540,10 @@ export default function OrdersPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-6">
+                    <TableCell
+                      colSpan={canViewPricing ? 6 : 5}
+                      className="text-center py-6"
+                    >
                       No orders found matching your filters
                     </TableCell>
                   </TableRow>
@@ -573,7 +587,8 @@ export default function OrdersPage() {
       </Card>
 
       {/* — Tracking Number Dialog — */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      {canUpdateTracking && (
+       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
@@ -597,7 +612,8 @@ export default function OrdersPage() {
             <Button onClick={saveTracking}>Save</Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+        </Dialog>
+      )}
     </div>
   );
 }

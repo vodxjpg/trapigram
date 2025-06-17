@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   CreditCard,
@@ -120,7 +120,19 @@ function groupByProduct(lines: Product[]) {
 
 export default function OrderView() {
   const { id } = useParams();
+  const router = useRouter();
   const can = usePermission();
+  if (can.loading) return null;               // wait for role resolution
+  
+  /* ── redirect if the user has no right to view orders ─────────── */
+  if (!can({ order: ["view"] })) {
+    // use a side-effect to avoid running during render
+    useEffect(() => {
+      router.replace("/orders");
+    }, [router]);
+    return null;  // nothing on screen during the redirect
+  }
+  const canViewPricing = can({ order: ["view_pricing"] });
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -341,12 +353,12 @@ export default function OrderView() {
                       <TableHead className="text-right">
                         Qty
                       </TableHead>
-                      <TableHead className="text-right">
-                        Unit Price
-                      </TableHead>
-                      <TableHead className="text-right">
-                        Total
-                      </TableHead>
+                      {canViewPricing && (
+                        <TableHead className="text-right">Unit&nbsp;Price</TableHead>
+                      )}
+                      {canViewPricing && (
+                        <TableHead className="text-right">Total</TableHead>
+                      )}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -407,17 +419,21 @@ export default function OrderView() {
                             {totalQty}
                           </TableCell>
 
-                          <TableCell className="text-right">
-                            {g.isAffiliate
-                              ? fmtPts(cheapest.unitPrice)
-                              : fmtMoney(cheapest.unitPrice)}
-                          </TableCell>
+                          {canViewPricing && (
+                            <TableCell className="text-right">
+                              {g.isAffiliate
+                                ? fmtPts(cheapest.unitPrice)
+                                : fmtMoney(cheapest.unitPrice)}
+                            </TableCell>
+                          )}
 
-                          <TableCell className="text-right">
-                            {g.isAffiliate
-                              ? fmtPts(lineSubtotal)
-                              : fmtMoney(lineSubtotal)}
-                          </TableCell>
+                          {canViewPricing && (
+                            <TableCell className="text-right">
+                              {g.isAffiliate
+                                ? fmtPts(lineSubtotal)
+                                : fmtMoney(lineSubtotal)}
+                            </TableCell>
+                          )}
                         </TableRow>
                       );
                     })}
@@ -425,64 +441,66 @@ export default function OrderView() {
                 </Table>
               </div>
 
-              {/* Price summary */}
-              <div className="mt-6 space-y-2 border-t pt-4">
-                <div className="flex justify-between">
-                  <span>Subtotal</span>
-                  <span>{fmtMoney(monetarySubtotal)}</span>
+              {/* Price summary (hidden if no pricing access) */}
+              {canViewPricing && (
+                <div className="mt-6 space-y-2 border-t pt-4">
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span>{fmtMoney(monetarySubtotal)}</span>
+                  </div>
+                  {affiliatePointsTotal > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span>Affiliate Items</span>
+                      <span className="font-medium">
+                        {fmtPts(affiliatePointsTotal)}
+                      </span>
+                    </div>
+                  )}
+                  {order.coupon && (
+                    <div className="flex justify-between text-sm">
+                      <span>Coupon</span>
+                      <span className="font-medium">
+                        {order.coupon}
+                      </span>
+                    </div>
+                  )}
+                  {order.discount > 0 && (
+                    <div className="flex justify-between text-green-600">
+                      <span>Discount</span>
+                      <span>–{fmtMoney(order.discount)}</span>
+                    </div>
+                  )}
+                  {order.pointsRedeemed! > 0 && (
+                    <div className="flex justify-between text-blue-600">
+                      <span>Points Redeemed</span>
+                      <span>{fmtPts(order.pointsRedeemed!)}</span>
+                    </div>
+                  )}
+                  {order.pointsRedeemedAmount! > 0 && (
+                    <div className="flex justify-between text-green-600">
+                      <span>Points Discount</span>
+                      <span>
+                        –{fmtMoney(order.pointsRedeemedAmount!)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>Shipping</span>
+                    <span>{fmtMoney(order.shipping)}</span>
+                  </div>
+                  <Separator className="my-2" />
+                  <div className="flex justify-between font-bold text-lg">
+                    <span>Total</span>
+                    <span>{fmtMoney(calculatedTotal)}</span>
+                  </div>
+                  {Math.abs(calculatedTotal - order.total) > 0.01 && (
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Server total</span>
+                      <span>{fmtMoney(order.total)}</span>
+                    </div>
+                  )}
                 </div>
-                {affiliatePointsTotal > 0 && (
-                  <div className="flex justify-between text-sm">
-                    <span>Affiliate Items</span>
-                    <span className="font-medium">
-                      {fmtPts(affiliatePointsTotal)}
-                    </span>
-                  </div>
-                )}
-                {order.coupon && (
-                  <div className="flex justify-between text-sm">
-                    <span>Coupon</span>
-                    <span className="font-medium">
-                      {order.coupon}
-                    </span>
-                  </div>
-                )}
-                {order.discount > 0 && (
-                  <div className="flex justify-between text-green-600">
-                    <span>Discount</span>
-                    <span>–{fmtMoney(order.discount)}</span>
-                  </div>
-                )}
-                {order.pointsRedeemed! > 0 && (
-                  <div className="flex justify-between text-blue-600">
-                    <span>Points Redeemed</span>
-                    <span>{fmtPts(order.pointsRedeemed!)}</span>
-                  </div>
-                )}
-                {order.pointsRedeemedAmount! > 0 && (
-                  <div className="flex justify-between text-green-600">
-                    <span>Points Discount</span>
-                    <span>
-                      –{fmtMoney(order.pointsRedeemedAmount!)}
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span>Shipping</span>
-                  <span>{fmtMoney(order.shipping)}</span>
-                </div>  
-                <Separator className="my-2" />
-                <div className="flex justify-between font-bold text-lg">
-                  <span>Total</span>
-                  <span>{fmtMoney(calculatedTotal)}</span>
-                </div>
-                {Math.abs(calculatedTotal - order.total) > 0.01 && (
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Server total</span>
-                    <span>{fmtMoney(order.total)}</span>
-                  </div>
-                )}
-              </div>
+              )}
             </CardContent>
           </Card>
 
@@ -551,35 +569,32 @@ export default function OrderView() {
                     messages.map((m) => (
                       <div
                         key={m.id}
-                        className={`flex ${
-                          m.isInternal
+                        className={`flex ${m.isInternal
                             ? "justify-end"
                             : "justify-start"
-                        }`}
+                          }`}
                       >
                         <div className="max-w-[80%]">
                           <div
-                            className={`flex items-start gap-2 ${
-                              m.isInternal
+                            className={`flex items-start gap-2 ${m.isInternal
                                 ? "flex-row-reverse"
                                 : ""
-                            }`}
+                              }`}
                           >
                             <Avatar className="mt-1">
                               <AvatarFallback>
                                 {m.isInternal
                                   ? "A"
                                   : order.clientEmail
-                                      .charAt(0)
-                                      .toUpperCase()}
+                                    .charAt(0)
+                                    .toUpperCase()}
                               </AvatarFallback>
                             </Avatar>
                             <div
-                              className={`${
-                                m.isInternal
+                              className={`${m.isInternal
                                   ? "bg-primary text-primary-foreground"
                                   : "bg-muted text-foreground"
-                              } rounded-lg p-3`}
+                                } rounded-lg p-3`}
                             >
                               {m.message}
                             </div>
