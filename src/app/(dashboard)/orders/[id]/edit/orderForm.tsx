@@ -34,7 +34,8 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils"; //
+import { cn } from "@/lib/utils";
+import { formatCurrency } from "@/lib/currency";
 /* ——————————————————— TYPES ——————————————————— */
 interface OrderFormWithFetchProps {
   orderId?: string;
@@ -795,7 +796,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                           </div>
                           {/* cheapest bucket price for header */}
                           <span className="font-medium">
-                            ${firstBucket.unitPrice.toFixed(2)} each
+                          {formatCurrency(firstBucket.unitPrice, clientCountry)} each
                           </span>
                         </div>
 
@@ -804,7 +805,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                           <ul className="mt-2 text-sm text-gray-600 space-y-1">
                             {item.priceBuckets.map((pb) => (
                               <li key={pb.unitPrice}>
-                                {pb.quantity} × ${pb.unitPrice.toFixed(2)}
+                               {pb.quantity} × {formatCurrency(pb.unitPrice, clientCountry)}
                               </li>
                             ))}
                           </ul>
@@ -812,14 +813,14 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
                         {/* line subtotal */}
                         <div className="mt-4 text-right font-medium">
-                          $
-                          {item.priceBuckets
-                            .reduce(
-                              (sum, pb) => sum + pb.quantity * pb.unitPrice,
-                              0
-                            )
-                            .toFixed(2)}
-                        </div>
+              {formatCurrency(
+                item.priceBuckets.reduce(
+                  (sum, pb) => sum + pb.quantity * pb.unitPrice,
+                  0
+                ),
+                clientCountry
+              )}
+            </div>
                       </div>
                     );
                   })}
@@ -1069,7 +1070,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                 </div>
                 <div className="flex justify-between">
                   <span>Subtotal:</span>
-                  <span className="font-medium">${subtotal.toFixed(2)}</span>
+                  <span className="font-medium">{formatCurrency(subtotal, clientCountry)}</span>
                 </div>
 
                 {orderData?.pointsRedeemed > 0 && (
@@ -1097,18 +1098,20 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                       : ""}
                     :
                   </span>
-                  <span className="font-medium">–${discount.toFixed(2)}</span>
+                  <span className="font-medium">–{formatCurrency(discount, clientCountry)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Shipping:</span>
                   <span className="font-medium">
-                    ${orderData?.shipping.toFixed(2)}
+                  {orderData?.shipping != null
+            ? formatCurrency(orderData.shipping, clientCountry)
+            : "—"}
                   </span>
                 </div>
                 <Separator />
                 <div className="flex justify-between text-lg font-bold">
                   <span>Total:</span>
-                  <span>${total.toFixed(2)}</span>
+                  <span>{formatCurrency(total, clientCountry)}</span>
                 </div>
               </div>
             </CardContent>

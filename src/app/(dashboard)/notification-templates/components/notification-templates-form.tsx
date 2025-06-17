@@ -254,6 +254,7 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                     <span className="text-xs">{`{order_date}`} - Output order's date</span>,&nbsp;
                     <span className="text-xs">{`{order_shipping_method}`} - Output order's shipping method</span>,&nbsp;
                     <span className="text-xs">{`{tracking_number}`} - Output order's tracking number</span>,&nbsp;
+                    <span className="text-xs">{`{shipping_company}`} - Output order's shipping company</span>,&nbsp;
                     <span className="text-xs">{`{expected_amt}`} - Output order's crypto expected amount (works with Coinslick)</span>,&nbsp;
                     <span className="text-xs">{`{received_amt}`} - Output order's crypto received amount (works with Coinslick)</span>,&nbsp;
                     <span className="text-xs">{`{pending_amt}`}- Output order's crypto pending amount (works with Coinslick)</span>,&nbsp;

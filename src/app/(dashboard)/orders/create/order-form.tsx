@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-
+import { formatCurrency } from "@/lib/currency";
 // Interfaces
 interface Product {
   id: string;
@@ -751,14 +751,14 @@ export default function OrderForm() {
                           )}
                           <div className="flex justify-between mt-2">
                             <span className="font-medium">
-                              Unit Price: ${price}
+                            Unit Price: {formatCurrency(price, clientCountry)}
                             </span>
                             <span className="font-medium">
                               $
-                              {(
-                                product.subtotal ??
-                                calcRowSubtotal(product, quantity)
-                              ).toFixed(2)}
+                              {formatCurrency(
+                  product.subtotal ?? price * quantity,
+                  clientCountry
+                )}
                             </span>
                           </div>
                         </div>
@@ -1036,7 +1036,7 @@ export default function OrderForm() {
                   </div>
                   <div className="flex justify-between">
                     <span>Subtotal:</span>
-                    <span className="font-medium">${subtotal.toFixed(2)}</span>
+                    <span className="font-medium">{formatCurrency(subtotal, clientCountry)}</span>
                   </div>
                   {couponApplied && discount > 0 && (
                     <div className="flex justify-between text-green-600">
@@ -1044,19 +1044,17 @@ export default function OrderForm() {
                         Discount
                         {discountType === "percentage" ? ` (${value}%)` : ""}:
                       </span>
-                      <span className="font-medium">–${discount}</span>
+                      <span className="font-medium">–{formatCurrency(discount, clientCountry)}</span>
                     </div>
                   )}
                   <div className="flex justify-between">
                     <span>Shipping:</span>
-                    <span className="font-medium">
-                      ${shippingCost.toFixed(2)}
-                    </span>
+                    <span className="font-medium">{formatCurrency(shippingCost, clientCountry)}</span>
                   </div>
                   <Separator />
                   <div className="flex justify-between text-lg font-bold">
                     <span>Total:</span>
-                    <span>${(total + shippingCost).toFixed(2)}</span>
+                    <span> {formatCurrency(total + shippingCost, clientCountry)}</span>
                   </div>
                 </div>
               ) : (

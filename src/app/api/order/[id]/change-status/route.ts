@@ -117,6 +117,7 @@ export async function PATCH(
               "trackingNumber"
               "cartId",
               "clientId",
+              "shippingService",
               "orderKey",
               "dateCreated",
               "shippingMethod",
@@ -368,6 +369,7 @@ export async function PATCH(
           tracking_number: ord.trackingNumber ?? "",
           expected_amt: expectedAmt,        // ★ NEW
           received_amt: receivedAmt,
+          shipping_company: ord.shippingService ?? "",
           pending_amt: pendingAmt,
           asset:        assetSymbol,        // ★ NEW
         },
