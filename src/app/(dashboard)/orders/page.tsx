@@ -79,8 +79,8 @@ export default function OrdersPage() {
   const router = useRouter();
 
   /* ──────────────────────────────────────────────────────────────
- *  Permission flags (computed once role is known)
- * ────────────────────────────────────────────────────────────── */
+   *  Permission flags (computed once role is known)
+   * ────────────────────────────────────────────────────────────── */
   const canViewDetail = !can.loading && can({ order: ["view"] });
   const canViewPricing = !can.loading && can({ order: ["view_pricing"] });
   const canUpdate = !can.loading && can({ order: ["update"] });
@@ -110,6 +110,16 @@ export default function OrdersPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
+  type ShippingCompany = { id: string; name: string };
+
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
+    []
+  );
+  const [shippingLoading, setShippingLoading] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState<string | undefined>(
+    undefined
+  );
+
   // — fetch orders from /api/order on mount
   useEffect(() => {
     setLoading(true);
@@ -125,7 +135,6 @@ export default function OrdersPage() {
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
-
 
   if (can.loading) return null;
 
@@ -192,6 +201,26 @@ export default function OrdersPage() {
     }
   };
 
+  useEffect(() => {
+    if (!dialogOpen) return;
+    (async () => {
+      setShippingLoading(true);
+      try {
+        const compRes = await fetch("/api/shipping-companies", {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
+        });
+        if (!compRes.ok) throw new Error("Failed to fetch shipping companies");
+        const comps: { companies: ShippingCompany[] } = await compRes.json();
+        setShippingCompanies(comps.shippingMethods);
+      } catch (err: any) {
+        toast.error(err.message);
+      } finally {
+        setShippingLoading(false);
+      }
+    })();
+  }, [dialogOpen]);
   // Function to change order status via API
   const handleStatusChange = async (
     orderId: string,
@@ -238,11 +267,24 @@ export default function OrdersPage() {
   // **Save tracking to API**
   const saveTracking = async () => {
     if (!selectedOrderId) return;
+    // ensure a company is selected
+    if (!selectedCompany) {
+      toast.error("Please select a shipping company before saving.");
+      return;
+    }
+    const company = shippingCompanies.find((c) => c.id === selectedCompany);
+    if (!company) {
+      toast.error("Selected shipping company not found.");
+      return;
+    }
     try {
       const res = await fetch(`/api/order/${selectedOrderId}/tracking-number`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trackingNumber: draftTracking }),
+        body: JSON.stringify({
+          trackingNumber: draftTracking,
+          shippingCompany: company.name,
+        }),
       });
       if (!res.ok) throw new Error("Failed to save tracking number");
       // Optimistically update UI
@@ -437,12 +479,18 @@ export default function OrdersPage() {
                           >
                             <SelectTrigger className="w-auto flex justify-center">
                               <Badge className={getStatusColor(order.status)}>
-                                {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                                {order.status.charAt(0).toUpperCase() +
+                                  order.status.slice(1)}
                               </Badge>
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="open" className="w-auto flex justify-left">
-                                <Badge className={getStatusColor("open")}>Open</Badge>
+                              <SelectItem
+                                value="open"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("open")}>
+                                  Open
+                                </Badge>
                               </SelectItem>
                               <SelectItem
                                 value="underpaid"
@@ -452,8 +500,13 @@ export default function OrdersPage() {
                                   Partially paid
                                 </Badge>
                               </SelectItem>
-                              <SelectItem value="paid" className="w-auto flex justify-left">
-                                <Badge className={getStatusColor("paid")}>Paid</Badge>
+                              <SelectItem
+                                value="paid"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("paid")}>
+                                  Paid
+                                </Badge>
                               </SelectItem>
                               <SelectItem
                                 value="completed"
@@ -483,16 +536,15 @@ export default function OrdersPage() {
                           </Select>
                         ) : (
                           <Badge className={getStatusColor(order.status)}>
-                            {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                            {order.status.charAt(0).toUpperCase() +
+                              order.status.slice(1)}
                           </Badge>
                         )}
                       </TableCell>
 
                       <TableCell>{formatDate(order.createdAt)}</TableCell>
                       {canViewPricing && (
-                        <TableCell>
-                          ${order.total.toFixed(2)}
-                        </TableCell>
+                        <TableCell>${order.total.toFixed(2)}</TableCell>
                       )}
                       <TableCell className="text-right">
                         <DropdownMenu>
@@ -588,30 +640,51 @@ export default function OrdersPage() {
 
       {/* — Tracking Number Dialog — */}
       {canUpdateTracking && (
-       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {selectedOrderId &&
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {selectedOrderId &&
                 orders.find((o) => o.id === selectedOrderId)?.trackingNumber
-                ? "Edit Tracking Number"
-                : "Set Tracking Number"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <Input
-              placeholder="Enter tracking number"
-              value={draftTracking}
-              onChange={(e) => setDraftTracking(e.target.value)}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={saveTracking}>Save</Button>
-          </DialogFooter>
-        </DialogContent>
+                  ? "Edit Tracking Number"
+                  : "Set Tracking Number"}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              {/* NEW: Shipping Company selector */}
+              <Select
+                value={selectedCompany}
+                onValueChange={(val) => setSelectedCompany(val)}
+                disabled={shippingLoading}
+              >
+                <SelectTrigger>
+                  <SelectValue
+                    placeholder={
+                      shippingLoading ? "Loading…" : "Select company"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {shippingCompanies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="Enter tracking number"
+                value={draftTracking}
+                onChange={(e) => setDraftTracking(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={saveTracking}>Save</Button>
+            </DialogFooter>
+          </DialogContent>
         </Dialog>
       )}
     </div>

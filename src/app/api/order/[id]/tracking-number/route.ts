@@ -16,9 +16,10 @@ export async function PATCH(
     try {
         const { id } = await params;
         const body = await req.json();
+        console.log(body)
 
         const trackingQuery = `UPDATE orders
-            SET "trackingNumber" = '${body.trackingNumber}', "updatedAt" = NOW()
+            SET "trackingNumber" = '${body.trackingNumber}', "shippingService" = '${body.shippingCompany}', "updatedAt" = NOW()
             WHERE id = '${id}'
             RETURNING *`
 
