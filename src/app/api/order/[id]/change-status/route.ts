@@ -376,7 +376,7 @@ export async function PATCH(
       });
 
       /* mark flag only for paid / completed (NOT underpaid) */
-      if (newStatus === "paid" || newStatus === "completed") {
+      if (newStatus === "completed") {
         await client.query(
           `UPDATE orders
               SET "notifiedPaidOrCompleted" = true,
