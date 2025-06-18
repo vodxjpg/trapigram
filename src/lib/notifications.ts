@@ -95,11 +95,13 @@ export async function sendNotification(params: SendNotificationParams) {
     clientId = null,
   } = params;
 
-  // if we have a tracking_number, turn it into a link
-if (variables.tracking_number) {
-  const tn = variables.tracking_number;
-  variables.tracking_number = `<a href="https://www.ordertracker.com/track/${tn}">${tn}</a>`;
-}
+  if (variables.tracking_number) {
+    const tn = variables.tracking_number
+    const url = `https://www.ordertracker.com/track/${tn}`
+  
+    // put the raw number, then a break, then the link
+    variables.tracking_number = `${tn}<br>${url}`
+  }
 
   /* 1️⃣ templates */
   const templates = await db
