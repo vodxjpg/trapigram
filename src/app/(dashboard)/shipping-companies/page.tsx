@@ -1,15 +1,26 @@
+// src/app/(dashboard)/shipping-companies/page.tsx
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { ShippingMethodsTable } from "./shipping-companies-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { usePermission } from "@/hooks/use-permission";
 
-export default function CategoriesPage() {
-    const { setHeaderTitle } = useHeaderTitle();
+export default function ShippingCompaniesPage() {
+  const { setHeaderTitle } = useHeaderTitle();
+  const router = useRouter();
+  const can = usePermission();
 
-    useEffect(() => {
-        setHeaderTitle("Shipping Companies"); // Set the header title for this page
-    }, [setHeaderTitle]);
+  useEffect(() => {
+    setHeaderTitle("Shipping Companies");
+  }, [setHeaderTitle]);
+
+  if (can.loading) return null;
+  if (!can({ shippingMethods: ["view"] })) {
+    router.replace("/");
+    return null;
+  }
 
   return (
     <div className="flex flex-col gap-6 p-6">

@@ -1,7 +1,7 @@
+// src/components/dashboard/nav-user.tsx
 "use client";
 
 import * as React from "react";
-// import { useRouter } from "next/navigation"; // <-- Removed
 import Link from "next/link";
 import {
   IconCreditCard,
@@ -32,69 +32,25 @@ import {
 } from "@/components/ui/sidebar";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
-
-/** Type for user data */
-type User = {
-  name: string;
-  email: string;
-  image?: string | null;
-};
+import { useUser } from "@/hooks/use-user";
 
 export function NavUser() {
   const { isMobile } = useSidebar();
-  // const router = useRouter(); // <-- Removed
-  const [user, setUser] = React.useState<User | null>(null);
-  const [loading, setLoading] = React.useState(true);
+  const { user, isLoading, error } = useUser();
 
-  // Fetch user data on mount
-  React.useEffect(() => {
-    async function fetchUser() {
-      try {
-        const sessionResponse = await authClient.getSession();
-        console.log("Raw session response:", sessionResponse);
-        
-        if (sessionResponse?.data && "session" in sessionResponse.data && sessionResponse.data.user) {
-          const { user: sessionUser } = sessionResponse.data;
-          setUser({
-            name: sessionUser.name || "Unknown",
-            email: sessionUser.email || "No email",
-            image: sessionUser.image,
-          });
-        } else {
-          console.warn("Session response lacks expected data:", sessionResponse);
-          throw new Error("No active session found");
-        }
-      } catch (err) {
-        console.error("Error fetching user:", err);
-        toast.error("Failed to load user data. Please try refreshing the page.");
-        setUser({ name: "Error", email: "N/A", image: null });
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchUser();
-  }, []);
-
-  // Define the sign-out handler
+  // sign out
   const handleSignOut = async () => {
     try {
       await authClient.signOut();
       toast.success("Logged out successfully!");
-      // router.push("/login"); // <-- Removed
       window.location.href = "/login";
-    } catch (err) {
-      console.error("Error during sign-out:", err);
+    } catch {
       toast.error("Failed to log out.");
     }
   };
 
-  // Navigation handler (removed because we now use <Link>)
-  // const handleNavigate = (path: string) => {
-  //   console.log("Navigating to:", path);
-  //   router.push(path);
-  // };
-
-  if (loading) {
+  // while our hook is loading, show a placeholder
+  if (isLoading) {
     return (
       <SidebarMenu>
         <SidebarMenuItem>
@@ -104,13 +60,36 @@ export function NavUser() {
             </Avatar>
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">Loading...</span>
-              <span className="text-muted-foreground truncate text-xs">...</span>
+              <span className="text-muted-foreground truncate text-xs">…</span>
             </div>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
     );
   }
+
+  // if we failed to load the user at all, show an error state
+  if (error || !user) {
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton size="lg" disabled>
+            <Avatar className="h-8 w-8 rounded-lg grayscale">
+              <AvatarFallback className="rounded-lg">⚠️</AvatarFallback>
+            </Avatar>
+            <div className="grid flex-1 text-left text-sm leading-tight">
+              <span className="truncate font-medium">Unknown user</span>
+              <span className="text-muted-foreground truncate text-xs">
+                Error loading profile
+              </span>
+            </div>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
+  }
+
+  const isGuest = user.is_guest === true;
 
   return (
     <SidebarMenu>
@@ -122,22 +101,27 @@ export function NavUser() {
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
               <Avatar className="h-8 w-8 rounded-lg grayscale">
-                <AvatarImage src={user?.image ?? ""} alt={user?.name ?? ""} />
-                <AvatarFallback className="rounded-lg">
-                  {user?.name ? getInitials(user.name) : "??"}
-                </AvatarFallback>
+                {user.image ? (
+                  <AvatarImage src={user.image} alt={user.name ?? ""} />
+                ) : (
+                  <AvatarFallback className="rounded-lg">
+                    {getInitials(user.name ?? "")}
+                  </AvatarFallback>
+                )}
               </Avatar>
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{user?.name ?? "No Name"}</span>
+                <span className="truncate font-medium">
+                  {user.name ?? "No Name"}
+                </span>
                 <span className="text-muted-foreground truncate text-xs">
-                  {user?.email ?? "No Email"}
+                  {user.email}
                 </span>
               </div>
               <IconDotsVertical className="ml-auto size-4" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
             side={isMobile ? "bottom" : "right"}
             align="end"
             sideOffset={4}
@@ -145,15 +129,20 @@ export function NavUser() {
             <DropdownMenuLabel className="p-0 font-normal">
               <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                 <Avatar className="h-8 w-8 rounded-lg">
-                  <AvatarImage src={user?.image ?? ""} alt={user?.name ?? ""} />
-                  <AvatarFallback className="rounded-lg">
-                    {user?.name ? getInitials(user.name) : "??"}
-                  </AvatarFallback>
+                  {user.image ? (
+                    <AvatarImage src={user.image} alt={user.name ?? ""} />
+                  ) : (
+                    <AvatarFallback className="rounded-lg">
+                      {getInitials(user.name ?? "")}
+                    </AvatarFallback>
+                  )}
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">{user?.name ?? "No Name"}</span>
+                  <span className="truncate font-medium">
+                    {user.name ?? "No Name"}
+                  </span>
                   <span className="text-muted-foreground truncate text-xs">
-                    {user?.email ?? "No Email"}
+                    {user.email}
                   </span>
                 </div>
               </div>
@@ -166,12 +155,14 @@ export function NavUser() {
                   <span>Account</span>
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/billing" className="flex items-center">
-                  <IconCreditCard className="mr-2 h-4 w-4" />
-                  <span>Billing</span>
-                </Link>
-              </DropdownMenuItem>
+              {!isGuest && (
+                <DropdownMenuItem asChild>
+                  <Link href="/billing" className="flex items-center">
+                    <IconCreditCard className="mr-2 h-4 w-4" />
+                    <span>Billing</span>
+                  </Link>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem asChild>
                 <Link href="/notification-templates" className="flex items-center">
                   <IconNotification className="mr-2 h-4 w-4" />
@@ -191,14 +182,11 @@ export function NavUser() {
   );
 }
 
-/** Utility function to get initials from a name */
 function getInitials(name: string) {
-  const parts = name.trim().split(/\s+/);
-  let initials = "";
-  for (const part of parts) {
-    if (part.length > 0 && initials.length < 2) {
-      initials += part[0].toUpperCase();
-    }
-  }
-  return initials;
+  return name
+    .split(/\s+/)
+    .map((w) => w[0]?.toUpperCase())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("");
 }

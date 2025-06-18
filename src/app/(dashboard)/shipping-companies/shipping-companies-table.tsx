@@ -1,4 +1,4 @@
-// src/components/ShippingMethodsTable.tsx
+// src/app/(dashboard)/shipping-companies/shipping-companies-table.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -49,6 +49,7 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
+import { usePermission } from "@/hooks/use-permission";
 
 type ShippingMethod = {
   id: string;
@@ -60,6 +61,7 @@ type ShippingMethod = {
 
 export function ShippingMethodsTable() {
   const router = useRouter();
+  const can = usePermission();
 
   const [methods, setMethods] = useState<ShippingMethod[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,9 +69,20 @@ export function ShippingMethodsTable() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
-
-  // Which method is pending deletion?
   const [toDelete, setToDelete] = useState<ShippingMethod | null>(null);
+
+  // 1) Redirect away if no view permission
+  useEffect(() => {
+    if (!can.loading && !can({ shippingMethods: ["view"] })) {
+      router.replace("/shipping-companies");
+    }
+  }, [can, router]);
+
+  // 2) Fetch when permitted
+  useEffect(() => {
+    if (can.loading || !can({ shippingMethods: ["view"] })) return;
+    fetchMethods();
+  }, [currentPage, pageSize, searchQuery, can]);
 
   const fetchMethods = async () => {
     setLoading(true);
@@ -91,10 +104,6 @@ export function ShippingMethodsTable() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    fetchMethods();
-  }, [currentPage, pageSize, searchQuery]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,6 +137,9 @@ export function ShippingMethodsTable() {
     router.push(`/shipping-companies/new`);
   };
 
+  // 3) While loading permissions or lacking view, render nothing
+  if (can.loading || !can({ shippingMethods: ["view"] })) return null;
+
   return (
     <div className="space-y-4">
       {/* header */}
@@ -144,9 +156,11 @@ export function ShippingMethodsTable() {
           </div>
           <Button type="submit">Search</Button>
         </form>
-        <Button onClick={handleAdd}>
-          <Plus className="mr-2 h-4 w-4" /> Add Method
-        </Button>
+        {can({ shippingMethods: ["create"] }) && (
+          <Button onClick={handleAdd}>
+            <Plus className="mr-2 h-4 w-4" /> Add Method
+          </Button>
+        )}
       </div>
 
       {/* table */}
@@ -193,15 +207,19 @@ export function ShippingMethodsTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEdit(m)}>
-                          <Edit className="mr-2 h-4 w-4" /> Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-destructive"
-                          onClick={() => setToDelete(m)}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" /> Delete
-                        </DropdownMenuItem>
+                        {can({ shippingMethods: ["update"] }) && (
+                          <DropdownMenuItem onClick={() => handleEdit(m)}>
+                            <Edit className="mr-2 h-4 w-4" /> Edit
+                          </DropdownMenuItem>
+                        )}
+                        {can({ shippingMethods: ["delete"] }) && (
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => setToDelete(m)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -274,7 +292,7 @@ export function ShippingMethodsTable() {
         </div>
       </div>
 
-      {/* AlertDialog for Delete Confirmation */}
+      {/* delete confirmation */}
       <AlertDialog
         open={!!toDelete}
         onOpenChange={(open) => {
@@ -285,14 +303,12 @@ export function ShippingMethodsTable() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Shipping Method?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to permanently delete “{toDelete?.name}”?
+              Permanently delete “{toDelete?.name}”?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteConfirm}
-            >
+            <AlertDialogAction onClick={handleDeleteConfirm}>
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>

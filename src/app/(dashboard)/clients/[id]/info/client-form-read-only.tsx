@@ -1,52 +1,55 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
-
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Select from "react-select";
 import ReactCountryFlag from "react-country-flag";
 import countriesLib from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
+import { usePermission } from "@/hooks/use-permission";
 
 countriesLib.registerLocale(enLocale);
-
-const countryOptions = Object.entries(countriesLib.getNames("en")).map(
-  ([code, name]) => ({
-    value: code,
-    label: (
-      <div className="flex items-center gap-2">
-        <ReactCountryFlag countryCode={code} svg style={{ width: 16, height: 16 }} />
-        {name}
-      </div>
-    ),
-  })
-);
-
-type Client = {
-  id: string;
-  username: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  phoneNumber: string;
-  referredBy: string | null;
-  country: string | null;
-};
+const countryOptions = Object.entries(
+  countriesLib.getNames("en")
+).map(([code, name]) => ({
+  value: code,
+  label: (
+    <div className="flex items-center gap-2">
+      <ReactCountryFlag
+        countryCode={code}
+        svg
+        style={{ width: 16, height: 16 }}
+      />
+      {name}
+    </div>
+  ),
+}));
 
 export default function ClientDetailView() {
   const { id } = useParams<{ id: string }>();
-  const [client, setClient] = useState<Client | null>(null);
+  const router = useRouter();
+  const can = usePermission();
+  const [client, setClient] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+
+  // redirect if no view
+  useEffect(() => {
+    if (!can.loading && !can({ customer: ["view"] })) {
+      router.replace("/clients");
+    }
+  }, [can, router]);
+  if (can.loading || !can({ customer: ["view"] })) return null;
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`/api/clients/${id}`,{
+        const res = await fetch(`/api/clients/${id}`, {
           headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+            "x-internal-secret":
+              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
           },
         });
         if (!res.ok) throw new Error("Failed to fetch client");

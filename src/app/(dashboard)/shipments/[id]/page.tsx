@@ -1,8 +1,8 @@
-// src/app/(dashboard)/clients/[id]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { usePermission } from "@/hooks/use-permission";
 import { ShipmentForm } from "../shipment-form";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -10,37 +10,58 @@ import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export default function EditClientPage() {
+export default function EditShipmentPage() {
   const params = useParams();
   const router = useRouter();
+  const can = usePermission();
   const [shipment, setShipment] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingData, setLoadingData] = useState(true);
+
+  // ACL: redirect if they can't update
+  useEffect(() => {
+    if (!can.loading && !can({ shipping: ["update"] })) {
+      router.replace("/shipments");
+    }
+  }, [can, router]);
 
   useEffect(() => {
-    const fetchShipments = async () => {
+    if (can.loading) return;
+    (async () => {
       try {
         const response = await fetch(`/api/shipments/${params.id}`, {
           headers: {
             "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
           },
-        }); 
-        console.log(response)
+        });
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to fetch shipments");
+          throw new Error(errorData.error || "Failed to fetch shipment");
         }
-        const data = await response.json(); // parse JSON once
+        const data = await response.json();
         setShipment(data);
       } catch (error: any) {
-        console.error("Error fetching shipments:", error);
-        toast.error(error.message || "Failed to load shipments data");
+        console.error("Error fetching shipment:", error);
+        toast.error(error.message || "Failed to load shipment data");
         router.push("/shipments");
       } finally {
-        setLoading(false);
+        setLoadingData(false);
       }
-    };
-    fetchShipments();
-  }, [params.id, router]);
+    })();
+  }, [can, params.id, router]);
+
+  if (can.loading || loadingData) {
+    return (
+      <div className="container mx-auto py-6 px-6 space-y-6">
+        <Skeleton className="h-12 w-full" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[...Array(6)].map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
+        </div>
+        <Skeleton className="h-10 w-32 mx-auto" />
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
@@ -55,23 +76,7 @@ export default function EditClientPage() {
           <p className="text-muted-foreground">Update shipment information</p>
         </div>
       </div>
-
-      {loading ? (
-        <div className="space-y-4">
-          <Skeleton className="h-12 w-full" />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-          </div>
-          <Skeleton className="h-10 w-32 mx-auto" />
-        </div>
-      ) : (
-        <ShipmentForm shipmentData={shipment} isEditing={true} />
-      )}
+      <ShipmentForm shipmentData={shipment} isEditing={true} />
     </div>
   );
 }

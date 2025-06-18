@@ -1,4 +1,4 @@
-// src/app/(dashboard)/sections/sections-table.tsx
+// src/app/(dashboard)/sections/components/sections-table.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -27,6 +27,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
@@ -39,6 +40,7 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { usePermission } from "@/hooks/use-permission";
 
 type Section = {
   id: string;
@@ -49,9 +51,6 @@ type Section = {
   updatedAt: string;
 };
 
-/* -------------------------------------------------- */
-/* helpers                                            */
-/* -------------------------------------------------- */
 type Node = Section & { children: Node[] };
 const buildTree = (list: Section[]): Node[] => {
   const map = new Map<string, Node>();
@@ -79,14 +78,25 @@ const flatten = (nodes: Node[], depth = 0): Array<Section & { depth: number }> =
   return out;
 };
 
-/* -------------------------------------------------- */
 export function SectionsTable() {
   const router = useRouter();
+  const can = usePermission();
+
+  const canView   = can({ sections: ["view"] });
+  const canCreate = can({ sections: ["create"] });
+  const canUpdate = can({ sections: ["update"] });
+  const canDelete = can({ sections: ["delete"] });
+
+  // redirect if no view permission
+  useEffect(() => {
+    if (!can.loading && !canView) {
+      router.replace("/");
+    }
+  }, [can.loading, canView, router]);
+
   const [rows, setRows] = useState<Array<Section & { depth: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [toDelete, setToDelete] = useState<Section | null>(null);
-
-  /* pagination (simple client-side for now) */
   const pageSizeOptions = [10, 20, 50];
   const [pageSize, setPageSize] = useState(10);
   const [pageIndex, setPageIndex] = useState(0);
@@ -103,18 +113,23 @@ export function SectionsTable() {
       setLoading(false);
     }
   };
-  useEffect(() => void fetchSections(), []);
+
+  useEffect(() => {
+    if (canView) fetchSections();
+  }, [canView]);
+
+  if (can.loading || !canView) {
+    return null;
+  }
 
   const paged = rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
 
-  /* delete */
   const confirmDelete = async () => {
     if (!toDelete) return;
     try {
       const res = await fetch(`/api/sections/${toDelete.id}`, {
         method: "DELETE",
-        headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
       });
       if (!res.ok) throw new Error();
       toast.success("Section deleted");
@@ -131,10 +146,6 @@ export function SectionsTable() {
       {/* header */}
       <div className="flex justify-between">
         <h1 className="text-2xl font-semibold">Sections</h1>
-        <Button onClick={() => router.push("/sections/new")}>
-          <Plus className="mr-2 h-4 w-4" />
-          New Section
-        </Button>
       </div>
 
       {/* table */}
@@ -151,13 +162,13 @@ export function SectionsTable() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
+                <TableCell colSpan={4} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
+                <TableCell colSpan={4} className="h-24 text-center">
                   No sections yet.
                 </TableCell>
               </TableRow>
@@ -165,7 +176,9 @@ export function SectionsTable() {
               paged.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell>
-                    <div style={{ paddingLeft: `${s.depth * 1.5}rem` }}>{s.title}</div>
+                    <div style={{ paddingLeft: `${s.depth * 1.5}rem` }}>
+                      {s.title}
+                    </div>
                   </TableCell>
                   <TableCell>{s.name}</TableCell>
                   <TableCell>
@@ -182,12 +195,26 @@ export function SectionsTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() => router.push(`/sections/${s.id}`)}
-                        >
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
+                        {canUpdate && (
+                          <DropdownMenuItem
+                            onClick={() => router.push(`/sections/${s.id}`)}
+                          >
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                        )}
+                        {canDelete && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => setToDelete(s)}
+                              className="text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -262,7 +289,9 @@ export function SectionsTable() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>Delete</AlertDialogAction>
+            <AlertDialogAction onClick={confirmDelete}>
+              Delete
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

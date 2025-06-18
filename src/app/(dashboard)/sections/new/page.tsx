@@ -1,23 +1,35 @@
 // src/app/(dashboard)/sections/new/page.tsx
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SectionForm } from "../components/section-form";
-import { useEffect, useState } from "react";
+import { usePermission } from "@/hooks/use-permission";
 
 export default function NewSectionPage() {
   const router = useRouter();
-  const [sections, setSections] = useState([]);
+  const can = usePermission();
+
+  const canCreate = can({ sections: ["create"] });
+  const [sections, setSections] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!can.loading && !canCreate) {
+      router.replace("/sections");
+    }
+  }, [can.loading, canCreate, router]);
 
   useEffect(() => {
     (async () => {
       const res = await fetch("/api/sections?depth=10");
-      const { sections } = await res.json();
-      setSections(sections);
+      const json = await res.json();
+      setSections(json.sections);
     })();
   }, []);
+
+  if (can.loading || !canCreate) return null;
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">

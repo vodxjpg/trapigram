@@ -44,7 +44,7 @@ import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useProducts } from "@/hooks/use-products"
 import type { Attribute } from "@/types/product"
-
+import { usePermission } from "@/hooks/use-permission"
 // Product type definition
 export type Product = {
   id: string
@@ -73,6 +73,7 @@ export type Product = {
 
 export function ProductsDataTable() {
   const router = useRouter()
+  const canPerm = usePermission()
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
@@ -300,6 +301,8 @@ export function ProductsDataTable() {
       id: "actions",
       cell: ({ row }) => {
         const product = row.original
+        const canUpdate = canPerm({ product: ["update"] })
+        const canDelete = canPerm({ product: ["delete"] })
         return (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -309,20 +312,27 @@ export function ProductsDataTable() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+              {canUpdate && (
               <DropdownMenuItem onClick={() => router.push(`/products/${product.id}/edit`)}>
                 <Edit className="mr-2 h-4 w-4" />
                 Edit
               </DropdownMenuItem>
+              )}
+              {canUpdate && (
               <DropdownMenuItem onClick={() => handleDuplicateProduct(product.id)}>
                 <Copy className="mr-2 h-4 w-4" />
                 Duplicate
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
+              )}
+              
+              {canDelete && <DropdownMenuSeparator />}
+              {canDelete && (
               <DropdownMenuItem onClick={() => setDeleteProductId(product.id)} className="text-red-600">
                 <Trash className="mr-2 h-4 w-4" />
                 Delete
               </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         )

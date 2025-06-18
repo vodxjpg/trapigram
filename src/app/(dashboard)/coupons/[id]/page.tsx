@@ -9,38 +9,36 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { usePermission } from "@/hooks/use-permission";
 
-export default function EditClientPage() {
-  const params = useParams();
+export default function EditCouponPage() {
+  const { id } = useParams();
   const router = useRouter();
+  const can = usePermission();
   const [coupon, setCoupon] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // redirect away if no update
   useEffect(() => {
-    const fetchCoupons = async () => {
-      try {
-        const response = await fetch(`/api/coupons/${params.id}`, {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-          },
-        }); 
-        console.log(response)
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to fetch coupons");
-        }
-        const data = await response.json(); // parse JSON once
-        setCoupon(data);
-      } catch (error: any) {
-        console.error("Error fetching coupons:", error);
-        toast.error(error.message || "Failed to load coupons data");
+    if (!can.loading && !can({ coupon: ["update"] })) {
+      router.replace("/coupons");
+    }
+  }, [can, router]);
+  if (can.loading || !can({ coupon: ["update"] })) return null;
+
+  useEffect(() => {
+    fetch(`/api/coupons/${id}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch");
+        return res.json();
+      })
+      .then(setCoupon)
+      .catch((e) => {
+        toast.error(e.message);
         router.push("/coupons");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchCoupons();
-  }, [params.id, router]);
+      })
+      .finally(() => setLoading(false));
+  }, [id, router]);
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
@@ -51,8 +49,10 @@ export default function EditClientPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Edit Coupon</h1>
-          <p className="text-muted-foreground">Update coupon information</p>
+          <h1 className="text-3xl font-bold">Edit Coupon</h1>
+          <p className="text-muted-foreground">
+            Update coupon information
+          </p>
         </div>
       </div>
 

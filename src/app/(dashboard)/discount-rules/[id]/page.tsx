@@ -9,26 +9,41 @@ import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DiscountRuleForm } from "../components/discount-rules-form";
+import { usePermission } from "@/hooks/use-permission";
 
 export default function EditDiscountRulePage() {
   const { id } = useParams();
   const router = useRouter();
+  const can = usePermission();
   const [rule, setRule] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // redirect if no update permission
   useEffect(() => {
-    fetch(`/api/tier-pricing/${id}`)
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch");
-        return res.json();
-      })
-      .then(setRule)
-      .catch((e) => {
-        toast.error(e.message);
-        router.push("/discount-rules");
-      })
-      .finally(() => setLoading(false));
-  }, [id, router]);
+    if (can.loading) return;
+    if (!can({ tierPricing: ["update"] })) {
+      router.replace("/discount-rules");
+    }
+  }, [can, router]);
+
+  useEffect(() => {
+    if (!can.loading) {
+      fetch(`/api/tier-pricing/${id}`)
+        .then((res) => {
+          if (!res.ok) throw new Error("Failed to fetch");
+          return res.json();
+        })
+        .then(setRule)
+        .catch((e) => {
+          toast.error(e.message);
+          router.push("/discount-rules");
+        })
+        .finally(() => setLoading(false));
+    }
+  }, [can.loading, id, router]);
+
+  if (can.loading) return null;
+  if (!can({ tierPricing: ["update"] })) return null;
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">

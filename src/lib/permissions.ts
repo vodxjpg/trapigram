@@ -1,4 +1,5 @@
 // src/lib/permissions.ts
+import { StockManagement } from "@/app/(dashboard)/products/components/stock-management";
 import { createAccessControl } from "better-auth/plugins/access";
 import {
   defaultStatements,
@@ -7,11 +8,12 @@ import {
 
 /** The extra, _only_ resources we actually care about in our app */
 const domainStatements: Record<string, string[]> = {
-  member     : ["delete", "update_role"],
-  invitation : ["create", "cancel"],
-  platformKey: ["view","create","update","delete"],
-  ticket      : ["view", "update"], 
-  order          : [
+  member: ["delete", "update_role"],
+  invitation: ["create", "cancel"],
+  platformKey: ["view", "create", "update", "delete"],
+  customer: ["view", "create", "update", "delete"],
+  ticket: ["view", "update"],
+  order: [
     "view",
     "update",
     "update_status",
@@ -19,11 +21,22 @@ const domainStatements: Record<string, string[]> = {
     "update_tracking",
   ],
   // Chat within orders
-  orderChat      : ["view"],
-  stock      : ["update"],
-  coupon     : ["register", "manage"],
-  revenue    : ["view"],
-  payment    : ["manage"],
+  orderChat: ["view"],
+  product: ["view", "create", "update", "delete"],
+  productCategories: ["view", "create", "update", "delete"],
+  productAttributes: ["view", "create", "update", "delete"],
+  warehouses: ["view", "create", "update", "delete", "sharing", "synchronize"],
+  tierPricing: ["view", "create", "update", "delete"],
+  stockManagement: ["view", "update"],
+  coupon: ["view", "create", "update", "delete"],
+  announcements: ["view", "create", "update", "delete"],
+  affiliates: ["view", "points", "settings", "products", "logs"],
+  revenue: ["view", "export"],
+  sections: ["view", "create", "update", "delete"],
+  payment: ["view", "create", "update", "delete"],
+  shipping: ["view", "create", "update", "delete"],
+  notifications: ["view", "create", "update", "delete"],
+  
 };
 
 // 1) Filter out “team” (or any other you don’t want) from defaultStatements

@@ -1,17 +1,31 @@
-// /home/zodx/Desktop/Trapyfy/src/app/(dashboard)/announcements/new/page.tsx
+// src/app/(dashboard)/announcements/new/page.tsx
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { AnnouncementForm } from "../announcements-form";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
-import { Suspense } from 'react'; // Added Suspense import
+import { Suspense } from 'react';
+import { usePermission } from "@/hooks/use-permission";
 
 export default function AnnouncementsNewPage() {
   const { setHeaderTitle } = useHeaderTitle();
+  const router = useRouter();
+  const can = usePermission();
+
+  const canCreate = can({ announcements: ["create"] });
 
   useEffect(() => {
-    setHeaderTitle("New Announcement"); // Set the header title for this page
+    setHeaderTitle("New Announcement");
   }, [setHeaderTitle]);
+
+  useEffect(() => {
+    if (!can.loading && !canCreate) {
+      router.replace("/announcements");
+    }
+  }, [can.loading, canCreate, router]);
+
+  if (can.loading || !canCreate) return null;
 
   return (
     <div className="flex flex-col gap-6 p-6">

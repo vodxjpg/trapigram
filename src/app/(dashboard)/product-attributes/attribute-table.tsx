@@ -1,3 +1,4 @@
+// src/app/(dashboard)/product-attributes/attribute-table.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -23,10 +24,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { usePermission } from "@/hooks/use-permission";
 import { AttributeDrawer } from "./attribute-drawer";
 
 type Attribute = {
@@ -38,10 +41,28 @@ type Attribute = {
 
 export function AttributeTable() {
   const router = useRouter();
+  const can = usePermission();
+
   const [attributes, setAttributes] = useState<Attribute[]>([]);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingAttribute, setEditingAttribute] = useState<Attribute | null>(null);
+
+  const canCreate = can({ productAttributes: ["create"] });
+  const canUpdate = can({ productAttributes: ["update"] });
+  const canDelete = can({ productAttributes: ["delete"] });
+
+  useEffect(() => {
+    if (!can.loading && !can({ productAttributes: ["view"] })) {
+      // shouldn't get here since page blocks it, but just in case
+      router.replace("/product-attributes");
+    }
+  }, [can, router]);
+
+  useEffect(() => {
+    if (can.loading) return;
+    fetchAttributes();
+  }, [can]);
 
   const fetchAttributes = async () => {
     setLoading(true);
@@ -50,31 +71,24 @@ export function AttributeTable() {
       if (!response.ok) throw new Error("Failed to fetch attributes");
       const data = await response.json();
       setAttributes(data.attributes);
-    } catch (error) {
-      console.error("Error fetching attributes:", error);
+    } catch {
       toast.error("Failed to load attributes");
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchAttributes();
-  }, []);
-
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this attribute and its terms?")) return;
-
     try {
       const response = await fetch(`/api/product-attributes/${id}`, {
         method: "DELETE",
         credentials: "include",
       });
-      if (!response.ok) throw new Error("Failed to delete attribute");
+      if (!response.ok) throw new Error();
       toast.success("Attribute deleted successfully");
       fetchAttributes();
-    } catch (error) {
-      console.error("Error deleting attribute:", error);
+    } catch {
       toast.error("Failed to delete attribute");
     }
   };
@@ -89,26 +103,30 @@ export function AttributeTable() {
     setDrawerOpen(true);
   };
 
-  const handleDrawerClose = (refreshData = false) => {
+  const handleDrawerClose = (refresh = false) => {
     setDrawerOpen(false);
     setEditingAttribute(null);
-    if (refreshData) fetchAttributes();
+    if (refresh) fetchAttributes();
   };
+
+  if (can.loading) return null;
 
   return (
     <div className="space-y-4">
       <div className="flex justify-between gap-4">
-        <form className="flex w-full sm:w-auto gap-2">
+        <form className="flex w-full sm:w-auto gap-2" onSubmit={(e) => e.preventDefault()}>
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input type="search" placeholder="Search attributes..." className="pl-8 w-full" />
           </div>
           <Button type="submit">Search</Button>
         </form>
-        <Button onClick={handleAdd}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Attribute
-        </Button>
+        {canCreate && (
+          <Button onClick={handleAdd}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Attribute
+          </Button>
+        )}
       </div>
 
       <div className="rounded-md border">
@@ -124,11 +142,15 @@ export function AttributeTable() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">Loading...</TableCell>
+                <TableCell colSpan={4} className="h-24 text-center">
+                  Loading...
+                </TableCell>
               </TableRow>
             ) : attributes.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">No attributes found.</TableCell>
+                <TableCell colSpan={4} className="h-24 text-center">
+                  No attributes found.
+                </TableCell>
               </TableRow>
             ) : (
               attributes.map((attribute) => (
@@ -151,17 +173,22 @@ export function AttributeTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEdit(attribute)}>
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleDelete(attribute.id)}
-                          className="text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
+                        {canUpdate && (
+                          <DropdownMenuItem onClick={() => handleEdit(attribute)}>
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                        )}
+                        {canDelete && <DropdownMenuSeparator />}
+                        {canDelete && (
+                          <DropdownMenuItem
+                            onClick={() => handleDelete(attribute.id)}
+                            className="text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -172,7 +199,11 @@ export function AttributeTable() {
         </Table>
       </div>
 
-      <AttributeDrawer open={drawerOpen} onClose={handleDrawerClose} attribute={editingAttribute} />
+      <AttributeDrawer
+        open={drawerOpen}
+        onClose={handleDrawerClose}
+        attribute={editingAttribute}
+      />
     </div>
   );
 }

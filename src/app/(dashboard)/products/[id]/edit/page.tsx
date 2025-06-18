@@ -1,6 +1,8 @@
 "use client"
 
 import { useParams, useRouter } from "next/navigation"
+import { usePermission } from "@/hooks/use-permission"
+import { useEffect } from "react"
 import { ChevronLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ProductForm } from "../../components/product-form"
@@ -12,18 +14,28 @@ import useSWR from "swr"
 export default function EditProductPage() {
   const router = useRouter()
   const params = useParams() as { id: string }
+  const can = usePermission()
+  // Redirect if user lacks update permission
+  useEffect(() => {
+    if (!can.loading && !can({ product: ["update"] })) {
+      router.replace("/products")
+    }
+  }, [can, router])
+
+  if (can.loading) return null
+  if (!can({ product: ["update"] })) return null
   // fetch the full { product, shared } JSON
   const { data, error } = useSWR(
-     `/api/products/${params.id}`,
-     async (url: string) => {
-       const res = await fetch(url)
-       if (!res.ok) throw new Error("Failed to load product")
-       return res.json() as Promise<{ product: Product; shared: boolean }>
-     }
-   )
-   const isLoading = !data && !error
-   const product = data?.product
-   const shared  = data?.shared
+    `/api/products/${params.id}`,
+    async (url: string) => {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error("Failed to load product")
+      return res.json() as Promise<{ product: Product; shared: boolean }>
+    }
+  )
+  const isLoading = !data && !error
+  const product = data?.product
+  const shared = data?.shared
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
@@ -44,10 +56,10 @@ export default function EditProductPage() {
         </div>
       ) : (
         <ProductForm
-        productId={params.id}
-        initialData={product}
-        shared={shared}
-      />
+          productId={params.id}
+          initialData={product}
+          shared={shared}
+        />
       )}
     </div>
   )

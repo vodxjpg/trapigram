@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/Trapyfy/src/app/(dashboard)/clients/clients-table.tsx
+// src/app/(dashboard)/clients/clients-table.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -47,10 +47,10 @@ import ReactCountryFlag from "react-country-flag";
 import countriesLib from "i18n-iso-countries";
 import en from "i18n-iso-countries/langs/en.json";
 import { toast } from "sonner";
+import { usePermission } from "@/hooks/use-permission";
 
 countriesLib.registerLocale(en);
 
-/* ───────────── Types ───────────── */
 type Client = {
   id: string;
   organizationId: string;
@@ -64,11 +64,29 @@ type Client = {
   points: number;
 };
 
-/* ───────────── Component ───────────── */
 export function ClientsTable() {
   const router = useRouter();
+  const can = usePermission();
 
-  /* table state */
+  // customer perms for CRUD
+  const canView    = can({ customer: ["view"] });
+  const canCreate  = can({ customer: ["create"] });
+  const canUpdate  = can({ customer: ["update"] });
+  const canDelete  = can({ customer: ["delete"] });
+
+  // affiliate-only perm for points adjustments
+  const canPoints  = can({ affiliates: ["points"] });
+
+  // enforce that they at least can see clients
+  useEffect(() => {
+    if (!can.loading && !canView) {
+      router.replace("/clients");
+    }
+  }, [can.loading, canView, router]);
+
+  if (can.loading || !canView) return null;
+
+  /* ─── table & dialog state ─── */
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalPages, setTotalPages] = useState(1);
@@ -77,18 +95,17 @@ export function ClientsTable() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
 
-  /* dialog state */
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Client | null>(null);
   const [delta, setDelta] = useState("");
 
-  /* ── debounce search ── */
+  // debounce the search input
   useEffect(() => {
     const id = setTimeout(() => setDebounced(search), 400);
     return () => clearTimeout(id);
   }, [search]);
 
-  /* ── fetch clients ── */
+  // fetch clients + merge affiliate balances
   const fetchClients = async () => {
     setLoading(true);
     try {
@@ -98,50 +115,52 @@ export function ClientsTable() {
       );
       if (!res.ok) throw new Error((await res.json()).error || "Fetch failed");
       const { clients, totalPages, currentPage } = await res.json();
-       // 1) load raw clients...
- setClients(clients);
-     setTotalPages(totalPages);
-     setPage(currentPage);
- // 2) then fetch all balances in one go
- const balRes = await fetch(
-   `/api/affiliate/points/balance`,
-   { headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" } }
- );
- if (!balRes.ok) throw new Error("Could not load balances");
- const { balances } = await balRes.json(); // [{ clientId, pointsCurrent, pointsSpent }, …]
+      setClients(clients);
+      setTotalPages(totalPages);
+      setPage(currentPage);
 
- // 3) merge balances into clients
- setClients(cs =>
-   cs.map(c => {
-     const b = balances.find(x => x.clientId === c.id);
-     return { ...c, points: b?.pointsCurrent ?? 0 };
-   })
- );
+      // now load all point balances in one request
+      const balRes = await fetch(
+        `/api/affiliate/points/balance`,
+        { headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" } }
+      );
+      if (!balRes.ok) throw new Error("Could not load balances");
+      const { balances } = await balRes.json();
 
-    } catch (e: any) {
-      toast.error(e.message);
+      // merge points into client list
+      setClients(cs =>
+        cs.map(c => {
+          const b = balances.find(x => x.clientId === c.id);
+          return { ...c, points: b?.pointsCurrent ?? 0 };
+        })
+      );
+    } catch (err: any) {
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
   };
   useEffect(() => void fetchClients(), [page, pageSize, debounced]);
 
-  /* ── delete ── */
+  // delete client
   const deleteClient = async (id: string) => {
     if (!confirm("Delete this client?")) return;
     await fetch(`/api/clients/${id}`, {
       method: "DELETE",
       headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" },
-    }).then(fetchClients);
+    });
+    fetchClients();
   };
 
-  /* ── dialog helpers ── */
+  // open the Adjust Points dialog
   const openDialog = (client: Client) => {
+    if (!canPoints) return;
     setSelected(client);
     setDelta("");
     setOpen(true);
   };
 
+  // post the point adjustment
   const saveAdjustment = async () => {
     const val = Number(delta);
     if (!selected || !Number.isFinite(val) || val === 0) {
@@ -149,7 +168,7 @@ export function ClientsTable() {
       return;
     }
     try {
-      const res = await fetch("/api/affiliate/points", {
+      await fetch("/api/affiliate/points", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -162,20 +181,17 @@ export function ClientsTable() {
           description: "Dashboard manual adjustment",
         }),
       });
-      if (!res.ok) throw new Error((await res.json()).error || "Update failed");
       toast.success("Points updated");
       setOpen(false);
-      /* redirect to Affiliates dashboard */
       router.push("/affiliates");
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (err: any) {
+      toast.error(err.message);
     }
   };
 
-  /* ───────────── JSX ───────────── */
   return (
     <>
-      {/* Adjust Points dialog */}
+      {/* ─── Adjust Points Dialog ─── */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
@@ -204,9 +220,8 @@ export function ClientsTable() {
         </DialogContent>
       </Dialog>
 
-      {/* main card */}
+      {/* ─── Clients Table ─── */}
       <Card className="p-4">
-        {/* search + size */}
         <div className="flex items-center justify-between mb-4">
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -237,7 +252,6 @@ export function ClientsTable() {
           </Select>
         </div>
 
-        {/* table */}
         <div className="rounded-md border">
           <Table>
             <TableHeader>
@@ -296,21 +310,29 @@ export function ClientsTable() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => openDialog(c)}>
-                            <DollarSign className="mr-2 h-4 w-4" />
-                            Adjust Points
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => router.push(`/clients/${c.id}`)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => deleteClient(c.id)}
-                            className="text-destructive focus:text-destructive"
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
+                          {/* only show Adjust Points if allowed */}
+                          {canPoints && (
+                            <DropdownMenuItem onClick={() => openDialog(c)}>
+                              <DollarSign className="mr-2 h-4 w-4" />
+                              Adjust Points
+                            </DropdownMenuItem>
+                          )}
+                          {/* Edit/delete controlled by customer perms */}
+                          {canUpdate && (
+                            <DropdownMenuItem onClick={() => router.push(`/clients/${c.id}`)}>
+                              <Edit className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
+                          )}
+                          {canDelete && (
+                            <DropdownMenuItem
+                              onClick={() => deleteClient(c.id)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -321,7 +343,6 @@ export function ClientsTable() {
           </Table>
         </div>
 
-        {/* pagination */}
         <div className="flex items-center justify-between mt-4">
           <span className="text-sm text-muted-foreground">
             Page {page} of {totalPages}

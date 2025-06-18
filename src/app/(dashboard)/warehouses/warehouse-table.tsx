@@ -1,7 +1,18 @@
+// src/app/(dashboard)/warehouses/warehouse-table.tsx
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, Search, MoreVertical, Edit, Trash2, Share2, Link2, RefreshCw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import {
+  Plus,
+  Search,
+  MoreVertical,
+  Edit,
+  Trash2,
+  Share2,
+  RefreshCw,
+} from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -16,14 +27,14 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { WarehouseDrawer } from "./warehouse-drawer";
-import Link from "next/link";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { useRouter } from "next/navigation";
+import { WarehouseDrawer } from "./warehouse-drawer";
+import { usePermission } from "@/hooks/use-permission";
 
 type Warehouse = {
   id: string;
@@ -37,12 +48,31 @@ type Warehouse = {
 
 export function WarehouseTable() {
   const router = useRouter();
+  const can = usePermission();
+
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [syncToken, setSyncToken] = useState("");
+
+  const canCreate = can({ warehouses: ["create"] });
+  const canUpdate = can({ warehouses: ["update"] });
+  const canDelete = can({ warehouses: ["delete"] });
+  const canShare = can({ warehouses: ["sharing"] });
+  const canSync     = can({ warehouses: ["synchronize"] });
+
+  useEffect(() => {
+    if (!can.loading && !can({ warehouses: ["view"] })) {
+      router.replace("/warehouses");
+    }
+  }, [can, router]);
+
+  useEffect(() => {
+    if (can.loading) return;
+    fetchWarehouses();
+  }, [can]);
 
   const fetchWarehouses = async () => {
     setLoading(true);
@@ -58,15 +88,11 @@ export function WarehouseTable() {
     }
   };
 
-  useEffect(() => {
-    fetchWarehouses();
-  }, []);
-
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this warehouse?")) return;
     try {
       const response = await fetch(`/api/warehouses/${id}`, { method: "DELETE" });
-      if (!response.ok) throw new Error("Failed to delete warehouse");
+      if (!response.ok) throw new Error();
       toast.success("Warehouse deleted successfully");
       fetchWarehouses();
     } catch {
@@ -91,26 +117,24 @@ export function WarehouseTable() {
   };
 
   const handleSyncWarehouse = () => {
-    // Extract token from either raw token or full URL
     let token = syncToken.trim();
     try {
       const parsed = new URL(token);
       const segments = parsed.pathname.split("/").filter(Boolean);
-      if (segments.length) {
-        token = segments[segments.length - 1];
-      }
+      if (segments.length) token = segments[segments.length - 1];
     } catch {
-      // not a URL, assume raw token
+      // raw token
     }
-
     if (!token) {
       toast.error("Please enter a valid invitation code or link");
       return;
     }
-
     setDialogOpen(false);
     router.push(`/share/${token}`);
   };
+
+  if (can.loading) return null;
+  if (!can({ warehouses: ["view"] })) return null;
 
   return (
     <div className="space-y-4">
@@ -120,20 +144,26 @@ export function WarehouseTable() {
           <Input placeholder="Search warehouses..." className="pl-8" />
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setDialogOpen(true)}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Sync Warehouse
-          </Button>
-          <Button onClick={handleAdd}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Warehouse
-          </Button>
-          <Button asChild>
-            <Link href="/warehouses/share-links">
-              <Link2 className="mr-2 h-4 w-4" />
-              View Share Links
-            </Link>
-          </Button>
+      {canSync && (
+        <Button variant="outline" onClick={() => setDialogOpen(true)}>
+          <RefreshCw className="mr-2 h-4 w-4" />
+          Sync Warehouse
+        </Button>
+      )}
+          {canCreate && (
+            <Button onClick={handleAdd}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Warehouse
+            </Button>
+          )}
+          {canShare && (
+            <Button asChild>
+              <Link href="/warehouses/share-links">
+                <Share2 className="mr-2 h-4 w-4" />
+                View Share Links
+              </Link>
+            </Button>
+          )}
         </div>
       </div>
 
@@ -172,9 +202,9 @@ export function WarehouseTable() {
                     ))}
                   </TableCell>
                   <TableCell>
-                    {warehouse.countries.map((country) => (
-                      <Badge key={country} variant="outline" className="mr-1">
-                        {country}
+                    {warehouse.countries.map((ct) => (
+                      <Badge key={ct} variant="outline" className="mr-1">
+                        {ct}
                       </Badge>
                     ))}
                   </TableCell>
@@ -186,20 +216,38 @@ export function WarehouseTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEdit(warehouse)}>
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <Link href={`/warehouses/${warehouse.id}/share`} className="flex items-center">
-                            <Share2 className="mr-2 h-4 w-4" />
-                            Share
-                          </Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleDelete(warehouse.id)} className="text-destructive">
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
+                        {canUpdate && (
+                          <DropdownMenuItem onClick={() => handleEdit(warehouse)}>
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                        )}
+                        {canShare && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem>
+                              <Link
+                                href={`/warehouses/${warehouse.id}/share`}
+                                className="flex items-center"
+                              >
+                                <Share2 className="mr-2 h-4 w-4" />
+                                Share
+                              </Link>
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                        {canDelete && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => handleDelete(warehouse.id)}
+                              className="text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -210,7 +258,11 @@ export function WarehouseTable() {
         </Table>
       </div>
 
-      <WarehouseDrawer open={drawerOpen} onClose={handleDrawerClose} warehouse={editingWarehouse} />
+      <WarehouseDrawer
+        open={drawerOpen}
+        onClose={handleDrawerClose}
+        warehouse={editingWarehouse}
+      />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

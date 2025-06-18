@@ -1,8 +1,10 @@
-// src/app/(dashboard)/products/stock-management/components/stock-management-data-table.tsx
-"use client"
+// src/app/(dashboard)/products/components/stock-management-data-table.tsx
+"use client";
 
-import { useState, useEffect } from "react"
-import Image from "next/image"
+import { useState, useEffect } from "react";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import useSWR from "swr";
 import {
   useReactTable,
   type ColumnDef,
@@ -14,64 +16,86 @@ import {
   getSortedRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
-} from "@tanstack/react-table"
-import useSWR from "swr"
-import { Input } from "@/components/ui/input"
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table"
-import { Button } from "@/components/ui/button"
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
-import { Skeleton } from "@/components/ui/skeleton"
-import { useProducts } from "@/hooks/use-products"
-import type { Product } from "../../components/products-data-table"
+} from "@tanstack/react-table";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useProducts } from "@/hooks/use-products";
+import { usePermission } from "@/hooks/use-permission";
+import type { Product } from "../../components/products-data-table";
 
-const fetcher = (url: string) => fetch(url).then(res => res.json())
+const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 interface Warehouse {
-  id: string
-  name: string
-  countries: string[]
+  id: string;
+  name: string;
+  countries: string[];
 }
 
 export function StockManagementDataTable() {
-  const [sorting, setSorting] = useState<SortingState>([{ id: "stock", desc: false }])
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
-  const [search, setSearch] = useState("")
+  const router = useRouter();
+  const can = usePermission();
 
-  const { products, isLoading, totalPages, mutate } = useProducts({ page, pageSize, search })
-  const { data: whData } = useSWR<{ warehouses: Warehouse[] }>("/api/warehouses", fetcher)
-  const warehouses = whData?.warehouses || []
+  const [sorting, setSorting] = useState<SortingState>([{ id: "stock", desc: false }]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [search, setSearch] = useState("");
+
+  const { products, isLoading, totalPages, mutate } = useProducts({ page, pageSize, search });
+  const { data: whData } = useSWR<{ warehouses: Warehouse[] }>(
+    "/api/warehouses",
+    fetcher
+  );
+  const warehouses = whData?.warehouses || [];
+
+  // redirect if no view permission
+  useEffect(() => {
+    if (!can.loading && !can({ stockManagement: ["view"] })) {
+      router.replace("/products");
+    }
+  }, [can, router]);
+  if (can.loading || !can({ stockManagement: ["view"] })) return null;
 
   /* ------------------------------------------------------------ */
-  /*  Stock-popover (per-row)                                     */
+  /*  Stock-popover (per-row), only editable if they have update  */
   /* ------------------------------------------------------------ */
   function StockPopover({ product }: { product: Product }) {
-    const [editable, setEditable] = useState<Record<string, Record<string, number>>>({})
-    const [saving, setSaving] = useState(false)
+    const canUpdate = can({ stockManagement: ["update"] });
+    const [editable, setEditable] = useState<Record<string, Record<string, number>>>({});
+    const [saving, setSaving] = useState(false);
 
-    /* sync editable state from product.stockData */
+    // normalize incoming data
     useEffect(() => {
-      const norm: Record<string, Record<string, number>> = {}
+      const norm: Record<string, Record<string, number>> = {};
       for (const [wid, countries] of Object.entries(product.stockData || {})) {
-        norm[wid] = {}
+        norm[wid] = {};
         for (const [c, q] of Object.entries(countries)) {
-          norm[wid][c] = Number(q ?? 0)
+          norm[wid][c] = Number(q ?? 0);
         }
       }
-      setEditable(norm)
-    }, [product.stockData])
+      setEditable(norm);
+    }, [product.stockData]);
 
     const handleChange = (wid: string, country: string, qty: number) => {
-      setEditable(prev => ({
+      setEditable((prev) => ({
         ...prev,
         [wid]: { ...(prev[wid] || {}), [country]: qty },
-      }))
-    }
+      }));
+    };
 
     const handleSave = async () => {
-      setSaving(true)
+      setSaving(true);
       const warehouseStock = Object.entries(editable).flatMap(([warehouseId, countries]) =>
         Object.entries(countries).map(([country, quantity]) => ({
           warehouseId,
@@ -79,52 +103,76 @@ export function StockManagementDataTable() {
           variationId: null,
           country,
           quantity,
-        })),
-      )
+        }))
+      );
       await fetch(`/api/products/${product.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ warehouseStock }),
-      })
-      await mutate()
-      setSaving(false)
-    }
+      });
+      await mutate();
+      setSaving(false);
+    };
 
-    /* live total */
     const editableSum = Object.values(editable).reduce(
-      (sum, byCountry) => sum + Object.values(byCountry).reduce((s, q) => s + q, 0),
-      0,
-    )
+      (sum, byCountry) =>
+        sum + Object.values(byCountry).reduce((s, q) => s + q, 0),
+      0
+    );
+
+    // if they can't update, just show the sum:
+    if (!canUpdate) {
+      return (
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="sm">
+              {editableSum}
+            </Button>
+          </PopoverTrigger>
+        </Popover>
+      );
+    }
 
     return (
       <Popover>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm">{editableSum}</Button>
+          <Button variant="ghost" size="sm">
+            {editableSum}
+          </Button>
         </PopoverTrigger>
         <PopoverContent className="w-64">
-          {warehouses.map(w => (
+          {warehouses.map((w) => (
             <div key={w.id} className="mb-4">
               <div className="mb-1 font-medium">{w.name}</div>
-              {w.countries.map(c => (
-                <div key={c} className="mb-1 flex items-center justify-between">
+              {w.countries.map((c) => (
+                <div
+                  key={c}
+                  className="mb-1 flex items-center justify-between"
+                >
                   <span className="text-sm">{c}</span>
                   <Input
                     type="number"
                     min={0}
                     className="w-20"
                     value={editable[w.id]?.[c] ?? 0}
-                    onChange={e => handleChange(w.id, c, parseInt(e.target.value) || 0)}
+                    onChange={(e) =>
+                      handleChange(w.id, c, parseInt(e.target.value) || 0)
+                    }
                   />
                 </div>
               ))}
             </div>
           ))}
-          <Button className="w-full" onClick={handleSave} disabled={saving}>
+          <Button
+            className="w-full"
+            onClick={handleSave}
+            disabled={saving}
+          >
             {saving ? "Saving…" : "Save"}
           </Button>
         </PopoverContent>
       </Popover>
-    )
+    );
   }
 
   /* ------------------------------------------------------------ */
@@ -135,13 +183,13 @@ export function StockManagementDataTable() {
       id: "image",
       header: "Image",
       cell: ({ row }) => {
-        const { image, title } = row.original
+        const { image, title } = row.original;
         const initials = title
           .split(" ")
           .slice(0, 2)
-          .map(w => w.charAt(0).toUpperCase())
+          .map((w) => w.charAt(0).toUpperCase())
           .join("")
-          .slice(0, 2)
+          .slice(0, 2);
         return (
           <div className="relative h-10 w-10">
             {image ? (
@@ -157,7 +205,7 @@ export function StockManagementDataTable() {
               </div>
             )}
           </div>
-        )
+        );
       },
     },
     { accessorKey: "title", header: "Product Title" },
@@ -165,15 +213,16 @@ export function StockManagementDataTable() {
     {
       id: "stock",
       header: "Stock",
-      accessorFn: row =>
+      accessorFn: (row) =>
         Object.values(row.stockData || {}).reduce(
-          (sum, byCountry) => sum + Object.values(byCountry).reduce((s, q) => s + Number(q), 0),
-          0,
+          (sum, byCountry) =>
+            sum + Object.values(byCountry).reduce((s, q) => s + Number(q), 0),
+          0
         ),
       cell: ({ row }) => <StockPopover product={row.original} />,
       sortingFn: "basic",
     },
-  ]
+  ];
 
   /* ------------------------------------------------------------ */
   /*  Table instance                                              */
@@ -188,7 +237,7 @@ export function StockManagementDataTable() {
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-  })
+  });
 
   /* ------------------------------------------------------------ */
   /*  Render                                                      */
@@ -198,17 +247,22 @@ export function StockManagementDataTable() {
       <Input
         placeholder="Search products..."
         value={search}
-        onChange={e => setSearch(e.target.value)}
+        onChange={(e) => setSearch(e.target.value)}
         className="max-w-sm"
       />
       <div className="rounded-md border">
         <Table>
           <TableHeader>
-            {table.getHeaderGroups().map(hg => (
+            {table.getHeaderGroups().map((hg) => (
               <TableRow key={hg.id}>
-                {hg.headers.map(h => (
+                {hg.headers.map((h) => (
                   <TableHead key={h.id}>
-                    {h.isPlaceholder ? null : flexRender(h.column.columnDef.header, h.getContext())}
+                    {h.isPlaceholder
+                      ? null
+                      : flexRender(
+                          h.column.columnDef.header,
+                          h.getContext()
+                        )}
                   </TableHead>
                 ))}
               </TableRow>
@@ -226,18 +280,26 @@ export function StockManagementDataTable() {
                   </TableRow>
                 ))
               : table.getRowModel().rows.length
-              ? table.getRowModel().rows.map(row => (
+              ? table.getRowModel().rows.map((row) => (
                   <TableRow key={row.id}>
-                    {row.getVisibleCells().map(cell => (
-                      <TableCell key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
+                    {row
+                      .getVisibleCells()
+                      .map((cell) => (
+                        <TableCell key={cell.id}>
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext()
+                          )}
+                        </TableCell>
+                      ))}
                   </TableRow>
                 ))
               : (
                 <TableRow>
-                  <TableCell colSpan={columns.length} className="py-6 text-center">
+                  <TableCell
+                    colSpan={columns.length}
+                    className="py-6 text-center"
+                  >
                     No products found.
                   </TableCell>
                 </TableRow>
@@ -246,13 +308,21 @@ export function StockManagementDataTable() {
         </Table>
       </div>
       <div className="flex justify-between py-4">
-        <Button variant="outline" onClick={() => setPage(page - 1)} disabled={page === 1 || isLoading}>
+        <Button
+          variant="outline"
+          onClick={() => setPage((p) => p - 1)}
+          disabled={page === 1 || isLoading}
+        >
           Previous
         </Button>
-        <Button variant="outline" onClick={() => setPage(page + 1)} disabled={page === totalPages || isLoading}>
+        <Button
+          variant="outline"
+          onClick={() => setPage((p) => p + 1)}
+          disabled={page === totalPages || isLoading}
+        >
           Next
         </Button>
       </div>
     </div>
-  )
+  );
 }

@@ -1,46 +1,60 @@
-// src/app/(dashboard)/clients/[id]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ShippingMethodForm } from "../shipping-companies-form";
-import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { usePermission } from "@/hooks/use-permission";
+import { ShippingMethodForm } from "../shipping-companies-form";
 
-export default function EditClientPage() {
-  const params = useParams();
+export default function EditShippingMethodPage() {
+  const { id } = useParams();
   const router = useRouter();
-  const [shipping, setShipping] = useState<any>(null);
+  const can = usePermission();
+
+  const [method, setMethod] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // 1) Redirect if no update permission
   useEffect(() => {
-    const fetchShippings = async () => {
+    if (!can.loading && !can({ shippingMethods: ["update"] })) {
+      router.replace("/shipping-companies");
+    }
+  }, [can, router]);
+
+  // 2) Fetch the method once we know we have access
+  useEffect(() => {
+    if (can.loading || !can({ shippingMethods: ["update"] })) return;
+
+    (async () => {
       try {
-        const response = await fetch(`/api/shipping-companies/${params.id}`, {
+        const res = await fetch(`/api/shipping-companies/${id}`, {
           headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
           },
-        }); 
-        console.log(response)
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to fetch shipping companies");
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to fetch shipping method");
         }
-        const data = await response.json(); // parse JSON once
-        setShipping(data);
+        setMethod(await res.json());
       } catch (error: any) {
-        console.error("Error fetching shippings:", error);
-        toast.error(error.message || "Failed to load shipping companies data");
-        router.push("/shipping-companies");
+        console.error("Error fetching shipping method:", error);
+        toast.error(error.message || "Failed to load data");
+        router.replace("/shipping-companies");
       } finally {
         setLoading(false);
       }
-    };
-    fetchShippings();
-  }, [params.id, router]);
+    })();
+  }, [id, can, router]);
+
+  // 3) Avoid rendering until we know permission & load state
+  if (can.loading || !can({ shippingMethods: ["update"] })) {
+    return null;
+  }
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
@@ -51,8 +65,8 @@ export default function EditClientPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Edit Shipping Companies</h1>
-          <p className="text-muted-foreground">Update Shipping Companies information</p>
+          <h1 className="text-3xl font-bold tracking-tight">Edit Shipping Method</h1>
+          <p className="text-muted-foreground">Update shipping method information</p>
         </div>
       </div>
 
@@ -70,7 +84,7 @@ export default function EditClientPage() {
           <Skeleton className="h-10 w-32 mx-auto" />
         </div>
       ) : (
-        <ShippingMethodForm methodData={shipping} isEditing={true} />
+        <ShippingMethodForm methodData={method} isEditing />
       )}
     </div>
   );

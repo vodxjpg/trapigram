@@ -43,7 +43,7 @@ import { CategoryDrawer } from "./category-drawer";
 import { getInitials } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-
+import { usePermission } from "@/hooks/use-permission"
 type Category = {
   id: string;
   name: string;
@@ -69,7 +69,10 @@ export function CategoryTable() {
   const [pageSize, setPageSize] = useState(10);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-
+  const canPerm = usePermission()
+  const canCreate = canPerm({ productCategories: ["update"] })
+  const canUpdate = canPerm({ productCategories: ["update"] })
+  const canDelete = canPerm({ productCategories: ["delete"] })
   const fetchCategories = async () => {
     setLoading(true);
     try {
@@ -182,10 +185,12 @@ export function CategoryTable() {
           </div>
           <Button type="submit">Search</Button>
         </form>
+        {canCreate && (
         <Button onClick={handleAdd}>
           <Plus className="mr-2 h-4 w-4" />
           Add Category
         </Button>
+       )}
       </div>
 
       <div className="rounded-md border">
@@ -246,18 +251,22 @@ export function CategoryTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                      {canUpdate && (
                         <DropdownMenuItem onClick={() => handleEdit(category)}>
                           <Edit className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
+                         )}
+                                                 {canDelete && (
                         <DropdownMenuItem
                           onClick={() => handleDelete(category.id)}
                           className="text-destructive focus:text-destructive"
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
+                          </DropdownMenuItem>
+                        )}
+                     </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>

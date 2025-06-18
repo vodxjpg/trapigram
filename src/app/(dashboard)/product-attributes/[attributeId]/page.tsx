@@ -1,23 +1,33 @@
+// src/app/(dashboard)/product-attributes/[attributeId]/page.tsx
 "use client";
 
 import { useEffect } from "react";
-import { TermTable } from "./terms/term-table";
+import { useRouter, useParams } from "next/navigation";
+import { usePermission } from "@/hooks/use-permission";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { Suspense } from "react";
+import { TermTable } from "./terms/term-table";
 
-// Define the props interface to match Next.js dynamic route expectations
-interface AttributeTermsPageProps {
-  params: Promise<{ attributeId: string }>; // Use Promise for dynamic params
-}
-
-// Use async to handle the Promise in params
-export default async function AttributeTermsPage({ params }: AttributeTermsPageProps) {
+export default function AttributeTermsPage() {
   const { setHeaderTitle } = useHeaderTitle();
-  // Resolve the params Promise
-  const { attributeId } = await params;
+  const router = useRouter();
+  const can = usePermission();
+  const { attributeId } = useParams() as { attributeId: string };
 
+  // Set page title
   useEffect(() => {
     setHeaderTitle("Attribute Terms");
   }, [setHeaderTitle]);
+
+  // Redirect if no update permission
+  useEffect(() => {
+    if (!can.loading && !can({ productAttributes: ["update"] })) {
+      router.replace("/product-attributes");
+    }
+  }, [can, router]);
+
+  if (can.loading) return null;
+  if (!can({ productAttributes: ["update"] })) return null;
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -27,7 +37,9 @@ export default async function AttributeTermsPage({ params }: AttributeTermsPageP
           Manage terms for this attribute (e.g., Nike, Puma for Brand).
         </p>
       </div>
-      <TermTable attributeId={attributeId} />
+      <Suspense fallback={<div>Loading terms table...</div>}>
+        <TermTable attributeId={attributeId} />
+      </Suspense>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/Trapyfy/src/app/(dashboard)/announcements/[id]/page.tsx
+// src/app/(dashboard)/announcements/[id]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -9,40 +9,52 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { usePermission } from "@/hooks/use-permission";
 
 export default function EditAnnouncementPage() {
   const params = useParams();
   const router = useRouter();
+  const can = usePermission();
+
+  const canUpdate = can({ announcements: ["update"] });
+
   const [announcement, setAnnouncement] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // redirect if no update perms
   useEffect(() => {
+    if (!can.loading && !canUpdate) {
+      router.replace("/announcements");
+    }
+  }, [can.loading, canUpdate, router]);
+
+  useEffect(() => {
+    if (!canUpdate) return;
     const fetchAnnouncement = async () => {
       try {
-        const response = await fetch(`/api/announcements/${params.id}`, {
+        const res = await fetch(`/api/announcements/${params.id}`, {
           headers: {
             "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
           },
         });
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to fetch announcement");
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to fetch announcement");
         }
-        const data = await response.json();
-        setAnnouncement({
-          ...data,
-          deliveryScheduled: !!data.deliveryDate,
-        });
+        const data = await res.json();
+        setAnnouncement({ ...data, deliveryScheduled: !!data.deliveryDate });
       } catch (error: any) {
         console.error("Error fetching announcement:", error);
-        toast.error(error.message || "Failed to load announcement data");
+        toast.error(error.message || "Failed to load announcement");
         router.push("/announcements");
       } finally {
         setLoading(false);
       }
     };
     fetchAnnouncement();
-  }, [params.id, router]);
+  }, [canUpdate, params.id, router]);
+
+  if (can.loading || !canUpdate) return null;
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
@@ -62,12 +74,9 @@ export default function EditAnnouncementPage() {
         <div className="space-y-4">
           <Skeleton className="h-12 w-full" />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
+            {[...Array(6)].map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
           </div>
           <Skeleton className="h-10 w-32 mx-auto" />
         </div>

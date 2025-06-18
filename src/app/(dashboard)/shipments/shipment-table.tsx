@@ -1,7 +1,9 @@
+// src/app/(dashboard)/shipments/shipment-table.tsx
 "use client";
 
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { usePermission } from "@/hooks/use-permission";
 import {
   ChevronLeft,
   ChevronRight,
@@ -38,8 +40,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-
-// shadcn AlertDialog imports
 import {
   AlertDialog,
   AlertDialogContent,
@@ -69,21 +69,35 @@ type Shipment = {
 
 export function ShipmentsTable() {
   const router = useRouter();
+  const can = usePermission();
+
+  const canView   = can({ shipping: ["view"] });
+  const canCreate = can({ shipping: ["create"] });
+  const canUpdate = can({ shipping: ["update"] });
+  const canDelete = can({ shipping: ["delete"] });
 
   const [shipments, setShipments] = useState<Shipment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading]     = useState(true);
+  const [totalPages, setTotalPages]   = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize]       = useState(10);
 
   // sorting
-  const [sortColumn, setSortColumn] = useState<"title">("title");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [sortDirection, setSortDirection] = useState<"asc"|"desc">("asc");
+  const [sortColumn] = useState<"title">("title");
 
-  // which shipment is pending deletion?
-  const [shipmentToDelete, setShipmentToDelete] = useState<Shipment | null>(null);
+  // deletion dialog state
+  const [shipmentToDelete, setShipmentToDelete] = useState<Shipment|null>(null);
 
+  // redirect if no view
+  useEffect(() => {
+    if (!can.loading && !canView) {
+      router.replace("/");
+    }
+  }, [can.loading, canView, router]);
+
+  // fetch only when view is allowed
   const fetchShipments = async () => {
     setLoading(true);
     try {
@@ -106,39 +120,30 @@ export function ShipmentsTable() {
   };
 
   useEffect(() => {
-    fetchShipments();
-  }, [currentPage, pageSize, searchQuery]);
+    if (canView) fetchShipments();
+  }, [canView, currentPage, pageSize, searchQuery]);
+
+  if (can.loading || !canView) return null;
+
+  // sort by title
+  const sorted = [...shipments].sort((a, b) =>
+    sortDirection === "asc"
+      ? a.title.localeCompare(b.title)
+      : b.title.localeCompare(a.title)
+  );
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setCurrentPage(1);
-    fetchShipments();
   };
-
-  const handleSort = (column: "title") => {
-    if (sortColumn === column) {
-      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
-    } else {
-      setSortColumn(column);
-      setSortDirection("asc");
-    }
-  };
-
-  const sorted = [...shipments].sort((a, b) => {
-    if (sortColumn === "title") {
-      return sortDirection === "asc"
-        ? a.title.localeCompare(b.title)
-        : b.title.localeCompare(a.title);
-    }
-    return 0;
-  });
 
   const handleDeleteConfirmed = async () => {
     if (!shipmentToDelete) return;
     try {
-      const res = await fetch(`/api/shipments/${shipmentToDelete.id}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/shipments/${shipmentToDelete.id}`,
+        { method: "DELETE" }
+      );
       if (!res.ok) throw new Error("Delete failed");
       toast.success("Shipment deleted");
       setShipmentToDelete(null);
@@ -150,7 +155,7 @@ export function ShipmentsTable() {
 
   return (
     <div className="space-y-4">
-      {/* header */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
         <form onSubmit={handleSearch} className="flex w-full sm:w-auto gap-2">
           <div className="relative flex-1">
@@ -165,20 +170,21 @@ export function ShipmentsTable() {
           </div>
           <Button type="submit">Search</Button>
         </form>
-        <Button onClick={() => router.push("/shipments/new")}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Shipment
-        </Button>
+        {canCreate && (
+          <Button onClick={() => router.push("/shipments/new")}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Shipment
+          </Button>
+        )}
       </div>
 
-      {/* table */}
+      {/* Table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead
                 className="cursor-pointer"
-                onClick={() => handleSort("title")}
               >
                 Title{" "}
                 {sortColumn === "title" &&
@@ -234,29 +240,35 @@ export function ShipmentsTable() {
                     {new Date(s.createdAt).toLocaleDateString()}
                   </TableCell>
                   <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                          <span className="sr-only">Open menu</span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() => router.push(`/shipments/${s.id}`)}
-                        >
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onClick={() => setShipmentToDelete(s)}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    {(canUpdate || canDelete) && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="h-4 w-4" />
+                            <span className="sr-only">Open menu</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {canUpdate && (
+                            <DropdownMenuItem
+                              onClick={() => router.push(`/shipments/${s.id}`)}
+                            >
+                              <Edit className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
+                          )}
+                          {canDelete && (
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => setShipmentToDelete(s)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                   </TableCell>
                 </TableRow>
               ))
@@ -265,33 +277,31 @@ export function ShipmentsTable() {
         </Table>
       </div>
 
-      {/* pagination */}
+      {/* Pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
           Page {currentPage} of {totalPages}
         </div>
         <div className="flex items-center space-x-2">
-          <div className="flex items-center space-x-2">
-            <p className="text-sm font-medium">Rows per page</p>
-            <Select
-              value={pageSize.toString()}
-              onValueChange={(v) => {
-                setPageSize(Number(v));
-                setCurrentPage(1);
-              }}
-            >
-              <SelectTrigger className="h-8 w-[70px]">
-                <SelectValue placeholder={pageSize.toString()} />
-              </SelectTrigger>
-              <SelectContent side="top">
-                {[5, 10, 20, 50].map((n) => (
-                  <SelectItem key={n} value={n.toString()}>
-                    {n}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <p className="text-sm font-medium">Rows per page</p>
+          <Select
+            value={pageSize.toString()}
+            onValueChange={(v) => {
+              setPageSize(Number(v));
+              setCurrentPage(1);
+            }}
+          >
+            <SelectTrigger className="h-8 w-[70px]">
+              <SelectValue placeholder={pageSize.toString()} />
+            </SelectTrigger>
+            <SelectContent side="top">
+              {[5, 10, 20, 50].map((n) => (
+                <SelectItem key={n} value={n.toString()}>
+                  {n}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <div className="flex items-center space-x-2">
             <Button
               variant="outline"
@@ -329,7 +339,7 @@ export function ShipmentsTable() {
         </div>
       </div>
 
-      {/* AlertDialog for delete confirmation */}
+      {/* Delete Confirmation */}
       <AlertDialog
         open={!!shipmentToDelete}
         onOpenChange={(open) => !open && setShipmentToDelete(null)}
@@ -344,9 +354,7 @@ export function ShipmentsTable() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteConfirmed}
-            >
+            <AlertDialogAction onClick={handleDeleteConfirmed}>
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>

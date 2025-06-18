@@ -1,3 +1,4 @@
+// src/app/(dashboard)/payment-methods/payment-table.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { usePermission } from "@/hooks/use-permission";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +33,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
   Select,
@@ -45,12 +48,10 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 
 import { PaymentMethodDrawer } from "./payment-drawer";
 
-/* ─────────────────── types ─────────────────── */
 export interface PaymentMethod {
   id: string;
   name: string;
@@ -59,39 +60,35 @@ export interface PaymentMethod {
   secretKey?: string | null;
 }
 
-/* ─────────────────── constants ─────────────────── */
-const COINX_SENTINEL = "COINX_FIXED_ID"; // never hits DB
-
 const TRUSTED = [
   {
-    id: COINX_SENTINEL,
+    id: "COINX_FIXED_ID",
     name: "CoinX",
     logo: "/coinx-logo.svg",
   },
 ] as const;
 
-/* ─────────────────── component ─────────────────── */
 export function PaymentMethodsTable() {
-  /* state --------------------------------------------------- */
+  const router = useRouter();
+  const can = usePermission();
+
+  const canView   = can({ payment: ["view"] });
+  const canCreate = can({ payment: ["create"] });
+  const canUpdate = can({ payment: ["update"] });
+  const canDelete = can({ payment: ["delete"] });
+
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [loading, setLoading] = useState(true);
-
-  /* pagination & search */
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
 
-  /* modals / drawers */
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState<"coinx" | "custom">("custom");
   const [editing, setEditing] = useState<PaymentMethod | null>(null);
   const [providerDialog, setProviderDialog] = useState(false);
 
-  /* helper – coinx row (if created) */
-  const coinxRow = methods.find((m) => m.name.toLowerCase() === "coinx") || null;
-
-  /* fetch list ------------------------------------------------- */
   const fetchMethods = async () => {
     setLoading(true);
     try {
@@ -114,11 +111,22 @@ export function PaymentMethodsTable() {
   };
 
   useEffect(() => {
-    fetchMethods();
-  }, [currentPage, pageSize, searchQuery]);
+    if (canView) fetchMethods();
+  }, [currentPage, pageSize, searchQuery, canView]);
 
-  /* row actions ------------------------------------------------ */
+  // Redirect away if no view permission
+  useEffect(() => {
+    if (!can.loading && !canView) {
+      router.replace("/");
+    }
+  }, [can.loading, canView, router]);
+
+  if (can.loading || !canView) return null;
+
+  const coinxRow = methods.find((m) => m.name.toLowerCase() === "coinx") || null;
+
   const toggleActive = async (pm: PaymentMethod) => {
+    if (!canUpdate) return;
     try {
       await fetch(`/api/payment-methods/${pm.id}/active`, {
         method: "PATCH",
@@ -126,7 +134,7 @@ export function PaymentMethodsTable() {
         body: JSON.stringify({ active: !pm.active }),
       });
       setMethods((prev) =>
-        prev.map((m) => (m.id === pm.id ? { ...m, active: !pm.active } : m)),
+        prev.map((m) => (m.id === pm.id ? { ...m, active: !pm.active } : m))
       );
     } catch {
       toast.error("Failed to update status");
@@ -134,6 +142,7 @@ export function PaymentMethodsTable() {
   };
 
   const deleteRow = async (pm: PaymentMethod) => {
+    if (!canDelete) return;
     if (pm.name.toLowerCase() === "coinx") return; // safety
     if (!confirm("Delete this payment method?")) return;
     try {
@@ -145,11 +154,11 @@ export function PaymentMethodsTable() {
     }
   };
 
-  /* open drawer helpers --------------------------------------- */
   const openDrawer = (
     mode: "coinx" | "custom",
-    row: PaymentMethod | null = null,
+    row: PaymentMethod | null = null
   ) => {
+    if (!canCreate && !canUpdate) return;
     setDrawerMode(mode);
     setEditing(row);
     setDrawerOpen(true);
@@ -161,49 +170,46 @@ export function PaymentMethodsTable() {
     if (refresh) fetchMethods();
   };
 
-  /* ─────────────────── render ─────────────────── */
   return (
     <div className="space-y-6">
       {/* provider-picker dialog */}
-      <Dialog open={providerDialog} onOpenChange={setProviderDialog}>
-        <DialogContent className="sm:max-w-[460px]">
-          <DialogHeader>
-            <DialogTitle>Add a payment method</DialogTitle>
-          </DialogHeader>
-
-          <div className="grid grid-cols-2 gap-6 mt-4">
-            {/* CoinX swatch */}
-            <button
-              onClick={() => {
-                setProviderDialog(false);
-                openDrawer("coinx", coinxRow ?? null);
-              }}
-              className="border rounded-lg p-4 flex flex-col items-center gap-3 hover:bg-muted/50 transition"
-            >
-              <Image
-                src={TRUSTED[0].logo}
-                alt="CoinX"
-                width={48}
-                height={48}
-              />
-              <span className="font-medium">CoinX - Crypto</span>
-              <span className="text-xs text-green-600">Trusted provider</span>
-            </button>
-
-            {/* Custom swatch */}
-            <button
-              onClick={() => {
-                setProviderDialog(false);
-                openDrawer("custom");
-              }}
-              className="border rounded-lg p-4 flex flex-col items-center gap-3 hover:bg-muted/50 transition"
-            >
-              <Plus className="w-8 h-8" />
-              <span className="font-medium">Custom&nbsp;method</span>
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {canCreate && (
+        <Dialog open={providerDialog} onOpenChange={setProviderDialog}>
+          <DialogContent className="sm:max-w-[460px]">
+            <DialogHeader>
+              <DialogTitle>Add a payment method</DialogTitle>
+            </DialogHeader>
+            <div className="grid grid-cols-2 gap-6 mt-4">
+              <button
+                onClick={() => {
+                  setProviderDialog(false);
+                  openDrawer("coinx", coinxRow);
+                }}
+                className="border rounded-lg p-4 flex flex-col items-center gap-3 hover:bg-muted/50 transition"
+              >
+                <Image
+                  src={TRUSTED[0].logo}
+                  alt="CoinX"
+                  width={48}
+                  height={48}
+                />
+                <span className="font-medium">CoinX - Crypto</span>
+                <span className="text-xs text-green-600">Trusted provider</span>
+              </button>
+              <button
+                onClick={() => {
+                  setProviderDialog(false);
+                  openDrawer("custom");
+                }}
+                className="border rounded-lg p-4 flex flex-col items-center gap-3 hover:bg-muted/50 transition"
+              >
+                <Plus className="w-8 h-8" />
+                <span className="font-medium">Custom method</span>
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* header row */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
@@ -226,15 +232,12 @@ export function PaymentMethodsTable() {
           </div>
           <Button type="submit">Search</Button>
         </form>
-
-        {/* trigger picker dialog */}
-             {/* trigger picker dialog */}
-     <Button
-       onClick={() => setProviderDialog(true)}
-     >
-       <Plus className="mr-2 h-4 w-4" />
-       Add payment
-     </Button>
+        {canCreate && (
+          <Button onClick={() => setProviderDialog(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Payment
+          </Button>
+        )}
       </div>
 
       {/* table */}
@@ -275,6 +278,7 @@ export function PaymentMethodsTable() {
                     <Switch
                       checked={pm.active}
                       onCheckedChange={() => toggleActive(pm)}
+                      disabled={!canUpdate}
                     />
                   </TableCell>
                   <TableCell className="text-right">
@@ -285,28 +289,34 @@ export function PaymentMethodsTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() =>
-                            openDrawer(
-                              pm.name.toLowerCase() === "coinx"
-                                ? "coinx"
-                                : "custom",
-                              pm,
-                            )
-                          }
-                        >
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
-
-                        <DropdownMenuItem
-                          onClick={() => deleteRow(pm)}
-                          disabled={pm.name.toLowerCase() === "coinx"}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
+                        {canUpdate && (
+                          <DropdownMenuItem
+                            onClick={() =>
+                              openDrawer(
+                                pm.name.toLowerCase() === "coinx"
+                                  ? "coinx"
+                                  : "custom",
+                                pm
+                              )
+                            }
+                          >
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                        )}
+                        {canDelete && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => deleteRow(pm)}
+                              disabled={pm.name.toLowerCase() === "coinx"}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -318,7 +328,7 @@ export function PaymentMethodsTable() {
       </div>
 
       {/* pagination */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between mt-4">
         <div className="text-sm text-muted-foreground">
           Page {currentPage} of {totalPages}
         </div>
@@ -342,8 +352,6 @@ export function PaymentMethodsTable() {
               ))}
             </SelectContent>
           </Select>
-
-          {/* nav buttons */}
           <Button
             variant="outline"
             size="icon"
@@ -379,7 +387,6 @@ export function PaymentMethodsTable() {
         </div>
       </div>
 
-      {/* drawer */}
       <PaymentMethodDrawer
         open={drawerOpen}
         onClose={onDrawerClose}
