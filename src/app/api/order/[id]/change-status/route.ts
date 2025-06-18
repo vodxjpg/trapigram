@@ -114,7 +114,7 @@ export async function PATCH(
     } = await client.query(
       `SELECT status,
               country,
-              "trackingNumber"
+              "trackingNumber",
               "cartId",
               "clientId",
               "shippingService",
