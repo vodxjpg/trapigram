@@ -1,26 +1,30 @@
 // src/app/(dashboard)/organizations/[identifier]/roles/role-dialog.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { DialogContent } from "@radix-ui/react-dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import { statements } from "@/lib/permissions";
-import { cleanPermissions } from "@/lib/utils/cleanPermissions";
+import { useState, useEffect, useMemo } from "react";
+import { DialogContent }             from "@/components/ui/dialog";
+import { Button }                    from "@/components/ui/button";
+import { Input }                     from "@/components/ui/input";
+import { Checkbox }                  from "@/components/ui/checkbox";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { statements }                from "@/lib/permissions";
+import { cleanPermissions }          from "@/lib/utils/cleanPermissions";
+import { resourceLabels, actionLabels } from "@/lib/permissionLabels";
 
-type Props = {
+export default function RoleDialog({
+  organizationId,
+  existing,
+  onSaved,
+}: {
   organizationId: string;
+  existing?: { id: string; name: string; permissions: Record<string,string[]> };
   onSaved: () => void;
-  existing?: { id: string; name: string; permissions: Record<string, string[]> };
-};
-
-export default function RoleDialog({ organizationId, onSaved, existing }: Props) {
-  const [name, setName] = useState("");
-  const [perms, setPerms] = useState<Record<string, string[]>>({});
+}) {
+  const [name, setName]     = useState(existing?.name || "");
+  const [perms, setPerms]   = useState<Record<string,string[]>>(existing?.permissions || {});
+  const [filter, setFilter] = useState("");
   const [saving, setSaving] = useState(false);
 
-  /* preload in edit mode */
   useEffect(() => {
     if (existing) {
       setName(existing.name);
@@ -28,64 +32,90 @@ export default function RoleDialog({ organizationId, onSaved, existing }: Props)
     }
   }, [existing]);
 
-  function toggle(res: string, act: string) {
-    setPerms((prev) => {
-      const cur = new Set(prev[res] ?? []);
-      cur.has(act) ? cur.delete(act) : cur.add(act);
-      return { ...prev, [res]: Array.from(cur) };
+  const toggle = (res: string, act: string) => {
+    setPerms(prev => {
+      const setActs = new Set(prev[res] || []);
+      setActs.has(act) ? setActs.delete(act) : setActs.add(act);
+      return { ...prev, [res]: Array.from(setActs) };
     });
-  }
+  };
+
+  // Which resources match the user’s filter?
+  const visibleResources = useMemo(() =>
+    Object.keys(statements)
+      .filter(r => resourceLabels[r]?.toLowerCase().includes(filter.toLowerCase()))
+  , [filter]);
 
   async function save() {
     if (!name) return;
     setSaving(true);
-    const filtered = cleanPermissions(perms); 
-    const method = existing ? "PATCH" : "POST";
-    const res = await fetch(`/api/organizations/${organizationId}/roles`, {
+    const cleaned = cleanPermissions(perms);
+    const method  = existing ? "PATCH" : "POST";
+    const res     = await fetch(`/api/organizations/${organizationId}/roles`, {
       method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ roleId: existing?.id, name, permissions: filtered }),
-     
       credentials: "include",
+      body: JSON.stringify({
+        roleId:      existing?.id,
+        name,
+        permissions: cleaned,
+      }),
     });
     setSaving(false);
     if (res.ok) onSaved();
   }
 
   return (
-    <DialogContent className="bg-white p-6 rounded-md max-h-[80vh] overflow-y-auto">
-      <h2 className="font-semibold text-lg mb-4">
+    <DialogContent
+      className={`
+        bg-white p-6 rounded-md overflow-auto
+        w-[95vw] sm:w-[90vw] md:w-[80vw] lg:w-[60vw] xl:w-[50vw]
+        max-h-[90vh] mx-auto
+      `}
+    >
+      <h2 className="text-xl font-semibold mb-4">
         {existing ? "Edit Role" : "Create Role"}
       </h2>
 
       <Input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
         placeholder="Role name"
+        value={name}
+        onChange={e => setName(e.target.value)}
+        className="mb-4"
+      />
+
+      <Input
+        placeholder="Filter resources…"
+        value={filter}
+        onChange={e => setFilter(e.target.value)}
         className="mb-6"
       />
 
-      <div className="space-y-4">
-        {Object.entries(statements).map(([res, acts]) => (
-          <fieldset key={res} className="border rounded-md p-3">
-            <legend className="font-medium capitalize">{res}</legend>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
-              {acts.map((a) => {
-                const checked = perms[res]?.includes(a);
-                return (
-                  <label key={a} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={() => toggle(res, a)}
-                    />
-                    {a}
-                  </label>
-                );
-              })}
-            </div>
-          </fieldset>
+      <Accordion type="multiple" className="space-y-2">
+        {visibleResources.map(res => (
+          <AccordionItem key={res} value={res} className="border rounded">
+            <AccordionTrigger className="py-2 px-4 font-medium">
+              {resourceLabels[res] ?? res}
+            </AccordionTrigger>
+            <AccordionContent className="p-4 bg-gray-50">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {statements[res].map(act => {
+                  const checked = perms[res]?.includes(act) ?? false;
+                  return (
+                    <label key={act} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => toggle(res, act)}
+                      />
+                      {actionLabels[act] ?? act}
+                    </label>
+                  );
+                })}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
         ))}
-      </div>
+      </Accordion>
 
       <div className="mt-6 flex justify-end">
         <Button disabled={saving || !name} onClick={save}>
