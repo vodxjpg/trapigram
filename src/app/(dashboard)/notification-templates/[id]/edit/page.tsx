@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { usePermission } from "@/hooks/use-permission";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
-import { NotificationTemplateForm } from "../components/notification-templates-form";
+import { NotificationTemplateForm } from "../../components/notification-templates-form";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 
