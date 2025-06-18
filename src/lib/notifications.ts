@@ -95,6 +95,12 @@ export async function sendNotification(params: SendNotificationParams) {
     clientId = null,
   } = params;
 
+  // if we have a tracking_number, turn it into a link
+if (variables.tracking_number) {
+  const tn = variables.tracking_number;
+  variables.tracking_number = `<a href="https://www.ordertracker.com/track/${tn}">${tn}</a>`;
+}
+
   /* 1️⃣ templates */
   const templates = await db
     .selectFrom("notificationTemplates")
@@ -193,18 +199,31 @@ export async function sendNotification(params: SendNotificationParams) {
   /* — EMAIL — */
   if (channels.includes("email")) {
     const promises: Promise<unknown>[] = [];
-    if (hasAdminTpl)
-      promises.push(
-        ...adminEmails.map((addr) =>
-          sendEmail({ to: addr, subject: subjectAdmin, text: bodyAdmin }),
-        ),
-      );
-    if (hasUserTpl)
-      promises.push(
-        ...userEmails.map((addr) =>
-          sendEmail({ to: addr, subject: subjectUser, text: bodyUser }),
-        ),
-      );
+      if (hasAdminTpl) {
+          promises.push(
+            ...adminEmails.map((addr) =>
+              sendEmail({
+                to: addr,
+                subject: subjectAdmin,
+                html: bodyAdmin,
+                // fallback plain-text by stripping tags
+                text: bodyAdmin.replace(/<[^>]+>/g, ""),
+              }),
+            ),
+          );
+        }
+         if (hasUserTpl) {
+             promises.push(
+               ...userEmails.map((addr) =>
+                 sendEmail({
+                   to: addr,
+                   subject: subjectUser,
+                   html: bodyUser,
+                   text: bodyUser.replace(/<[^>]+>/g, ""),
+                 }),
+               ),
+             );
+           }
     await Promise.all(promises);
   }
 
