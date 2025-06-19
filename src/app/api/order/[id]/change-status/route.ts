@@ -8,6 +8,7 @@ import { adjustStock } from "@/lib/stock";
 import { sendNotification } from "@/lib/notifications";
 import type { NotificationType } from "@/lib/notifications";
 import { requireOrgPermission } from "@/lib/perm-server";
+import { getRevenue } from "@/lib/revenue";
 
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -95,7 +96,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-    // 1) context + permission guard
+  // 1) context + permission guard
   const { requireOrgPermission } = await import('@/lib/perm-server');
   const ctxOrRes = await requireOrgPermission(req, { order: ['update_status'] });
   if (ctxOrRes) return ctxOrRes;
@@ -251,6 +252,18 @@ export async function PATCH(
     await client.query("COMMIT");
     console.log(`Transaction committed for order ${id}`);
 
+    // ─── trigger revenue update for paid orders ───
+    if (newStatus === "paid") {
+      try {
+        // call getRevenue with order ID and organization ID
+        await getRevenue(id, organizationId);
+        console.log(`Revenue updated for order ${id}`);
+      } catch (revErr) {
+        console.error(`Failed to update revenue for order ${id}:`, revErr);
+      }
+    }
+
+
 
 
     /* ─────────────────────────────────────────────
@@ -262,10 +275,10 @@ export async function PATCH(
     if (newStatus === "open" && ord.status !== "open") { // NEW ⬅︎
       shouldNotify = true;                              // NEW ⬅︎
     }                                                   // NEW ⬅︎
-      else if (newStatus === "underpaid") {
-          shouldNotify = true;                     // notify always on first underpaid
-        } else if (FIRST_NOTIFY_STATUSES.includes(
-          newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
+    else if (newStatus === "underpaid") {
+      shouldNotify = true;                     // notify always on first underpaid
+    } else if (FIRST_NOTIFY_STATUSES.includes(
+      newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
       shouldNotify = !ord.notifiedPaidOrCompleted;
     } else if (newStatus === "cancelled" || newStatus === "refunded") {
       shouldNotify = true;
@@ -309,38 +322,38 @@ export async function PATCH(
         .join("<br><br>");
 
       /* map status → notification type */
-          /* ── gather extra variables for the “underpaid” e-mail ───────────── */
-    let receivedAmt = "";
-    let expectedAmt = "";
-    let assetSymbol  = "";
-    if (newStatus === "underpaid") {
+      /* ── gather extra variables for the “underpaid” e-mail ───────────── */
+      let receivedAmt = "";
+      let expectedAmt = "";
+      let assetSymbol = "";
+      if (newStatus === "underpaid") {
         try {
           /* orderMeta can arrive as JSON **object** (pg-json) or string — normalise */
           const metaArr =
             Array.isArray(ord.orderMeta)
               ? ord.orderMeta
               : JSON.parse(ord.orderMeta ?? "[]");
-      
+
           const latest = [...metaArr]
-             .reverse()
-             .find((m: any) => (m.event ?? "").toLowerCase() === "underpaid");
-      
+            .reverse()
+            .find((m: any) => (m.event ?? "").toLowerCase() === "underpaid");
+
           receivedAmt = latest?.order?.received ?? "";
           expectedAmt = latest?.order?.expected ?? "";
-          assetSymbol  = latest?.order?.asset     ?? "";
+          assetSymbol = latest?.order?.asset ?? "";
         } catch {
           /* leave placeholders empty on malformed data */
         }
       }
 
       const pendingAmt =
-      receivedAmt && expectedAmt
-        ? String(Number(expectedAmt) - Number(receivedAmt))
-        : "";
+        receivedAmt && expectedAmt
+          ? String(Number(expectedAmt) - Number(receivedAmt))
+          : "";
 
       const notifTypeMap: Record<string, NotificationType> = {
         open: "order_placed",
-        underpaid:  "order_partially_paid",   // NEW ⬅︎
+        underpaid: "order_partially_paid",   // NEW ⬅︎
         paid: "order_paid",
         completed: "order_completed",
         cancelled: "order_cancelled",
@@ -371,7 +384,7 @@ export async function PATCH(
           received_amt: receivedAmt,
           shipping_company: ord.shippingService ?? "",
           pending_amt: pendingAmt,
-          asset:        assetSymbol,        // ★ NEW
+          asset: assetSymbol,        // ★ NEW
         },
       });
 
