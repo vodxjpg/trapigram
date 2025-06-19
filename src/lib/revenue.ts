@@ -47,6 +47,8 @@ const coins = {
     'XMR': 'monero'
 }
 
+const apiKey = '144659c7b175794ed4eae9bacf853944'
+
 export async function getRevenue(orderId, organizationId) {
     const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${orderId}'`
     const resultCheck = await pool.query(checkQuery);
@@ -163,8 +165,9 @@ export async function getRevenue(orderId, organizationId) {
             const cost = Number(totalCost)
 
             if (paymentType !== 'coinx') {
-                total = order.totalAmount
+                total = Number(order.totalAmount)
             }
+            console.log(total)
 
             const query = `INSERT INTO "orderRevenue" (id, "orderId", total, discount, shipping, cost, "createdAt", "updatedAt", "organizationId")
                     VALUES ('${revenueId}', '${orderId}', ${total.toFixed(2)}, ${discount.toFixed(2)}, ${shipping.toFixed(2)}, ${cost.toFixed(2)}, NOW(), NOW(), '${organizationId}')
