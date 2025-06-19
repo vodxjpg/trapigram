@@ -249,15 +249,15 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                     Available placeholders:&nbsp;
                   </FormLabel>
                   <div>
-                    <span className="text-xs">{`{product_list}`} - Output order's product list </span>,&nbsp;
-                    <span className="text-xs">{`{order_number}`} - Output order's number</span>,&nbsp;
-                    <span className="text-xs">{`{order_date}`} - Output order's date</span>,&nbsp;
-                    <span className="text-xs">{`{order_shipping_method}`} - Output order's shipping method</span>,&nbsp;
-                    <span className="text-xs">{`{tracking_number}`} - Output order's tracking number</span>,&nbsp;
-                    <span className="text-xs">{`{shipping_company}`} - Output order's shipping company</span>,&nbsp;
-                    <span className="text-xs">{`{expected_amt}`} - Output order's crypto expected amount (works with Coinslick)</span>,&nbsp;
-                    <span className="text-xs">{`{received_amt}`} - Output order's crypto received amount (works with Coinslick)</span>,&nbsp;
-                    <span className="text-xs">{`{pending_amt}`}- Output order's crypto pending amount (works with Coinslick)</span>,&nbsp;
+                    <span className="text-xs">{`{product_list}`} - Output order's product list </span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{order_number}`} - Output order's number</span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{order_date}`} - Output order's date</span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{order_shipping_method}`} - Output order's shipping method</span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{tracking_number}`} - Output order's tracking number</span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{shipping_company}`} - Output order's shipping company</span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{expected_amt}`} - Output order's crypto expected amount (works with Coinslick)</span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{received_amt}`} - Output order's crypto received amount (works with Coinslick)</span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{pending_amt}`}- Output order's crypto pending amount (works with Coinslick)</span>,&nbsp;<br></br>
                     <span className="text-xs">{`{asset}`} - Output order's crypto asset (works with Coinslick)</span>
                   </div>
                   <FormControl>

@@ -16,25 +16,21 @@ export type NotificationType =
   | "order_cancelled"
   | "order_refunded"
   | "order_partially_paid"
-  | "order_shipped"            // ← NEW
+  | "order_shipped"; // ← NEW
 
-export type NotificationChannel =
-  | "email"
-  | "in_app"
-  | "webhook"
-  | "telegram";
+export type NotificationChannel = "email" | "in_app" | "webhook" | "telegram";
 
 export interface SendNotificationParams {
   organizationId: string;
   type: NotificationType;
-  message: string;                                // fallback body
-  subject?: string;                               // fallback subject
+  message: string;
+  subject?: string;
   variables?: Record<string, string>;
   country?: string | null;
   trigger?: string | null;
   channels: NotificationChannel[];
-  userId?: string | null;                         // explicit admin target
-  clientId?: string | null;                       // explicit user/client target
+  userId?: string | null;
+  clientId?: string | null;
 }
 
 /* ───────────────── helpers ───────────────── */
@@ -44,7 +40,8 @@ const applyVars = (txt: string, vars: Record<string, string>) =>
     txt,
   );
 
-/** HTML → Telegram-safe subset (<b>, <i>, <u>, <s>, <code>, <br>, etc.) */
+
+/** HTML → Telegram-safe subset */
 const toTelegramHtml = (html: string) =>
   html
     .replace(/<\s*p[^>]*>/gi, "")
@@ -74,7 +71,6 @@ const pickTemplate = (
     return country ? arr.includes(country) : arr.length === 0;
   });
   if (exact) return exact;
-
   return templates.find(
     (t) => t.role === role && JSON.parse(t.countries || "[]").length === 0,
   );
@@ -95,12 +91,10 @@ export async function sendNotification(params: SendNotificationParams) {
     clientId = null,
   } = params;
 
+  /* enrich variables (tracking link) */
   if (variables.tracking_number) {
-    const tn = variables.tracking_number
-    const url = `https://www.ordertracker.com/track/${tn}`
-  
-    // put the raw number, then a break, then the link
-    variables.tracking_number = `${tn}<br>${url}`
+    const tn = variables.tracking_number;
+    variables.tracking_number = `${tn}<br>https://www.ordertracker.com/track/${tn}`;
   }
 
   /* 1️⃣ templates */
@@ -113,22 +107,58 @@ export async function sendNotification(params: SendNotificationParams) {
 
   const tplUser  = pickTemplate("user",  country, templates);
   const tplAdmin = pickTemplate("admin", country, templates);
-
   const hasUserTpl  = !!tplUser;
   const hasAdminTpl = !!tplAdmin;
 
-  /* 2️⃣ subjects & bodies (with variable substitution) */
-  const subjectUser  = (tplUser?.subject  || subject || type).trim().replace(/_/g, " ");
-  const subjectAdmin = (tplAdmin?.subject || subject || type).trim().replace(/_/g, " ");
+  /* 2️⃣ subjects & bodies – generic (all channels) */
+  const makeRawSub = (
+    tplSubject: string | null | undefined,
+    fallback: string | undefined,
+  ) => {
+    // if we fall back to the enum name, prettify it; else leave as-is
+    if (!tplSubject && !fallback) {
+      const pretty = type.replace(/_/g, " ");
+      return pretty;
+    }
+    return (tplSubject || fallback || "").trim();
+  };
 
-  const bodyUser  = applyVars(tplUser?.message  || message, variables);
-  const bodyAdmin = applyVars(tplAdmin?.message || message, variables);
+  const rawSubUser = makeRawSub(tplUser?.subject, subject);
+  const rawSubAdm  = makeRawSub(tplAdmin?.subject, subject);
 
-  /* 3️⃣ e-mail targets */
+  const subjectUserGeneric  = applyVars(rawSubUser, variables);
+  const subjectAdminGeneric = applyVars(rawSubAdm,  variables);
+  const bodyUserGeneric     = applyVars(tplUser?.message  || message, variables);
+  const bodyAdminGeneric    = applyVars(tplAdmin?.message || message, variables);
+
+  /* 2️⃣-bis subjects & bodies – e-mail only (product list hidden) */
+  const varsEmail = {
+    ...variables,
+    product_list:
+      "Due to privacy reasons you can only see the product list in your order details page or message notification by the API",
+  };
+
+  const subjectUserEmail  = applyVars(rawSubUser, varsEmail);
+  const subjectAdminEmail = applyVars(rawSubAdm,  varsEmail);
+  const bodyUserEmail     = applyVars(tplUser?.message  || message, varsEmail);
+  const bodyAdminEmail    = applyVars(tplAdmin?.message || message, varsEmail);
+
+
+  /* 3️⃣ support e-mail (for CC and admin fallback) */
+  const supportRow = await db
+    .selectFrom("organizationSupportEmail")
+    .select(["email"])
+    .where("organizationId", "=", organizationId)
+    .$if(country !== null, (q) => q.where("country", "=", country!))
+    .orderBy("isGlobal desc")
+    .limit(1)
+    .executeTakeFirst();
+  const supportEmail = supportRow?.email || null;
+
+  /* 4️⃣ e-mail targets */
   const adminEmails: string[] = [];
-  const userEmails:  string[] = [];
+  const userEmails: string[] = [];
 
-  /* explicit admin */
   if (userId) {
     const u = await db
       .selectFrom("user")
@@ -138,7 +168,6 @@ export async function sendNotification(params: SendNotificationParams) {
     if (u?.email) adminEmails.push(u.email);
   }
 
-  /* owners */
   const ownerRows = await db
     .selectFrom("member")
     .select(["userId"])
@@ -155,7 +184,6 @@ export async function sendNotification(params: SendNotificationParams) {
     owners.forEach((o) => o.email && adminEmails.push(o.email));
   }
 
-  /* client */
   let clientRow: { email: string | null; userId: string | null } | null = null;
   if (clientId) {
     clientRow = await db
@@ -166,20 +194,9 @@ export async function sendNotification(params: SendNotificationParams) {
     if (clientRow?.email) userEmails.push(clientRow.email);
   }
 
-  /* fallback support e-mail */
-  if (!adminEmails.length) {
-    const sup = await db
-      .selectFrom("organizationSupportEmail")
-      .select(["email"])
-      .where("organizationId", "=", organizationId)
-      .$if(country !== null, (q) => q.where("country", "=", country!))
-      .orderBy("isGlobal desc")
-      .limit(1)
-      .executeTakeFirst();
-    if (sup?.email) adminEmails.push(sup.email);
-  }
+  if (!adminEmails.length && supportEmail) adminEmails.push(supportEmail);
 
-  /* 4️⃣ master log */
+  /* 5️⃣ master log */
   await db
     .insertInto("notifications")
     .values({
@@ -187,7 +204,7 @@ export async function sendNotification(params: SendNotificationParams) {
       organizationId,
       type,
       trigger,
-      message: bodyUser,
+      message: bodyUserGeneric,
       channels: JSON.stringify(channels),
       country,
       targetUserId: userId,
@@ -197,52 +214,71 @@ export async function sendNotification(params: SendNotificationParams) {
     })
     .execute();
 
-  /* 5️⃣ channel fan-out — respect template presence */
+  /* 6️⃣ channel fan-out */
   /* — EMAIL — */
   if (channels.includes("email")) {
+    const send = ({
+      to,
+      subject,
+      html,
+      text,
+      cc,
+    }: {
+      to: string;
+      subject: string;
+      html: string;
+      text: string;
+      cc?: string | null;
+    }) => sendEmail({ to, subject, html, text, ...(cc ? { cc } : {}) });
+  
     const promises: Promise<unknown>[] = [];
-      if (hasAdminTpl) {
-          promises.push(
-            ...adminEmails.map((addr) =>
-              sendEmail({
-                to: addr,
-                subject: subjectAdmin,
-                html: bodyAdmin,
-                // fallback plain-text by stripping tags
-                text: bodyAdmin.replace(/<[^>]+>/g, ""),
-              }),
-            ),
-          );
-        }
-         if (hasUserTpl) {
-             promises.push(
-               ...userEmails.map((addr) =>
-                 sendEmail({
-                   to: addr,
-                   subject: subjectUser,
-                   html: bodyUser,
-                   text: bodyUser.replace(/<[^>]+>/g, ""),
-                 }),
-               ),
-             );
-           }
+  
+    /* ADMIN MAILS — send if we have any admin addresses */
+    if (adminEmails.length) {
+      promises.push(
+        ...adminEmails.map((addr) =>
+          send({
+            to: addr,
+            subject: subjectAdminEmail,
+            html: bodyAdminEmail,
+            text: bodyAdminEmail.replace(/<[^>]+>/g, ""),
+          }),
+        ),
+      );
+    }
+  
+    /* USER MAILS — send if we have any user addresses */
+    if (userEmails.length) {
+      promises.push(
+        ...userEmails.map((addr) =>
+          send({
+            to: addr,
+            subject: subjectUserEmail,
+            html: bodyUserEmail,
+            text: bodyUserEmail.replace(/<[^>]+>/g, ""),
+            cc: supportEmail, // CC support on every user mail
+          }),
+        ),
+      );
+    }
+
     await Promise.all(promises);
   }
 
-  /* — IN-APP (only if a user template exists) — */
+  /* — IN-APP (user only) — */
   if (channels.includes("in_app") && hasUserTpl) {
     await dispatchInApp({
       organizationId,
       userId,
       clientId,
-      message: bodyUser,
+      message: bodyUserGeneric,
       country,
     });
   }
 
-  /* — WEBHOOK — always fires */
+  /* — WEBHOOK — */
   if (channels.includes("webhook")) {
-    await dispatchWebhook({ organizationId, type, message: bodyUser });
+    await dispatchWebhook({ organizationId, type, message: bodyUserGeneric });
   }
 
   /* — TELEGRAM — */
@@ -251,9 +287,9 @@ export async function sendNotification(params: SendNotificationParams) {
       organizationId,
       type,
       country,
-      bodyAdmin: hasAdminTpl ? bodyAdmin : "",
-      bodyUser: hasUserTpl ? bodyUser : "",
-      adminUserIds: [],             // owners reach via groups
+      bodyAdmin: hasAdminTpl ? bodyAdminGeneric : "",
+      bodyUser: hasUserTpl ? bodyUserGeneric : "",
+      adminUserIds: [],
       clientUserId: clientRow?.userId || null,
     });
   }
@@ -326,7 +362,6 @@ async function dispatchTelegram(opts: {
     clientUserId,
   } = opts;
 
-  /* 1. bot token */
   const row = await db
     .selectFrom("organizationPlatformKey")
     .select(["apiKey"])
@@ -337,7 +372,6 @@ async function dispatchTelegram(opts: {
 
   const BOT = `https://api.telegram.org/bot${row.apiKey}/sendMessage`;
 
-  /* 2. groups */
   const groupRows = await db
     .selectFrom("notificationGroups")
     .select(["groupId", "countries"])
@@ -353,7 +387,6 @@ async function dispatchTelegram(opts: {
     })
     .map((g) => g.groupId);
 
-  /* 3. targets (skip roles w/o template) */
   const targets: { chatId: string; text: string }[] = [];
 
   if (bodyAdmin.trim()) {
