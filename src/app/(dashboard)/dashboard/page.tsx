@@ -13,7 +13,7 @@ export default function DashboardPage() {
   useEffect(() => {
     setHeaderTitle("Dashboard"); // Set the header title for this page
   }, [setHeaderTitle]);
-
+  // dashboard components
   return (
     <div className="flex flex-1 flex-col">
       <div className="@container/main flex flex-1 flex-col gap-2">
