@@ -135,6 +135,7 @@ const subtotal = products
     total:         Number(order.totalAmount),
     pointsRedeemed:        order.pointsRedeemed,
     pointsRedeemedAmount:  Number(order.pointsRedeemedAmount),
+    referralAwarded:      order.referralAwarded === true,
     trackingNumber:       order.trackingNumber,
     shippingInfo: {
       address: decryptSecretNode(order.address),
@@ -170,6 +171,12 @@ export async function PATCH(
 
   const fields: string[] = [];
   const values: any[] = [];
+
+    // ── allow updating our new flag ─────────────────────────────
+  if ("referralAwarded" in body) {
+    fields.push(`"referralAwarded" = $${fields.length + 1}`);
+    values.push(body.referralAwarded);
+  }
 
   // ── 1. orderMeta  (expects array) ────────────────────────────
 if ("orderMeta" in body) {

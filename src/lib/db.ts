@@ -151,7 +151,7 @@ interface DB {
     id: string;
     organizationId: string;
     affiliateGroupId: string;    // FK ↺ affiliateGroups.id
-    groupId: string;             // telegram handle/id
+    groupId: string;           // telegram handle/id
     userId: string;              // auth user UUID
     clientId: string;            // clients.id
     joinedAt: Date;

@@ -170,7 +170,7 @@ export function SettingsForm() {
             {groups.length === 0 && (
               <p className="text-sm text-muted-foreground">
                 No groups registered yet—invite the bot first to any group, make it a visible admin,
-                and register the group using the command /affiliate_group
+                and register the group using the command <b>/affiliate_group</b>
               </p>
             )}
 
@@ -180,8 +180,8 @@ export function SettingsForm() {
                 className="flex items-center gap-2 border rounded-lg p-3"
               >
                 <div className="flex-1">
-                  <p className="font-medium">@{g.groupId}</p>
-                  <p className="text-muted-foreground text-xs">{g.groupName}</p>
+                  <p className="font-medium">{g.groupName}</p>
+                  <p className="text-muted-foreground text-xs">@{g.groupId}</p>
                 </div>
 
                 <Input

@@ -257,7 +257,7 @@ export function LevelForm({ id }: Props) {
   );
 })}
 
-            <Button type="submit" disabled={submitting || uploading}>
+            <Button className="mt-10" type="submit" disabled={submitting || uploading}>
               {submitting ? "Saving…" : id ? "Update Level" : "Save Level"}
             </Button>
           </form>
