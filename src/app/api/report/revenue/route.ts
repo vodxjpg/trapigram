@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
         const result = await pool.query(revenueQuery, values);
         const row = result.rows
         row.map((m) => {
+            console.log(m)
             if (m.asset.length > 0) {
                 m.coin = m.asset[0].order.asset
             } else {
