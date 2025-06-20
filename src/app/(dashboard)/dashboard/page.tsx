@@ -39,8 +39,43 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 export const description = "An interactive area chart";
+
+type OrderStatus =
+  | "open"
+  | "paid"
+  | "cancelled"
+  | "refunded"
+  | "underpaid"
+  | "completed";
+
+const getStatusColor = (s: OrderStatus) => {
+  switch (s) {
+    case "open":
+      return "bg-blue-500";
+    case "paid":
+      return "bg-green-500";
+    case "cancelled":
+      return "bg-red-500";
+    case "refunded":
+      return "bg-red-500";
+    case "underpaid":
+      return "bg-orange-500";
+    case "completed":
+      return "bg-purple-500";
+    default:
+      return "bg-gray-500";
+  }
+};
 
 const chartData = [
   { date: "2024-04-01", desktop: 222, mobile: 150 },
@@ -145,6 +180,21 @@ const chartConfig = {
 export default function DashboardPage() {
   const { setHeaderTitle } = useHeaderTitle();
 
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+    }).format(amount);
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  };
+
   useEffect(() => {
     setHeaderTitle("Dashboard");
   }, [setHeaderTitle]);
@@ -159,6 +209,7 @@ export default function DashboardPage() {
   const [totalRevenue, setTotalRevenue] = React.useState<number | null>(null);
   const [totalClient, setTotalClient] = React.useState<number | null>(null);
   const [totalActive, setTotalActive] = React.useState<number | null>(null);
+  const [orderList, setOrderList] = React.useState<number | null>(null);
 
   // Compute from/to params for API based on selection
   const getFromToParams = (): { from: string; to: string } => {
@@ -185,13 +236,14 @@ export default function DashboardPage() {
       try {
         const resp = await fetch(`/api/dashboard?from=${from}&to=${to}`);
         if (!resp.ok) throw new Error("Network response was not ok");
-        const { orderAmount, revenue, clientAmount, activeAmount } =
+        const { orderAmount, revenue, clientAmount, activeAmount, orderList } =
           await resp.json();
-        console.log(orderAmount);
+        console.log(orderList);
         setTotalOrders(orderAmount);
         setTotalRevenue(revenue);
         setTotalClient(clientAmount);
         setTotalActive(activeAmount);
+        setOrderList(orderList);
       } catch (error) {
         console.error("Failed to fetch total orders:", error);
       }
@@ -204,6 +256,7 @@ export default function DashboardPage() {
       setTimeRange("7d");
     }
   }, [isMobile]);
+  console.log(orderList);
 
   // Filter chart data locally for the graph
   const filteredData = chartData.filter((item) => {
@@ -488,7 +541,60 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           </div>
-          <DataTable data={data} />
+          <div className="px-4 lg:px-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-2xl font-bold">Orders</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="font-semibold">
+                          Order Nro
+                        </TableHead>
+                        <TableHead className="font-semibold">User</TableHead>
+                        <TableHead className="font-semibold">Status</TableHead>
+                        <TableHead className="font-semibold text-right">
+                          Total
+                        </TableHead>
+                        <TableHead className="font-semibold">Date</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {orderList !== null
+                        ? orderList.map((order) => (
+                            <TableRow
+                              key={order.id}
+                              className="hover:bg-muted/50"
+                            >
+                              <TableCell className="font-medium">
+                                {order.orderNumber}
+                              </TableCell>
+                              <TableCell>{order.user}</TableCell>
+                              <TableCell>
+                                <Badge
+                                  className={`${getStatusColor(order.status)} text-white hover:${getStatusColor(order.status)}/80 capitalize`}
+                                >
+                                  {order.status}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right font-medium">
+                                {formatCurrency(order.total)}
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {formatDate(order.date)}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        : "loading..."}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
     </div>

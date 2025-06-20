@@ -64,7 +64,37 @@ export async function GET(req: NextRequest) {
         const actives = activeResult.rows
         const activeAmount = actives.length
 
-        return NextResponse.json({ orderAmount, revenue, clientAmount, activeAmount }, { status: 200 });
+        const orderListQuery = `SELECT o.*, c."firstName", c."lastName", c."username", c.email
+        FROM   orders o
+        JOIN   clients c ON c.id = o."clientId"
+        WHERE  o."organizationId" = '${organizationId}'
+        ORDER BY "dateCreated" DESC LIMIT 10`
+
+        const orderListResult = await pool.query(orderListQuery);
+        const orderList = orderListResult.rows
+
+        const orderSorted: {
+            id: string,
+            orderNumber: string,
+            user: string,
+            status: string,
+            date: Date,
+            total: number,
+        }[] = []
+
+        for (const od of orderList) {
+            orderSorted.push({
+                id: od.id,
+                orderNumber: od.orderKey,
+                user: `${od.firstName} ${od.lastName} - ${od.username} (${od.email})`,
+                status: od.status,
+                date: od.dateCreated,
+                total: od.totalAmount
+            })
+        }
+        console.log(orderSorted)
+
+        return NextResponse.json({ orderAmount, revenue, clientAmount, activeAmount, orderList: orderSorted }, { status: 200 });
     } catch (err) {
         console.error("Error fetching revenue:", err);
         return NextResponse.json(
