@@ -6,10 +6,46 @@ const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
 });
 
+interface Period {
+    from: Date;
+    to: Date;
+}
+
+function eachDay(from, to) {
+    const days = [];
+    let cur = new Date(from);
+    while (cur <= to) {
+        days.push(new Date(cur));
+        cur.setDate(cur.getDate() + 1);
+    }
+    return days;
+}
+
+function splitIntoCurrentAndPrevious(currentFrom: Date, currentTo: Date): {
+    current: Period;
+    previous: Period;
+} {
+    // 1) compute the length of the current period (in ms)
+    const spanMs = currentTo.getTime() - currentFrom.getTime();
+
+    // 2) previousTo is one millisecond before currentFrom
+    const previousTo = new Date(currentFrom.getTime() - 1);
+
+    // 3) previousFrom is previousTo minus spanMs
+    const previousFrom = new Date(previousTo.getTime() - spanMs);
+
+    return {
+        current: { from: currentFrom, to: currentTo },
+        previous: { from: previousFrom, to: previousTo },
+    };
+}
+
 export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const from = url.searchParams.get("from");
     const to = url.searchParams.get("to");
+
+    console.log(to, from)
 
     if (!from || !to) {
         return NextResponse.json(
@@ -92,9 +128,70 @@ export async function GET(req: NextRequest) {
                 total: od.totalAmount
             })
         }
-        console.log(orderSorted)
 
-        return NextResponse.json({ orderAmount, revenue, clientAmount, activeAmount, orderList: orderSorted }, { status: 200 });
+        const chartQuery = `SELECT * FROM "orderRevenue"
+        WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz
+        ORDER BY "createdAt" DESC`;
+
+        const chartResult = await pool.query(chartQuery, values);
+        const chart = chartResult.rows
+
+        const byDay = chart.reduce((acc, o) => {
+            const day = new Date(o.createdAt).toISOString().split('T')[0]; // 'YYYY-MM-DD'
+            const total = parseFloat(o.total);
+            const discount = parseFloat(o.discount);
+            const shipping = parseFloat(o.shipping);
+            const cost = parseFloat(o.cost);
+            const revenue = total - discount - shipping - cost;
+
+            if (!acc[day]) {
+                acc[day] = { total: 0, revenue: 0 };
+            }
+            acc[day].total += total;
+            acc[day].revenue += revenue;
+            return acc;
+        }, {});
+
+        const fromDate = new Date(from)
+        const toDate = new Date(to)
+
+        const days = eachDay(fromDate, toDate)
+
+        const chartData = days.map(d => {
+            const key = d.toISOString().split('T')[0];
+            return {
+                date: key,
+                total: byDay[key]?.total ?? 0,
+                revenue: byDay[key]?.revenue ?? 0,
+            };
+        });
+
+        const { current, previous } = splitIntoCurrentAndPrevious(fromDate, toDate);
+
+        const revenueGrowthQuery = `SELECT * FROM "orderRevenue"
+        WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz`;
+
+        const growthValues = [organizationId, previous.from, previous.to]
+
+        const revenueGrowthResult = await pool.query(revenueGrowthQuery, growthValues);
+        const revenuesGrowth = revenueGrowthResult.rows
+
+        const revenueGrowth = revenuesGrowth.reduce((acc, o) => {
+            const total = parseFloat(o.total);
+            const discount = parseFloat(o.discount);
+            const shipping = parseFloat(o.shipping);
+            const cost = parseFloat(o.cost);
+
+            const profit = total - discount - shipping - cost;
+
+            return acc + profit;
+        }, 0);
+
+        const growthRate = revenueGrowth > 0
+            ? (revenue - revenueGrowth) / revenueGrowth
+            : "100%";
+
+        return NextResponse.json({ orderAmount, revenue, clientAmount, activeAmount, orderList: orderSorted, chartData, growthRate }, { status: 200 });
     } catch (err) {
         console.error("Error fetching revenue:", err);
         return NextResponse.json(
