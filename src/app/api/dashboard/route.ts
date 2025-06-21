@@ -188,7 +188,7 @@ export async function GET(req: NextRequest) {
         }, 0);
 
         const growthRate = revenueGrowth > 0
-            ? (revenue - revenueGrowth) / revenueGrowth
+            ? ((revenue - revenueGrowth) / revenueGrowth) * 100
             : "100%";
 
         return NextResponse.json({ orderAmount, revenue, clientAmount, activeAmount, orderList: orderSorted, chartData, growthRate }, { status: 200 });

@@ -273,12 +273,16 @@ export default function DashboardPage() {
               <CardHeader>
                 <CardDescription>Revenue Growth Rate</CardDescription>
                 <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                  {growthRate !== null ? `${growthRate}` : "Loading..."}
+                  {growthRate !== null
+                    ? `${growthRate.toFixed(2)}%`
+                    : "Loading..."}
                 </CardTitle>
                 <CardAction>
                   <Badge variant="outline">
                     <IconTrendingUp />
-                    {growthRate !== null ? `+${growthRate}` : "Loading..."}
+                    {growthRate !== null
+                      ? `+${growthRate.toFixed(2)}%`
+                      : "Loading..."}
                   </Badge>
                 </CardAction>
               </CardHeader>
