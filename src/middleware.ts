@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
+import { enforceRateLimit } from "./lib/rateLimiter";
 
 const ALLOWED_ORIGINS = [
   "https://trapyfy.com",
@@ -23,21 +24,27 @@ export async function middleware(request: NextRequest) {
       return new Response(null, {
         status: 204,
         headers: {
-          "Access-Control-Allow-Origin":      allowOrigin,
-          "Access-Control-Allow-Methods":     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-          "Access-Control-Allow-Headers":     "Content-Type,Authorization",
+          "Access-Control-Allow-Origin": allowOrigin,
+          "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type,Authorization",
           "Access-Control-Allow-Credentials": "true",
-          "Access-Control-Max-Age":           "86400",
+          "Access-Control-Max-Age": "86400",
         },
       });
+    }
+
+    try {
+      await enforceRateLimit(request);
+    } catch (rateErrorResponse) {
+      return rateErrorResponse;
     }
 
     // Attach CORS headers to real requests
     const res = NextResponse.next();
     if (allowOrigin) {
-      res.headers.set("Access-Control-Allow-Origin",      allowOrigin);
-      res.headers.set("Access-Control-Allow-Methods",     "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-      res.headers.set("Access-Control-Allow-Headers",     "Content-Type,Authorization");
+      res.headers.set("Access-Control-Allow-Origin", allowOrigin);
+      res.headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+      res.headers.set("Access-Control-Allow-Headers", "Content-Type,Authorization");
       res.headers.set("Access-Control-Allow-Credentials", "true");
     }
     return res;
@@ -65,8 +72,8 @@ export async function middleware(request: NextRequest) {
     path === "/"
       ? pathname === "/"
       : path.includes(":path*")
-      ? pathname.startsWith(path.split(":")[0])
-      : pathname.startsWith(path)
+        ? pathname.startsWith(path.split(":")[0])
+        : pathname.startsWith(path)
   );
   console.log("Is public path:", isPublicPath);
 
