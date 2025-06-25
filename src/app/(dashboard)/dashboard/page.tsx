@@ -1,12 +1,12 @@
 "use client";
 
 import * as React from "react";
+import { driver } from "driver.js";
+import "driver.js/dist/driver.css";
+
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useEffect } from "react";
-import { ChartAreaInteractive } from "@/components/chart-area-interactive";
-import { DataTable } from "@/components/data-table";
-import data from "./data.json";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { IconTrendingDown, IconTrendingUp } from "@tabler/icons-react";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,6 @@ import {
   CardAction,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -181,78 +180,110 @@ export default function DashboardPage() {
 
   const filteredData = chartData;
 
+  React.useEffect(() => {
+    // Only show the tour once per user
+    const hasSeen = localStorage.getItem("hasSeenDriverTour");
+    if (!hasSeen) {
+      const tour = driver({
+        overlayOpacity: 0.5,
+        steps: [
+          {
+            element: ".test-driver",
+            popover: {
+              title: "Animated Tour Example",
+              description:
+                "Here is the code example showing animated tour. Let's walk you through it.",
+              side: "left",
+              align: "start",
+            },
+          },
+        ],
+      });
+
+      // start the tour
+      tour.drive();
+
+      // mark as shown
+      localStorage.setItem("hasSeenDriverTour", "true");
+    }
+  }, []);
+
   // dashboard components
   return (
     <div className="flex flex-1 flex-col">
       <div className="@container/main flex flex-1 flex-col gap-2">
         <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
           <div className="px-4 lg:px-6">
-            <Card className="@container/card">
-              <CardHeader>
-                <CardTitle>Total Orders: </CardTitle>
-                <CardDescription>
+            <div className="test-driver">
+              <Card className="@container/card">
+                <CardHeader>
+                  <CardTitle>Total Orders: </CardTitle>
                   <CardDescription>
-                    {totalOrders !== null ? `${totalOrders}` : "Loading..."}
+                    <CardDescription>
+                      {totalOrders !== null ? `${totalOrders}` : "Loading..."}
+                    </CardDescription>
+                    <span className="@[540px]/card:hidden">Last 3 months</span>
                   </CardDescription>
-                  <span className="@[540px]/card:hidden">Last 3 months</span>
-                </CardDescription>
-                <CardAction>
-                  <ToggleGroup
-                    type="single"
-                    value={timeRange}
-                    onValueChange={setTimeRange}
-                    variant="outline"
-                    className="hidden *:data-[slot=toggle-group-item]:!px-4 @[767px]/card:flex"
-                  >
-                    <ToggleGroupItem value="90d">Last 3 months</ToggleGroupItem>
-                    <ToggleGroupItem value="30d">Last 30 days</ToggleGroupItem>
-                    <ToggleGroupItem value="7d">
-                      Last 7 days
-                    </ToggleGroupItem>{" "}
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <ToggleGroupItem value="custom">
-                          Custom Date
-                        </ToggleGroupItem>
-                      </PopoverTrigger>
-                      <PopoverContent className="p-4 w-auto">
-                        <Calendar
-                          mode="range"
-                          selected={[customRange.from, customRange.to]}
-                          onSelect={(range) => {
-                            setCustomRange({
-                              from: range?.from,
-                              to: range?.to,
-                            });
-                            setTimeRange("custom");
-                          }}
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  </ToggleGroup>
-                  <Select value={timeRange} onValueChange={setTimeRange}>
-                    <SelectTrigger
-                      className="flex w-40 **:data-[slot=select-value]:block **:data-[slot=select-value]:truncate @[767px]/card:hidden"
-                      size="sm"
-                      aria-label="Select a value"
+                  <CardAction>
+                    <ToggleGroup
+                      type="single"
+                      value={timeRange}
+                      onValueChange={setTimeRange}
+                      variant="outline"
+                      className="hidden *:data-[slot=toggle-group-item]:!px-4 @[767px]/card:flex"
                     >
-                      <SelectValue placeholder="Last 3 months" />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-xl">
-                      <SelectItem value="90d" className="rounded-lg">
+                      <ToggleGroupItem value="90d">
                         Last 3 months
-                      </SelectItem>
-                      <SelectItem value="30d" className="rounded-lg">
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="30d">
                         Last 30 days
-                      </SelectItem>
-                      <SelectItem value="7d" className="rounded-lg">
-                        Last 7 days
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </CardAction>
-              </CardHeader>
-            </Card>
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="7d">Last 7 days</ToggleGroupItem>{" "}
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <ToggleGroupItem value="custom">
+                            Custom Date
+                          </ToggleGroupItem>
+                        </PopoverTrigger>
+                        <PopoverContent className="p-4 w-auto">
+                          <Calendar
+                            mode="range"
+                            selected={[customRange.from, customRange.to]}
+                            onSelect={(range) => {
+                              setCustomRange({
+                                from: range?.from,
+                                to: range?.to,
+                              });
+                              setTimeRange("custom");
+                            }}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </ToggleGroup>
+                    <Select value={timeRange} onValueChange={setTimeRange}>
+                      <SelectTrigger
+                        className="flex w-40 **:data-[slot=select-value]:block **:data-[slot=select-value]:truncate @[767px]/card:hidden"
+                        size="sm"
+                        aria-label="Select a value"
+                      >
+                        <SelectValue placeholder="Last 3 months" />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-xl">
+                        <SelectItem value="90d" className="rounded-lg">
+                          Last 3 months
+                        </SelectItem>
+                        <SelectItem value="30d" className="rounded-lg">
+                          Last 30 days
+                        </SelectItem>
+                        <SelectItem value="7d" className="rounded-lg">
+                          Last 7 days
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </CardAction>
+                </CardHeader>
+              </Card>
+            </div>
           </div>
           <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
             <Card className="@container/card">
