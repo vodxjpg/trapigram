@@ -1,4 +1,6 @@
 // src/lib/db.ts
+import fs from "fs";
+import path from "path";
 import { Pool } from "pg";
 import { Kysely, PostgresDialect } from "kysely";
 
@@ -699,10 +701,56 @@ interface DB {
   };
 }
 
+/* ──────────────────────────────────────────────────────────────── *
+ *  Runtime safety checks                                          *
+ * ──────────────────────────────────────────────────────────────── */
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable is required");
+}
+
+/**
+ * Absolute path to the Supabase root-CA certificate.
+ * Adjust if your cert lives elsewhere.
+ * Example:  certs/prod-ca-2021.crt  (placed at project root)
+ */
+const caPath = path.resolve(process.cwd(), "certs/prod-ca-2021.crt");
+
+/* Read the CA into memory once at startup. */
+let supabaseCA = "";
+try {
+  supabaseCA = fs.readFileSync(caPath, "utf-8");
+  console.log("✔︎ Loaded Supabase CA from", caPath);
+} catch (err) {
+  console.error("✘ Failed to load Supabase CA:", (err as Error).message);
+  /* To hard-fail on missing CA, uncomment the next line. */
+  // throw err;
+}
+
+/* ──────────────────────────────────────────────────────────────── *
+ *  pg Pool with enforced SSL (Supabase)                           *
+ * ──────────────────────────────────────────────────────────────── */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: {
+    ca: supabaseCA,
+    rejectUnauthorized: true, // block MITM / self-signed
+  },
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 2_000,
 });
 
+/* Optional diagnostics */
+pool.on("connect", () => {
+  console.log("Database connected successfully");
+});
+pool.on("error", (err) => {
+  console.error("Unexpected DB client error:", err);
+});
+
+/* ──────────────────────────────────────────────────────────────── *
+ *  Kysely instance                                                *
+ * ──────────────────────────────────────────────────────────────── */
 export const db = new Kysely<DB>({
   dialect: new PostgresDialect({ pool }),
 });
