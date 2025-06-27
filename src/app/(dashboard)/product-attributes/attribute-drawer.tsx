@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/product-attributes/attribute-drawer.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -59,13 +60,18 @@ export function AttributeDrawer({ open, onClose, attribute }: AttributeDrawerPro
     defaultValues: { name: "", slug: "" },
   });
 
+  // Reset form and slug state every time the drawer opens
   useEffect(() => {
+    if (!open) return;
+
     if (attribute) {
       form.reset({ name: attribute.name, slug: attribute.slug });
     } else {
       form.reset({ name: "", slug: "" });
     }
-  }, [attribute, form]);
+    setSlugExists(false);
+    setSlugChecking(false);
+  }, [open, attribute, form]);
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const name = e.target.value;
@@ -126,7 +132,7 @@ export function AttributeDrawer({ open, onClose, attribute }: AttributeDrawerPro
   };
 
   return (
-    <Drawer open={open} onOpenChange={(open) => !open && onClose()} direction={isMobile ? "bottom" : "right"}>
+    <Drawer open={open} onOpenChange={(isOpen) => !isOpen && onClose()} direction={isMobile ? "bottom" : "right"}>
       <DrawerContent>
         <DrawerHeader>
           <DrawerTitle>{attribute ? "Edit Attribute" : "Add Attribute"}</DrawerTitle>
@@ -169,7 +175,7 @@ export function AttributeDrawer({ open, onClose, attribute }: AttributeDrawerPro
                           placeholder="e.g., brand"
                         />
                         {slugChecking && (
-                          <Loader2 className="absolute right-2 top-1/2 transform -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+                          <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
                         )}
                       </div>
                     </FormControl>

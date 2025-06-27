@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/product-categories/category-drawer.tsx
 "use client";
 
 import type React from "react";
@@ -111,7 +112,10 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
     }
   }, [open, category]);
 
+  // Reset the form every time the drawer opens so the next create/edit starts clean.
   useEffect(() => {
+    if (!open) return; // do nothing while closed
+
     if (category) {
       form.reset({
         name: category.name,
@@ -135,7 +139,7 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
       setImagePreview(null);
       setImageFile(null);
     }
-  }, [category, form]);
+  }, [open, category, form]);
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const name = e.target.value;
@@ -289,7 +293,7 @@ export function CategoryDrawer({ open, onClose, category }: CategoryDrawerProps)
   };
 
   return (
-    <Drawer open={open} onOpenChange={(open) => !open && onClose()} direction={isMobile ? "bottom" : "right"}>
+    <Drawer open={open} onOpenChange={(isOpen) => !isOpen && onClose()} direction={isMobile ? "bottom" : "right"}>
       <DrawerContent className="max-h">
         <DrawerHeader>
           <DrawerTitle>{category ? "Edit Category" : "Add Category"}</DrawerTitle>

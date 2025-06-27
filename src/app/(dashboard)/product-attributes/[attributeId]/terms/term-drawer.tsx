@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/product-attributes/[attributeId]/terms/term-drawer.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -60,13 +61,18 @@ export function TermDrawer({ open, onClose, term, attributeId }: TermDrawerProps
     defaultValues: { name: "", slug: "" },
   });
 
+  // Reset form and slug state every time the drawer opens
   useEffect(() => {
+    if (!open) return;
+
     if (term) {
       form.reset({ name: term.name, slug: term.slug });
     } else {
       form.reset({ name: "", slug: "" });
     }
-  }, [term, form]);
+    setSlugExists(false);
+    setSlugChecking(false);
+  }, [open, term, form]);
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const name = e.target.value;
@@ -119,8 +125,8 @@ export function TermDrawer({ open, onClose, term, attributeId }: TermDrawerProps
 
       if (!response.ok) throw new Error("Failed to save term");
       toast.success(term ? "Term updated" : "Term created");
-      
-      // Reset the form after successful submission
+
+      // Optional immediate reset so drawer reopens blank even if parent keeps it open
       form.reset({ name: "", slug: "" });
       onClose(true);
     } catch (error) {
@@ -132,7 +138,7 @@ export function TermDrawer({ open, onClose, term, attributeId }: TermDrawerProps
   };
 
   return (
-    <Drawer open={open} onOpenChange={(open) => !open && onClose()} direction={isMobile ? "bottom" : "right"}>
+    <Drawer open={open} onOpenChange={(isOpen) => !isOpen && onClose()} direction={isMobile ? "bottom" : "right"}>
       <DrawerContent>
         <DrawerHeader>
           <DrawerTitle>{term ? "Edit Term" : "Add Term"}</DrawerTitle>
@@ -175,7 +181,7 @@ export function TermDrawer({ open, onClose, term, attributeId }: TermDrawerProps
                           placeholder="e.g., nike"
                         />
                         {slugChecking && (
-                          <Loader2 className="absolute right-2 top-1/2 transform -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+                          <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
                         )}
                       </div>
                     </FormControl>
