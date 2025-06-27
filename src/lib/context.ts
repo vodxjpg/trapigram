@@ -54,14 +54,23 @@ function ipToInt(ip: string) {
   return ip.split(".").reduce((acc, oct) => (acc << 8) + Number(oct), 0) >>> 0;
 }
 function ipAllowed(ipStr: string): boolean {
+  /* ── normalise local IPv6 forms ───────────────────────────── */
+  if (ipStr === "::1")         ipStr = "127.0.0.1";          // pure IPv6 loopback
+  if (ipStr.startsWith("::ffff:"))
+    ipStr = ipStr.slice(7);                                 // IPv6-mapped IPv4
+
+  /* ── original logic (unchanged) ──────────────────────────── */
   if (!net.isIP(ipStr)) return false;
+
   return SERVICE_ALLOWED_CIDRS.some(cidr => {
     if (!cidr.includes("/")) return cidr === ipStr;
+
     const [base, bits] = cidr.split("/");
-    const mask = -1 >>> (32 - Number(bits));
+    const mask         = -1 >>> (32 - Number(bits));
     return (ipToInt(ipStr) & mask) === (ipToInt(base) & mask);
   });
 }
+
 
 function keysEqual(incoming: string) {
   const a = Buffer.from(incoming);
