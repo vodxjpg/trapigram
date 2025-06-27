@@ -1,137 +1,121 @@
-// src/middleware.ts
-
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionCookie } from "better-auth/cookies";
-import { enforceRateLimit } from "./lib/rateLimiter";
+import { getSessionCookie }          from "better-auth/cookies";
+import { enforceRateLimit }          from "@/lib/rateLimiter";
 
-const ALLOWED_ORIGINS = [
+/*──────────────────── Config ────────────────────*/
+const ALLOWED_ORIGINS = new Set([
   "https://trapyfy.com",
   "https://www.trapyfy.com",
-];
+]);
 
-export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+const CORS_ALLOW_HEADERS =
+  "Content-Type,Authorization,x-api-key,x-timestamp,x-signature";
+const CORS_ALLOW_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
 
-  // ────────────────────────────────────────────────────────
-  // 1) CORS for /api/* (preflight + real requests)
-  // ────────────────────────────────────────────────────────
+/* helper – add the cors headers that browsers require */
+function applyCorsHeaders(res: Response, origin: string) {
+  if (!origin) return;
+  res.headers.set("Access-Control-Allow-Origin", origin);
+  res.headers.set("Access-Control-Allow-Credentials", "true");
+  res.headers.set("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
+  res.headers.set("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
+  res.headers.set("Vary", "Origin");
+}
+
+/* safest IP extractor for Vercel / CF → take **right-most** IP */
+function clientIp(req: NextRequest) {
+  const fwd = req.headers.get("x-forwarded-for");
+  if (!fwd) return (req as any).ip ?? "";
+  const ips = fwd.split(",").map(s => s.trim());
+  return ips[ips.length - 1];           // first hop after the edge
+}
+
+export async function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl;
+
+  /*────────────────────────────────────────
+    1️⃣  CORS + rate-limit for /api/*
+  ────────────────────────────────────────*/
   if (pathname.startsWith("/api/")) {
-    const origin = request.headers.get("origin") ?? "";
-    const allowOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : "";
+    const origin      = req.headers.get("origin") ?? "";
+    const allowOrigin = ALLOWED_ORIGINS.has(origin) ? origin : "";
 
-    // Handle preflight
-    if (request.method === "OPTIONS") {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": allowOrigin,
-          "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type,Authorization",
-          "Access-Control-Allow-Credentials": "true",
-          "Access-Control-Max-Age": "86400",
-        },
-      });
+    /* Pre-flight */
+    if (req.method === "OPTIONS") {
+      const res = new Response(null, { status: 204 });
+      applyCorsHeaders(res, allowOrigin);
+      res.headers.set("Access-Control-Max-Age", "86400");
+      return res;
     }
 
+    /* Rate-limit — if the limiter throws, decorate the 429 with CORS */
     try {
-      await enforceRateLimit(request);
-    } catch (rateErrorResponse) {
-      return rateErrorResponse;
+      await enforceRateLimit(req);
+    } catch (rateRes: any) {
+      if (rateRes instanceof Response) {
+        applyCorsHeaders(rateRes, allowOrigin);
+        return rateRes;
+      }
+      throw rateRes;
     }
 
-    // Attach CORS headers to real requests
+    /* Real request */
     const res = NextResponse.next();
-    if (allowOrigin) {
-      res.headers.set("Access-Control-Allow-Origin", allowOrigin);
-      res.headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-      res.headers.set("Access-Control-Allow-Headers", "Content-Type,Authorization");
-      res.headers.set("Access-Control-Allow-Credentials", "true");
-    }
+    applyCorsHeaders(res, allowOrigin);
     return res;
   }
 
-  // ────────────────────────────────────────────────────────
-  // 2) Your existing auth middleware for non-API paths
-  // ────────────────────────────────────────────────────────
-  console.log("Middleware triggered for:", pathname);
+  /*────────────────────────────────────────
+    2️⃣  Auth & onboarding for pages / assets
+  ────────────────────────────────────────*/
+  const pathLower = pathname.toLowerCase();
 
-  const sessionCookie = getSessionCookie(request);
-  console.log("Session cookie:", sessionCookie);
-
-  // Define your public paths
-  const publicPaths = [
-    "/",
-    "/login",
-    "/sign-up",
-    "/forgot-password",
-    "/verify-email",
-    "/accept-invitation/:path*",
-    "/check-email",
+  const PUBLIC_PATHS = [
+    "/", "/login", "/sign-up", "/forgot-password", "/verify-email",
+    "/check-email", "/accept-invitation/",
   ];
-  const isPublicPath = publicPaths.some((path) =>
-    path === "/"
-      ? pathname === "/"
-      : path.includes(":path*")
-        ? pathname.startsWith(path.split(":")[0])
-        : pathname.startsWith(path)
+  const isPublic = PUBLIC_PATHS.some(p =>
+    p === "/"
+      ? pathLower === "/"
+      : p.endsWith("/")        /* prefix match */
+        ? pathLower.startsWith(p)
+        : pathLower === p,
   );
-  console.log("Is public path:", isPublicPath);
+  if (isPublic) return NextResponse.next();
 
-  if (isPublicPath) {
-    console.log("Public path, proceeding without auth check");
-    return NextResponse.next();
-  }
-
-  // Special handling for /reset-password
-  if (pathname === "/reset-password") {
-    const token = request.nextUrl.searchParams.get("token");
-    if (!token) {
-      console.log("No token for reset-password, redirecting to /forgot-password");
-      return NextResponse.redirect(new URL("/forgot-password", request.url));
+  /* /reset-password special-case */
+  if (pathLower === "/reset-password") {
+    if (!req.nextUrl.searchParams.get("token")) {
+      return NextResponse.redirect(new URL("/forgot-password", req.url));
     }
-    console.log("Reset-password with token, proceeding");
     return NextResponse.next();
   }
 
-  // If no session cookie on protected path => redirect to /login
+  const sessionCookie = getSessionCookie(req);
   if (!sessionCookie) {
-    console.log("No session and not a public path, redirecting to /login");
-    return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  // Check-status flow
-  const originalPath = pathname;
-  const checkStatusUrl = new URL("/api/auth/check-status", request.url);
-  checkStatusUrl.searchParams.set("originalPath", originalPath);
+  /* Call central policy endpoint */
+  const checkUrl = new URL("/api/auth/check-status", req.url);
+  checkUrl.searchParams.set("originalPath", pathname);
 
-  const checkStatusResponse = await fetch(checkStatusUrl, {
-    headers: request.headers,
-    method: "GET",
+  const checkRes  = await fetch(checkUrl, {
+    headers: req.headers,
+    method : "GET",
     credentials: "include",
   });
-  const checkStatusData = await checkStatusResponse.json();
-  console.log("Check-status response:", checkStatusData);
 
-  if (!checkStatusResponse.ok) {
-    console.error("Check-status failed:", checkStatusData);
-    return NextResponse.redirect(new URL("/login", request.url));
+  /* network / DB hiccup → let request through, client will retry */
+  if (!checkRes.ok) return NextResponse.next();
+
+  const { redirect } = await checkRes.json();
+  if (redirect && redirect !== pathname) {
+    return NextResponse.redirect(new URL(redirect, req.url));
   }
-
-  const { redirect } = checkStatusData;
-  console.log("Redirect target:", redirect);
-
-  if (redirect && redirect !== originalPath) {
-    console.log(`Redirecting from ${originalPath} to ${redirect}`);
-    return NextResponse.redirect(new URL(redirect, request.url));
-  }
-
-  console.log("All checks passed => proceeding");
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: [
-    "/api/:path*",
-    "/((?!_next/static|_next/image|favicon.ico).*)",
-  ],
+  matcher: ["/api/:path*", "/((?!_next/static|_next/image|favicon.ico).*)"],
 };
