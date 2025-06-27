@@ -17,6 +17,10 @@ export default function EditClientPage() {
   const can = usePermission();
 
   const [client, setClient] = useState<any>(null);
+  const [lastPurchase, setLastPurchase] = useState();
+  const [totalOrders, setTotalOrders] = useState(0);
+  const [mostPurchased, setMostPurchased] = useState("");
+  const [quantityPurchased, setQuantityPurchased] = useState(0);
   const [loading, setLoading] = useState(true);
 
   // 1) Redirect away if they lack the update permission
@@ -46,7 +50,13 @@ export default function EditClientPage() {
           throw new Error(errorData.error || "Failed to fetch client");
         }
         const data = await response.json();
-        setClient(data);
+        setClient(data.client);
+        const date = formatDate(data.lastPurchase.createdAt);
+        setLastPurchase(date);
+        setTotalOrders(data.totalOrders);
+        setMostPurchased(data.mostPurchased.title);
+        setQuantityPurchased(data.quantityPurchased);
+        console.log(data);
       } catch (error: any) {
         console.error("Error fetching client:", error);
         toast.error(error.message || "Failed to load client data");
@@ -57,6 +67,23 @@ export default function EditClientPage() {
     };
     fetchClient();
   }, [params.id, router]);
+
+  function formatDate(createdAt) {
+    const date = new Date(createdAt);
+
+    const pad = (n) => String(n).padStart(2, "0");
+
+    // If you want to format in UTC, use getUTC* methods;
+    // for local time, use get*:
+    const day = pad(date.getUTCDate());
+    const month = pad(date.getUTCMonth() + 1);
+    const year = date.getUTCFullYear();
+    const hours = pad(date.getUTCHours());
+    const mins = pad(date.getUTCMinutes());
+    const secs = pad(date.getUTCSeconds());
+
+    return `${day}/${month}/${year} ${hours}:${mins}:${secs}`;
+  }
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
@@ -69,9 +96,7 @@ export default function EditClientPage() {
         </Link>
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Edit Client</h1>
-          <p className="text-muted-foreground">
-            Update client information
-          </p>
+          <p className="text-muted-foreground">Update client information</p>
         </div>
       </div>
 
@@ -102,19 +127,19 @@ export default function EditClientPage() {
               <h3 className="text-sm font-medium text-muted-foreground">
                 Total Orders
               </h3>
-              <p className="text-2xl font-bold">0</p>
+              <p className="text-2xl font-bold">{totalOrders}</p>
             </div>
             <div className="border rounded-lg p-4">
               <h3 className="text-sm font-medium text-muted-foreground">
                 Most Purchased Product
               </h3>
-              <p className="text-lg font-medium">None yet</p>
+              <p className="text-lg font-medium">{`${mostPurchased} - x${quantityPurchased} units`}</p>
             </div>
             <div className="border rounded-lg p-4">
               <h3 className="text-sm font-medium text-muted-foreground">
                 Last Purchase
               </h3>
-              <p className="text-lg font-medium">Never</p>
+              <p className="text-lg font-medium">{lastPurchase}</p>
             </div>
           </div>
         </div>

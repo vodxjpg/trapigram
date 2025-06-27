@@ -28,33 +28,39 @@ export function NavUnified({ items }: { items: NavItem[] }) {
       {items.map((item) =>
         item.items && item.items.length > 0 ? (
           <Collapsible key={item.title}>
-            <SidebarMenuItem>
-              <CollapsibleTrigger asChild>
-                <SidebarMenuButton tooltip={item.title}>
-                  {item.icon && <item.icon />}
-                  <span className="text-black">{item.title}</span>
-                </SidebarMenuButton>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <SidebarMenuSub>
-                  {item.items.map((subItem) => (
-                    <SidebarMenuSubItem key={subItem.title}>
-                      <a className="text-sm" href={subItem.url}>{subItem.title}</a>
-                    </SidebarMenuSubItem>
-                  ))}
-                </SidebarMenuSub>
-              </CollapsibleContent>
-            </SidebarMenuItem>
+            <div className={item.title}>
+              <SidebarMenuItem>
+                <CollapsibleTrigger asChild>
+                  <SidebarMenuButton tooltip={item.title}>
+                    {item.icon && <item.icon />}
+                    <span className="text-black">{item.title}</span>
+                  </SidebarMenuButton>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <SidebarMenuSub>
+                    {item.items.map((subItem) => (
+                      <SidebarMenuSubItem key={subItem.title}>
+                        <a className="text-sm" href={subItem.url}>
+                          {subItem.title}
+                        </a>
+                      </SidebarMenuSubItem>
+                    ))}
+                  </SidebarMenuSub>
+                </CollapsibleContent>
+              </SidebarMenuItem>
+            </div>
           </Collapsible>
         ) : (
-          <SidebarMenuItem key={item.title}>
-            <a href={item.url}>
-              <SidebarMenuButton tooltip={item.title}>
-                {item.icon && <item.icon />}
-                <span>{item.title}</span>
-              </SidebarMenuButton>
-            </a>
-          </SidebarMenuItem>
+          <div key={item.title} className={item.title}>
+            <SidebarMenuItem key={item.title}>
+              <a href={item.url}>
+                <SidebarMenuButton tooltip={item.title}>
+                  {item.icon && <item.icon />}
+                  <span>{item.title}</span>
+                </SidebarMenuButton>
+              </a>
+            </SidebarMenuItem>
+          </div>
         )
       )}
     </SidebarMenu>

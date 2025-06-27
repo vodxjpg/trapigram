@@ -185,14 +185,113 @@ export default function DashboardPage() {
     const hasSeen = localStorage.getItem("hasSeenDriverTour");
     if (!hasSeen) {
       const tour = driver({
+        showProgress: true,
+        allowClose: false,
         overlayOpacity: 0.5,
         steps: [
           {
-            element: ".test-driver",
             popover: {
-              title: "Animated Tour Example",
+              title: "Welcome to Trapigram",
               description:
-                "Here is the code example showing animated tour. Let's walk you through it.",
+                "This quick tour will walk you through the main sections of Trapigram, so you can get started managing your business with confidence.",
+            },
+          },
+          {
+            element: ".Organizations",
+            popover: {
+              title: "Organizations",
+              description:
+                "Here you can switch between different organizations or create a new one. Use this to keep your teams and data neatly separated.",
+              side: "left",
+              align: "start",
+            },
+          },
+          {
+            element: ".Shops",
+            popover: {
+              title: "Shops",
+              description:
+                "Under each organization you can set up one or more shops. Configure shop details, locations and payment settings here.",
+              side: "left",
+              align: "start",
+            },
+          },
+          {
+            element: ".Inventory",
+            popover: {
+              title: "Inventory",
+              description:
+                "Manage your entire catalog: add or edit products, track stock levels in real time, set up tiered pricing and assign warehouses.",
+              side: "left",
+              align: "start",
+            },
+          },
+          {
+            element: ".Clients",
+            popover: {
+              title: "Clients & Support",
+              description:
+                "View and maintain client profiles, see purchase history, and respond directly to any support tickets they submit.",
+              side: "left",
+              align: "start",
+            },
+          },
+          {
+            element: ".Marketing",
+            popover: {
+              title: "Marketing",
+              description:
+                "Create and manage affiliate partnerships, generate discount coupons for promotions, and schedule site-wide announcements.",
+              side: "left",
+              align: "start",
+            },
+          },
+          {
+            element: ".Orders",
+            popover: {
+              title: "Orders & Reviews",
+              description:
+                "Process incoming orders, update their status, handle refunds or returns, and read customer reviews to gather feedback.",
+              side: "left",
+              align: "start",
+            },
+          },
+          {
+            element: ".Analytics",
+            popover: {
+              title: "Reports",
+              description:
+                "Dive into analytics: view product performance, coupon redemption rates, revenue trends, and export charts for deeper insights.",
+              side: "left",
+              align: "start",
+            },
+          },
+          {
+            element: ".Sections",
+            popover: {
+              title: "Sections",
+              description:
+                "Organize and customize the content sections of your site or dashboard. Add, rename or reorder modules to suit your workflow.",
+              side: "left",
+              align: "start",
+            },
+          },
+          {
+            element: ".Shipping",
+            popover: {
+              title: "Shipping",
+              description:
+                "Define shipping methods, connect with carrier services, and set regional rates to streamline order fulfillment.",
+              side: "left",
+              align: "start",
+            },
+          },
+          {
+            element: ".Payment.methods",
+            popover: {
+              title: "Payment Methods",
+              description:
+                "Enable, disable or configure payment gateways. Manage accepted card types, currencies and transaction fees securely.",
               side: "left",
               align: "start",
             },
@@ -204,7 +303,7 @@ export default function DashboardPage() {
       tour.drive();
 
       // mark as shown
-      localStorage.setItem("hasSeenDriverTour", "true");
+      //localStorage.setItem("hasSeenDriverTour", "true");
     }
   }, []);
 
@@ -214,76 +313,52 @@ export default function DashboardPage() {
       <div className="@container/main flex flex-1 flex-col gap-2">
         <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
           <div className="px-4 lg:px-6">
-            <div className="test-driver">
-              <Card className="@container/card">
-                <CardHeader>
-                  <CardTitle>Total Orders: </CardTitle>
+            <Card className="@container/card">
+              <CardHeader>
+                <CardTitle>Total Orders: </CardTitle>
+                <CardDescription>
                   <CardDescription>
-                    <CardDescription>
-                      {totalOrders !== null ? `${totalOrders}` : "Loading..."}
-                    </CardDescription>
-                    <span className="@[540px]/card:hidden">Last 3 months</span>
+                    {totalOrders !== null ? `${totalOrders}` : "Loading..."}
                   </CardDescription>
-                  <CardAction>
-                    <ToggleGroup
-                      type="single"
-                      value={timeRange}
-                      onValueChange={setTimeRange}
-                      variant="outline"
-                      className="hidden *:data-[slot=toggle-group-item]:!px-4 @[767px]/card:flex"
+                  <span className="@[540px]/card:hidden">Last 3 months</span>
+                </CardDescription>
+                <CardAction>
+                  <ToggleGroup
+                    type="single"
+                    value={timeRange}
+                    onValueChange={setTimeRange}
+                    variant="outline"
+                    className="hidden *:data-[slot=toggle-group-item]:!px-4 @[767px]/card:flex"
+                  >
+                    <ToggleGroupItem value="90d">Last 3 months</ToggleGroupItem>
+                    <ToggleGroupItem value="30d">Last 30 days</ToggleGroupItem>
+                    <ToggleGroupItem value="7d">
+                      Last 7 days
+                    </ToggleGroupItem>{" "}
+                  </ToggleGroup>
+                  <Select value={timeRange} onValueChange={setTimeRange}>
+                    <SelectTrigger
+                      className="flex w-40 **:data-[slot=select-value]:block **:data-[slot=select-value]:truncate @[767px]/card:hidden"
+                      size="sm"
+                      aria-label="Select a value"
                     >
-                      <ToggleGroupItem value="90d">
+                      <SelectValue placeholder="Last 3 months" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl">
+                      <SelectItem value="90d" className="rounded-lg">
                         Last 3 months
-                      </ToggleGroupItem>
-                      <ToggleGroupItem value="30d">
+                      </SelectItem>
+                      <SelectItem value="30d" className="rounded-lg">
                         Last 30 days
-                      </ToggleGroupItem>
-                      <ToggleGroupItem value="7d">Last 7 days</ToggleGroupItem>{" "}
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <ToggleGroupItem value="custom">
-                            Custom Date
-                          </ToggleGroupItem>
-                        </PopoverTrigger>
-                        <PopoverContent className="p-4 w-auto">
-                          <Calendar
-                            mode="range"
-                            selected={[customRange.from, customRange.to]}
-                            onSelect={(range) => {
-                              setCustomRange({
-                                from: range?.from,
-                                to: range?.to,
-                              });
-                              setTimeRange("custom");
-                            }}
-                          />
-                        </PopoverContent>
-                      </Popover>
-                    </ToggleGroup>
-                    <Select value={timeRange} onValueChange={setTimeRange}>
-                      <SelectTrigger
-                        className="flex w-40 **:data-[slot=select-value]:block **:data-[slot=select-value]:truncate @[767px]/card:hidden"
-                        size="sm"
-                        aria-label="Select a value"
-                      >
-                        <SelectValue placeholder="Last 3 months" />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-xl">
-                        <SelectItem value="90d" className="rounded-lg">
-                          Last 3 months
-                        </SelectItem>
-                        <SelectItem value="30d" className="rounded-lg">
-                          Last 30 days
-                        </SelectItem>
-                        <SelectItem value="7d" className="rounded-lg">
-                          Last 7 days
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </CardAction>
-                </CardHeader>
-              </Card>
-            </div>
+                      </SelectItem>
+                      <SelectItem value="7d" className="rounded-lg">
+                        Last 7 days
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </CardAction>
+              </CardHeader>
+            </Card>
           </div>
           <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
             <Card className="@container/card">

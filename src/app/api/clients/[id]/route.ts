@@ -32,11 +32,56 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     `;
     const result = await pool.query(query, [id, organizationId]);
 
+    const lastPurchaseQuery = `SELECT "createdAt" FROM orders WHERE "clientId" = '${id}' ORDER BY "createdAt" DESC LIMIT 1`
+    const lastPurchaseResult = await pool.query(lastPurchaseQuery)
+    const lastPurchase = lastPurchaseResult.rows[0]
+
+    const totalOrdersQuery = `SELECT * FROM orders WHERE "clientId" = '${id}'`
+    const totalOrdersResult = await pool.query(totalOrdersQuery)
+    const totalOrders = totalOrdersResult.rows.length
+
+    const productList: {
+      productId: string,
+      quantity: number
+    }[] = []
+
+    for (const od of totalOrdersResult.rows) {
+      const cartQuery = `SELECT * FROM "cartProducts" WHERE "cartId" = '${od.cartId}'`
+      const cartResult = await pool.query(cartQuery)
+      const cart = cartResult.rows
+
+      for (const ca of cart) {
+        productList.push({
+          productId: ca.productId,
+          quantity: ca.quantity
+        })
+      }
+    }
+
+    const totals = productList.reduce((acc, { productId, quantity }) => {
+      acc[productId] = (acc[productId] || 0) + quantity;
+      return acc;
+    }, {});
+
+    const summary = Object.entries(totals).map(([productId, quantity]) => ({
+      productId,
+      quantity
+    }));
+
+    const maxItem = summary.reduce((best, current) =>
+      current.quantity > best.quantity ? current : best
+    );
+
+    const mostPurchasedQuery = `SELECT title FROM "products" WHERE "id" = '${maxItem.productId}'`
+    const mostPurchasedResult = await pool.query(mostPurchasedQuery)
+    const mostPurchased = mostPurchasedResult.rows[0]
+    const quantityPurchased = maxItem.quantity
+
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Client not found" }, { status: 404 });
     }
 
-    return NextResponse.json(result.rows[0]);
+    return NextResponse.json({ client: result.rows[0], lastPurchase, totalOrders, mostPurchased, quantityPurchased });
   } catch (error: any) {
     console.error("[GET /api/clients/[id]] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
