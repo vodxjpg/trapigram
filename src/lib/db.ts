@@ -749,7 +749,7 @@ pool.on("error", (err) => {
 });
 
 /* ──────────────────────────────────────────────────────────────── *
- *  Kysely instance                                                *
+ *  Kysely instance, necessary                                      *
  * ──────────────────────────────────────────────────────────────── */
 export const db = new Kysely<DB>({
   dialect: new PostgresDialect({ pool }),
