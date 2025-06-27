@@ -704,53 +704,60 @@ interface DB {
 /* ──────────────────────────────────────────────────────────────── *
  *  Runtime safety checks                                          *
  * ──────────────────────────────────────────────────────────────── */
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is required");
+// Block accidental client-side bundling.
+if (typeof window !== "undefined") {
+  throw new Error("❌ db.ts must never be imported in browser bundles");
 }
 
+// Fail fast if DATABASE_URL is missing or obviously plaintext.
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL env var is required");
+}
+if (process.env.DATABASE_URL.startsWith("postgres://") === false) {
+  throw new Error("DATABASE_URL must use the postgres:// scheme");
+}
+
+
 /**
+ * 
  * Absolute path to the Supabase root-CA certificate.
  * Adjust if your cert lives elsewhere.
  * Example:  certs/prod-ca-2021.crt  (placed at project root)
  */
 const caPath = path.resolve(process.cwd(), "certs/prod-ca-2021.crt");
-
-/* Read the CA into memory once at startup. */
 let supabaseCA = "";
 try {
-  supabaseCA = fs.readFileSync(caPath, "utf-8");
-  console.log("✔︎ Loaded Supabase CA from", caPath);
+  supabaseCA = fs.readFileSync(caPath, "utf8");
+  console.info(`✔︎ Loaded Supabase CA from ${caPath}`);
 } catch (err) {
   console.error("✘ Failed to load Supabase CA:", (err as Error).message);
-  /* To hard-fail on missing CA, uncomment the next line. */
-  // throw err;
+  throw err;                              // hard-fail: no CA → no DB
 }
 
-/* ──────────────────────────────────────────────────────────────── *
- *  pg Pool with enforced SSL (Supabase)                           *
- * ──────────────────────────────────────────────────────────────── */
+/* ──────────────── 4. Secure pg Pool (TLS 1.3+, keep-alive) ─────── */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
     ca: supabaseCA,
-    rejectUnauthorized: true, // block MITM / self-signed
+    rejectUnauthorized: true,
+    /** Enforce modern cipher suites; Node ≥20 negotiates TLS 1.3 by default,
+     * but we pin it defensively. */
+    minVersion: "TLSv1.3",
   },
-  max: 10,
+  max: Number.parseInt(process.env.PG_POOL_MAX ?? "10", 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 2_000,
+  keepAlive: true,
+  statement_timeout: 5_000,   // abort long-running queries server-side
 });
 
-/* Optional diagnostics */
-pool.on("connect", () => {
-  console.log("Database connected successfully");
-});
-pool.on("error", (err) => {
-  console.error("Unexpected DB client error:", err);
-});
+/* Optional structured diagnostics; disable in production logs */
+if (process.env.NODE_ENV !== "production") {
+  pool.on("connect", () => console.info("↯ DB connection established"));
+  pool.on("error", (err) => console.error("DB client error:", err));
+}
 
-/* ──────────────────────────────────────────────────────────────── *
- *  Kysely instance                                                *
- * ──────────────────────────────────────────────────────────────── */
+/* ──────────────── 5. Kysely instance (unchanged) ───────────────── */
 export const db = new Kysely<DB>({
   dialect: new PostgresDialect({ pool }),
 });
