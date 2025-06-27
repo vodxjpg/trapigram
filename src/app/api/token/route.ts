@@ -1,29 +1,66 @@
-/*──────────────────────────────────────────────────────────────────
-  src/app/api/token/route.ts   (NEW – mint 300 s RS256 JWT)
-──────────────────────────────────────────────────────────────────*/
+/*───────────────────────────────────────────────────────────────
+  src/app/api/token/route.ts
+  Mint a short-lived (RS256) “service-account” JWT
+───────────────────────────────────────────────────────────────*/
 import { NextRequest, NextResponse } from "next/server";
-import { sign as jwtSign } from "jsonwebtoken";
-import { createHmac } from "crypto";
-import net from "net";
+import { sign as jwtSign }           from "jsonwebtoken";
+import { createHmac }                from "crypto";
+import fs   from "fs";
+import path from "path";
 
-const MASTER_KEY   = process.env.SERVICE_API_KEY ?? "";
-const PRIVATE_KEY  = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
-const CIDRS        = (process.env.SERVICE_ALLOWED_CIDRS ?? "")
-  .split(",").map(s => s.trim()).filter(Boolean);
-const HMAC_WINDOW  = 300_000; // 300 s
+/*──────────────────── Lazy env initialisation ───────────────*/
+let MASTER_KEY  : string;
+let PRIVATE_KEY : string;
+let CIDRS       : string[];
+let HMAC_WINDOW = 300_000;          // 300 s default
 
-if (!MASTER_KEY || !PRIVATE_KEY || CIDRS.length === 0) {
-  throw new Error("Service-token route mis-configured env vars");
+function ensureEnv() {
+  if (MASTER_KEY) return;           // already loaded
+
+  MASTER_KEY   = process.env.SERVICE_API_KEY ?? "";
+  HMAC_WINDOW  = (Number(process.env.SERVICE_JWT_TTL) || 300) * 1_000;
+
+  /* ── private key: prefer file path ──*/
+  const keyFile = process.env.SERVICE_JWT_PRIVATE_KEY_PATH;
+  if (keyFile) {
+    PRIVATE_KEY = fs.readFileSync(
+      path.resolve(process.cwd(), keyFile),
+      "utf8",
+    ).trim();
+  } else {
+    PRIVATE_KEY = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
+  }
+
+  /* ── allow-list CIDRs ──*/
+  CIDRS = (process.env.SERVICE_ALLOWED_CIDRS ?? "")
+            .split(",")
+            .map(s => s.trim())
+            .filter(Boolean);
+
+  if (!MASTER_KEY || !PRIVATE_KEY || CIDRS.length === 0) {
+    throw new Error(
+      "SERVICE_API_KEY / SERVICE_JWT_PRIVATE_KEY(_PATH) / SERVICE_ALLOWED_CIDRS missing",
+    );
+  }
 }
 
-/* simple /32 matcher (same as in context.ts) */
+/* /32 matcher (same logic used in context.ts) */
 function ipAllowed(ip: string) {
-  return CIDRS.some(c => c.endsWith("/32") ? c.slice(0, -3) === ip : c === ip);
+  return CIDRS.some(c =>
+    c.endsWith("/32") ? c.slice(0, -3) === ip : c === ip,
+  );
 }
 
+/*──────────────────── POST /api/token ────────────────────*/
 export async function POST(req: NextRequest) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
-             (req as any).ip || "";
+  ensureEnv();                              // ← lazy load / validate
+
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+    // @ts-ignore – Edge vs Node runtime difference
+    (req as any).ip ||
+    "";
+
   if (!ipAllowed(ip)) {
     return NextResponse.json({ error: "IP not allowed" }, { status: 403 });
   }
@@ -32,6 +69,8 @@ export async function POST(req: NextRequest) {
   if (apiKey !== MASTER_KEY) {
     return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
   }
+
+  /*── HMAC replay-protection ──*/
   const ts  = req.headers.get("x-timestamp")  ?? "";
   const sig = req.headers.get("x-signature")  ?? "";
   const age = Math.abs(Date.now() - Number(ts));
@@ -43,11 +82,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Bad signature" }, { status: 401 });
   }
 
+  /*── Issue JWT ──*/
+  const expiresSec = HMAC_WINDOW / 1_000;      // e.g. 300
   const token = jwtSign(
     { sub: "service-account", scope: "full" },
     PRIVATE_KEY,
-    { algorithm: "RS256", expiresIn: 300 },   // 300 s
+    { algorithm: "RS256", expiresIn: expiresSec },
   );
 
-  return NextResponse.json({ token, expiresIn: 300 });
+  return NextResponse.json({ token, expiresIn: expiresSec });
 }
