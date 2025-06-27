@@ -191,9 +191,9 @@ export default function DashboardPage() {
         steps: [
           {
             popover: {
-              title: "Welcome to Trapigram",
+              title: "Welcome to Trapyfy",
               description:
-                "This quick tour will walk you through the main sections of Trapigram, so you can get started managing your business with confidence.",
+                "This quick tour will walk you through the main sections of Trapyfy, so you can get started managing your business with confidence.",
             },
           },
           {

@@ -173,7 +173,7 @@ export function ShipmentsTable() {
         {canCreate && (
           <Button onClick={() => router.push("/shipments/new")}>
             <Plus className="mr-2 h-4 w-4" />
-            Add Shipment
+            Add shipping method
           </Button>
         )}
       </div>

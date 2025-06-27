@@ -33,9 +33,9 @@ export default function NewShippingMethodPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Add New Shipping Method</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Add New Shipping Company</h1>
           <p className="text-muted-foreground">
-            Create a new shipping method in your database.
+            Create a new shipping company.
           </p>
         </div>
       </div>
