@@ -1,7 +1,7 @@
 // src/lib/db.ts
 import fs from "fs";
 import path from "path";
-import { pgPool as pool } from "@/lib/db";;
+import { Pool } from "pg";                   // ✅ real Pool
 import { Kysely, PostgresDialect } from "kysely";
 
 interface DB {
