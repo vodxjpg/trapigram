@@ -10,6 +10,7 @@ import path from "path";
 
 import { auth } from "@/lib/auth";
 import { db   } from "@/lib/db";
+import { loadKey } from "@/lib/readKey";
 
 /*──────────────────── Types ────────────────────*/
 export type RequestContext = {
@@ -18,12 +19,7 @@ export type RequestContext = {
   tenantId:       string;
 };
 
-/*──────────────────── Env / file helpers ────────────────────*/
-function readMaybe(filePath?: string, envFallback = ""): string {
-  if (!filePath) return envFallback;
-  try   { return fs.readFileSync(path.resolve(filePath), "utf8").trim(); }
-  catch { return envFallback; }
-}
+
 
 /*──────────────────── Constants & sanity checks ────────────────────*/
 const SERVICE_API_KEY = process.env.SERVICE_API_KEY ?? "";
@@ -38,10 +34,10 @@ if (SERVICE_ALLOWED_CIDRS.length === 0) {
   throw new Error("SERVICE_ALLOWED_CIDRS env missing");
 }
 
-const JWT_PUBLIC_KEY = readMaybe(
-  process.env.SERVICE_JWT_PUBLIC_KEY_PATH,   // optional path
-  process.env.SERVICE_JWT_PUBLIC_KEY ?? "",  // inline PEM fallback
-);
+const JWT_PUBLIC_KEY = loadKey(
+    process.env.SERVICE_JWT_PUBLIC_KEY          // inline first …
+      ?? process.env.SERVICE_JWT_PUBLIC_KEY_PATH // … or file path
+  );
 if (!JWT_PUBLIC_KEY) throw new Error("JWT public key missing (env or file)");
 
 const HMAC_WINDOW_MS =

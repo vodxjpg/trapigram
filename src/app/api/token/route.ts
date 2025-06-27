@@ -7,6 +7,7 @@ import { sign as jwtSign }           from "jsonwebtoken";
 import { createHmac }                from "crypto";
 import fs   from "fs";
 import path from "path";
+import { loadKey } from "@/lib/readKey";
 
 /*──────────────────── Lazy env initialisation ───────────────*/
 let MASTER_KEY  : string;
@@ -21,15 +22,11 @@ function ensureEnv() {
   HMAC_WINDOW  = (Number(process.env.SERVICE_JWT_TTL) || 300) * 1_000;
 
   /* ── private key: prefer file path ──*/
-  const keyFile = process.env.SERVICE_JWT_PRIVATE_KEY_PATH;
-  if (keyFile) {
-    PRIVATE_KEY = fs.readFileSync(
-      path.resolve(process.cwd(), keyFile),
-      "utf8",
-    ).trim();
-  } else {
-    PRIVATE_KEY = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
-  }
+   /* ── private key (inline or path) ──*/
+ PRIVATE_KEY = loadKey(
+   process.env.SERVICE_JWT_PRIVATE_KEY
+     ?? process.env.SERVICE_JWT_PRIVATE_KEY_PATH,
+ );
 
   /* ── allow-list CIDRs ──*/
   CIDRS = (process.env.SERVICE_ALLOWED_CIDRS ?? "")
