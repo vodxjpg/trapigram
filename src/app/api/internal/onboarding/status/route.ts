@@ -3,10 +3,7 @@ import { auth } from "@/lib/auth";
 import { authClient } from "@/lib/auth-client";
 import { pgPool as pool } from "@/lib/db";;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 export async function GET(req: NextRequest) {

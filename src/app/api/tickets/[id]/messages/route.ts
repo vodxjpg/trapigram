@@ -6,10 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 /** Helper to check if the caller is the org owner */
 async function isOwner(organizationId: string, userId: string) {
   const { rowCount } = await pool.query(

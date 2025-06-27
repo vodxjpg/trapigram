@@ -3,10 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getContext } from "@/lib/context";
 import { pgPool as pool } from "@/lib/db";;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 export async function GET(req: NextRequest) {
   // 1. Central auth: service key, API key or session cookie
   const ctx = await getContext(req);

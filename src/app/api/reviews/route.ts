@@ -4,10 +4,7 @@ import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;

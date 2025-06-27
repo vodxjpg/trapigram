@@ -4,10 +4,7 @@ import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 // Shipment schema definition.
 // Note: The "countries" field is expected to be provided as an array,
 // and it will be stringified before inserting into the database.

@@ -4,10 +4,7 @@ import { auth } from "@/lib/auth";
 import { verifyInternalPost } from "@/lib/verifyOrigin";
 import { pgPool as pool } from "@/lib/db";;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 export async function POST(req: NextRequest) {
   try {
     // 0) CSRF-style origin check — no secret needed

@@ -3,10 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";;
 import { auth } from "@/lib/auth";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
+// nothingconst INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {

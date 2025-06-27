@@ -3,10 +3,7 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 const attributeSchema = z.object({
   name: z.string().min(1, "Name is required"),
   slug: z.string().min(1, "Slug is required"),

@@ -5,10 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 /* ---------- validation helpers ---------- */
 const messagesSchema = z.object({
   message: z.string().min(1, { message: "Message is required." }),

@@ -5,10 +5,7 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 // ---------------------- Zod schemas ----------------------
 const paymentUpdateSchema = z.object({
   active: z.boolean(),

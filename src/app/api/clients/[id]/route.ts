@@ -3,10 +3,7 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 const clientUpdateSchema = z.object({
   username: z.string().min(3, { message: "Username must be at least 3 characters." }).optional(),
   firstName: z.string().min(1, { message: "First name is required." }).optional(),

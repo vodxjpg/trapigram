@@ -4,10 +4,7 @@ import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 // Updated coupon schema with new "expendingMinimum" field.
 const couponSchema = z.object({
   name: z.string().min(1, { message: "Name is required." }),

@@ -4,10 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { pgPool as pool } from "@/lib/db";;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 export async function GET(req: NextRequest) {
   try {
     // 0) Get the original path from query param, so we know what page the user is *really* requesting

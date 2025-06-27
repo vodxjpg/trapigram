@@ -6,10 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import purify from "@/lib/dompurify";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 
 const announcementSchema = z.object({
   title: z.string().min(1, { message: "Title is required." }),

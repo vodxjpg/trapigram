@@ -2,10 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 // Make sure you’ve set this in your env: INTERNAL_API_SECRET
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET;
 

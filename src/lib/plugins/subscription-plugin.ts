@@ -5,10 +5,7 @@ import { plans } from "@/data/plans";
 import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 export const subscriptionPlugin = (): BetterAuthPlugin => {
   return {
     id: "subscription",

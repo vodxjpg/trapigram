@@ -5,10 +5,7 @@ import { pgPool as pool } from "@/lib/db";;
 import purify from "@/lib/dompurify";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
+// nothing
 const announcementUpdateSchema = z.object({
   title: z.string().min(1, { message: "Title is required." }).optional(),
   content: z.string().min(1, { message: "Content is required." }).optional(),
