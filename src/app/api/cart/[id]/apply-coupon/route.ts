@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import crypto from "crypto"
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || ""
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || ""
 

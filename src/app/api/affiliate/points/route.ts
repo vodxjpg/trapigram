@@ -11,7 +11,7 @@ import { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 /*──────── validation ────────*/
 const createSchema = z.object({

@@ -1,14 +1,14 @@
 // src/app/api/order/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
 
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 /* ------------------------------------------------------------------ */
 /*  Encryption helpers                                                */

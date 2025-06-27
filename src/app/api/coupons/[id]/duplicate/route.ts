@@ -1,10 +1,10 @@
 // src/app/api/coupons/[id]/duplicate/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 /* helper – make a unique CODE within an org */
 async function uniqueCode(base: string, organizationId: string): Promise<string> {

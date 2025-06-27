@@ -1,7 +1,7 @@
 // File: src/app/api/auth/organization/check-org-slug/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getContext } from "@/lib/context";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,

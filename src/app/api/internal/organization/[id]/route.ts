@@ -1,6 +1,6 @@
 // /home/zodx/Desktop/Trapyfy/src/app/api/internal/organization/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { auth } from "@/lib/auth";
 
 const pool = new Pool({

@@ -1,7 +1,7 @@
 // src/app/api/cart/[id]/add-product/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
@@ -9,7 +9,7 @@ import { resolveUnitPrice } from "@/lib/pricing";
 import { adjustStock } from "@/lib/stock";
 import { getStepsFor, getPriceForQuantity, tierPricing } from "@/lib/tier-pricing";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 const cartProductSchema = z.object({
   productId: z.string(),

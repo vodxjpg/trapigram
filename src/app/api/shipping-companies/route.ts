@@ -1,7 +1,7 @@
 // src/app/api/shippingMethods/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 

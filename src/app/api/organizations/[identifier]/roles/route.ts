@@ -1,11 +1,11 @@
 // src/app/api/organizations/[identifier]/roles/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import { cleanPermissions } from "@/lib/utils/cleanPermissions";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 /* ─────────────── Helpers ─────────────── */
 async function assertOwner(orgId: string, userId: string) {

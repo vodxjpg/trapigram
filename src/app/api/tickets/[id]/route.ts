@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { z } from "zod";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 /* ---------- validation helpers ---------- */
 const uuid = z.string().uuid("Invalid ticketId");

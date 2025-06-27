@@ -1,5 +1,5 @@
 // /home/zodx/Desktop/Trapyfy/src/lib/auth.ts
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { betterAuth } from "better-auth";
 import { magicLink, organization } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";

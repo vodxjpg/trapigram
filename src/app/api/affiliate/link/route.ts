@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);

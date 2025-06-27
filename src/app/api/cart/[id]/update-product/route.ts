@@ -1,14 +1,14 @@
 // src/app/api/cart/[id]/update-product/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
 import { getStepsFor, getPriceForQuantity, tierPricing } from "@/lib/tier-pricing";
 import { resolveUnitPrice } from "@/lib/pricing";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 const cartProductSchema = z.object({
   productId: z.string(),

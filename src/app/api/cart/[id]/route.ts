@@ -1,10 +1,10 @@
 // src/app/api/cart/[id]/route.ts   ← full file, only response shape changed
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 import { resolveUnitPrice } from "@/lib/pricing";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 export async function GET(
   req: NextRequest,

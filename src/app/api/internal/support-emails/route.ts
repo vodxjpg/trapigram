@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { Pool } from "pg"
+import { pgPool as pool } from "@/lib/db";
 import { nanoid } from "nanoid"
 import { auth } from "@/lib/auth"
 

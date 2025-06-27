@@ -1,7 +1,7 @@
 // src/lib/db.ts
 import fs from "fs";
 import path from "path";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { Kysely, PostgresDialect } from "kysely";
 
 interface DB {
@@ -758,6 +758,8 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 /* ──────────────── 5. Kysely instance (unchanged) ───────────────── */
+
+export { pool as pgPool };   // for raw SQL users 
 export const db = new Kysely<DB>({
   dialect: new PostgresDialect({ pool }),
 });

@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 
 const pool = new Pool({

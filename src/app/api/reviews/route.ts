@@ -1,6 +1,6 @@
 // src/app/api/reviews/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 

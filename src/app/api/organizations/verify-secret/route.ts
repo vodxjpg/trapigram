@@ -1,10 +1,10 @@
 // src/app/api/organizations/verify-secret/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 import crypto from "crypto";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY!;
 const ENC_IV_B64 = process.env.ENCRYPTION_IV!;
 

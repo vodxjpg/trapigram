@@ -1,11 +1,11 @@
 // src/app/api/tickets/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 // helper to check if caller is owner
 async function isOwner(organizationId: string, userId: string) {

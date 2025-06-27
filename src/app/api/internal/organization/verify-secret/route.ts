@@ -1,10 +1,10 @@
 // /home/zodx/Desktop/Trapyfy/src/app/api/internal/organization/verify-secret/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import { auth } from "@/lib/auth";
 import crypto from "crypto";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";

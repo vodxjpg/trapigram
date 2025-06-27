@@ -1,6 +1,6 @@
 // src/lib/stock.ts — centralised inventory helper
 
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 
 /**
  * Reserve or release stock for one product in a single country.

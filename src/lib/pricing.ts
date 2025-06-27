@@ -1,6 +1,6 @@
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 export async function computeMoneyPrice(product: any, country: string) {
   const sale = product.salePrice?.[country];

@@ -1,11 +1,11 @@
 // src/app/api/order/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
+import { pgPool as pool } from "@/lib/db";;
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { z } from "zod";
 import { requireOrgPermission } from "@/lib/perm-server";
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 
 /* ─── encryption helpers ─────────────────────────────────────── */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
