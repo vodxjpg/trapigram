@@ -1,4 +1,5 @@
 /* /src/app/api/affiliate/products/route.ts */
+export const runtime = "nodejs";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";

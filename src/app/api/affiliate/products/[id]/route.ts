@@ -1,6 +1,7 @@
 // ==================================================================
 //  src/app/api/affiliate/products/[id]/route.ts  – FULL REWRITE
 // ==================================================================
+export const runtime = "nodejs";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";

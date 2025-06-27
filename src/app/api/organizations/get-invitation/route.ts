@@ -1,4 +1,5 @@
 // /home/zodx/Desktop/Trapyfy/src/app/api/organizations/get-invitation/route.ts
+export const runtime = "nodejs";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 

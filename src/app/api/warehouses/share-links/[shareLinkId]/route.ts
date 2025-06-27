@@ -1,4 +1,5 @@
 // src/app/api/warehouses/share-links/[shareLinkId]/route.ts
+export const runtime = "nodejs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
