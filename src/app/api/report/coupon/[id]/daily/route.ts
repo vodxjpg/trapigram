@@ -3,9 +3,7 @@ import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 import { getYear, getMonth } from "date-fns"
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
+// nothing
 
 interface Entry {
     couponCode: string;

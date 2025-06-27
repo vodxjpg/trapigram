@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
+// nothing
 
 interface Entry {
     couponCode: string;

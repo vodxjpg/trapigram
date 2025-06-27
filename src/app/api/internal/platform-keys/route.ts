@@ -3,9 +3,7 @@ import { pgPool as pool } from "@/lib/db";
 import { nanoid } from "nanoid"
 import { auth } from "@/lib/auth"
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-})
+// nothing
 
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string
 

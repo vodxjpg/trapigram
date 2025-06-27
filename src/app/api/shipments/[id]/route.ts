@@ -6,9 +6,7 @@ import { pgPool as pool } from "@/lib/db";;
 import { auth } from "@/lib/auth";
 import { getContext } from "@/lib/context";
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
+// nothing
 
 const costGroupSchema = z.object({
     minOrderCost: z.coerce
