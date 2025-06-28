@@ -1,36 +1,30 @@
-/*───────────────────────────────────────────────────────────────
-  src/app/api/token/route.ts
-  Mints a short-lived (RS256) “service-account” JWT
-───────────────────────────────────────────────────────────────*/
+/* src/app/api/token/route.ts */
 import { NextRequest, NextResponse } from "next/server";
-import { sign as jwtSign }           from "jsonwebtoken";
-import { createHmac }                from "crypto";
-import { loadKey }                   from "@/lib/readKey";
+import { sign as jwtSign } from "jsonwebtoken";
+import { createHmac, timingSafeEqual } from "crypto";
+import { loadKey } from "@/lib/readKey";
 
-/*──────────────────── Lazy env bootstrap ────────────────────*/
-let MASTER_KEY!:  string;                // SERVICE_API_KEY
-let PRIVATE_KEY!: string;                // RSA-PEM (inline or file)
-let CIDRS:        string[] = [];         // allow-list
-let HMAC_WINDOW   = 300_000;             // ms (default 300 s)
+let MASTER_KEY!: string;
+let PRIVATE_KEY!: string;
+let CIDRS: string[] = [];
+let HMAC_WINDOW = 300_000;
 
 function ensureEnv() {
-  if (MASTER_KEY) return;                // already initialised
+  if (MASTER_KEY) return;
 
-  MASTER_KEY  = process.env.SERVICE_API_KEY ?? "";
+  MASTER_KEY = process.env.SERVICE_API_KEY ?? "";
   HMAC_WINDOW = (Number(process.env.SERVICE_JWT_TTL) || 300) * 1_000;
+  console.log("HMAC_WINDOW (ms):", HMAC_WINDOW);
 
-  /* ■ 1.  Private key  (path OR inline PEM) */
   PRIVATE_KEY = loadKey(
-    process.env.SERVICE_JWT_PRIVATE_KEY ??
-    process.env.SERVICE_JWT_PRIVATE_KEY_PATH,
+    process.env.SERVICE_JWT_PRIVATE_KEY ?? process.env.SERVICE_JWT_PRIVATE_KEY_PATH
   );
-  // convert “\n” sequences to real new-lines if the key
-  // came straight from an .env file:
   if (PRIVATE_KEY.includes("\\n")) {
     PRIVATE_KEY = PRIVATE_KEY.replace(/\\n/g, "\n").trim();
   }
+  console.log("PRIVATE_KEY (first 50 chars):", PRIVATE_KEY.slice(0, 50) + "...");
+  console.log("PRIVATE_KEY is PEM format:", PRIVATE_KEY.includes("-----BEGIN PRIVATE KEY-----"));
 
-  /* ■ 2.  CIDR / IP allow-list */
   CIDRS = (process.env.SERVICE_ALLOWED_CIDRS ?? "")
     .split(",")
     .map(s => s.trim())
@@ -38,72 +32,84 @@ function ensureEnv() {
 
   if (!MASTER_KEY || !PRIVATE_KEY || CIDRS.length === 0) {
     throw new Error(
-      "SERVICE_API_KEY / SERVICE_JWT_PRIVATE_KEY(_PATH) / SERVICE_ALLOWED_CIDRS missing",
+      "SERVICE_API_KEY / SERVICE_JWT_PRIVATE_KEY(_PATH) / SERVICE_ALLOWED_CIDRS missing"
     );
   }
 }
 
-/*──────────────────── IP helpers ────────────────────*/
 function toIPv4(raw: string) {
-  if (raw === "::1")            return "127.0.0.1";          // v6 localhost
-  if (raw.startsWith("::ffff:")) return raw.slice(7);        // v4-mapped v6
+  if (raw === "::1") return "127.0.0.1";
+  if (raw.startsWith("::ffff:")) return raw.slice(7);
   return raw;
 }
+
 function ipToInt(ip: string) {
   return ip.split(".").reduce((n, o) => (n << 8) + +o, 0) >>> 0;
 }
+
 function cidrMatch(ip: string, cidr: string) {
   if (!cidr.includes("/")) return ip === cidr;
   const [base, bits] = cidr.split("/");
   const mask = -1 >>> (32 - Number(bits));
   return (ipToInt(ip) & mask) === (ipToInt(base) & mask);
 }
+
 function ipAllowed(raw: string) {
   const ip = toIPv4(raw);
   return CIDRS.some(c => cidrMatch(ip, c));
 }
 
-/*──────────────────── POST /api/token ────────────────────*/
 export async function POST(req: NextRequest) {
-  ensureEnv();                                          // initialise once
+  ensureEnv();
 
-  /* 1)  IP gate ------------------------------------------------------*/
   const ipRaw =
     req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
-    // @ts-expect-error — present in Node runtime
     (req as any).ip ||
     "";
+  console.log("IP received:", ipRaw);
 
   if (!ipAllowed(ipRaw)) {
+    console.log(`IP ${ipRaw} not allowed; allowed CIDRs: ${CIDRS}`);
     return NextResponse.json({ error: "IP not allowed" }, { status: 403 });
   }
 
-  /* 2)  Master API-key ----------------------------------------------*/
-  if (req.headers.get("x-api-key") !== MASTER_KEY) {
+  const apiKey = req.headers.get("x-api-key") ?? "";
+  if (apiKey !== MASTER_KEY) {
+    console.log("Invalid API key");
     return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
   }
 
-  /* 3)  HMAC replay-protection --------------------------------------*/
-  const ts  = req.headers.get("x-timestamp")  ?? "";
-  const sig = req.headers.get("x-signature")  ?? "";
+  const ts = req.headers.get("x-timestamp") ?? "";
+  const sig = req.headers.get("x-signature") ?? "";
   const age = Math.abs(Date.now() - Number(ts));
 
+  console.log(`Timestamp: ${ts}, Signature: ${sig}, Age: ${age}ms`);
+
   if (!ts || !sig || age > HMAC_WINDOW) {
+    console.log(`Bad timestamp: age=${age}ms, window=${HMAC_WINDOW}ms`);
     return NextResponse.json({ error: "Bad timestamp" }, { status: 401 });
   }
 
   const expected = createHmac("sha256", MASTER_KEY).update(ts).digest("hex");
-  if (sig !== expected) {
+  if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+    console.log(`HMAC mismatch: expected=${expected}, received=${sig}`);
     return NextResponse.json({ error: "Bad signature" }, { status: 401 });
   }
 
-  /* 4)  Issue JWT ----------------------------------------------------*/
-  const expiresSec = Math.floor(HMAC_WINDOW / 1_000);   // e.g. 300
-  const token = jwtSign(
-    { sub: "service-account", scope: "full" },
-    PRIVATE_KEY,                                       // ✓ now valid PEM
-    { algorithm: "RS256", expiresIn: expiresSec },
-  );
-
-  return NextResponse.json({ token, expiresIn: expiresSec });
+  try {
+    const expiresSec = Math.floor(HMAC_WINDOW / 1_000);
+    const payload = {
+      sub: "service-account",
+      scope: "full",
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + expiresSec,
+    };
+    console.log("Signing JWT with payload:", payload);
+    const token = jwtSign(payload, PRIVATE_KEY, { algorithm: "RS256" });
+    console.log("Generated JWT:", token.slice(0, 20) + "...");
+    return NextResponse.json({ token, expiresIn: expiresSec });
+  } catch (e) {
+    console.error("JWT signing failed:", e.message);
+    return NextResponse.json({ error: `JWT signing failed: ${e.message}` }, { status: 500 });
+  }
 }

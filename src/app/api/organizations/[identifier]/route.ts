@@ -19,9 +19,9 @@ function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
 // ─── GET single ─────────────────────────────────────────────────
 export async function GET(
   req: NextRequest,
-  { params }: { params: { identifier: string } }
+  context: { params: { identifier: string } }
 ) {
-  const { identifier } = params;
+  const { identifier } = await context.params;   // await!
   if (!identifier) {
     return NextResponse.json(
       { error: "identifier is required" },

@@ -15,75 +15,113 @@ const clientUpdateSchema = z.object({
   country: z.string().optional().nullable(), // New field: nullable country code
 });
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
   try {
     const { id } = await params;
-    const query = `
-      SELECT id, "userId", "organizationId", username, "firstName", "lastName", "lastInteraction", email, "phoneNumber", "levelId", "referredBy", country, "createdAt", "updatedAt"
+
+    // ── Base client record ────────────────────────────────────────────
+    const clientQuery = `
+      SELECT id, "userId", "organizationId", username, "firstName", "lastName",
+             "lastInteraction", email, "phoneNumber", "levelId", "referredBy",
+             country, "createdAt", "updatedAt"
       FROM clients
       WHERE id = $1 AND "organizationId" = $2
     `;
-    const result = await pool.query(query, [id, organizationId]);
+    const clientResult = await pool.query(clientQuery, [id, organizationId]);
+    if (clientResult.rows.length === 0) {
+      return NextResponse.json({ error: "Client not found" }, { status: 404 });
+    }
+    const client = clientResult.rows[0];
 
-    const lastPurchaseQuery = `SELECT "createdAt" FROM orders WHERE "clientId" = '${id}' ORDER BY "createdAt" DESC LIMIT 1`
-    const lastPurchaseResult = await pool.query(lastPurchaseQuery)
-    const lastPurchase = lastPurchaseResult.rows[0]
+    // ── Orders summary ────────────────────────────────────────────────
+    const lastPurchaseQuery = `
+      SELECT "createdAt"
+      FROM orders
+      WHERE "clientId" = $1
+      ORDER BY "createdAt" DESC
+      LIMIT 1
+    `;
+    const [{ rows: lastPurchaseRows }] = await Promise.all([
+      pool.query(lastPurchaseQuery, [id]),
+    ]);
+    const lastPurchase = lastPurchaseRows[0] ?? null;
 
-    const totalOrdersQuery = `SELECT * FROM orders WHERE "clientId" = '${id}'`
-    const totalOrdersResult = await pool.query(totalOrdersQuery)
-    const totalOrders = totalOrdersResult.rows.length
+    const totalOrdersQuery = `
+      SELECT id, "cartId"
+      FROM orders
+      WHERE "clientId" = $1
+    `;
+    const totalOrdersResult = await pool.query(totalOrdersQuery, [id]);
+    const totalOrders = totalOrdersResult.rows.length;
 
-    const productList: {
-      productId: string,
-      quantity: number
-    }[] = []
+    // ── Build product purchase list ───────────────────────────────────
+    type ProductAgg = { productId: string; quantity: number };
+    const productList: ProductAgg[] = [];
 
-    for (const od of totalOrdersResult.rows) {
-      const cartQuery = `SELECT * FROM "cartProducts" WHERE "cartId" = '${od.cartId}'`
-      const cartResult = await pool.query(cartQuery)
-      const cart = cartResult.rows
-
-      for (const ca of cart) {
-        productList.push({
-          productId: ca.productId,
-          quantity: ca.quantity
-        })
+    for (const order of totalOrdersResult.rows) {
+      const cartQuery = `
+        SELECT "productId", quantity
+        FROM "cartProducts"
+        WHERE "cartId" = $1
+      `;
+      const cartRows = (await pool.query(cartQuery, [order.cartId])).rows;
+      for (const { productId, quantity } of cartRows) {
+        productList.push({ productId, quantity });
       }
     }
 
-    const totals = productList.reduce((acc, { productId, quantity }) => {
-      acc[productId] = (acc[productId] || 0) + quantity;
+    // ── Aggregate quantities per product ──────────────────────────────
+    const totals = productList.reduce<Record<string, number>>((acc, { productId, quantity }) => {
+      acc[productId] = (acc[productId] ?? 0) + quantity;
       return acc;
     }, {});
 
     const summary = Object.entries(totals).map(([productId, quantity]) => ({
       productId,
-      quantity
+      quantity,
     }));
 
-    const maxItem = summary.reduce((best, current) =>
-      current.quantity > best.quantity ? current : best
-    );
+    // ── Most-purchased product (if any) ───────────────────────────────
+    let mostPurchased: { title: string } | null = null;
+    let quantityPurchased = 0;
 
-    const mostPurchasedQuery = `SELECT title FROM "products" WHERE "id" = '${maxItem.productId}'`
-    const mostPurchasedResult = await pool.query(mostPurchasedQuery)
-    const mostPurchased = mostPurchasedResult.rows[0]
-    const quantityPurchased = maxItem.quantity
+    if (summary.length) {
+      const maxItem = summary.reduce((best, cur) =>
+        cur.quantity > best.quantity ? cur : best,
+      );
 
-    if (result.rows.length === 0) {
-      return NextResponse.json({ error: "Client not found" }, { status: 404 });
+      const mostPurchasedQuery = `
+        SELECT title
+        FROM products
+        WHERE id = $1
+        LIMIT 1
+      `;
+      const mpResult = await pool.query(mostPurchasedQuery, [maxItem.productId]);
+      mostPurchased = mpResult.rows[0] ?? null;
+      quantityPurchased = maxItem.quantity;
     }
 
-    return NextResponse.json({ client: result.rows[0], lastPurchase, totalOrders, mostPurchased, quantityPurchased });
+    // ── Response ──────────────────────────────────────────────────────
+    return NextResponse.json({
+      client,
+      lastPurchase,
+      totalOrders,
+      mostPurchased,
+      quantityPurchased,
+    });
   } catch (error: any) {
     console.error("[GET /api/clients/[id]] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);

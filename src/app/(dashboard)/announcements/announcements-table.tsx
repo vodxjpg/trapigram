@@ -225,10 +225,6 @@ export function AnnouncementsTable() {
           </div>
           <Button type="submit">Search</Button>
         </form>
-        <Button onClick={() => router.push(`/announcements/new`)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Announcement
-        </Button>
       </div>
 
       {/* Announcements Table */}

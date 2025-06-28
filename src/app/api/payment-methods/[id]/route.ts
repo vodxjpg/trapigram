@@ -1,30 +1,29 @@
 // src/app/api/payment-methods/[id]/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
-// nothing
-// ---------------------- Zod schemas ----------------------
+// ────────── validation schema ──────────
 const paymentUpdateSchema = z.object({
-  name: z.string().min(1, { message: "Name is required." }),
-  active: z.boolean(),
-  apiKey: z.string().nullable().optional(),
-  secretKey: z.string().nullable().optional()
+  name:      z.string().min(1, { message: "Name is required." }),
+  active:    z.boolean(),
+  apiKey:    z.string().nullable().optional(),
+  secretKey: z.string().nullable().optional(),
 });
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };   // ← note Promise
 
-// ---------------------- GET /api/payment-methods/[id] ----------------------
+// ────────── GET /api/payment-methods/[id] ──────────
 export async function GET(req: NextRequest, { params }: Params) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
   try {
-    const { id } = params;
+    const { id } = await params;                     // ← await here
     const sql = `
-      SELECT id, "tenantId", name, active, "apiKey", "secretKey", "createdAt", "updatedAt"
+      SELECT id, "tenantId", name, active, "apiKey", "secretKey",
+             "createdAt", "updatedAt"
       FROM "paymentMethods"
       WHERE id = $1
     `;
@@ -33,27 +32,25 @@ export async function GET(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
     }
     return NextResponse.json(result.rows[0]);
-  } catch (err: any) {
+  } catch (err) {
     console.error("[GET /api/payment-methods/[id]]", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
-// ---------------------- PATCH /api/payment-methods/[id] ----------------------
+// ────────── PATCH /api/payment-methods/[id] ──────────
 export async function PATCH(req: NextRequest, { params }: Params) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
   try {
-    const { id } = params;
-    const body = await req.json();
+    const { id } = await params;                     // ← await here too
+    const body   = await req.json();
     const parsed = paymentUpdateSchema.parse(body);
 
-    // build dynamic update
     const updates: string[] = [];
     const values: any[] = [];
     let idx = 1;
-
 
     for (const [key, val] of Object.entries(parsed)) {
       updates.push(`"${key}" = $${idx++}`);
@@ -68,7 +65,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const sql = `
       UPDATE "paymentMethods"
       SET ${updates.join(", ")}, "updatedAt" = NOW()
-      WHERE id = $${idx++}
+      WHERE id = $${idx}
       RETURNING *
     `;
     const res = await pool.query(sql, values);
@@ -85,13 +82,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 }
 
-// ---------------------- DELETE /api/payment-methods/[id] ----------------------
+// ────────── DELETE /api/payment-methods/[id] ──────────
 export async function DELETE(req: NextRequest, { params }: Params) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
   try {
-    const { id } = params;
+    const { id } = await params;                     // ← await here too
     const sql = `
       DELETE FROM "paymentMethods"
       WHERE id = $1
@@ -102,7 +99,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
     }
     return NextResponse.json({ message: "Payment method deleted" });
-  } catch (err: any) {
+  } catch (err) {
     console.error("[DELETE /api/payment-methods/[id]]", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
