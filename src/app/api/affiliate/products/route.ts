@@ -77,21 +77,21 @@ async function uniqueSku(base: string, orgId: string) {
 }
 
 /*==================================================================
-  GET
+  GET   – fixed “IN ()” syntax error when there are no products
   =================================================================*/
   export async function GET(req: NextRequest) {
-    // 1) resolve auth/context
+    /* 1) resolve auth/context ------------------------------------------------ */
     const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
     const { organizationId, tenantId } = ctx;
   
-    // 2) pull pagination + filter params
+    /* 2) pagination + search ------------------------------------------------- */
     const { searchParams } = new URL(req.url);
     const limit  = Number(searchParams.get("limit")  || "50");
     const offset = Number(searchParams.get("offset") || "0");
     const search = searchParams.get("search") || "";
   
-    // 3) fetch the base product rows
+    /* 3) base product rows --------------------------------------------------- */
     const rows = await db
       .selectFrom("affiliateProducts")
       .select([
@@ -113,20 +113,29 @@ async function uniqueSku(base: string, orgId: string) {
       .offset(offset)
       .execute();
   
-    // 4) pull all stock rows for those products in one go
+    /* 4) warehouse stock – only query if we actually have product IDs -------- */
     const ids = rows.map((r) => r.id);
-    const stockRows = await db
-      .selectFrom("warehouseStock")
-      .select([
-        "affiliateProductId",
-        "warehouseId",
-        "country",
-        "quantity",
-      ])
-      .where("affiliateProductId", "in", ids)
-      .execute();
+    let stockRows: {
+      affiliateProductId: string;
+      warehouseId: string;
+      country: string;
+      quantity: number;
+    }[] = [];
   
-    // 5) build a nested stock map: { [prodId]: { [warehouse]: { [country]: qty } } }
+    if (ids.length) {
+      stockRows = await db
+        .selectFrom("warehouseStock")
+        .select([
+          "affiliateProductId",
+          "warehouseId",
+          "country",
+          "quantity",
+        ])
+        .where("affiliateProductId", "in", ids)
+        .execute();
+    }
+  
+    /* 5) build nested stock map --------------------------------------------- */
     const stockMap: Record<string, Record<string, Record<string, number>>> = {};
     for (const { affiliateProductId, warehouseId, country, quantity } of stockRows) {
       stockMap[affiliateProductId] ??= {};
@@ -134,7 +143,7 @@ async function uniqueSku(base: string, orgId: string) {
       stockMap[affiliateProductId][warehouseId][country] = quantity;
     }
   
-    // 6) stitch it all together
+    /* 6) stitch & respond ---------------------------------------------------- */
     const products = rows.map((r) => ({
       id:           r.id,
       title:        r.title,
@@ -144,12 +153,13 @@ async function uniqueSku(base: string, orgId: string) {
       productType:  r.productType,
       pointsPrice:  mergePointsByLevel(r.regularPoints as any, r.salePoints as any),
       cost:         r.cost,
-      stock:        stockMap[r.id] ?? {},      // ← your per-product stock map
+      stock:        stockMap[r.id] ?? {},
       createdAt:    r.createdAt,
     }));
   
     return NextResponse.json({ products });
   }
+  
 
 /*==================================================================
   POST
