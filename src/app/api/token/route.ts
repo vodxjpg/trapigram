@@ -1,9 +1,9 @@
-/* src/app/api/token/route.ts */
+/* src/app/api/token/route.ts  (FULL after patch) */
 import { NextRequest, NextResponse } from "next/server";
 import { sign as jwtSign } from "jsonwebtoken";
 import { createHmac, timingSafeEqual } from "crypto";
 import { loadKey } from "@/lib/readKey";
-import { CIDR } from "ip-cidr";                  // ← NEW
+import { CIDR } from "ip-cidr";
 
 let MASTER_KEY!: string;
 let PRIVATE_KEY!: string;
@@ -13,20 +13,15 @@ let HMAC_WINDOW = 300_000;
 function ensureEnv() {
   if (MASTER_KEY) return;
 
-  MASTER_KEY   = process.env.SERVICE_API_KEY ?? "";
-  HMAC_WINDOW  = (Number(process.env.SERVICE_JWT_TTL) || 300) * 1_000;
-  console.log("HMAC_WINDOW (ms):", HMAC_WINDOW);
+  MASTER_KEY  = process.env.SERVICE_API_KEY ?? "";
+  HMAC_WINDOW = (Number(process.env.SERVICE_JWT_TTL) || 300) * 1_000;
 
   PRIVATE_KEY = loadKey(
     process.env.SERVICE_JWT_PRIVATE_KEY ?? process.env.SERVICE_JWT_PRIVATE_KEY_PATH,
   ).replace(/\\n/g, "\n").trim();
-  console.log("PRIVATE_KEY (first 50 chars):", PRIVATE_KEY.slice(0, 50) + "...");
-  console.log("PRIVATE_KEY is PEM format:", PRIVATE_KEY.includes("-----BEGIN PRIVATE KEY-----"));
 
   CIDRS = (process.env.SERVICE_ALLOWED_CIDRS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+    .split(",").map(s => s.trim()).filter(Boolean);
 
   if (!MASTER_KEY || !PRIVATE_KEY || CIDRS.length === 0) {
     throw new Error(
@@ -35,74 +30,69 @@ function ensureEnv() {
   }
 }
 
-function toIPv4(raw: string) {
-  if (raw === "::1") return "127.0.0.1";
-  if (raw.startsWith("::ffff:")) return raw.slice(7);
-  return raw;
+function normalise(ip: string) {
+  if (ip === "::1") return "127.0.0.1";
+  return ip.startsWith("::ffff:") ? ip.slice(7) : ip;
 }
 
-/* ─── replaced bit-mask math with ip-cidr ────────────────────────── */
-function ipAllowed(raw: string) {
-  const ip = toIPv4(raw);
-  return CIDRS.some((c) => {
+function ipAllowed(ip: string) {
+  ip = normalise(ip);
+  return CIDRS.some(c => {
     try   { return new CIDR(c).contains(ip); }
-    catch { return false; }                  // ignore malformed CIDR
+    catch { return false; }           // ignore malformed CIDR
   });
+}
+
+function extractClientIp(req: NextRequest): string {
+  /* Cloudflare → real client */
+  const cf = req.headers.get("cf-connecting-ip");
+  if (cf) return cf;
+
+  /* Generic proxy chain */
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) return xff.split(",")[0].trim();
+
+  /* Fallback: edge runtime */
+  return (req as any).ip || "";
 }
 
 export async function POST(req: NextRequest) {
   ensureEnv();
 
-  const ipRaw =
-    req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
-    (req as any).ip ||
-    "";
-  console.log("IP received:", ipRaw);
+  const ipRaw = extractClientIp(req);
+  console.log("Client IP:", ipRaw);
 
   if (!ipAllowed(ipRaw)) {
-    console.log(`IP ${ipRaw} not allowed; allowed CIDRs: ${CIDRS}`);
+    console.log(`IP ${ipRaw} not allowed; CIDRs: ${CIDRS.join()}`);
     return NextResponse.json({ error: "IP not allowed" }, { status: 403 });
   }
 
   const apiKey = req.headers.get("x-api-key") ?? "";
   if (apiKey !== MASTER_KEY) {
-    console.log("Invalid API key");
     return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
   }
 
   const ts  = req.headers.get("x-timestamp") ?? "";
   const sig = req.headers.get("x-signature") ?? "";
   const age = Math.abs(Date.now() - Number(ts));
-  console.log(`Timestamp: ${ts}, Signature: ${sig}, Age: ${age}ms`);
 
   if (!ts || !sig || age > HMAC_WINDOW) {
-    console.log(`Bad timestamp: age=${age}ms, window=${HMAC_WINDOW}ms`);
     return NextResponse.json({ error: "Bad timestamp" }, { status: 401 });
   }
 
   const expected = createHmac("sha256", MASTER_KEY).update(ts).digest("hex");
   if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
-    console.log(`HMAC mismatch: expected=${expected}, received=${sig}`);
     return NextResponse.json({ error: "Bad signature" }, { status: 401 });
   }
 
   try {
-    const expiresSec = Math.floor(HMAC_WINDOW / 1_000);
-    const payload = {
-      sub  : "service-account",
-      scope: "full",
-      iat  : Math.floor(Date.now() / 1000),
-      exp  : Math.floor(Date.now() / 1000) + expiresSec,
-    };
-    console.log("Signing JWT with payload:", payload);
-    const token = jwtSign(payload, PRIVATE_KEY, { algorithm: "RS256" });
-    console.log("Generated JWT:", token.slice(0, 20) + "...");
-    return NextResponse.json({ token, expiresIn: expiresSec });
+    const expSec  = Math.floor(HMAC_WINDOW / 1_000);
+    const nowSec  = Math.floor(Date.now() / 1000);
+    const payload = { sub: "service-account", scope: "full", iat: nowSec, exp: nowSec + expSec };
+    const token   = jwtSign(payload, PRIVATE_KEY, { algorithm: "RS256" });
+
+    return NextResponse.json({ token, expiresIn: expSec });
   } catch (e: any) {
-    console.error("JWT signing failed:", e.message);
-    return NextResponse.json(
-      { error: `JWT signing failed: ${e.message}` },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: `JWT signing failed: ${e.message}` }, { status: 500 });
   }
 }
