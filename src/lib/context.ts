@@ -39,9 +39,13 @@ if (!JWT_PUBLIC_KEY) {
 const HMAC_WINDOW_MS = (Number(process.env.SERVICE_JWT_TTL) || 300) * 1_000;
 
 function clientIp(req: NextRequest): string {
-  const xff = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return xff || (req as any).ip || "";
+  const cf = req.headers.get("cf-connecting-ip");
+  if (cf) return cf;
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) return xff.split(",")[0].trim();
+  return (req as any).ip ?? "";
 }
+
 
 function ipToInt(ip: string) {
   return ip.split(".").reduce((acc, oct) => (acc << 8) + Number(oct), 0) >>> 0;

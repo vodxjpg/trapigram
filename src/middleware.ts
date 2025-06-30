@@ -42,13 +42,14 @@ function applyCorsHeaders(res: Response, origin: string) {
    • Cloudflare → CF-Connecting-IP
    • Vercel / others → x-forwarded-for first element
    • Fallback to req.ip  */
-function clientIp(req: NextRequest): string {
-  const cfc = req.headers.get("cf-connecting-ip");
-  if (cfc) return cfc;
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  return (req as any).ip ?? "unknown";
-}
+   function clientIp(req: NextRequest): string {
+    const cf = req.headers.get("cf-connecting-ip");
+    if (cf) return cf;
+    const xff = req.headers.get("x-forwarded-for");
+    if (xff) return xff.split(",")[0].trim();
+    return (req as any).ip ?? "";
+  }
+  
 
 /*──────────────────── Middleware ────────────────────*/
 export async function middleware(req: NextRequest) {
