@@ -757,7 +757,7 @@ if (process.env.NODE_ENV !== "production") {
   pool.on("error", (err) => console.error("DB client error:", err));
 }
 
-/* ──────────────── 5. Kysely instance (unchanged) ───────────────── */
+/* ──────────────── 5. Kysely instance ───────────────── */
 
 export { pool as pgPool };   // for raw SQL users 
 export const db = new Kysely<DB>({
