@@ -5,6 +5,7 @@ import { verify as jwtVerify, JwtPayload } from "jsonwebtoken";
 import net from "net";
 import fs from "fs";
 import path from "path";
+import { CIDR } from "ip-cidr";               // ← NEW
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -52,10 +53,11 @@ function ipAllowed(ipStr: string): boolean {
   if (!net.isIP(ipStr)) return false;
 
   return SERVICE_ALLOWED_CIDRS.some((cidr) => {
-    if (!cidr.includes("/")) return cidr === ipStr;
-    const [base, bits] = cidr.split("/");
-    const mask = -1 >>> (32 - Number(bits));
-    return (ipToInt(ipStr) & mask) === (ipToInt(base) & mask);
+    try {
+      return new CIDR(cidr).contains(ipStr);
+    } catch {
+      return false;                           // ignore malformed CIDR
+    }
   });
 }
 
@@ -78,6 +80,7 @@ function validHmac(ts: string, sig: string) {
   return timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
 }
 
+/* ---------- resolveServiceAccount (unchanged) ---------- */
 async function resolveServiceAccount(
   organizationId: string
 ): Promise<RequestContext | NextResponse> {
@@ -137,6 +140,7 @@ async function resolveServiceAccount(
   return { organizationId, userId: "service-account", tenantId };
 }
 
+/* ---------- resolveGuestTenant (unchanged) ------------- */
 async function resolveGuestTenant(
   organizationId: string
 ): Promise<string | NextResponse> {
@@ -183,6 +187,7 @@ async function resolveGuestTenant(
   return tenantId;
 }
 
+/* ---------- getContext (unchanged except ipAllowed logic) ---------- */
 export async function getContext(
   req: NextRequest
 ): Promise<RequestContext | NextResponse> {
@@ -214,9 +219,15 @@ export async function getContext(
       }
       return resolveServiceAccount(organizationId);
     } catch (e) {
-      console.error("JWT verification failed:", e.message);
-      console.error("JWT_PUBLIC_KEY used:", JWT_PUBLIC_KEY.replace(/\n/g, "\\n").slice(0, 100) + "...");
-      return NextResponse.json({ error: `Invalid or expired token: ${e.message}` }, { status: 401 });
+      console.error("JWT verification failed:", (e as Error).message);
+      console.error(
+        "JWT_PUBLIC_KEY used:",
+        JWT_PUBLIC_KEY.replace(/\n/g, "\\n").slice(0, 100) + "..."
+      );
+      return NextResponse.json(
+        { error: `Invalid or expired token: ${(e as Error).message}` },
+        { status: 401 }
+      );
     }
   }
 
@@ -244,7 +255,7 @@ export async function getContext(
 
   if (apiKey) {
     const { valid, error, user, key } =
-  await auth.api.verifyApiKey({ body: { key: apiKey } });
+      await auth.api.verifyApiKey({ body: { key: apiKey } });
     if (!valid) {
       return NextResponse.json(
         { error: error?.message || "Invalid API key" },
@@ -280,7 +291,6 @@ export async function getContext(
       .where("ownerUserId", "=", ownerUserId)
       .executeTakeFirst();
     
-
     if (tenantRow) {
       return { organizationId, userId: ownerUserId, tenantId: tenantRow.id };
     }

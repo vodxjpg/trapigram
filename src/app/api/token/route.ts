@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sign as jwtSign } from "jsonwebtoken";
 import { createHmac, timingSafeEqual } from "crypto";
 import { loadKey } from "@/lib/readKey";
+import { CIDR } from "ip-cidr";                  // ← NEW
 
 let MASTER_KEY!: string;
 let PRIVATE_KEY!: string;
@@ -12,27 +13,24 @@ let HMAC_WINDOW = 300_000;
 function ensureEnv() {
   if (MASTER_KEY) return;
 
-  MASTER_KEY = process.env.SERVICE_API_KEY ?? "";
-  HMAC_WINDOW = (Number(process.env.SERVICE_JWT_TTL) || 300) * 1_000;
+  MASTER_KEY   = process.env.SERVICE_API_KEY ?? "";
+  HMAC_WINDOW  = (Number(process.env.SERVICE_JWT_TTL) || 300) * 1_000;
   console.log("HMAC_WINDOW (ms):", HMAC_WINDOW);
 
   PRIVATE_KEY = loadKey(
-    process.env.SERVICE_JWT_PRIVATE_KEY ?? process.env.SERVICE_JWT_PRIVATE_KEY_PATH
-  );
-  if (PRIVATE_KEY.includes("\\n")) {
-    PRIVATE_KEY = PRIVATE_KEY.replace(/\\n/g, "\n").trim();
-  }
+    process.env.SERVICE_JWT_PRIVATE_KEY ?? process.env.SERVICE_JWT_PRIVATE_KEY_PATH,
+  ).replace(/\\n/g, "\n").trim();
   console.log("PRIVATE_KEY (first 50 chars):", PRIVATE_KEY.slice(0, 50) + "...");
   console.log("PRIVATE_KEY is PEM format:", PRIVATE_KEY.includes("-----BEGIN PRIVATE KEY-----"));
 
   CIDRS = (process.env.SERVICE_ALLOWED_CIDRS ?? "")
     .split(",")
-    .map(s => s.trim())
+    .map((s) => s.trim())
     .filter(Boolean);
 
   if (!MASTER_KEY || !PRIVATE_KEY || CIDRS.length === 0) {
     throw new Error(
-      "SERVICE_API_KEY / SERVICE_JWT_PRIVATE_KEY(_PATH) / SERVICE_ALLOWED_CIDRS missing"
+      "SERVICE_API_KEY / SERVICE_JWT_PRIVATE_KEY(_PATH) / SERVICE_ALLOWED_CIDRS missing",
     );
   }
 }
@@ -43,20 +41,13 @@ function toIPv4(raw: string) {
   return raw;
 }
 
-function ipToInt(ip: string) {
-  return ip.split(".").reduce((n, o) => (n << 8) + +o, 0) >>> 0;
-}
-
-function cidrMatch(ip: string, cidr: string) {
-  if (!cidr.includes("/")) return ip === cidr;
-  const [base, bits] = cidr.split("/");
-  const mask = -1 >>> (32 - Number(bits));
-  return (ipToInt(ip) & mask) === (ipToInt(base) & mask);
-}
-
+/* ─── replaced bit-mask math with ip-cidr ────────────────────────── */
 function ipAllowed(raw: string) {
   const ip = toIPv4(raw);
-  return CIDRS.some(c => cidrMatch(ip, c));
+  return CIDRS.some((c) => {
+    try   { return new CIDR(c).contains(ip); }
+    catch { return false; }                  // ignore malformed CIDR
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -79,10 +70,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
   }
 
-  const ts = req.headers.get("x-timestamp") ?? "";
+  const ts  = req.headers.get("x-timestamp") ?? "";
   const sig = req.headers.get("x-signature") ?? "";
   const age = Math.abs(Date.now() - Number(ts));
-
   console.log(`Timestamp: ${ts}, Signature: ${sig}, Age: ${age}ms`);
 
   if (!ts || !sig || age > HMAC_WINDOW) {
@@ -99,17 +89,20 @@ export async function POST(req: NextRequest) {
   try {
     const expiresSec = Math.floor(HMAC_WINDOW / 1_000);
     const payload = {
-      sub: "service-account",
+      sub  : "service-account",
       scope: "full",
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + expiresSec,
+      iat  : Math.floor(Date.now() / 1000),
+      exp  : Math.floor(Date.now() / 1000) + expiresSec,
     };
     console.log("Signing JWT with payload:", payload);
     const token = jwtSign(payload, PRIVATE_KEY, { algorithm: "RS256" });
     console.log("Generated JWT:", token.slice(0, 20) + "...");
     return NextResponse.json({ token, expiresIn: expiresSec });
-  } catch (e) {
+  } catch (e: any) {
     console.error("JWT signing failed:", e.message);
-    return NextResponse.json({ error: `JWT signing failed: ${e.message}` }, { status: 500 });
+    return NextResponse.json(
+      { error: `JWT signing failed: ${e.message}` },
+      { status: 500 },
+    );
   }
 }
