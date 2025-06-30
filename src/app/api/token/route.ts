@@ -1,4 +1,4 @@
-/* src/app/api/token/route.ts  (FULL after patch) */
+/* src/app/api/token/route.ts  — COMPLETE file */
 import { NextRequest, NextResponse } from "next/server";
 import { sign as jwtSign } from "jsonwebtoken";
 import { createHmac, timingSafeEqual } from "crypto";
@@ -30,32 +30,44 @@ function ensureEnv() {
   }
 }
 
-function normalise(ip: string) {
-  if (ip === "::1") return "127.0.0.1";
-  return ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+/* ────────────── IP helpers ───────────────── */
+function toIPv4(raw: string) {
+  if (raw === "::1") return "127.0.0.1";
+  return raw.startsWith("::ffff:") ? raw.slice(7) : raw;
 }
 
-function ipAllowed(ip: string) {
-  ip = normalise(ip);
-  return CIDRS.some(c => {
-    try   { return new CIDR(c).contains(ip); }
-    catch { return false; }           // ignore malformed CIDR
-  });
+function ipToInt(ip: string) {
+  return ip.split(".").reduce((n, o) => (n << 8) + +o, 0) >>> 0;
+}
+
+function cidrContains(ipStr: string, block: string) {
+  if (!block.includes("/")) return ipStr === block;
+  const [base, bitsStr] = block.split("/");
+  const bits = Number(bitsStr);
+  if (Number.isNaN(bits) || bits < 0 || bits > 32) return false;
+  const mask = (0xffffffff << (32 - bits)) >>> 0;
+  return (ipToInt(ipStr) & mask) === (ipToInt(base) & mask);
+}
+
+function ipAllowed(raw: string) {
+  const ip = toIPv4(raw.trim());
+  /* 1️⃣ fast-path via ip-cidr */
+  for (const c of CIDRS) {
+    try { if (new CIDR(c).contains(ip)) return true; }
+    catch {/* fall through */}
+  }
+  /* 2️⃣ deterministic fallback */
+  return CIDRS.some(c => cidrContains(ip, c));
 }
 
 function extractClientIp(req: NextRequest): string {
-  /* Cloudflare → real client */
   const cf = req.headers.get("cf-connecting-ip");
   if (cf) return cf;
-
-  /* Generic proxy chain */
   const xff = req.headers.get("x-forwarded-for");
   if (xff) return xff.split(",")[0].trim();
-
-  /* Fallback: edge runtime */
   return (req as any).ip || "";
 }
-
+/* ────────────── handler ───────────────── */
 export async function POST(req: NextRequest) {
   ensureEnv();
 
@@ -75,7 +87,6 @@ export async function POST(req: NextRequest) {
   const ts  = req.headers.get("x-timestamp") ?? "";
   const sig = req.headers.get("x-signature") ?? "";
   const age = Math.abs(Date.now() - Number(ts));
-
   if (!ts || !sig || age > HMAC_WINDOW) {
     return NextResponse.json({ error: "Bad timestamp" }, { status: 401 });
   }
@@ -86,12 +97,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const expSec  = Math.floor(HMAC_WINDOW / 1_000);
     const nowSec  = Math.floor(Date.now() / 1000);
-    const payload = { sub: "service-account", scope: "full", iat: nowSec, exp: nowSec + expSec };
-    const token   = jwtSign(payload, PRIVATE_KEY, { algorithm: "RS256" });
-
-    return NextResponse.json({ token, expiresIn: expSec });
+    const expSec  = nowSec + Math.floor(HMAC_WINDOW / 1_000);
+    const token   = jwtSign(
+      { sub: "service-account", scope: "full", iat: nowSec, exp: expSec },
+      PRIVATE_KEY,
+      { algorithm: "RS256" },
+    );
+    return NextResponse.json({ token, expiresIn: expSec - nowSec });
   } catch (e: any) {
     return NextResponse.json({ error: `JWT signing failed: ${e.message}` }, { status: 500 });
   }
