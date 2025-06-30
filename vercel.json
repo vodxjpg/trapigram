@@ -2,5 +2,9 @@
   "env": {
     "NODE_EXTRA_CA_CERTS": "certs/prod-ca-2021.crt"
   },
-  "includeFiles": "certs/**"
+  "functions": {
+    "app/api/**/route.[jt]s": {
+      "includeFiles": "certs/**"
+    }
+  }
 }
