@@ -1,11 +1,6 @@
 {
-    "env": {
-      "NODE_EXTRA_CA_CERTS": "./certs/prod-ca-2021.crt"
-    },
-    "functions": {
-      "api/**/*.js":      { "includeFiles": "certs/**" },
-      "api/**/*.ts":      { "includeFiles": "certs/**" },
-      ".next/**/route.js":{ "includeFiles": "certs/**" }
-    }
-  }
-  
+  "env": {
+    "NODE_EXTRA_CA_CERTS": "certs/prod-ca-2021.crt"
+  },
+  "serverFiles": ["certs/**"]
+}
