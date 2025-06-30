@@ -5,7 +5,7 @@ import { verify as jwtVerify, JwtPayload } from "jsonwebtoken";
 import net from "net";
 import fs from "fs";
 import path from "path";
-import { CIDR } from "ip-cidr";               // ← NEW
+import CIDR  from "ip-cidr";               // ← NEW
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";

@@ -2,7 +2,7 @@
 import { BetterAuthPlugin } from "better-auth";
 import { createAuthEndpoint } from "better-auth/api";
 import { plans } from "@/data/plans";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 
 // nothing
