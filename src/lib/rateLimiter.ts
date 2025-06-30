@@ -2,7 +2,7 @@
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { NextRequest, NextResponse } from 'next/server';
 
-// 100 req / 60s for most endpoints
+// 100 req / 60s for most endpoints this is general
 export const globalLimiter = new RateLimiterMemory({
   points: 100,
   duration: 60,

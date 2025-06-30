@@ -740,7 +740,7 @@ const pool = new Pool({
   ssl: {
     ca: supabaseCA,
     rejectUnauthorized: true,
-    /** Enforce modern cipher suites; Node ≥20 negotiates TLS 1.3 by default,
+    /** Enforce modern ciphe suites; Node ≥20 negotiates TLS 1.3 by default,
      * but we pin it defensively. */
     minVersion: "TLSv1.3",
   },
