@@ -12,7 +12,6 @@ export type NotificationType =
   | "order_placed"
   | "order_paid"
   | "order_completed"
-  | "order_ready"
   | "order_cancelled"
   | "order_refunded"
   | "order_partially_paid"
