@@ -200,11 +200,6 @@ export async function getContext(
   const apiKey = req.headers.get("x-api-key") ?? "";
 
   if (authz.startsWith("Bearer ")) {
-    const ip = clientIp(req);
-    if (!ipAllowed(ip)) {
-      return NextResponse.json({ error: "IP not allowed" }, { status: 403 });
-    }
-
     try {
       const token = authz.slice(7);
       const payload = jwtVerify(token, JWT_PUBLIC_KEY, { algorithms: ["RS256"] }) as JwtPayload;
