@@ -1,3 +1,4 @@
+// middleware.ts  (FULL, HARDENED 2025-06-30)
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie }          from "better-auth/cookies";
 import { enforceRateLimit }          from "@/lib/rateLimiter";
@@ -12,7 +13,21 @@ const CORS_ALLOW_HEADERS =
   "Content-Type,Authorization,x-api-key,x-timestamp,x-signature";
 const CORS_ALLOW_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
 
-/* helper – add the cors headers that browsers require */
+/*──────────────────── Helpers ────────────────────*/
+function applySecurityHeaders(res: Response) {
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("X-Frame-Options", "DENY");
+  res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  res.headers.set("Content-Security-Policy", "default-src 'self'");
+  if (process.env.NODE_ENV === "production") {
+    res.headers.set(
+      "Strict-Transport-Security",
+      "max-age=63072000; includeSubDomains; preload",
+    );
+  }
+}
+
 function applyCorsHeaders(res: Response, origin: string) {
   if (!origin) return;
   res.headers.set("Access-Control-Allow-Origin", origin);
@@ -20,16 +35,22 @@ function applyCorsHeaders(res: Response, origin: string) {
   res.headers.set("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
   res.headers.set("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
   res.headers.set("Vary", "Origin");
+  applySecurityHeaders(res);                     // piggy-back security headers
 }
 
-/* safest IP extractor for Vercel / CF → take **right-most** IP */
-function clientIp(req: NextRequest) {
-  const fwd = req.headers.get("x-forwarded-for");
-  if (!fwd) return (req as any).ip ?? "";
-  const ips = fwd.split(",").map(s => s.trim());
-  return ips[ips.length - 1];           // first hop after the edge
+/* Resolve caller IP:
+   • Cloudflare → CF-Connecting-IP
+   • Vercel / others → x-forwarded-for first element
+   • Fallback to req.ip  */
+function clientIp(req: NextRequest): string {
+  const cfc = req.headers.get("cf-connecting-ip");
+  if (cfc) return cfc;
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) return xff.split(",")[0].trim();
+  return (req as any).ip ?? "unknown";
 }
 
+/*──────────────────── Middleware ────────────────────*/
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
@@ -48,9 +69,9 @@ export async function middleware(req: NextRequest) {
       return res;
     }
 
-    /* Rate-limit — if the limiter throws, decorate the 429 with CORS */
+    /* Rate-limit */
     try {
-      await enforceRateLimit(req);
+      await enforceRateLimit(req, clientIp(req));   // pass resolved IP
     } catch (rateRes: any) {
       if (rateRes instanceof Response) {
         applyCorsHeaders(rateRes, allowOrigin);
@@ -66,50 +87,45 @@ export async function middleware(req: NextRequest) {
   }
 
   /*────────────────────────────────────────
-    2️⃣  Auth & onboarding for pages / assets
+    2️⃣  Auth & public-page logic
   ────────────────────────────────────────*/
-  const pathLower = pathname.toLowerCase();
-
-  const PUBLIC_PATHS = [
+  const lower = pathname.toLowerCase();
+  const PUBLIC = [
     "/", "/login", "/sign-up", "/forgot-password", "/verify-email",
     "/check-email", "/accept-invitation/",
   ];
-  const isPublic = PUBLIC_PATHS.some(p =>
-    p === "/"
-      ? pathLower === "/"
-      : p.endsWith("/")        /* prefix match */
-        ? pathLower.startsWith(p)
-        : pathLower === p,
+  const isPublic = PUBLIC.some(p =>
+    p === "/" ? lower === "/" : p.endsWith("/") ? lower.startsWith(p) : lower === p,
   );
   if (isPublic) return NextResponse.next();
 
-  /* /reset-password special-case */
-  if (pathLower === "/reset-password") {
+  /* /reset-password must carry ?token= */
+  if (lower === "/reset-password") {
     if (!req.nextUrl.searchParams.get("token")) {
       return NextResponse.redirect(new URL("/forgot-password", req.url));
     }
     return NextResponse.next();
   }
 
-  const sessionCookie = getSessionCookie(req);
-  if (!sessionCookie) {
+  /* Session required */
+  if (!getSessionCookie(req)) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  /* Call central policy endpoint */
+  /* Central policy check */
   const checkUrl = new URL("/api/auth/check-status", req.url);
   checkUrl.searchParams.set("originalPath", pathname);
 
-  const checkRes  = await fetch(checkUrl, {
+  const policyRes = await fetch(checkUrl, {
+    method: "GET",
     headers: req.headers,
-    method : "GET",
     credentials: "include",
   });
 
-  /* network / DB hiccup → let request through, client will retry */
-  if (!checkRes.ok) return NextResponse.next();
+  /* network / DB hiccup → allow */
+  if (!policyRes.ok) return NextResponse.next();
 
-  const { redirect } = await checkRes.json();
+  const { redirect } = await policyRes.json();
   if (redirect && redirect !== pathname) {
     return NextResponse.redirect(new URL(redirect, req.url));
   }
