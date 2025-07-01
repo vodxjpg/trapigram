@@ -15,7 +15,10 @@ export type NotificationType =
   | "order_cancelled"
   | "order_refunded"
   | "order_partially_paid"
-  | "order_shipped"; // ← NEW
+  | "order_shipped"
+  | "ticket_created"  
+  | "ticket_replied"
+  | "order_message";
 
 export type NotificationChannel = "email" | "in_app" | "webhook" | "telegram";
 

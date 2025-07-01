@@ -51,45 +51,66 @@ if (guard) return guard;
 /* ---------- POST /api/order/[orderId]/messages ---------- */
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
+  const { organizationId, userId } = ctx;
+
+  const guard = await requireOrgPermission(req, { orderChat: ["view"] });
+  if (guard) return guard;
 
   try {
-        // authorization: reuse same view permission (or define write, but using view)
-    const guard = await requireOrgPermission(req, { orderChat: ["view"] });
-    if (guard) return guard;
     const { id } = await params;
-    const internalHeader = req.headers.get("x-is-internal");
-    const isInternal = internalHeader === "true";
-    const data = await req.json();
-    const { message, clientId } = data
+    const isInternal = req.headers.get("x-is-internal") === "true";
+    const raw = await req.json();
+    const { message, clientId } = messagesSchema.parse(raw);
 
-    const messageId = uuidv4();
+    /* insert */
+    const msgId = uuidv4();
+    await pool.query(
+      `INSERT INTO "orderMessages"
+         (id,"orderId","clientId",message,"isInternal","createdAt")
+       VALUES ($1,$2,$3,$4,$5,NOW())`,
+      [msgId, id, clientId, message, isInternal],
+    );
 
-    const insertQuery = `
-      INSERT INTO "orderMessages"
-        (id, "orderId", "clientId", message, "isInternal", "createdAt")
-      VALUES
-        ($1, $2, $3, $4, $5, NOW())
-      RETURNING *;
-    `;
+    /* ─── notify (public only) ─── */
+    if (!isInternal) {
+      const { rows: [ord] } = await pool.query(
+        `SELECT "orderKey","clientId" FROM orders WHERE id = $1`,
+        [id],
+      );
+      const { orderKey, clientId: orderClientId } = ord;
+      const { rows: [cli] } = await pool.query(
+        `SELECT "userId" FROM clients WHERE id = $1`,
+        [orderClientId],
+      );
 
-    const values = [
-      messageId,
-      id,
-      clientId,
-      message,
-      isInternal
-    ]
+      const customerSent = cli?.userId === userId;
+      const channels: NotificationChannel[] = ["email", "in_app"];
 
-    const mRes = await pool.query(insertQuery, values);
-    const messages = mRes.rows[0]
+      await sendNotification({
+        organizationId,
+        type: "order_message",
+        message: customerSent
+          ? `New message from customer on order <strong>#${orderKey}</strong>: ${message}`
+          : `Update on your order <strong>#${orderKey}</strong>: ${message}`,
+        subject: customerSent
+          ? `Customer message on order #${orderKey}`
+          : `Reply regarding order #${orderKey}`,
+        variables: { order_number: orderKey },
+        channels,
+        clientId: customerSent ? null : orderClientId,
+      });
+    }
 
-    return NextResponse.json({ messages }, { status: 200 });
+    return NextResponse.json({ ok: true }, { status: 200 });
   } catch (err) {
-    console.error("[GET /api/order/:id/messages]", err);
+    console.error("[POST /api/order/:id/messages]", err);
+    if (err instanceof z.ZodError)
+      return NextResponse.json({ error: err.errors }, { status: 400 });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
