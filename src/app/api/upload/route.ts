@@ -6,7 +6,7 @@ import { join } from "path";
 import { getContext } from "@/lib/context";
 
 /* helper: decide storage backend */
-const useBlob = !!process.env.VERCEL_BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN;
+const useBlob = !!process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
 
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
