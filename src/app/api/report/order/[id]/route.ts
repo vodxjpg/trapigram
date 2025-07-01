@@ -90,7 +90,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             let total = 0
             let value = 0
 
-            if (paymentType === 'coinx') {
+            if (paymentType === 'niftipay') {
 
                 const coin = order.orderMeta[0].order.asset
                 const url = `https://api.coingecko.com/api/v3/coins/${coins[coin]}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
@@ -125,7 +125,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 const shipping = order.shippingTotal * value
                 const cost = totalCost * value
 
-                if (paymentType !== 'coinx') {
+                if (paymentType !== 'niftipay') {
                     total = order.totalAmount * value
                 }
 
@@ -153,7 +153,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 const shipping = order.shippingTotal * value
                 const cost = totalCost * value
 
-                if (paymentType !== 'coinx') {
+                if (paymentType !== 'niftipay') {
                     total = order.totalAmount * value
                 }
 
@@ -171,7 +171,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 const shipping = Number(order.shippingTotal)
                 const cost = Number(totalCost)
 
-                if (paymentType !== 'coinx') {
+                if (paymentType !== 'niftipay') {
                     total = order.totalAmount
                 }
 

@@ -6,8 +6,7 @@ import { betterAuth } from "better-auth";
 import { magicLink, organization, apiKey } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { createAuthMiddleware } from "better-auth/api";
-
-import { db, pgPool } from "@/lib/db";            // ← central Kysely + Pool
+import { db, pgPool } from "@/lib/db";
 import { sendEmail }   from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
 import { ac, owner }   from "@/lib/permissions";
