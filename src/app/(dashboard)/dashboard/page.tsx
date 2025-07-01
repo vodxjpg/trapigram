@@ -303,7 +303,7 @@ export default function DashboardPage() {
       tour.drive();
 
       // mark as shown
-      //localStorage.setItem("hasSeenDriverTour", "true");
+      localStorage.setItem("hasSeenDriverTour", "true");
     }
   }, []);
 
