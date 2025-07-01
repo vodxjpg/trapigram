@@ -4,6 +4,8 @@ import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
+import { sendNotification, NotificationChannel } from "@/lib/notifications";
+
 
 // nothing
 /* ---------- validation helpers ---------- */
@@ -51,7 +53,7 @@ if (guard) return guard;
 /* ---------- POST /api/order/[orderId]/messages ---------- */
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: { id: string } },
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -61,29 +63,41 @@ export async function POST(
   if (guard) return guard;
 
   try {
-    const { id } = await params;
+    const { id } = params;
     const isInternal = req.headers.get("x-is-internal") === "true";
-    const raw = await req.json();
-    const { message, clientId } = messagesSchema.parse(raw);
 
-    /* insert */
+    /* validate body */
+    const raw   = await req.json();
+    const { message, clientId } = messagesSchema.parse({ ...raw, isInternal });
+
+    /* insert message and return saved row */
     const msgId = uuidv4();
-    await pool.query(
-      `INSERT INTO "orderMessages"
-         (id,"orderId","clientId",message,"isInternal","createdAt")
-       VALUES ($1,$2,$3,$4,$5,NOW())`,
+    const {
+      rows: [saved],
+    } = await pool.query(
+      `
+      INSERT INTO "orderMessages"
+        (id,"orderId","clientId",message,"isInternal","createdAt")
+      VALUES ($1,$2,$3,$4,$5,NOW())
+      RETURNING *;
+      `,
       [msgId, id, clientId, message, isInternal],
     );
 
-    /* ─── notify (public only) ─── */
+    /* ─── notifications (public only) ─── */
     if (!isInternal) {
-      const { rows: [ord] } = await pool.query(
-        `SELECT "orderKey","clientId" FROM orders WHERE id = $1`,
+      const {
+        rows: [ord],
+      } = await pool.query(
+        `SELECT "orderKey","clientId" FROM orders WHERE id = $1 LIMIT 1`,
         [id],
       );
       const { orderKey, clientId: orderClientId } = ord;
-      const { rows: [cli] } = await pool.query(
-        `SELECT "userId" FROM clients WHERE id = $1`,
+
+      const {
+        rows: [cli],
+      } = await pool.query(
+        `SELECT "userId" FROM clients WHERE id = $1 LIMIT 1`,
         [orderClientId],
       );
 
@@ -105,7 +119,8 @@ export async function POST(
       });
     }
 
-    return NextResponse.json({ ok: true }, { status: 200 });
+    /* respond with the saved message for the UI */
+    return NextResponse.json({ messages: saved }, { status: 200 });
   } catch (err) {
     console.error("[POST /api/order/:id/messages]", err);
     if (err instanceof z.ZodError)
@@ -113,4 +128,3 @@ export async function POST(
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
-
