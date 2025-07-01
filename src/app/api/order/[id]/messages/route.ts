@@ -89,7 +89,10 @@ export async function POST(
       const {
         rows: [ord],
       } = await pool.query(
-        `SELECT "orderKey","clientId" FROM orders WHERE id = $1 LIMIT 1`,
+             `SELECT "orderKey","clientId", country
+                FROM orders
+               WHERE id = $1
+               LIMIT 1`,
         [id],
       );
       const { orderKey, clientId: orderClientId, country: orderCountry } = ord;
