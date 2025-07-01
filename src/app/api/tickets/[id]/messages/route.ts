@@ -107,25 +107,26 @@ export async function POST(
 
     /* 4️⃣-bis notify client on public reply */
     if (!parsed.isInternal) {
-      // look up clientId for this ticket
-      const { rows } = await pool.query(
-        `SELECT "clientId" FROM tickets WHERE id = $1 LIMIT 1`,
+      const {
+        rows: [{ clientId: orderClientId, country: clientCountry }],
+      } = await pool.query(
+        `SELECT t."clientId", c.country
+           FROM tickets t
+           JOIN clients c ON c.id = t."clientId"
+          WHERE t.id = $1 LIMIT 1`,
         [id],
       );
-      const clientId = rows[0]?.clientId ?? null;
 
       const channels: NotificationChannel[] = ["email", "in_app"];
       await sendNotification({
         organizationId,
-        type:    "ticket_replied",
+        type: "ticket_replied",
         message: `Update on your ticket: <strong>${messageText}</strong>`,
         subject: `Reply on ticket #${id}`,
-        variables: {
-          ticket_number: id,           // ★ NEW placeholder
-          ticket_id:     id,
-        },
+        variables: { ticket_number: id },
         channels,
-        clientId,
+        clientId: orderClientId,
+        country: clientCountry,      // ★ ensure match
       });
     }
 

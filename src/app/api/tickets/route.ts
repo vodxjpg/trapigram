@@ -107,6 +107,11 @@ export async function POST(req: NextRequest) {
     const result = (await pool.query(insert, vals)).rows[0];
 
     /* ─── fire notification ─── */
+    const { rows: [cli] } = await pool.query(
+      `SELECT country FROM clients WHERE id = $1 LIMIT 1`,
+      [data.clientId],
+    );
+    const clientCountry = cli?.country ?? null;
     const channels: NotificationChannel[] = ["email", "in_app"];
     await sendNotification({
       organizationId,

@@ -92,7 +92,7 @@ export async function POST(
         `SELECT "orderKey","clientId" FROM orders WHERE id = $1 LIMIT 1`,
         [id],
       );
-      const { orderKey, clientId: orderClientId } = ord;
+      const { orderKey, clientId: orderClientId, country: orderCountry } = ord;
 
       const {
         rows: [cli],
@@ -116,6 +116,7 @@ export async function POST(
         variables: { order_number: orderKey },
         channels,
         clientId: customerSent ? null : orderClientId,
+        country:  orderCountry,      // ★ crucial for template match
       });
     }
 
