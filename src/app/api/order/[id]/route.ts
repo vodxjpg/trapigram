@@ -147,7 +147,7 @@ const subtotal = products
       firstName: client.firstName,
       lastName:  client.lastName,
       username:  client.username,
-      email:     client.email,
+      email: client.email ?? "",
     },
   };
 

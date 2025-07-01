@@ -157,7 +157,7 @@ export default function OrderView() {
           ...o,
           clientFirstName: c.firstName,
           clientLastName: c.lastName,
-          clientEmail: c.email,
+          clientEmail:     c.email ?? "",
           clientUsername: c.username,
         });
         setError(null);
@@ -583,11 +583,11 @@ export default function OrderView() {
                           >
                             <Avatar className="mt-1">
                               <AvatarFallback>
-                                {m.isInternal
+                               {m.isInternal
                                   ? "A"
-                                  : order.clientEmail
-                                    .charAt(0)
-                                    .toUpperCase()}
+                                  : (order.clientEmail ?? order.clientUsername ?? "?")
+                                      .charAt(0)
+                                      .toUpperCase()}
                               </AvatarFallback>
                             </Avatar>
                             <div
