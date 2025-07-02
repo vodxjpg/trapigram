@@ -124,6 +124,33 @@ export const auth = betterAuth({
         }
       },
     },
+     // ──────────────────────────────────────────────────────────────
+ //  When a new session is created pick the user’s first org and
+ //  store it in `activeOrganizationId`.  Every tab can now call
+ //  getActiveMember / usePermission without a separate “setActive”.
+ // ──────────────────────────────────────────────────────────────
+ session: {
+   create: {
+     before: async (session) => {
+       const firstOrg = await db
+         .selectFrom("member")
+         .select("organizationId")
+         .where("userId", "=", session.userId)
+         .orderBy("createdAt")
+         .limit(1)
+         .executeTakeFirst();
+
+       if (!firstOrg) return { data: session };   // no memberships yet
+
+       return {
+         data: {
+           ...session,
+           activeOrganizationId: firstOrg.organizationId,
+         },
+       };
+     },
+   },
+ },
   },
 
   /*──────────────────── Session extras ──────────────*/
