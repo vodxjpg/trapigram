@@ -9,26 +9,13 @@ import { createAuthMiddleware } from "better-auth/api";
 import { db, pgPool } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
-
-import {
-  ac,
-  builtinRoles,         // owner / admin / member
-  registerDynamicRoles,  // builds Role objects from DB rows
-  buildRoles,            // merges built-ins + dynamic
-} from "@/lib/permissions";
-
+import { ac } from "@/lib/permissions";
+import { roles } from "@/lib/roles"; // Import roles from new file
 import { v4 as uuidv4 } from "uuid";
 
 /*───────────────────────────────────────────────────────────────────
   MAIN CONFIG
 ───────────────────────────────────────────────────────────────────*/
-
-const dynamicRoleRows = await db
-  .selectFrom("orgRole")
-  .select(["name", "permissions"])
-  .execute();
-const dynamicRoles = registerDynamicRoles(dynamicRoleRows);
-export const roles = buildRoles(dynamicRoles);
 export const auth = betterAuth({
   /*──────────────────── Database ────────────────────*/
   database: pgPool,                   // ← one source of truth
