@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { authClient } from "@/lib/auth-client";                  // ← NEW
+import { usePermission } from "@/hooks/use-permission";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Edit } from "lucide-react";
@@ -38,6 +38,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, CalendarIcon, MoreVertical, Mail, Truck } from "lucide-react";
 import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 import { toast } from "sonner";
+
+// **New imports for the dialog/modal**
 import {
   Dialog,
   DialogContent,
@@ -46,8 +48,16 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-type OrderStatus = "open" | "underpaid" | "paid" | "cancelled" | "refunded" | "completed";
+// Define order status types
+type OrderStatus =
+  | "open"
+  | "underpaid"
+  | "paid"
+  | "cancelled"
+  | "refunded"
+  | "completed";
 
+// **Extend Order to include trackingNumber**
 interface Order {
   id: string;
   orderKey: string;
@@ -56,72 +66,61 @@ interface Order {
   username: string;
   email: string;
   status: OrderStatus;
-  createdAt: string;
+  createdAt: string; // incoming ISO string
   total: number;
   trackingNumber?: string;
 }
 
+// Date filter options
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
 
 export default function OrdersPage() {
+   const can = usePermission(); ;
   const router = useRouter();
-  const can = authClient.organization.checkRolePermission;           // ← NEW
 
-  // ─── load current member to get their role ─────────────────────────
-  const { data: member, isLoading: loadingMember, error: memberError } =
-    authClient.organization.useActiveMember();
+  /* ──────────────────────────────────────────────────────────────
+   *  Permission flags (computed once role is known)
+   * ────────────────────────────────────────────────────────────── */
+  const canViewDetail = !can.loading && can({ order: ["view"] });
+  const canViewPricing = !can.loading && can({ order: ["view_pricing"] });
+  const canUpdate = !can.loading && can({ order: ["update"] });
+  const canUpdateTracking = !can.loading && can({ order: ["update_tracking"] });
 
-  // ─── while we’re loading the member record… ───────────────────────
-  if (loadingMember) {
-    return (
-      <div className="container mx-auto py-8 px-4 text-center">
-        Loading permissions…
-      </div>
-    );
-  }
-  if (memberError) {
-    return (
-      <div className="container mx-auto py-8 px-4 text-center text-red-600">
-        Error loading permissions
-      </div>
-    );
-  }
-
-  const role = member?.role || "";
-
-  // ─── compute all flags synchronously ──────────────────────────────
-  const canViewDetail     = can({ permissions: { order: ["view"] },           role });
-  const canViewPricing    = can({ permissions: { order: ["view_pricing"] },    role });
-  const canUpdate         = can({ permissions: { order: ["update"] },         role });
-  const canUpdateTracking = can({ permissions: { order: ["update_tracking"] }, role });
-
-  // ◼︎ orders state
+  // ◼︎ state for all orders via API
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // ◼︎ modal / tracking
-  const [dialogOpen, setDialogOpen]         = useState(false);
+  // **Modal state**
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
-  const [draftTracking, setDraftTracking]   = useState("");
+  const [draftTracking, setDraftTracking] = useState("");
 
-  // ◼︎ filters
+  // ◼︎ filters & UI state
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([]);
-  const [searchQuery, setSearchQuery]       = useState("");
-  const [statusFilter, setStatusFilter]     = useState<string>("all");
-  const [dateFilter, setDateFilter]         = useState<DateFilterOption>("all");
-  const [dateRange, setDateRange]           = useState<{ from?: Date; to?: Date }>({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [dateFilter, setDateFilter] = useState<DateFilterOption>("all");
+  const [dateRange, setDateRange] = useState<{
+    from: Date | undefined;
+    to: Date | undefined;
+  }>({ from: undefined, to: undefined });
 
-  // ◼︎ pagination
+  // ◼︎ pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
   type ShippingCompany = { id: string; name: string };
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
-  const [shippingLoading, setShippingLoading]     = useState(false);
-  const [selectedCompany, setSelectedCompany]     = useState<string>();
 
-  // ─── fetch orders ─────────────────────────────────────────────────
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
+    []
+  );
+  const [shippingLoading, setShippingLoading] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState<string | undefined>(
+    undefined
+  );
+
+  // — fetch orders from /api/order on mount
   useEffect(() => {
     setLoading(true);
     fetch("/api/order")
@@ -137,9 +136,14 @@ export default function OrdersPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  // ─── apply filters ────────────────────────────────────────────────
+
+
+  // — apply filters whenever inputs or orders change
   useEffect(() => {
-    let result = orders.map((o) => ({ ...o, createdAt: new Date(o.createdAt).toString() }));
+    let result = orders.map((o) => ({
+      ...o,
+      createdAt: new Date(o.createdAt).toString(),
+    })) as Order[];
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -157,11 +161,14 @@ export default function OrdersPage() {
     if (dateFilter !== "all") {
       const now = new Date();
       if (dateFilter === "today") {
-        result = result.filter((o) => new Date(o.createdAt) >= startOfDay(now));
+        const start = startOfDay(now);
+        result = result.filter((o) => new Date(o.createdAt) >= start);
       } else if (dateFilter === "last-week") {
-        result = result.filter((o) => new Date(o.createdAt) >= startOfDay(subWeeks(now, 1)));
+        const since = startOfDay(subWeeks(now, 1));
+        result = result.filter((o) => new Date(o.createdAt) >= since);
       } else if (dateFilter === "last-month") {
-        result = result.filter((o) => new Date(o.createdAt) >= startOfDay(subMonths(now, 1)));
+        const since = startOfDay(subMonths(now, 1));
+        result = result.filter((o) => new Date(o.createdAt) >= since);
       } else if (dateFilter === "custom" && dateRange.from) {
         const from = startOfDay(dateRange.from);
         const to = dateRange.to ? endOfDay(dateRange.to) : endOfDay(now);
@@ -177,38 +184,48 @@ export default function OrdersPage() {
 
   const getStatusColor = (s: OrderStatus) => {
     switch (s) {
-      case "open":       return "bg-blue-500";
-      case "paid":       return "bg-green-500";
-      case "cancelled":  return "bg-red-500";
-      case "refunded":   return "bg-red-500";
-      case "underpaid":  return "bg-orange-500";
-      case "completed":  return "bg-purple-500";
-      default:           return "bg-gray-500";
+      case "open":
+        return "bg-blue-500";
+      case "paid":
+        return "bg-green-500";
+      case "cancelled":
+        return "bg-red-500";
+      case "refunded":
+        return "bg-red-500";
+      case "underpaid":
+        return "bg-orange-500";
+      case "completed":
+        return "bg-purple-500";
+      default:
+        return "bg-gray-500";
     }
   };
 
-  // ─── fetch shipping companies when modal opens ────────────────────
   useEffect(() => {
     if (!dialogOpen) return;
     (async () => {
       setShippingLoading(true);
       try {
-        const res = await fetch("/api/shipping-companies", {
-          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+        const compRes = await fetch("/api/shipping-companies", {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
         });
-        if (!res.ok) throw new Error("Failed to fetch shipping companies");
-        const { shippingMethods } = await res.json();
-        setShippingCompanies(shippingMethods);
-      } catch (e: any) {
-        toast.error(e.message);
+        if (!compRes.ok) throw new Error("Failed to fetch shipping companies");
+        const comps: { companies: ShippingCompany[] } = await compRes.json();
+        setShippingCompanies(comps.shippingMethods);
+      } catch (err: any) {
+        toast.error(err.message);
       } finally {
         setShippingLoading(false);
       }
     })();
   }, [dialogOpen]);
-
-  // ─── status update ────────────────────────────────────────────────
-  const handleStatusChange = async (orderId: string, newStatus: OrderStatus) => {
+  // Function to change order status via API
+  const handleStatusChange = async (
+    orderId: string,
+    newStatus: OrderStatus
+  ) => {
     try {
       const res = await fetch(`/api/order/${orderId}/change-status`, {
         method: "PATCH",
@@ -219,22 +236,27 @@ export default function OrdersPage() {
       setOrders((prev) =>
         prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
       );
-      toast.success("Order status changed");
-    } catch {
+      toast.success(`Order status changed`);
+    } catch (err) {
+      console.error(err);
       alert("Error updating order status");
     }
   };
 
   const handleOrderAction = (orderId: string, action: string) => {
+    console.log(`Performing ${action} on order ${orderId}`);
     if (action === "cancel") {
       setOrders((prev) =>
         prev.map((o) => (o.id === orderId ? { ...o, status: "cancelled" } : o))
       );
-    } else {
-      alert(`Action "${action}" on ${orderId}`);
+    } else if (action === "initiate-payment") {
+      alert(`Payment initiated for order ${orderId}`);
+    } else if (action === "send-notification") {
+      alert(`Payment notification sent for order ${orderId}`);
     }
   };
 
+  // **Open the tracking modal**
   const handleTracking = (orderId: string) => {
     const order = orders.find((o) => o.id === orderId);
     setSelectedOrderId(orderId);
@@ -242,22 +264,30 @@ export default function OrdersPage() {
     setDialogOpen(true);
   };
 
+  // **Save tracking to API**
   const saveTracking = async () => {
-    if (!selectedOrderId || !selectedCompany) {
-      toast.error("Select a shipping company and enter a tracking number");
+    if (!selectedOrderId) return;
+    // ensure a company is selected
+    if (!selectedCompany) {
+      toast.error("Please select a shipping company before saving.");
       return;
     }
     const company = shippingCompanies.find((c) => c.id === selectedCompany);
+    if (!company) {
+      toast.error("Selected shipping company not found.");
+      return;
+    }
     try {
       const res = await fetch(`/api/order/${selectedOrderId}/tracking-number`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           trackingNumber: draftTracking,
-          shippingCompany: company!.name,
+          shippingCompany: company.name,
         }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) throw new Error("Failed to save tracking number");
+      // Optimistically update UI
       setOrders((prev) =>
         prev.map((o) =>
           o.id === selectedOrderId ? { ...o, trackingNumber: draftTracking } : o
@@ -265,26 +295,52 @@ export default function OrdersPage() {
       );
       toast.success("Tracking number saved");
       setDialogOpen(false);
-    } catch {
+    } catch (err) {
+      console.error(err);
       toast.error("Could not save tracking");
     }
   };
 
-  const formatDate = (d: string) => format(new Date(d), "MMM dd, yyyy");
-  const handleDateFilterChange = (v: DateFilterOption) => {
-    setDateFilter(v);
-    if (v !== "custom") setDateRange({});    
+  const formatDate = (dateStr: string) =>
+    format(new Date(dateStr), "MMM dd, yyyy");
+
+  const handleDateFilterChange = (value: DateFilterOption) => {
+    setDateFilter(value);
+    if (value !== "custom") setDateRange({ from: undefined, to: undefined });
   };
 
-  // ─── pagination ───────────────────────────────────────────────────
+  // paginate
   const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
   const paginatedOrders = filteredOrders.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
 
-  if (loading) return <div className="text-center py-8">Loading orders…</div>;
-  if (error)   return <div className="text-center py-8 text-red-600">Error: {error}</div>;
+  /* ──────────────────────────────────────────────────────────────
+ *  All hooks above have now executed; it’s safe to short-circuit
+ *  rendering while permissions are still loading.
+ * ────────────────────────────────────────────────────────────── */
+if (can.loading) {
+  return (
+    <div className="container mx-auto py-8 px-4 text-center">
+      Loading permissions…
+    </div>
+  );
+}
+
+
+  if (loading)
+    return (
+      <div className="container mx-auto py-8 px-4 text-center">
+        Loading orders…
+      </div>
+    );
+  if (error)
+    return (
+      <div className="container mx-auto py-8 px-4 text-center text-red-600">
+        Error loading orders: {error}
+      </div>
+    );
 
   return (
     <div className="container mx-auto py-8 px-4">
