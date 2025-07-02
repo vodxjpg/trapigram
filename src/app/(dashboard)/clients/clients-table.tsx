@@ -119,13 +119,8 @@ export function ClientsTable() {
   const canPoints = can({ affiliates: ["points"] });
 
   // enforce that they at least can see clients
-  useEffect(() => {
-    if (!can.loading && !canView) {
-      router.replace("/clients");
-    }
-  }, [can.loading, canView, router]);
-
-  if (can.loading || !canView) return null;
+  if (can.loading) return null;           // still wait for the hook
+  if (!canView)     return null;    
 
   function formatDate(createdAt) {
     const date = new Date(createdAt);
