@@ -1,65 +1,31 @@
-// src/lib/permissions.ts  — centralised role & ACL definition
-// -----------------------------------------------------------------------------
-// 1.  All resources & actions that exist in the product live in `statements`.
-// 2.  An access‑control engine (`ac`) is created once and exported.
-// 3.  Built‑in roles (owner / admin / member) are defined **here** so that both
-//     the server plugin *and* the react client can import the exact same object.
-// 4.  Custom roles that an Owner creates at runtime are persisted in the DB.
-//     They are registered with `ac` at boot time via `registerDynamicRoles()`
-//     and merged with the built‑ins before being passed into the plugin.
-// -----------------------------------------------------------------------------
-
+// src/lib/permissions.ts
 import { createAccessControl } from "better-auth/plugins/access";
-import {
-  defaultStatements,
-  ownerAc,
-} from "better-auth/plugins/organization/access";
+import { defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
 
-/* -------------------------------------------------------------------------- */
-/*  Domain‑specific resources & actions                                        */
-/* -------------------------------------------------------------------------- */
 export const domainStatements = {
-  member:            ["delete", "update_role"],
-  invitation:        ["create", "cancel"],
-  platformKey:       ["view", "create", "update", "delete"],
-  customer:          ["view", "create", "update", "delete"],
-  ticket:            ["view", "update"],
-  order:             [
-    "view",
-    "update",
-    "update_status",
-    "view_pricing",
-    "update_tracking",
-  ],
-  orderChat:         ["view"], // sub‑resource of order
-  product:           ["view", "create", "update", "delete"],
+  member: ["delete", "update_role"],
+  invitation: ["create", "cancel"],
+  platformKey: ["view", "create", "update", "delete"],
+  customer: ["view", "create", "update", "delete"],
+  ticket: ["view", "update"],
+  order: ["view", "update", "update_status", "view_pricing", "update_tracking"],
+  orderChat: ["view"],
+  product: ["view", "create", "update", "delete"],
   productCategories: ["view", "create", "update", "delete"],
   productAttributes: ["view", "create", "update", "delete"],
-  warehouses:        [
-    "view",
-    "create",
-    "update",
-    "delete",
-    "sharing",
-    "synchronize",
-  ],
-  tierPricing:       ["view", "create", "update", "delete"],
-  stockManagement:   ["view", "update"],
-  coupon:            ["view", "create", "update", "delete"],
-  announcements:     ["view", "create", "update", "delete"],
-  affiliates:        ["view", "points", "settings", "products", "logs"],
-  revenue:           ["view", "export"],
-  sections:          ["view", "create", "update", "delete"],
-  payment:           ["view", "create", "update", "delete"],
-  shipping:          ["view", "create", "update", "delete"],
-  notifications:     ["view", "create", "update", "delete"],
+  warehouses: ["view", "create", "update", "delete", "sharing", "synchronize"],
+  tierPricing: ["view", "create", "update", "delete"],
+  stockManagement: ["view", "update"],
+  coupon: ["view", "create", "update", "delete"],
+  announcements: ["view", "create", "update", "delete"],
+  affiliates: ["view", "points", "settings", "products", "logs"],
+  revenue: ["view", "export"],
+  sections: ["view", "create", "update", "delete"],
+  payment: ["view", "create", "update", "delete"],
+  shipping: ["view", "create", "update", "delete"],
+  notifications: ["view", "create", "update", "delete"],
 } as const;
 
-type DomainStatements = typeof domainStatements;
-
-/* -------------------------------------------------------------------------- */
-/*  Merge default + domain statements                                          */
-/* -------------------------------------------------------------------------- */
 const filteredDefaults = Object.fromEntries(
   Object.entries(defaultStatements).filter(([resource]) => resource !== "team"),
 ) as typeof defaultStatements;
@@ -69,10 +35,11 @@ export const statements = {
   ...domainStatements,
 } as const;
 
-type StatementShape = typeof statements;
+// Export a type for permissions
+export type Permission = {
+  [K in keyof typeof statements]?: (typeof statements[K][number])[];
+};
 
-/* -------------------------------------------------------------------------- */
-/*  Access‑control engine                                                      */
 /* -------------------------------------------------------------------------- */
 export const ac = createAccessControl(statements);
 
