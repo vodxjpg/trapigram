@@ -1,26 +1,13 @@
-// src/app/(dashboard)/orders/[id]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import {
-  ArrowLeft,
-  CreditCard,
-  Package,
-  Truck,
-  Send,
-} from "lucide-react";
+import { ArrowLeft, CreditCard, Package, Truck, Send } from "lucide-react";
 import Image from "next/image";
 import { format } from "date-fns";
-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
   Table,
@@ -37,6 +24,7 @@ import { usePermission } from "@/hooks/use-permission";
 import { formatCurrency } from "@/lib/currency";
 
 /* ——————————————————— TYPES ——————————————————— */
+
 interface Product {
   id: string;
   title: string;
@@ -48,12 +36,14 @@ interface Product {
   isAffiliate: boolean;
   image: string | null;
 }
+
 interface ShippingInfo {
   address: string;
   company: string;
   method: string;
   payment: string;
 }
+
 interface Order {
   id: string;
   cartId: string;
@@ -73,7 +63,9 @@ interface Order {
   shipping: number;
   total: number;
   shippingInfo: ShippingInfo;
+  country?: string;
 }
+
 interface Message {
   id: number;
   message: string;
@@ -82,39 +74,49 @@ interface Message {
 }
 
 /* ——————————————————— HELPERS ——————————————————— */
+
 function groupByProduct(lines: Product[]) {
   return lines
-    .reduce((acc, l) => {
-      let bucket = acc.find((b) => b.id === l.id);
-      if (!bucket) {
-        bucket = {
-          id: l.id,
-          title: l.title,
-          sku: l.sku,
-          description: l.description,
-          image: l.image,
-          isAffiliate: l.isAffiliate,
-          priceBuckets: [] as { unitPrice: number; quantity: number }[],
-        };
-        acc.push(bucket);
-      }
-      const pb = bucket.priceBuckets.find((p) => p.unitPrice === l.unitPrice);
-      if (pb) pb.quantity += l.quantity;
-      else bucket.priceBuckets.push({ unitPrice: l.unitPrice, quantity: l.quantity });
-      return acc;
-    }, [] as Array<{
-      id: string;
-      title: string;
-      sku: string;
-      description: string;
-      image: string | null;
-      isAffiliate: boolean;
-      priceBuckets: { unitPrice: number; quantity: number }[];
-    }>)
+    .reduce(
+      (acc, l) => {
+        let bucket = acc.find((b) => b.id === l.id);
+        if (!bucket) {
+          bucket = {
+            id: l.id,
+            title: l.title,
+            sku: l.sku,
+            description: l.description,
+            image: l.image,
+            isAffiliate: l.isAffiliate,
+            priceBuckets: [] as { unitPrice: number; quantity: number }[],
+          };
+          acc.push(bucket);
+        }
+        const pb = bucket.priceBuckets.find((p) => p.unitPrice === l.unitPrice);
+        if (pb) pb.quantity += l.quantity;
+        else
+          bucket.priceBuckets.push({
+            unitPrice: l.unitPrice,
+            quantity: l.quantity,
+          });
+        return acc;
+      },
+      [] as Array<{
+        id: string;
+        title: string;
+        sku: string;
+        description: string;
+        image: string | null;
+        isAffiliate: boolean;
+        priceBuckets: { unitPrice: number; quantity: number }[];
+      }>
+    )
     .map((b) => ({
       ...b,
-      // sort buckets so cheapest (usually “old price”) is first
-      priceBuckets: [...b.priceBuckets].sort((a, z) => a.unitPrice - z.unitPrice),
+      // sort buckets so cheapest (usually "old price") is first
+      priceBuckets: [...b.priceBuckets].sort(
+        (a, z) => a.unitPrice - z.unitPrice
+      ),
     }));
 }
 
@@ -122,57 +124,50 @@ export default function OrderView() {
   const { id } = useParams();
   const router = useRouter();
   const can = usePermission();
-  if (can.loading) return null;               // wait for role resolution
-  
-  /* ── redirect if the user has no right to view orders ─────────── */
-  if (!can({ order: ["view"] })) {
-    // use a side-effect to avoid running during render
-    useEffect(() => {
-      router.replace("/orders");
-    }, [router]);
-    return null;  // nothing on screen during the redirect
-  }
-  const canViewPricing = can({ order: ["view_pricing"] });
+
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
 
-  /* ————————— fetch order + client ————————— */
-  useEffect(() => {
-    if (!id) return;
-    (async () => {
-      try {
-        setLoading(true);
-        const orderRes = await fetch(`/api/order/${id}`);
-        if (!orderRes.ok) throw new Error("Failed loading order");
-        const o: Order = await orderRes.json();
+  const canViewPricing = can({ order: ["view_pricing"] });
 
-        const clientRes = await fetch(`/api/clients/${o.clientId}`);
-        if (!clientRes.ok) throw new Error("Failed loading client");
-        const { client: c } = await clientRes.json();
-        setOrder({
-          ...o,
-          clientFirstName: c.firstName ?? "",
-          clientLastName:  c.lastName  ?? "",
-          clientEmail:     c.email     ?? "",
-          clientUsername: c.username,
-        });
-        setError(null);
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [id]);
+  /* ————————— fetch order + client ————————— */
+  const fetchOrderAndClient = async () => {
+    if (!id) return;
+    try {
+      setLoading(true);
+      const orderRes = await fetch(`/api/order/${id}`);
+      if (!orderRes.ok) throw new Error("Failed loading order");
+      const o: Order = await orderRes.json();
+
+      const clientRes = await fetch(`/api/clients/${o.clientId}`);
+      if (!clientRes.ok) throw new Error("Failed loading client");
+      const { client: c } = await clientRes.json();
+
+      setOrder({
+        ...o,
+        clientFirstName: c.firstName ?? "",
+        clientLastName: c.lastName ?? "",
+        clientEmail: c.email ?? "",
+        clientUsername: c.username,
+      });
+      setError(null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   /* ————————— fetch messages ————————— */
-  useEffect(() => {
+  const fetchMessages = async () => {
     if (!id || !order) return;
+
     // only fetch if user can view orderChat
     if (!can({ orderChat: ["view"] })) return;
+
     fetch(`/api/order/${id}/messages`)
       .then((r) => {
         if (!r.ok) throw new Error("Forbidden");
@@ -180,20 +175,61 @@ export default function OrderView() {
       })
       .then((d) => setMessages(d.messages))
       .catch(console.error);
+  };
+
+  const sendMessage = async () => {
+    if (!newMessage.trim()) return;
+
+    const res = await fetch(`/api/order/${id}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-is-internal": "true",
+      },
+      body: JSON.stringify({
+        message: newMessage,
+        clientId: order.clientId,
+      }),
+    });
+
+    const m = await res.json();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: m.messages.id,
+        message: m.messages.message,
+        isInternal: m.messages.isInternal,
+        createdAt: m.messages.createdAt,
+      },
+    ]);
+    setNewMessage("");
+  };
+
+  useEffect(() => {
+    if (!can.loading && !can({ order: ["view"] })) {
+      router.replace("/orders");
+    }
+  }, [can, router]);
+
+  useEffect(() => {
+    fetchOrderAndClient();
+  }, [id]);
+
+  useEffect(() => {
+    fetchMessages();
   }, [id, order, can]);
+
+  if (can.loading) return null; // wait for role resolution
 
   if (loading)
     return (
-      <div className="container mx-auto py-8 text-center">
-        Loading order…
-      </div>
+      <div className="container mx-auto py-8 text-center">Loading order…</div>
     );
+
   if (error || !order)
     return (
       <div className="container mx-auto py-8 text-center">
-        <p className="text-red-600">
-          Error: {error ?? "Order not found"}
-        </p>
+        <p className="text-red-600">Error: {error ?? "Order not found"}</p>
         <Button
           variant="ghost"
           className="mt-4"
@@ -212,10 +248,7 @@ export default function OrderView() {
     .reduce(
       (sum, g) =>
         sum +
-        g.priceBuckets.reduce(
-          (s, pb) => s + pb.unitPrice * pb.quantity,
-          0
-        ),
+        g.priceBuckets.reduce((s, pb) => s + pb.unitPrice * pb.quantity, 0),
       0
     );
 
@@ -224,10 +257,7 @@ export default function OrderView() {
     .reduce(
       (sum, g) =>
         sum +
-        g.priceBuckets.reduce(
-          (s, pb) => s + pb.unitPrice * pb.quantity,
-          0
-        ),
+        g.priceBuckets.reduce((s, pb) => s + pb.unitPrice * pb.quantity, 0),
       0
     );
 
@@ -238,46 +268,22 @@ export default function OrderView() {
     (order.pointsRedeemedAmount ?? 0);
 
   /* ————— helpers ————— */
-  const fmtMoney = (n: number) =>
-    formatCurrency(n, order.country);
+  const fmtMoney = (n: number) => formatCurrency(n, order.country);
   const fmtPts = (n: number) => `${n} pts`;
   const statusClr = (s: string) =>
-    ({
-      open: "bg-blue-500",
-      paid: "bg-green-500",
-      cancelled: "bg-red-500",
-      completed: "bg-purple-500",
-    } as any)[s] ?? "bg-gray-500";
+    (
+      ({
+        open: "bg-blue-500",
+        paid: "bg-green-500",
+        cancelled: "bg-red-500",
+        completed: "bg-purple-500",
+      }) as any
+    )[s] ?? "bg-gray-500";
+
   const fmtMsgTime = (d: Date) => format(d, "MMM d, h:mm a");
 
-  const sendMessage = async () => {
-    if (!newMessage.trim()) return;
-    const res = await fetch(`/api/order/${id}/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-is-internal": "true",
-      },
-      body: JSON.stringify({
-        message: newMessage,
-        clientId: order.clientId,
-      }),
-    });
-    const m = await res.json();
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: m.messages.id,
-        message: m.messages.message,
-        isInternal: m.messages.isInternal,
-        createdAt: m.messages.createdAt,
-      },
-    ]);
-    setNewMessage("");
-  };
-
   return (
-    <div className="container mx-auto py-8 px-4">
+    <div className="container mx-auto py-8 px-4 max-w-7xl">
       {/* Back + title */}
       <div className="mb-6">
         <Button
@@ -290,48 +296,38 @@ export default function OrderView() {
         <h1 className="text-3xl font-bold">Order Details</h1>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* ——— LEFT COLUMN ——— */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Order info */}
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start">
+        <div className="xl:col-span-3 space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center justify-between">
+              <CardTitle className="flex justify-between">
                 Order Information
                 <Badge className={statusClr(order.status)}>
-                  {order.status.charAt(0).toUpperCase() +
-                    order.status.slice(1)}
+                  {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                 </Badge>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <p className="text-sm text-muted-foreground">
-                    Client
-                  </p>
+                  <p className="text-sm text-muted-foreground">Client</p>
                   <p className="font-medium">
                     {order.clientFirstName} {order.clientLastName} —{" "}
                     {order.clientUsername} ({order.clientEmail})
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">
-                    Order&nbsp;ID
-                  </p>
+                  <p className="text-sm text-muted-foreground">Order ID</p>
                   <p className="font-medium">{order.id}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">
-                    Cart&nbsp;ID
-                  </p>
+                  <p className="text-sm text-muted-foreground">Cart ID</p>
                   <p className="font-medium">{order.cartId}</p>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Products */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -349,11 +345,9 @@ export default function OrderView() {
                       <TableHead className="hidden md:table-cell">
                         Description
                       </TableHead>
-                      <TableHead className="text-right">
-                        Qty
-                      </TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
                       {canViewPricing && (
-                        <TableHead className="text-right">Unit&nbsp;Price</TableHead>
+                        <TableHead className="text-right">Unit Price</TableHead>
                       )}
                       {canViewPricing && (
                         <TableHead className="text-right">Total</TableHead>
@@ -362,16 +356,15 @@ export default function OrderView() {
                   </TableHeader>
                   <TableBody>
                     {grouped.map((g) => {
-                      const totalQty = g.priceBuckets.reduce(
+                      const qty = g.priceBuckets.reduce(
                         (s, pb) => s + pb.quantity,
                         0
                       );
                       const cheapest = g.priceBuckets[0];
-                      const lineSubtotal = g.priceBuckets.reduce(
+                      const sub = g.priceBuckets.reduce(
                         (s, pb) => s + pb.unitPrice * pb.quantity,
                         0
                       );
-
                       return (
                         <TableRow key={g.id}>
                           <TableCell>
@@ -385,12 +378,10 @@ export default function OrderView() {
                               />
                             </div>
                           </TableCell>
-
                           <TableCell className="font-medium">
                             {g.title}
-                            {/* price-bucket breakdown */}
                             {g.priceBuckets.length > 1 && (
-                              <ul className="text-xs text-muted-foreground mt-1 space-y-[2px]">
+                              <ul className="text-xs text-muted-foreground mt-1 space-y-1">
                                 {g.priceBuckets.map((pb) => (
                                   <li key={pb.unitPrice}>
                                     {pb.quantity} ×{" "}
@@ -402,9 +393,7 @@ export default function OrderView() {
                               </ul>
                             )}
                           </TableCell>
-
                           <TableCell>{g.sku}</TableCell>
-
                           <TableCell className="hidden md:table-cell max-w-xs">
                             <div
                               className="prose max-w-none"
@@ -413,11 +402,7 @@ export default function OrderView() {
                               }}
                             />
                           </TableCell>
-
-                          <TableCell className="text-right">
-                            {totalQty}
-                          </TableCell>
-
+                          <TableCell className="text-right">{qty}</TableCell>
                           {canViewPricing && (
                             <TableCell className="text-right">
                               {g.isAffiliate
@@ -425,12 +410,9 @@ export default function OrderView() {
                                 : fmtMoney(cheapest.unitPrice)}
                             </TableCell>
                           )}
-
                           {canViewPricing && (
                             <TableCell className="text-right">
-                              {g.isAffiliate
-                                ? fmtPts(lineSubtotal)
-                                : fmtMoney(lineSubtotal)}
+                              {g.isAffiliate ? fmtPts(sub) : fmtMoney(sub)}
                             </TableCell>
                           )}
                         </TableRow>
@@ -440,9 +422,8 @@ export default function OrderView() {
                 </Table>
               </div>
 
-              {/* Price summary (hidden if no pricing access) */}
               {canViewPricing && (
-                <div className="mt-6 space-y-2 border-t pt-4">
+                <div className="mt-6 border-t pt-4 space-y-2">
                   <div className="flex justify-between">
                     <span>Subtotal</span>
                     <span>{fmtMoney(monetarySubtotal)}</span>
@@ -450,37 +431,19 @@ export default function OrderView() {
                   {affiliatePointsTotal > 0 && (
                     <div className="flex justify-between text-sm">
                       <span>Affiliate Items</span>
-                      <span className="font-medium">
-                        {fmtPts(affiliatePointsTotal)}
-                      </span>
+                      <span>{fmtPts(affiliatePointsTotal)}</span>
                     </div>
                   )}
                   {order.coupon && (
                     <div className="flex justify-between text-sm">
                       <span>Coupon</span>
-                      <span className="font-medium">
-                        {order.coupon}
-                      </span>
+                      <span>{order.coupon}</span>
                     </div>
                   )}
                   {order.discount > 0 && (
-                    <div className="flex justify-between text-green-600">
+                    <div className="flex justify-between text-red-600">
                       <span>Discount</span>
-                      <span>–{fmtMoney(order.discount)}</span>
-                    </div>
-                  )}
-                  {order.pointsRedeemed! > 0 && (
-                    <div className="flex justify-between text-blue-600">
-                      <span>Points Redeemed</span>
-                      <span>{fmtPts(order.pointsRedeemed!)}</span>
-                    </div>
-                  )}
-                  {order.pointsRedeemedAmount! > 0 && (
-                    <div className="flex justify-between text-green-600">
-                      <span>Points Discount</span>
-                      <span>
-                        –{fmtMoney(order.pointsRedeemedAmount!)}
-                      </span>
+                      <span>-{fmtMoney(order.discount)}</span>
                     </div>
                   )}
                   <div className="flex justify-between">
@@ -492,18 +455,11 @@ export default function OrderView() {
                     <span>Total</span>
                     <span>{fmtMoney(calculatedTotal)}</span>
                   </div>
-                  {Math.abs(calculatedTotal - order.total) > 0.01 && (
-                    <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>Server total</span>
-                      <span>{fmtMoney(order.total)}</span>
-                    </div>
-                  )}
                 </div>
               )}
             </CardContent>
           </Card>
 
-          {/* Shipping & payment */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -513,117 +469,109 @@ export default function OrderView() {
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <h3 className="font-semibold mb-2">
-                    Shipping Address
-                  </h3>
-                  <p className="text-muted-foreground">
-                    {order.shippingInfo.address}
-                  </p>
-                  <div className="mt-4">
-                    <h3 className="font-semibold mb-2">
-                      Shipping Company
-                    </h3>
-                    <p className="text-muted-foreground">
-                      {order.shippingInfo.company}
-                    </p>
-                  </div>
+                  <h3 className="font-semibold">Shipping Address</h3>
+                  <p>{order.shippingInfo.address}</p>
+                  <h3 className="font-semibold mt-4">Shipping Company</h3>
+                  <p>{order.shippingInfo.company}</p>
                 </div>
                 <div>
-                  <h3 className="font-semibold mb-2">
-                    Shipping Method
+                  <h3 className="font-semibold">Shipping Method</h3>
+                  <p>{order.shippingInfo.method}</p>
+                  <h3 className="font-semibold mt-4 flex items-center gap-2">
+                    <CreditCard className="h-4 w-4" /> Payment Method
                   </h3>
-                  <p className="text-muted-foreground">
-                    {order.shippingInfo.method}
-                  </p>
-                  <div className="mt-4">
-                    <h3 className="font-semibold flex items-center gap-2 mb-2">
-                      <CreditCard className="h-4 w-4" /> Payment Method
-                    </h3>
-                    <p className="text-muted-foreground">
-                      {order.shippingInfo.payment}
-                    </p>
-                  </div>
+                  <p>{order.shippingInfo.payment}</p>
                 </div>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* ——— RIGHT COLUMN ——— */}
-        <div className="lg:col-span-1">
-          <Card className="h-full flex flex-col">
-            <CardHeader>
+        <div className="xl:col-span-1">
+          <Card className="h-[800px] flex flex-col">
+            <CardHeader className="flex-shrink-0 pb-4">
               <CardTitle>Customer Communication</CardTitle>
-              <div className="text-sm text-muted-foreground flex items-center gap-2">
-                <span>Client:</span>
-                <span className="font-medium">
-                  {order.clientEmail}
-                </span>
+              <div className="text-sm text-muted-foreground">
+                Client: {order.clientEmail}
               </div>
             </CardHeader>
-            <CardContent className="flex-grow flex flex-col h-[500px]">
-              <ScrollArea className="flex-1">
-                <div className="p-2">
-                  {can({ orderChat: ["view"] }) &&
-                    messages.map((m) => (
-                      <div
-                        key={m.id}
-                        className={`flex ${m.isInternal
-                            ? "justify-end"
-                            : "justify-start"
-                          }`}
-                      >
-                        <div className="max-w-[80%]">
-                          <div
-                            className={`flex items-start gap-2 ${m.isInternal
-                                ? "flex-row-reverse"
-                                : ""
-                              }`}
-                          >
-                            <Avatar className="mt-1">
-                              <AvatarFallback>
-                               {m.isInternal
-                                  ? "A"
-                                  : (order.clientEmail ?? order.clientUsername ?? "?")
-                                      .charAt(0)
-                                      .toUpperCase()}
-                              </AvatarFallback>
-                            </Avatar>
+            <CardContent className="flex-1 flex flex-col min-h-0 p-0">
+              {can({ orderChat: ["view"] }) ? (
+                <>
+                  <div className="flex-1 min-h-0">
+                    <ScrollArea className="h-full">
+                      <div className="px-4 py-2 space-y-4">
+                        {messages.length === 0 ? (
+                          <div className="text-center text-muted-foreground py-8">
+                            <p>No messages yet</p>
+                            <p className="text-sm">Start a conversation</p>
+                          </div>
+                        ) : (
+                          messages.map((m) => (
                             <div
-                              className={`${m.isInternal
-                                  ? "bg-primary text-primary-foreground"
-                                  : "bg-muted text-foreground"
-                                } rounded-lg p-3`}
+                              key={m.id}
+                              className={`flex ${m.isInternal ? "justify-end" : "justify-start"} mb-4`}
                             >
-                              {m.message}
+                              <div className="max-w-[85%] flex flex-col">
+                                <div
+                                  className={`flex items-start gap-2 ${m.isInternal ? "flex-row-reverse" : "flex-row"}`}
+                                >
+                                  <Avatar className="w-8 h-8 flex-shrink-0">
+                                    <AvatarFallback className="text-xs">
+                                      {m.isInternal
+                                        ? "A"
+                                        : order.clientEmail
+                                            .charAt(0)
+                                            .toUpperCase()}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div
+                                    className={`rounded-lg p-3 break-words ${m.isInternal ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"}`}
+                                  >
+                                    <p className="text-sm">{m.message}</p>
+                                  </div>
+                                </div>
+                                <div
+                                  className={`text-xs text-muted-foreground mt-1 ${m.isInternal ? "text-right" : "text-left"}`}
+                                >
+                                  {fmtMsgTime(m.createdAt)}
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                          <div className="text-xs text-right opacity-70 mt-1">
-                            {fmtMsgTime(m.createdAt)}
-                          </div>
-                        </div>
+                          ))
+                        )}
                       </div>
-                    ))}
-                </div>
-              </ScrollArea>
-
-              {can({ orderChat: ["view"] }) && (
-                <div className="flex gap-2 mt-2">
-                  <Input
-                    value={newMessage}
-                    placeholder="Type a message…"
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        sendMessage();
-                      }
-                    }}
-                  />
-                  <Button size="icon" onClick={sendMessage}>
-                    <Send className="h-4 w-4" />
-                    <span className="sr-only">Send</span>
-                  </Button>
+                    </ScrollArea>
+                  </div>
+                  <div className="flex-shrink-0 p-4 border-t bg-background">
+                    <div className="flex gap-2">
+                      <Input
+                        value={newMessage}
+                        placeholder="Type a message…"
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            sendMessage();
+                          }
+                        }}
+                        className="flex-1"
+                      />
+                      <Button
+                        size="icon"
+                        onClick={sendMessage}
+                        disabled={!newMessage.trim()}
+                      >
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center p-4">
+                  <p className="text-muted-foreground text-center">
+                    You don't have permission to view customer communication.
+                  </p>
                 </div>
               )}
             </CardContent>
