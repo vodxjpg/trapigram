@@ -1,5 +1,5 @@
 "use client";
-
+import { useEffect } from "react";          //  ← add
 import { ClientForm } from "../client-form";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -10,11 +10,14 @@ import { useRouter } from "next/navigation";
 export default function NewClientPage() {
    const can = usePermission(); ;
   const router = useRouter();
-  if (can.loading) return null;
-  if (!can({ customer: ["create"] })) {
-    router.replace("/clients");
-    return null;
-  }
+  /* redirect only *after* permissions are resolved */
+  useEffect(() => {
+    if (!can.loading && !can({ customer: ["create"] })) {
+      router.replace("/clients");
+    }
+  }, [can, router]);
+  
+  if (can.loading || !can({ customer: ["create"] })) return null;
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
