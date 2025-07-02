@@ -95,7 +95,7 @@ export default function OrganizationDetailsPage() {
       </p>
 
       {/* Invitation form for owner or manager */}
-      {["owner", "manager"].includes(userRole) && (
+      {["owner"].includes(userRole) && (
         <InviteMemberForm
           organizationId={id}
           currentUserRole={userRole}
