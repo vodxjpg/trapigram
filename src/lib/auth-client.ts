@@ -7,7 +7,7 @@ import { organizationClient } from "better-auth/client/plugins";
 import { magicLinkClient } from "better-auth/client/plugins";
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
 import { apiKeyClient } from "better-auth/client/plugins";
-import { roles } from "@/lib/roles"; // Im
+import { ac } from "@/lib/permissions";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
 
 /* ──────────────────────────────── TYPES ──────────────────────────────────── */
