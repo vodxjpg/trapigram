@@ -100,7 +100,8 @@ export default function OrganizationDetailsPage() {
       </p>
 
       {/* Invitation form (hook will still double-check permissions) */}
-      {can({ invitation: ["create"] }) && (
+      {/* Invitation form shows for anyone with invitation:create */}
+{can({ invitation: ["create"] }) && (
   <InviteMemberForm organizationId={id} />
 )}
 

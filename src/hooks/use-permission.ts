@@ -3,73 +3,67 @@
 
 import { useCallback, useMemo, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth-client";
-import { getMember } from "@/lib/auth-client/get-member";
+import { getMember }  from "@/lib/auth-client/get-member";
 
 /**
  * usePermission
  * -------------
- * If you pass `organizationId`, permissions are checked for that org.
- * Otherwise the hook relies on the active organization stored in the
- * Better-Auth session.
+ * • If you pass `organizationId`, permissions are checked for that org.
+ * • Otherwise the hook falls back to the active org in the session.
  *
- * The returned function `can(perm)` also carries:
- *   • can.loading  – true while the role is still loading
- *   • can.role     – the resolved role (string or null)
+ * `can(perm)` returns a boolean and also carries:
+ *   – can.loading  • true while the role is still loading
+ *   – can.role     • the resolved role string or null
  */
 export function usePermission(organizationId?: string) {
   const [role, setRole] = useState<string | null>(null); // null = loading
 
-  /* ──────────────────────────────────────────────────────────────
-   * 1. Load role for the requested (or active) organization
-   * ────────────────────────────────────────────────────────────── */
+  /* ── 1. Resolve role ─────────────────────────────────────────── */
   useEffect(() => {
     let cancelled = false;
 
-    async function loadRole() {
+    (async () => {
       try {
         const res = organizationId
-          ? await getMember({ organizationId })            // custom endpoint
+          ? await getMember({ organizationId })
           : await authClient.organization.getActiveMember();
 
-        if (!cancelled) {
-          const resolved = (res?.data?.role || "").toLowerCase();
-          /*  🔍  TEMPORARY DEBUG LOG — remove when satisfied  */
-          console.log(
-            "[usePermission] org =", organizationId ?? "<active>",
-            "→ role =", resolved || "<none>",
-          );
-          setRole(resolved);
-        }
+        if (cancelled) return;
+
+        const resolved = (res?.data?.role || "").toLowerCase();
+        console.log(
+          "[usePermission] org =", organizationId ?? "<active>",
+          "→ role =", resolved || "<none>"
+        );
+        setRole(resolved);
       } catch (err) {
         if (!cancelled) {
           console.warn("[usePermission] failed to load role:", err);
-          setRole("");                                     // treat as “no role”
+          setRole("");                       // treat as guest / no role
         }
       }
-    }
+    })();
 
-    loadRole();
     return () => { cancelled = true; };
   }, [organizationId]);
 
   const loading = role === null;
   const cache   = useMemo(() => new Map<string, boolean>(), [role]);
 
-  /* ──────────────────────────────────────────────────────────────
-   * 2. Permission checker (memoised)
-   * ────────────────────────────────────────────────────────────── */
+  /* ── 2. Permission checker ───────────────────────────────────── */
   const checker = useCallback(
     (perm: Record<string, string[]>) => {
-      if (role === "owner") return true;   // owner bypass
-      if (loading) return true;            // optimistic until role loads
+      if (role === "owner") return true;       // owner bypass
+      if (loading) return true;                // optimistic while loading
 
       const key = JSON.stringify(perm);
       if (cache.has(key)) return cache.get(key)!;
 
-      const ok = authClient.organization.checkRolePermission({
-        permissions: perm,
-        role,
-      });
+      // Better-Auth’s type for `role` is overly narrow ("owner").
+      // Cast the whole call to `any` so custom roles compile.
+      const ok: boolean = (authClient.organization as any)
+        .checkRolePermission({ permissions: perm, role });
+
       cache.set(key, ok);
       return ok;
     },
