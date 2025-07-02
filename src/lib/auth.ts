@@ -181,6 +181,7 @@ export const auth = betterAuth({
     customRules: {
       "/check-email": { window: 60, max: 5 },
     },
+
   },
 
   /*──────────────────── Custom API route ────────────*/
@@ -205,6 +206,35 @@ export const auth = betterAuth({
           return new Response(JSON.stringify({ error: "Internal server error" }),
             { status: 500, headers: { "Content-Type": "application/json" } });
         }
+      },
+    },
+    // Add debug endpoint
+    "/debug-permission": {
+      POST: async (req) => {
+        const { permissions, organizationId } = req.body;
+        const session = await authClient.getSession();
+        const userId = session?.user?.id;
+        if (!userId) {
+          return new Response(JSON.stringify({ error: "No session" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const member = await db
+          .selectFrom("member")
+          .select(["role", "organizationId"])
+          .where("userId", "=", userId)
+          .where("organizationId", "=", organizationId || session?.activeOrganizationId)
+          .executeTakeFirst();
+        console.log("[debug-permission] User:", userId, "Role:", member?.role, "Org:", member?.organizationId);
+        console.log("[debug-permission] Checking permissions:", permissions);
+        console.log("[debug-permission] Roles object:", roles["support"]?.statements);
+        const result = await authClient.organization.hasPermission({ permissions });
+        console.log("[debug-permission] Result:", result);
+        return new Response(JSON.stringify(result), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
       },
     },
   },
