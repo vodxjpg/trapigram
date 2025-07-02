@@ -1,4 +1,4 @@
-// File: src/app/(dashboard)/sections/components/section-form.tsx
+// src/app/(dashboard)/sections/components/section-form.tsx
 "use client";
 
 import { useState } from "react";
@@ -31,6 +31,7 @@ import { Upload, X } from "lucide-react";
 const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
 import "react-quill-new/dist/quill.snow.css";
 
+/* ───────── Quill config ───────── */
 const quillModules = {
   toolbar: [
     [{ header: [1, 2, false] }],
@@ -42,8 +43,9 @@ const quillModules = {
 };
 const quillFormats = ["header", "bold", "italic", "underline", "list", "link"];
 
+/* ───────── schema ───────── */
 const schema = z.object({
-  name: z.string().min(1),
+  name: z.string().min(1),         // hidden but still required
   title: z.string().min(1),
   content: z.string().min(1),
   videoUrl: z
@@ -57,40 +59,52 @@ const schema = z.object({
         v === null ||
         /^\/uploads\/.+/.test(v) ||
         /^https?:\/\/.+/.test(v),
-      { message: "Invalid video file URL" }
+      { message: "Invalid video file URL" },
     ),
   parentSectionId: z.string().uuid().nullable().optional(),
 });
 type Values = z.infer<typeof schema>;
 
-type Opt = { id: string; title: string; parentSectionId: string | null };
+/* ───────── helpers ───────── */
+const slugify = (s: string) =>
+  s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+type Opt  = { id: string; title: string; parentSectionId: string | null };
 type Props = { initial?: Partial<Values> & { id?: string }; sections?: Opt[] };
 
 export function SectionForm({ initial, sections = [] }: Props) {
   const router = useRouter();
   const [isSubmitting, setSubmitting] = useState(false);
 
-  // Derive initial fileName from initial.videoUrl if present
+  /* ─── intro detector (slug === "intro") ─── */
+  const introSlug = initial?.name === "intro";
+
+  /* ─── initial file name for intro’s video ─── */
   const initialFileName =
-    initial?.videoUrl?.split("/").pop() ?? null;
+    introSlug && initial?.videoUrl ? initial.videoUrl.split("/").pop() ?? null : null;
   const [fileName, setFileName] = useState<string | null>(initialFileName);
 
+  /* ─── RHF setup ─── */
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
-      name: initial?.name ?? "",
+      name:  initial?.name  ?? "",
       title: initial?.title ?? "",
       content: initial?.content ?? "",
-      videoUrl: initial?.videoUrl ?? null,
+      videoUrl: introSlug ? initial?.videoUrl ?? null : null,
       parentSectionId: initial?.parentSectionId ?? null,
     },
   });
   const selfId = initial?.id;
 
+  /* ─── upload handler (intro only) ─── */
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    // show name immediately
     setFileName(f.name);
     const fd = new FormData();
     fd.append("file", f);
@@ -104,10 +118,17 @@ export function SectionForm({ initial, sections = [] }: Props) {
     form.setValue("videoUrl", filePath as any);
   };
 
+  /* ─── form submit ─── */
   const onSubmit = async (raw: Values) => {
     setSubmitting(true);
     try {
-      const url = selfId ? `/api/sections/${selfId}` : "/api/sections";
+      /* slug hidden → derive if blank */
+      if (!raw.name) raw.name = slugify(raw.title);
+
+      /* non-intro sections must NOT carry videoUrl */
+      if (raw.name !== "intro") raw.videoUrl = null;
+
+      const url    = selfId ? `/api/sections/${selfId}` : "/api/sections";
       const method = selfId ? "PUT" : "POST";
       const res = await fetch(url, {
         method,
@@ -126,6 +147,7 @@ export function SectionForm({ initial, sections = [] }: Props) {
     }
   };
 
+  /* ─── parent-select helpers ─── */
   const optionSections = sections.filter((s) => s.id !== selfId);
   const label = (s: Opt) => {
     let depth = 0;
@@ -139,22 +161,22 @@ export function SectionForm({ initial, sections = [] }: Props) {
     return `${"—".repeat(depth)} ${s.title}`;
   };
 
+  /* ─── placeholder hint component ─── */
   const PlaceholderHint = () => (
     <div className="rounded-md bg-muted p-4 text-sm space-y-1">
       <p className="font-medium">Available placeholders:</p>
       <ul className="list-disc pl-4 space-y-1">
         {placeholderDefs.map((p) => (
           <li key={p.key}>
-            <code className="px-1 py-0.5 bg-gray-100 rounded">
-              {`{${p.key}}`}
-            </code>{" "}
-            – {p.description}
+            <code className="px-1 py-0.5 bg-gray-100 rounded">{`{${p.key}}`}</code> –{" "}
+            {p.description}
           </li>
         ))}
       </ul>
     </div>
   );
 
+  /* ──────────────────────────── render ──────────────────────────── */
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
@@ -162,15 +184,10 @@ export function SectionForm({ initial, sections = [] }: Props) {
           <CardHeader>
             <CardTitle>{selfId ? "Edit Section" : "Create Section"}</CardTitle>
           </CardHeader>
+
           <CardContent className="space-y-6">
             <div className="grid md:grid-cols-2 gap-6">
-              <FormItem>
-                <FormLabel>Name (slug)</FormLabel>
-                <FormControl>
-                  <Input placeholder="address" {...form.register("name")} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
+              {/* Title */}
               <FormItem>
                 <FormLabel>Title</FormLabel>
                 <FormControl>
@@ -178,6 +195,8 @@ export function SectionForm({ initial, sections = [] }: Props) {
                 </FormControl>
                 <FormMessage />
               </FormItem>
+
+              {/* Parent section */}
               <FormItem>
                 <FormLabel>Parent Section</FormLabel>
                 <Select
@@ -202,55 +221,58 @@ export function SectionForm({ initial, sections = [] }: Props) {
                 </Select>
                 <FormMessage />
               </FormItem>
-              <FormItem>
-                <FormLabel>Video File</FormLabel>
-                <div className="flex items-center gap-2">
-                  <FormControl>
-                    <input
-                      id="video-upl"
-                      type="file"
-                      accept="video/mp4,video/webm,video/ogg,video/quicktime,video/x-msvideo,video/mpeg"
-                      className="hidden"
-                      onChange={handleUpload}
-                    />
-                  </FormControl>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() =>
-                      document.getElementById("video-upl")?.click()
-                    }
-                  >
-                    <Upload className="h-4 w-4" /> Upload
-                  </Button>
-                  {form.watch("videoUrl") && (
+
+              {/* Video upload — only for intro  */}
+              {introSlug && (
+                <FormItem className="md:col-span-2">
+                  <FormLabel>Intro Video</FormLabel>
+                  <div className="flex items-center gap-2">
+                    <FormControl>
+                      <input
+                        id="video-upl"
+                        type="file"
+                        accept="video/mp4,video/webm,video/ogg,video/quicktime,video/x-msvideo,video/mpeg"
+                        className="hidden"
+                        onChange={handleUpload}
+                      />
+                    </FormControl>
                     <Button
                       type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        form.setValue("videoUrl", null);
-                        setFileName(null);
-                      }}
+                      variant="outline"
+                      onClick={() => document.getElementById("video-upl")?.click()}
                     >
-                      <X className="h-4 w-4" />
+                      <Upload className="h-4 w-4" /> {fileName ? "Change" : "Upload"}
                     </Button>
+                    {form.watch("videoUrl") && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => {
+                          form.setValue("videoUrl", null);
+                          setFileName(null);
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {fileName && (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Selected file: {fileName}
+                    </p>
                   )}
-                </div>
-                {fileName && (
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Selected file: {fileName}
+                    Max 150 MB. Formats: MP4, WebM, Ogg, QuickTime, AVI, MPEG
                   </p>
-                )}
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Max 150 MB. Formats: MP4, WebM, Ogg, QuickTime, AVI, MPEG
-                </p>
-                <FormMessage />
-              </FormItem>
+                  <FormMessage />
+                </FormItem>
+              )}
             </div>
 
             <PlaceholderHint />
-            {/* Quill */}
+
+            {/* Content */}
             <FormItem>
               <FormLabel>Content</FormLabel>
               <FormControl>
@@ -268,6 +290,7 @@ export function SectionForm({ initial, sections = [] }: Props) {
           </CardContent>
         </Card>
 
+        {/* Actions */}
         <div className="flex justify-end gap-4">
           <Button variant="outline" type="button" onClick={() => router.push("/sections")}>
             Cancel
