@@ -1,61 +1,52 @@
-// src/hooks/use-permission.ts
 "use client";
 
 import { useCallback, useMemo, useEffect, useState } from "react";
-import { authClient } from "@/lib/auth-client";
+import { authClient } from "@/lib/auth-client";          // ✅ still needed
+import { getMember } from "@/lib/auth-client/get-member"; // ✅ custom fetcher
 
 /**
  * usePermission
  * -------------
- * `organizationId` → string | undefined
- *   – pass a specific org ID when you have one
- *   – omit/leave undefined to fall back to the “active” organisation
+ * Pass an `organizationId` when you know it; otherwise the hook will fall
+ * back to the active org stored in the user’s session.
  *
- * Returns a function `can(perm)` that answers true/false **and** carries a
- * `.loading` Boolean so existing code like `can.loading` keeps working.
+ * Returns a function `can(perm)` with these extras:
+ *   • can.loading  – true while the role is being fetched
+ *   • can.role     – the resolved role (or null while loading)
  */
 export function usePermission(organizationId?: string) {
-  const [role, setRole] = useState<string | null>(null); // null = still loading
+  const [role, setRole] = useState<string | null>(null); // null = loading
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // 1. Look up the role for THIS organisation (or the active one)
-  // ────────────────────────────────────────────────────────────────────────────
+  // 1 ─ Fetch role for the requested (or active) organisation
   useEffect(() => {
     let cancelled = false;
 
     async function loadRole() {
       try {
         const res = organizationId
-          ? await authClient.organization.getMember({ organizationId })
+          ? await getMember({ organizationId })            // ← our endpoint
           : await authClient.organization.getActiveMember();
 
         if (!cancelled) {
-          setRole((res?.data?.role || "").toLowerCase()); // normalise case
+          setRole((res?.data?.role || "").toLowerCase());  // normalise case
         }
       } catch {
-        if (!cancelled) setRole(""); // treat “couldn’t fetch” as “no role”
+        if (!cancelled) setRole("");                       // treat as “no role”
       }
     }
 
     loadRole();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [organizationId]);
 
   const loading = role === null;
-  const cache = useMemo(() => new Map<string, boolean>(), [role]);
+  const cache   = useMemo(() => new Map<string, boolean>(), [role]);
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // 2. Permission checker
-  // ────────────────────────────────────────────────────────────────────────────
+  // 2 ─ Permission checker
   const checker = useCallback(
     (perm: Record<string, string[]>) => {
-      // Owner can do anything
-      if (role === "owner") return true;
-
-      // While loading ⇒ optimistic true (prevents UI flicker)
-      if (loading) return true;
+      if (role === "owner") return true;   // owner bypass
+      if (loading) return true;            // optimistic until role loads
 
       const key = JSON.stringify(perm);
       if (cache.has(key)) return cache.get(key)!;
@@ -70,12 +61,8 @@ export function usePermission(organizationId?: string) {
     [cache, role, loading],
   );
 
-  // Attach metadata so callers can read can.loading etc.
   (checker as any).loading = loading;
-  (checker as any).role = role;
+  (checker as any).role    = role;
 
-  return checker as typeof checker & {
-    loading: boolean;
-    role: string | null;
-  };
+  return checker as typeof checker & { loading: boolean; role: string | null };
 }
