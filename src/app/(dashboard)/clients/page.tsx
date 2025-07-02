@@ -26,7 +26,7 @@ export default function ClientsPage() {
 
   // didn’t pass → redirect once, then bail out
   if (!mayView) {
-    router.replace("/");
+    router.replace("/dashboard");
     return null;
   }
 
