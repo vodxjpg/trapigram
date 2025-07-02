@@ -24,7 +24,7 @@ type Organization = {
 export default function OrganizationDetailsPage() {
   const { identifier } = useParams();
   const { setHeaderTitle } = useHeaderTitle();
-   const can = usePermission(); ;
+  const can = usePermission(); 
 
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,6 +40,9 @@ export default function OrganizationDetailsPage() {
         const { organization: org } = await res.json();
         setOrganization(org);
         setHeaderTitle(org.name);
+        await authClient.organization.setActive({
+            organizationId: org.id,
+          });
       } catch (err) {
         console.error(err);
         toast.error("Failed to load organization details.");

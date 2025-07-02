@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { GoogleAnalytics } from '@next/third-parties/google';
 import { Source_Sans_3, Manrope } from "next/font/google";
-import { useParams } from "next/navigation";
+
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/dashboard/app-sidebar";
 import { SiteHeader } from "@/components/dashboard/site-header";
@@ -9,7 +9,6 @@ import FooterDashboard from "@/components/dashboard/FooterDashboard";
 import { siteDetails } from '@/data/siteDetails';
 import { HeaderTitleProvider } from "@/context/HeaderTitleContext";
 import { Toaster } from "@/components/ui/sonner"
-import { useSetActiveOrg } from "@/hooks/use-set-active-org";
 
 import "@/app/globals.css";
 
@@ -23,8 +22,6 @@ export const metadata: Metadata = {
 };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode; }) {
-  const { identifier } = useParams();          // slug or id in the URL
-  useSetActiveOrg(identifier as string, /* isSlug = */ true);
   return (
     <html lang="en">
       <body className={`${manrope.className} ${sourceSans.className} antialiased`}>
