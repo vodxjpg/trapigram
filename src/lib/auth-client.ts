@@ -4,7 +4,8 @@ import { organizationClient } from "better-auth/client/plugins";
 import { magicLinkClient } from "better-auth/client/plugins";
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
 import { apiKeyClient } from "better-auth/client/plugins";
-import { ac } from "@/lib/permissions";
+import { ac } from "@/lib/permissions"
+import { roles } from "@/lib/roles"
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
 
 // Dynamically import roles only server-side
@@ -12,7 +13,7 @@ let rolesPromise: Promise<any> | null = null;
 if (typeof window === "undefined") {
   rolesPromise = import("@/lib/roles").then((module) => module.roles);
 }
-const roles = typeof window === "undefined" ? await rolesPromise : {};
+
 
 /* ──────────────────────────────── TYPES ──────────────────────────────────── */
 declare module "better-auth/react" {

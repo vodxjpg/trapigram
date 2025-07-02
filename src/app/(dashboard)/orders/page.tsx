@@ -1,9 +1,8 @@
-/* src/app/(dashboard)/orders/page.tsx */
 "use client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";                  // ← NEW
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Edit } from "lucide-react";
@@ -65,57 +64,64 @@ interface Order {
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
 
 export default function OrdersPage() {
-  const can = usePermission();
   const router = useRouter();
+  const can = authClient.organization.checkRolePermission;           // ← NEW
 
-  // Permission states
-  const [canViewDetail, setCanViewDetail] = useState(false);
-  const [canViewPricing, setCanViewPricing] = useState(false);
-  const [canUpdate, setCanUpdate] = useState(false);
-  const [canUpdateTracking, setCanUpdateTracking] = useState(false);
-  const [permissionsLoading, setPermissionsLoading] = useState(true);
+  // ─── load current member to get their role ─────────────────────────
+  const { data: member, isLoading: loadingMember, error: memberError } =
+    authClient.organization.useActiveMember();
 
-  // Check permissions
-  useEffect(() => {
-    const checkPermissions = async () => {
-      if (can.loading) return;
-      const [viewDetail, viewPricing, update, updateTracking] = await Promise.all([
-        can({ order: ["view"] }),
-        can({ order: ["view_pricing"] }),
-        can({ order: ["update"] }),
-        can({ order: ["update_tracking"] }),
-      ]);
-      setCanViewDetail(viewDetail);
-      setCanViewPricing(viewPricing);
-      setCanUpdate(update);
-      setCanUpdateTracking(updateTracking);
-      setPermissionsLoading(false);
-    };
-    checkPermissions();
-  }, [can]);
+  // ─── while we’re loading the member record… ───────────────────────
+  if (loadingMember) {
+    return (
+      <div className="container mx-auto py-8 px-4 text-center">
+        Loading permissions…
+      </div>
+    );
+  }
+  if (memberError) {
+    return (
+      <div className="container mx-auto py-8 px-4 text-center text-red-600">
+        Error loading permissions
+      </div>
+    );
+  }
 
+  const role = member?.role || "";
+
+  // ─── compute all flags synchronously ──────────────────────────────
+  const canViewDetail     = can({ permissions: { order: ["view"] },           role });
+  const canViewPricing    = can({ permissions: { order: ["view_pricing"] },    role });
+  const canUpdate         = can({ permissions: { order: ["update"] },         role });
+  const canUpdateTracking = can({ permissions: { order: ["update_tracking"] }, role });
+
+  // ◼︎ orders state
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+
+  // ◼︎ modal / tracking
+  const [dialogOpen, setDialogOpen]         = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
-  const [draftTracking, setDraftTracking] = useState("");
+  const [draftTracking, setDraftTracking]   = useState("");
+
+  // ◼︎ filters
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [dateFilter, setDateFilter] = useState<DateFilterOption>("all");
-  const [dateRange, setDateRange] = useState<{
-    from: Date | undefined;
-    to: Date | undefined;
-  }>({ from: undefined, to: undefined });
+  const [searchQuery, setSearchQuery]       = useState("");
+  const [statusFilter, setStatusFilter]     = useState<string>("all");
+  const [dateFilter, setDateFilter]         = useState<DateFilterOption>("all");
+  const [dateRange, setDateRange]           = useState<{ from?: Date; to?: Date }>({});
+
+  // ◼︎ pagination
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
   type ShippingCompany = { id: string; name: string };
   const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
-  const [shippingLoading, setShippingLoading] = useState(false);
-  const [selectedCompany, setSelectedCompany] = useState<string | undefined>(undefined);
+  const [shippingLoading, setShippingLoading]     = useState(false);
+  const [selectedCompany, setSelectedCompany]     = useState<string>();
 
+  // ─── fetch orders ─────────────────────────────────────────────────
   useEffect(() => {
     setLoading(true);
     fetch("/api/order")
@@ -131,11 +137,9 @@ export default function OrdersPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // ─── apply filters ────────────────────────────────────────────────
   useEffect(() => {
-    let result = orders.map((o) => ({
-      ...o,
-      createdAt: new Date(o.createdAt).toString(),
-    })) as Order[];
+    let result = orders.map((o) => ({ ...o, createdAt: new Date(o.createdAt).toString() }));
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -153,14 +157,11 @@ export default function OrdersPage() {
     if (dateFilter !== "all") {
       const now = new Date();
       if (dateFilter === "today") {
-        const start = startOfDay(now);
-        result = result.filter((o) => new Date(o.createdAt) >= start);
+        result = result.filter((o) => new Date(o.createdAt) >= startOfDay(now));
       } else if (dateFilter === "last-week") {
-        const since = startOfDay(subWeeks(now, 1));
-        result = result.filter((o) => new Date(o.createdAt) >= since);
+        result = result.filter((o) => new Date(o.createdAt) >= startOfDay(subWeeks(now, 1)));
       } else if (dateFilter === "last-month") {
-        const since = startOfDay(subMonths(now, 1));
-        result = result.filter((o) => new Date(o.createdAt) >= since);
+        result = result.filter((o) => new Date(o.createdAt) >= startOfDay(subMonths(now, 1)));
       } else if (dateFilter === "custom" && dateRange.from) {
         const from = startOfDay(dateRange.from);
         const to = dateRange.to ? endOfDay(dateRange.to) : endOfDay(now);
@@ -176,44 +177,37 @@ export default function OrdersPage() {
 
   const getStatusColor = (s: OrderStatus) => {
     switch (s) {
-      case "open":
-        return "bg-blue-500";
-      case "paid":
-        return "bg-green-500";
-      case "cancelled":
-        return "bg-red-500";
-      case "refunded":
-        return "bg-red-500";
-      case "underpaid":
-        return "bg-orange-500";
-      case "completed":
-        return "bg-purple-500";
-      default:
-        return "bg-gray-500";
+      case "open":       return "bg-blue-500";
+      case "paid":       return "bg-green-500";
+      case "cancelled":  return "bg-red-500";
+      case "refunded":   return "bg-red-500";
+      case "underpaid":  return "bg-orange-500";
+      case "completed":  return "bg-purple-500";
+      default:           return "bg-gray-500";
     }
   };
 
+  // ─── fetch shipping companies when modal opens ────────────────────
   useEffect(() => {
     if (!dialogOpen) return;
     (async () => {
       setShippingLoading(true);
       try {
-        const compRes = await fetch("/api/shipping-companies", {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
+        const res = await fetch("/api/shipping-companies", {
+          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
         });
-        if (!compRes.ok) throw new Error("Failed to fetch shipping companies");
-        const comps: { companies: ShippingCompany[] } = await compRes.json();
-        setShippingCompanies(comps.shippingMethods);
-      } catch (err: any) {
-        toast.error(err.message);
+        if (!res.ok) throw new Error("Failed to fetch shipping companies");
+        const { shippingMethods } = await res.json();
+        setShippingCompanies(shippingMethods);
+      } catch (e: any) {
+        toast.error(e.message);
       } finally {
         setShippingLoading(false);
       }
     })();
   }, [dialogOpen]);
 
+  // ─── status update ────────────────────────────────────────────────
   const handleStatusChange = async (orderId: string, newStatus: OrderStatus) => {
     try {
       const res = await fetch(`/api/order/${orderId}/change-status`, {
@@ -225,23 +219,19 @@ export default function OrdersPage() {
       setOrders((prev) =>
         prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
       );
-      toast.success(`Order status changed`);
-    } catch (err) {
-      console.error(err);
+      toast.success("Order status changed");
+    } catch {
       alert("Error updating order status");
     }
   };
 
   const handleOrderAction = (orderId: string, action: string) => {
-    console.log(`Performing ${action} on order ${orderId}`);
     if (action === "cancel") {
       setOrders((prev) =>
         prev.map((o) => (o.id === orderId ? { ...o, status: "cancelled" } : o))
       );
-    } else if (action === "initiate-payment") {
-      alert(`Payment initiated for order ${orderId}`);
-    } else if (action === "send-notification") {
-      alert(`Payment notification sent for order ${orderId}`);
+    } else {
+      alert(`Action "${action}" on ${orderId}`);
     }
   };
 
@@ -253,26 +243,21 @@ export default function OrdersPage() {
   };
 
   const saveTracking = async () => {
-    if (!selectedOrderId) return;
-    if (!selectedCompany) {
-      toast.error("Please select a shipping company before saving.");
+    if (!selectedOrderId || !selectedCompany) {
+      toast.error("Select a shipping company and enter a tracking number");
       return;
     }
     const company = shippingCompanies.find((c) => c.id === selectedCompany);
-    if (!company) {
-      toast.error("Selected shipping company not found.");
-      return;
-    }
     try {
       const res = await fetch(`/api/order/${selectedOrderId}/tracking-number`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           trackingNumber: draftTracking,
-          shippingCompany: company.name,
+          shippingCompany: company!.name,
         }),
       });
-      if (!res.ok) throw new Error("Failed to save tracking number");
+      if (!res.ok) throw new Error();
       setOrders((prev) =>
         prev.map((o) =>
           o.id === selectedOrderId ? { ...o, trackingNumber: draftTracking } : o
@@ -280,45 +265,26 @@ export default function OrdersPage() {
       );
       toast.success("Tracking number saved");
       setDialogOpen(false);
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("Could not save tracking");
     }
   };
 
-  const formatDate = (dateStr: string) => format(new Date(dateStr), "MMM dd, yyyy");
-
-  const handleDateFilterChange = (value: DateFilterOption) => {
-    setDateFilter(value);
-    if (value !== "custom") setDateRange({ from: undefined, to: undefined });
+  const formatDate = (d: string) => format(new Date(d), "MMM dd, yyyy");
+  const handleDateFilterChange = (v: DateFilterOption) => {
+    setDateFilter(v);
+    if (v !== "custom") setDateRange({});    
   };
 
+  // ─── pagination ───────────────────────────────────────────────────
   const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
   const paginatedOrders = filteredOrders.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
 
-  if (permissionsLoading || can.loading) {
-    return (
-      <div className="container mx-auto py-8 px-4 text-center">
-        Loading permissions…
-      </div>
-    );
-  }
-
-  if (loading)
-    return (
-      <div className="container mx-auto py-8 px-4 text-center">
-        Loading orders…
-      </div>
-    );
-  if (error)
-    return (
-      <div className="container mx-auto py-8 px-4 text-center text-red-600">
-        Error loading orders: {error}
-      </div>
-    );
+  if (loading) return <div className="text-center py-8">Loading orders…</div>;
+  if (error)   return <div className="text-center py-8 text-red-600">Error: {error}</div>;
 
   return (
     <div className="container mx-auto py-8 px-4">
@@ -335,6 +301,7 @@ export default function OrdersPage() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Search Input */}
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -344,6 +311,8 @@ export default function OrdersPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
+
+            {/* Status Filter */}
             <Select
               value={statusFilter}
               onValueChange={(v) => setStatusFilter(v)}
@@ -360,9 +329,13 @@ export default function OrdersPage() {
                 <SelectItem value="cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
+
+            {/* Date Filter */}
             <Select
               value={dateFilter}
-              onValueChange={(v) => handleDateFilterChange(v as DateFilterOption)}
+              onValueChange={(v) =>
+                handleDateFilterChange(v as DateFilterOption)
+              }
             >
               <SelectTrigger>
                 <SelectValue placeholder="Filter by date" />
@@ -375,6 +348,8 @@ export default function OrdersPage() {
                 <SelectItem value="custom">Custom Range</SelectItem>
               </SelectContent>
             </Select>
+
+            {/* Custom Date Range Picker */}
             {dateFilter === "custom" && (
               <Popover>
                 <PopoverTrigger asChild>
@@ -450,8 +425,9 @@ export default function OrdersPage() {
                         {order.firstName} {order.lastName} — {order.username} (
                         {order.email})
                       </TableCell>
+                      {/* Status Select showing only badges or editable based on permission */}
                       <TableCell>
-                        {canUpdate ? (
+                        {can({ order: ["update_status"] }) ? (
                           <Select
                             value={order.status}
                             onValueChange={(v) =>
@@ -465,28 +441,50 @@ export default function OrdersPage() {
                               </Badge>
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="open" className="w-auto flex justify-left">
-                                <Badge className={getStatusColor("open")}>Open</Badge>
+                              <SelectItem
+                                value="open"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("open")}>
+                                  Open
+                                </Badge>
                               </SelectItem>
-                              <SelectItem value="underpaid" className="w-auto flex justify-left">
+                              <SelectItem
+                                value="underpaid"
+                                className="w-auto flex justify-left"
+                              >
                                 <Badge className={getStatusColor("underpaid")}>
                                   Partially paid
                                 </Badge>
                               </SelectItem>
-                              <SelectItem value="paid" className="w-auto flex justify-left">
-                                <Badge className={getStatusColor("paid")}>Paid</Badge>
+                              <SelectItem
+                                value="paid"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("paid")}>
+                                  Paid
+                                </Badge>
                               </SelectItem>
-                              <SelectItem value="completed" className="w-auto flex justify-left">
+                              <SelectItem
+                                value="completed"
+                                className="w-auto flex justify-left"
+                              >
                                 <Badge className={getStatusColor("completed")}>
                                   Completed
                                 </Badge>
                               </SelectItem>
-                              <SelectItem value="cancelled" className="w-auto flex justify-left">
+                              <SelectItem
+                                value="cancelled"
+                                className="w-auto flex justify-left"
+                              >
                                 <Badge className={getStatusColor("cancelled")}>
                                   Cancelled
                                 </Badge>
                               </SelectItem>
-                              <SelectItem value="refunded" className="w-auto flex justify-left">
+                              <SelectItem
+                                value="refunded"
+                                className="w-auto flex justify-left"
+                              >
                                 <Badge className={getStatusColor("refunded")}>
                                   Refunded
                                 </Badge>
@@ -495,10 +493,12 @@ export default function OrdersPage() {
                           </Select>
                         ) : (
                           <Badge className={getStatusColor(order.status)}>
-                            {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                            {order.status.charAt(0).toUpperCase() +
+                              order.status.slice(1)}
                           </Badge>
                         )}
                       </TableCell>
+
                       <TableCell>{formatDate(order.createdAt)}</TableCell>
                       {canViewPricing && (
                         <TableCell>${order.total.toFixed(2)}</TableCell>
@@ -514,21 +514,30 @@ export default function OrdersPage() {
                           <DropdownMenuContent align="end">
                             {canUpdate && (
                               <DropdownMenuItem
-                                onClick={() => router.push(`/orders/${order.id}/edit`)}
+                                onClick={() =>
+                                  router.push(`/orders/${order.id}/edit`)
+                                }
                               >
                                 <Edit className="mr-2 h-4 w-4" />
                                 Edit
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuItem
-                              onClick={() => handleOrderAction(order.id, "send-notification")}
-                              disabled={order.status === "cancelled" || order.status === "completed"}
+                              onClick={() =>
+                                handleOrderAction(order.id, "send-notification")
+                              }
+                              disabled={
+                                order.status === "cancelled" ||
+                                order.status === "completed"
+                              }
                             >
                               <Mail className="mr-2 h-4 w-4" />
                               <span>Send Payment Notification</span>
                             </DropdownMenuItem>
                             {canUpdateTracking && (
-                              <DropdownMenuItem onClick={() => handleTracking(order.id)}>
+                              <DropdownMenuItem
+                                onClick={() => handleTracking(order.id)}
+                              >
                                 <Truck className="mr-2 h-4 w-4" />
                                 <span>Set tracking number</span>
                               </DropdownMenuItem>
@@ -540,7 +549,10 @@ export default function OrdersPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={canViewPricing ? 6 : 5} className="text-center py-6">
+                    <TableCell
+                      colSpan={canViewPricing ? 6 : 5}
+                      className="text-center py-6"
+                    >
                       No orders found matching your filters
                     </TableCell>
                   </TableRow>
@@ -548,6 +560,8 @@ export default function OrdersPage() {
               </TableBody>
             </Table>
           </div>
+
+          {/* Pagination Controls */}
           <div className="flex items-center justify-between p-4">
             <div>
               Showing{" "}
@@ -570,7 +584,9 @@ export default function OrdersPage() {
                 variant="outline"
                 size="sm"
                 disabled={currentPage === pageCount || pageCount === 0}
-                onClick={() => setCurrentPage((p) => Math.min(p + 1, pageCount))}
+                onClick={() =>
+                  setCurrentPage((p) => Math.min(p + 1, pageCount))
+                }
               >
                 Next
               </Button>
@@ -579,6 +595,7 @@ export default function OrdersPage() {
         </CardContent>
       </Card>
 
+      {/* — Tracking Number Dialog — */}
       {canUpdateTracking && (
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent>
@@ -591,13 +608,18 @@ export default function OrdersPage() {
               </DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4">
+              {/* NEW: Shipping Company selector */}
               <Select
                 value={selectedCompany}
                 onValueChange={(val) => setSelectedCompany(val)}
                 disabled={shippingLoading}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder={shippingLoading ? "Loading…" : "Select company"} />
+                  <SelectValue
+                    placeholder={
+                      shippingLoading ? "Loading…" : "Select company"
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {shippingCompanies.map((c) => (
