@@ -17,7 +17,7 @@ import { getMember } from "@/lib/auth-client/get-member";
  */
 export function usePermission(organizationId?: string) {
   const [role, setRole] = useState<string | null>(null); // null = loading
-  const [, bump] = useState(0);
+
   /* ── 1. Resolve role ─────────────────────────────────────────── */
   useEffect(() => {
     let cancelled = false;
@@ -44,10 +44,7 @@ export function usePermission(organizationId?: string) {
   }, [organizationId]);
 
   const loading = role === null;
-  const cache = useMemo(
-      () => new Map<string, boolean>(),
-      [role, (window as any).__permissionGeneration__]      // <── auto-flush
-    );
+  const cache = useMemo(() => new Map<string, boolean>(), [role]);
 
   /* ── 2. Permission checker ───────────────────────────────────── */
   const checker = useCallback(
@@ -79,8 +76,6 @@ export function usePermission(organizationId?: string) {
       /* We store the Promise to avoid duplicate calls while it resolves */
       const promise = evaluate().then((ok) => {
         cache.set(key, ok);       // memoise result (true/false)
-        /* trigger React to re-evaluate callers that already rendered “false” */
-        bump((n) => n + 1);
         return ok;
       });
 
