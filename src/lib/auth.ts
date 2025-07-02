@@ -29,9 +29,6 @@ const dynamicRoleRows = await db
   .execute();
 const dynamicRoles = registerDynamicRoles(dynamicRoleRows);
 export const roles = buildRoles(dynamicRoles);
-console.log("Dynamic roles fetched:", dynamicRoleRows);
-console.log("Registered dynamic roles:", dynamicRoles);
-console.log("Final roles object:", roles);
 export const auth = betterAuth({
   /*──────────────────── Database ────────────────────*/
   database: pgPool,                   // ← one source of truth
