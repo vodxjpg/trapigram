@@ -62,9 +62,9 @@ export interface PaymentMethod {
 
 const TRUSTED = [
   {
-    id: "COINX_FIXED_ID",
-    name: "CoinX",
-    logo: "/coinx-logo.svg",
+    id: "01",
+    name: "Niftipay",
+    logo: "/niftipay-logo.svg",
   },
 ] as const;
 
@@ -85,7 +85,7 @@ export function PaymentMethodsTable() {
   const [searchQuery, setSearchQuery] = useState("");
 
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerMode, setDrawerMode] = useState<"coinx" | "custom">("custom");
+  const [drawerMode, setDrawerMode] = useState<"niftipay" | "custom">("custom");
   const [editing, setEditing] = useState<PaymentMethod | null>(null);
   const [providerDialog, setProviderDialog] = useState(false);
 
@@ -123,7 +123,7 @@ export function PaymentMethodsTable() {
 
   if (can.loading || !canView) return null;
 
-  const coinxRow = methods.find((m) => m.name.toLowerCase() === "coinx") || null;
+  const niftipayRow = methods.find((m) => m.name.toLowerCase() === "niftipay") || null;
 
   const toggleActive = async (pm: PaymentMethod) => {
     if (!canUpdate) return;
@@ -143,7 +143,7 @@ export function PaymentMethodsTable() {
 
   const deleteRow = async (pm: PaymentMethod) => {
     if (!canDelete) return;
-    if (pm.name.toLowerCase() === "coinx") return; // safety
+    if (pm.name.toLowerCase() === "niftipay") return; // safety
     if (!confirm("Delete this payment method?")) return;
     try {
       await fetch(`/api/payment-methods/${pm.id}`, { method: "DELETE" });
@@ -155,7 +155,7 @@ export function PaymentMethodsTable() {
   };
 
   const openDrawer = (
-    mode: "coinx" | "custom",
+    mode: "niftipay" | "custom",
     row: PaymentMethod | null = null
   ) => {
     if (!canCreate && !canUpdate) return;
@@ -183,17 +183,17 @@ export function PaymentMethodsTable() {
               <button
                 onClick={() => {
                   setProviderDialog(false);
-                  openDrawer("coinx", coinxRow);
+                  openDrawer("niftipay", niftipayRow);
                 }}
                 className="border rounded-lg p-4 flex flex-col items-center gap-3 hover:bg-muted/50 transition"
               >
                 <Image
                   src={TRUSTED[0].logo}
-                  alt="CoinX"
+                  alt="Niftipay"
                   width={48}
                   height={48}
                 />
-                <span className="font-medium">CoinX - Crypto</span>
+                <span className="font-medium">Niftipay - Accept crypto payments</span>
                 <span className="text-xs text-green-600">Trusted provider</span>
               </button>
               <button
@@ -268,7 +268,7 @@ export function PaymentMethodsTable() {
                 <TableRow key={pm.id}>
                   <TableCell className="flex items-center gap-2">
                     {pm.name}
-                    {pm.name.toLowerCase() === "coinx" && (
+                    {pm.name.toLowerCase() === "niftipay" && (
                       <span className="text-xs text-green-600 ml-2">
                         trusted
                       </span>
@@ -293,8 +293,8 @@ export function PaymentMethodsTable() {
                           <DropdownMenuItem
                             onClick={() =>
                               openDrawer(
-                                pm.name.toLowerCase() === "coinx"
-                                  ? "coinx"
+                                pm.name.toLowerCase() === "niftipay"
+                                  ? "niftipay"
                                   : "custom",
                                 pm
                               )
@@ -309,7 +309,7 @@ export function PaymentMethodsTable() {
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               onClick={() => deleteRow(pm)}
-                              disabled={pm.name.toLowerCase() === "coinx"}
+                              disabled={pm.name.toLowerCase() === "niftipay"}
                               className="text-destructive focus:text-destructive"
                             >
                               <Trash2 className="mr-2 h-4 w-4" />

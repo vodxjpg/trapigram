@@ -151,13 +151,12 @@ export default function OrderView() {
 
         const clientRes = await fetch(`/api/clients/${o.clientId}`);
         if (!clientRes.ok) throw new Error("Failed loading client");
-        const c = await clientRes.json();
-
+        const { client: c } = await clientRes.json();
         setOrder({
           ...o,
-          clientFirstName: c.firstName,
-          clientLastName: c.lastName,
-          clientEmail: c.email,
+          clientFirstName: c.firstName ?? "",
+          clientLastName:  c.lastName  ?? "",
+          clientEmail:     c.email     ?? "",
           clientUsername: c.username,
         });
         setError(null);
@@ -583,11 +582,11 @@ export default function OrderView() {
                           >
                             <Avatar className="mt-1">
                               <AvatarFallback>
-                                {m.isInternal
+                               {m.isInternal
                                   ? "A"
-                                  : order.clientEmail
-                                    .charAt(0)
-                                    .toUpperCase()}
+                                  : (order.clientEmail ?? order.clientUsername ?? "?")
+                                      .charAt(0)
+                                      .toUpperCase()}
                               </AvatarFallback>
                             </Avatar>
                             <div

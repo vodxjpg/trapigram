@@ -5,8 +5,11 @@ import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
+import {
+  sendNotification,   // notification dispatcher
+  NotificationChannel // enum helper
+} from "@/lib/notifications";
 
-// nothing
 /** Helper to check if the caller is the org owner */
 async function isOwner(organizationId: string, userId: string) {
   const { rowCount } = await pool.query(
@@ -21,36 +24,35 @@ async function isOwner(organizationId: string, userId: string) {
   return rowCount > 0;
 }
 
-// Zod schema for validating incoming message
+/* ---------- validation schema ---------- */
 const messagesSchema = z.object({
-  message: z.string().min(1, "Message is required."),
+  message:     z.string().min(1, "Message is required."),
   attachments: z.string(),
-  isInternal: z.boolean(),
+  isInternal:  z.boolean(),
 });
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // 1) context + update guard
+  /* 1️⃣ context + permission guard */
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
 
   if (!(await isOwner(organizationId, userId))) {
     const guard = await requireOrgPermission(req, { ticket: ["update"] });
-    if (guard) {
+    if (guard)
       return NextResponse.json(
         { error: "You don’t have permission to post messages" },
-        { status: 403 }
+        { status: 403 },
       );
-    }
   }
 
   try {
     const { id } = await params;
 
-    // 2) normalize inputs
+    /* 2️⃣ normalise inputs */
     const raw = await req.json();
     const messageText =
       typeof raw.message === "string"
@@ -61,12 +63,11 @@ export async function POST(
         ? raw.content.trim()
         : "";
 
-    if (!messageText) {
+    if (!messageText)
       return NextResponse.json(
         { error: "Message is required in the request body." },
-        { status: 400 }
+        { status: 400 },
       );
-    }
 
     const attachmentsStr =
       typeof raw.attachments === "string"
@@ -75,14 +76,14 @@ export async function POST(
 
     const isInternal = req.headers.get("x-is-internal") === "true";
 
-    // 3) validate schema
+    /* 3️⃣ validate */
     const parsed = messagesSchema.parse({
       message: messageText,
       attachments: attachmentsStr,
       isInternal,
     });
 
-    // 4) insert
+    /* 4️⃣ insert into DB */
     const messageId = uuidv4();
     const result = await pool.query(
       `
@@ -98,38 +99,60 @@ export async function POST(
         parsed.message,
         parsed.attachments,
         parsed.isInternal,
-      ]
+      ],
     );
 
     const saved = result.rows[0];
-    // parse attachments JSON back to array
-    saved.attachments = JSON.parse(saved.attachments);
+    saved.attachments = JSON.parse(saved.attachments); // back to array for the client
 
-    // 5) bump ticket to in-progress if not first message
+    /* 4️⃣-bis notify client on public reply */
+    if (!parsed.isInternal) {
+      const {
+        rows: [{ clientId: orderClientId, country: clientCountry }],
+      } = await pool.query(
+        `SELECT t."clientId", c.country
+           FROM tickets t
+           JOIN clients c ON c.id = t."clientId"
+          WHERE t.id = $1 LIMIT 1`,
+        [id],
+      );
+
+      const channels: NotificationChannel[] = ["email", "in_app"];
+      await sendNotification({
+        organizationId,
+        type: "ticket_replied",
+        message: `Update on your ticket: <strong>${messageText}</strong>`,
+        subject: `Reply on ticket #${id}`,
+        variables: { ticket_number: id },
+        channels,
+        clientId: orderClientId,
+        country: clientCountry,      // ★ ensure match
+      });
+    }
+
+    /* 5️⃣ bump ticket status */
     const countRes = await pool.query(
       `SELECT COUNT(*) FROM "ticketMessages" WHERE "ticketId" = $1`,
-      [id]
+      [id],
     );
     if (Number(countRes.rows[0].count) > 1) {
       await pool.query(
         `UPDATE tickets SET status = 'in-progress' WHERE id = $1`,
-        [id]
+        [id],
       );
     }
 
     return NextResponse.json(saved, { status: 201 });
   } catch (err: any) {
     console.error("[POST /api/tickets/[id]/messages] error:", err);
-    if (err instanceof z.ZodError) {
-      // send validation errors
+    if (err instanceof z.ZodError)
       return NextResponse.json(
         { error: err.errors.map((e) => e.message).join("; ") },
-        { status: 400 }
+        { status: 400 },
       );
-    }
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

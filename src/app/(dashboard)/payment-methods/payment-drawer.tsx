@@ -28,7 +28,7 @@ export interface PaymentMethod {
 interface Props {
   open: boolean;
   onClose: (refresh?: boolean) => void;
-  mode: "coinx" | "custom";
+  mode: "niftipay" | "custom";
   method: PaymentMethod | null;
 }
 
@@ -39,10 +39,10 @@ export function PaymentMethodDrawer({
   mode,
   method,
 }: Props) {
-  const isCoinx = mode === "coinx";
+  const isNiftipay = mode === "niftipay";
 
   /* form state */
-  const [name, setName] = useState(isCoinx ? "CoinX" : "");
+  const [name, setName] = useState(isNiftipay ? "Niftipay" : "");
   const [active, setActive] = useState(true);
   const [apiKey, setApiKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
@@ -57,7 +57,7 @@ export function PaymentMethodDrawer({
       setApiKey(method.apiKey ?? "");
       setSecretKey(method.secretKey ?? "");
     } else {
-      setName(isCoinx ? "CoinX" : "");
+      setName(isNiftipay ? "Niftipay" : "");
       setActive(true);
       setApiKey("");
       setSecretKey("");
@@ -73,7 +73,7 @@ export function PaymentMethodDrawer({
     setSaving(true);
     try {
       const payload = {
-        name: isCoinx ? "CoinX" : name.trim(),
+        name: isNiftipay ? "Niftipay" : name.trim(),
         active,
         apiKey: apiKey.trim() || null,
         secretKey: secretKey.trim() || null,
@@ -108,23 +108,23 @@ export function PaymentMethodDrawer({
         <DrawerHeader>
           <DrawerTitle>
             {method
-              ? isCoinx
-                ? "Configure CoinX"
+              ? isNiftipay
+                ? "Configure Niftipay"
                 : "Edit payment method"
-              : isCoinx
-              ? "Configure CoinX"
+              : isNiftipay
+              ? "Configure Niftipay"
               : "New payment method"}
           </DrawerTitle>
           <DrawerDescription>
-            {isCoinx
-              ? "Enter your CoinX credentials."
+            {isNiftipay
+              ? "Enter your Niftipay credentials."
               : "Fill in the details of the payment method."}
           </DrawerDescription>
         </DrawerHeader>
 
         <div className="px-4 space-y-4">
-          {/* name (hidden/locked for CoinX) */}
-          {!isCoinx && (
+          {/* name (hidden/locked for Niftipay) */}
+          {!isNiftipay && (
             <div>
               <label className="block text-sm font-medium mb-1">Name</label>
               <Input

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sign as jwtSign } from "jsonwebtoken";
 import { createHmac, timingSafeEqual } from "crypto";
 import { loadKey } from "@/lib/readKey";
-import { CIDR } from "ip-cidr";
+import CIDR from "ip-cidr";
 
 let MASTER_KEY!: string;
 let PRIVATE_KEY!: string;

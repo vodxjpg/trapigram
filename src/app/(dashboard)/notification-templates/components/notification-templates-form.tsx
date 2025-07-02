@@ -32,10 +32,12 @@ const NOTIF_TYPES = [
   "order_placed",
   "order_paid",
   "order_completed",
-  "order_ready",
   "order_cancelled",
   "order_refunded",
-  "order_partially_paid"  // ← NEW
+  "order_partially_paid",
+  "ticket_created",
+  "ticket_replied",
+  "order_message",
 ] as const;
 
 countriesLib.registerLocale(en);
@@ -257,8 +259,9 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                     <span className="text-xs">{`{shipping_company}`} - Output order's shipping company</span>,&nbsp;<br></br>
                     <span className="text-xs">{`{expected_amt}`} - Output order's crypto expected amount (works with Coinslick)</span>,&nbsp;<br></br>
                     <span className="text-xs">{`{received_amt}`} - Output order's crypto received amount (works with Coinslick)</span>,&nbsp;<br></br>
-                    <span className="text-xs">{`{pending_amt}`}- Output order's crypto pending amount (works with Coinslick)</span>,&nbsp;<br></br>
-                    <span className="text-xs">{`{asset}`} - Output order's crypto asset (works with Coinslick)</span>
+                    <span className="text-xs">{`{pending_amt}`} - Output order's crypto pending amount (works with Coinslick)</span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{asset}`} - Output order's crypto asset (works with Coinslick)</span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{ticket_number}`} - Output support ticket number</span>
                   </div>
                   <FormControl>
                     <ReactQuill theme="snow" value={field.value} onChange={field.onChange} modules={quillModules} />

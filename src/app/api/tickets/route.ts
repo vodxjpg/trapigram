@@ -5,6 +5,11 @@ import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
+import {
+  sendNotification,
+  NotificationChannel,
+} from "@/lib/notifications";
+
 
 
 // helper to check if caller is owner
@@ -100,6 +105,27 @@ export async function POST(req: NextRequest) {
     `;
     const vals = [ticketId, organizationId, data.clientId, data.title, data.priority, data.status];
     const result = (await pool.query(insert, vals)).rows[0];
+
+    /* ─── fire notification ─── */
+    const { rows: [cli] } = await pool.query(
+      `SELECT country FROM clients WHERE id = $1 LIMIT 1`,
+      [data.clientId],
+    );
+    const clientCountry = cli?.country ?? null;
+    const channels: NotificationChannel[] = ["email", "in_app"];
+    await sendNotification({
+      organizationId,
+      type:     "ticket_created",
+      message:  `New ticket created: <strong>${result.title}</strong>`,
+      subject:  `Ticket #${ticketId} created`,
+      variables: {
+        ticket_number: ticketId,         // ★ NEW placeholder
+        ticket_id:     ticketId,         // keep for bw-compat
+        ticket_title:  result.title,
+      },
+      channels,
+      clientId: result.clientId,
+    });
     return NextResponse.json(result, { status: 201 });
   } catch (err: any) {
     console.error("[POST /api/tickets]", err);

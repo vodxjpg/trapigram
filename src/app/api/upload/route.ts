@@ -1,10 +1,12 @@
-// File: src/app/api/upload/route.ts
+// src/app/api/upload/route.ts  ← UPDATED
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, mkdir } from "fs/promises";
-import { join, dirname } from "path";
-import { auth } from "@/lib/auth";
 import { v4 as uuidv4 } from "uuid";
+import { writeFile, mkdir } from "fs/promises";
+import { join } from "path";
 import { getContext } from "@/lib/context";
+
+/* helper: decide storage backend */
+const useBlob = !!process.env.BLOB_READ_WRITE_TOKEN;
 
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
@@ -14,14 +16,12 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File;
-
-    if (!file) {
+    if (!file)
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
-    }
 
-    // Validate file type
-    const imageTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-    const videoTypes = [
+    /* ---------- validation ---------- */
+    const img = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    const vid = [
       "video/mp4",
       "video/webm",
       "video/ogg",
@@ -29,56 +29,39 @@ export async function POST(req: NextRequest) {
       "video/x-msvideo",
       "video/mpeg",
     ];
-    const validTypes = [...imageTypes, ...videoTypes];
-    if (!validTypes.includes(file.type)) {
+    const okTypes = [...img, ...vid];
+    if (!okTypes.includes(file.type))
       return NextResponse.json({ error: "Invalid file type" }, { status: 400 });
+
+    const max = img.includes(file.type) ? 5 * 2 ** 20 : 150 * 2 ** 20;
+    if (file.size > max) {
+      const lbl = img.includes(file.type) ? "5MB" : "150MB";
+      return NextResponse.json({ error: `File too large (max ${lbl})` }, { status: 400 });
     }
 
-    // Determine max size: 5MB for images, 150MB for videos
-    const maxSize = imageTypes.includes(file.type)
-      ? 5 * 1024 * 1024
-      : 150 * 1024 * 1024;
-    if (file.size > maxSize) {
-      const sizeLabel = imageTypes.includes(file.type) ? "5MB" : "150MB";
-      return NextResponse.json(
-        { error: `File too large (max ${sizeLabel})` },
-        { status: 400 }
-      );
+    /* ---------- naming & buffer ---------- */
+    const ext  = file.name.split(".").pop();
+    const name = `${uuidv4()}.${ext}`;
+    const path = `tenants/${organizationId}/categories/${name}`;
+    const buf  = Buffer.from(await file.arrayBuffer());
+
+    /* ---------- storage ---------- */
+    let url: string;
+    if (useBlob) {
+      // dynamic import keeps local dev working even if @vercel/blob isn't installed
+      // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+      const { put } = (await import("@vercel/blob")) as typeof import("@vercel/blob");
+      ({ url } = await put(path, buf, { access: "public", contentType: file.type }));
+    } else {
+      const absDir = join(process.cwd(), "public", "uploads", path.split("/").slice(0, -1).join("/"));
+      await mkdir(absDir, { recursive: true });
+      await writeFile(join(process.cwd(), "public", "uploads", path), buf);
+      url = `/uploads/${path}`;              // served statically in dev
     }
 
-    // Create unique filename
-    const fileExt = file.name.split(".").pop();
-    const fileName = `${uuidv4()}.${fileExt}`;
-
-    // Create tenant directory path
-    const uploadDir = join(
-      process.cwd(),
-      "public",
-      "uploads",
-      "tenants",
-      organizationId,
-      "categories"
-    );
-
-    // Ensure directory exists
-    await mkdir(dirname(join(uploadDir, fileName)), { recursive: true });
-
-    // Convert file to buffer and save
-    const buffer = Buffer.from(await file.arrayBuffer());
-    await writeFile(join(uploadDir, fileName), buffer);
-
-    // Return the path to the file (relative to public directory)
-    const filePath = `/uploads/tenants/${organizationId}/categories/${fileName}`;
-
-    return NextResponse.json(
-      {
-        success: true,
-        filePath,
-      },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error("[POST /api/upload] error:", error);
+    return NextResponse.json({ success: true, filePath: url }, { status: 200 });
+  } catch (err) {
+    console.error("[POST /api/upload] error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
