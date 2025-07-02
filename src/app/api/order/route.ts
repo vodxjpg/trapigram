@@ -63,8 +63,6 @@ export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
-  const guard = await requireOrgPermission(req, { order: ["view"] });
-  if (guard) return guard;
   const { searchParams } = new URL(req.url);
   const filterOrderKey = searchParams.get("orderKey");
   const filterClientId = searchParams.get("clientId");
