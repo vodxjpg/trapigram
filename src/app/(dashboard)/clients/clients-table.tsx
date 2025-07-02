@@ -51,6 +51,9 @@ import { usePermission } from "@/hooks/use-permission";
 
 countriesLib.registerLocale(en);
 
+/* ------------------------------------------------------------------------- */
+/*  Types                                                                    */
+/* ------------------------------------------------------------------------- */
 type Client = {
   id: string;
   organizationId: string;
@@ -64,86 +67,57 @@ type Client = {
   points: number;
 };
 
+/* ------------------------------------------------------------------------- */
+/*  Component                                                                */
+/* ------------------------------------------------------------------------- */
 export function ClientsTable() {
   const router = useRouter();
-   const can = usePermission(); ;
+  const can    = usePermission();
 
-  // ─── Statistics modal state ─────────────────────────────────
-  const [statsOpen, setStatsOpen] = useState(false);
+  /* --------------------------- local state ------------------------------ */
+  const [statsOpen,    setStatsOpen]    = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
-  const [statsData, setStatsData] = useState<{
+  const [statsData,    setStatsData]    = useState<{
     totalOrders: number;
     mostPurchased: string;
     quantityPurchased: number;
     lastPurchase: string;
   } | null>(null);
 
-  const [clients, setClients] = useState<Client[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [totalPages, setTotalPages] = useState(1);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [search, setSearch] = useState("");
+  const [clients,   setClients]   = useState<Client[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [totalPages,setTotalPages]= useState(1);
+  const [page,      setPage]      = useState(1);
+  const [pageSize,  setPageSize]  = useState(10);
+  const [search,    setSearch]    = useState("");
   const [debounced, setDebounced] = useState("");
-  const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<Client | null>(null);
-  const [delta, setDelta] = useState("");
+  const [open,      setOpen]      = useState(false);
+  const [selected,  setSelected]  = useState<Client | null>(null);
+  const [delta,     setDelta]     = useState("");
 
-  const openStatsModal = useCallback(async (id: string) => {
-    setStatsOpen(true);
-    setStatsLoading(true);
-    try {
-      const res = await fetch(`/api/clients/${id}`);
-      const data = await res.json();
-      setStatsData({
-        totalOrders: data.totalOrders,
-        mostPurchased: data.mostPurchased,
-        quantityPurchased: data.quantityPurchased,
-        lastPurchase: data.lastPurchase,
-      });
-    } catch (err: any) {
-      toast.error(err.message);
-      setStatsData(null);
-    } finally {
-      setStatsLoading(false);
-    }
-  }, []);
-
-  // customer perms for CRUD
-  const canView   = true;
+  /* --------------------------- permissions ------------------------------ */
+  const canView   = can({ customer: ["view"] });
   const canCreate = can({ customer: ["create"] });
   const canUpdate = can({ customer: ["update"] });
   const canDelete = can({ customer: ["delete"] });
-
-  // affiliate-only perm for points adjustments
   const canPoints = can({ affiliates: ["points"] });
 
-  // enforce that they at least can see clients
- /*  Safe early-return (after all hooks have run) */
- if (can.loading || !canView) {
-   return null;
- }
+  /* --------------------------- helpers ---------------------------------- */
+  const formatDate = (d: string | Date) => {
+    const date = new Date(d);
+    const pad  = (n: number) => String(n).padStart(2, "0");
+    return `${pad(date.getUTCDate())}/${pad(date.getUTCMonth() + 1)}/${date.getUTCFullYear()} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+  };
 
-  function formatDate(createdAt) {
-    const date = new Date(createdAt);
-    const pad = (n) => String(n).padStart(2, "0");
-    const day = pad(date.getUTCDate());
-    const month = pad(date.getUTCMonth() + 1);
-    const year = date.getUTCFullYear();
-    const hours = pad(date.getUTCHours());
-    const mins = pad(date.getUTCMinutes());
-    const secs = pad(date.getUTCSeconds());
-    return `${day}/${month}/${year} ${hours}:${mins}:${secs}`;
-  }
-
-  // debounce the search input
+  /* --------------------------- debounce search -------------------------- */
   useEffect(() => {
     const id = setTimeout(() => setDebounced(search), 400);
     return () => clearTimeout(id);
   }, [search]);
 
-  // fetch clients + merge affiliate balances
+  /* --------------------------- data fetch ------------------------------- */
   const fetchClients = async () => {
+    if (!canView) return;                     // guard – no rights ⇒ no work
     setLoading(true);
     try {
       const res = await fetch(
@@ -153,35 +127,30 @@ export function ClientsTable() {
             "x-internal-secret":
               process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
           },
-        }
+        },
       );
-
       if (!res.ok) throw new Error((await res.json()).error || "Fetch failed");
 
       const { clients, totalPages, currentPage } = await res.json();
-
       setClients(clients);
       setTotalPages(totalPages);
       setPage(currentPage);
 
-      // now load all point balances in one request
-      const balRes = await fetch(`/api/affiliate/points/balance`, {
+      /* merge affiliate balances --------------------------------------- */
+      const balRes = await fetch("/api/affiliate/points/balance", {
         headers: {
           "x-internal-secret":
             process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
         },
       });
-
       if (!balRes.ok) throw new Error("Could not load balances");
-
       const { balances } = await balRes.json();
 
-      // merge points into client list
       setClients((cs) =>
-        cs.map((c) => {
-          const b = balances.find((x) => x.clientId === c.id);
-          return { ...c, points: b?.pointsCurrent ?? 0 };
-        })
+        cs.map((c) => ({
+          ...c,
+          points: balances.find((b) => b.clientId === c.id)?.pointsCurrent ?? 0,
+        })),
       );
     } catch (err: any) {
       toast.error(err.message);
@@ -190,12 +159,37 @@ export function ClientsTable() {
     }
   };
 
-  useEffect(() => void fetchClients(), [page, pageSize, debounced]);
+  useEffect(
+    () => {
+      fetchClients();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [page, pageSize, debounced, canView],
+  );
 
-  // delete client
+  /* --------------------------- callbacks -------------------------------- */
+  const openStatsModal = useCallback(async (id: string) => {
+    setStatsOpen(true);
+    setStatsLoading(true);
+    try {
+      const res = await fetch(`/api/clients/${id}`);
+      const data = await res.json();
+      setStatsData({
+        totalOrders:        data.totalOrders,
+        mostPurchased:      data.mostPurchased,
+        quantityPurchased:  data.quantityPurchased,
+        lastPurchase:       data.lastPurchase,
+      });
+    } catch (err: any) {
+      toast.error(err.message);
+      setStatsData(null);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
   const deleteClient = async (id: string) => {
-    if (!confirm("Delete this client?")) return;
-
+    if (!canDelete || !confirm("Delete this client?")) return;
     await fetch(`/api/clients/${id}`, {
       method: "DELETE",
       headers: {
@@ -205,7 +199,6 @@ export function ClientsTable() {
     fetchClients();
   };
 
-  // open the Adjust Points dialog
   const openDialog = (client: Client) => {
     if (!canPoints) return;
     setSelected(client);
@@ -213,21 +206,18 @@ export function ClientsTable() {
     setOpen(true);
   };
 
-  // post the point adjustment
   const saveAdjustment = async () => {
     const val = Number(delta);
     if (!selected || !Number.isFinite(val) || val === 0) {
       toast.error("Enter a non-zero integer");
       return;
     }
-
     try {
       await fetch("/api/affiliate/points", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-internal-secret":
-            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
         },
         body: JSON.stringify({
           id: selected.id,
@@ -236,7 +226,6 @@ export function ClientsTable() {
           description: "Dashboard manual adjustment",
         }),
       });
-
       toast.success("Points updated");
       setOpen(false);
       router.push("/affiliates");
@@ -245,9 +234,13 @@ export function ClientsTable() {
     }
   };
 
+  /* --------------------------- GUARD → render --------------------------- */
+  if (can.loading || !canView) return null;
+
+  /* --------------------------- UI -------------------------------------- */
   return (
     <>
-      {/* ─── Adjust Points Dialog ─── */}
+      {/* ─────────────────────── Adjust Points dialog ─────────────────── */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
@@ -256,7 +249,7 @@ export function ClientsTable() {
           {selected && (
             <>
               <p>
-                <strong>{selected.username}</strong> current balance:&nbsp;
+                <strong>{selected.username}</strong>&nbsp;current balance:&nbsp;
                 <span className="font-mono">{selected.points}</span>
               </p>
               <Input
@@ -276,13 +269,14 @@ export function ClientsTable() {
         </DialogContent>
       </Dialog>
 
-      {/* ─── Clients Table ─── */}
+      {/* ───────────────────────── Clients table ───────────────────────── */}
       <Card className="p-4">
+        {/* Header row */}
         <div className="flex items-center justify-between mb-4">
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search clients..."
+              placeholder="Search clients…"
               className="pl-8"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -308,6 +302,7 @@ export function ClientsTable() {
           </Select>
         </div>
 
+        {/* Table */}
         <div className="rounded-md border">
           <Table>
             <TableHeader>
@@ -323,16 +318,17 @@ export function ClientsTable() {
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
+
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center">
+                  <TableCell colSpan={9} className="text-center">
                     Loading…
                   </TableCell>
                 </TableRow>
               ) : clients.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center">
+                  <TableCell colSpan={9} className="text-center">
                     No clients
                   </TableCell>
                 </TableRow>
@@ -349,11 +345,7 @@ export function ClientsTable() {
                           <ReactCountryFlag
                             countryCode={c.country}
                             svg
-                            style={{
-                              width: "1em",
-                              height: "1em",
-                              marginRight: 6,
-                            }}
+                            style={{ width: "1em", height: "1em", marginRight: 6 }}
                           />
                           {countriesLib.getName(c.country, "en") ?? c.country}
                         </div>
@@ -372,7 +364,6 @@ export function ClientsTable() {
                         <Search className="h-4 w-4" />
                       </Button>
                     </TableCell>
-                    <TableCell className="text-right"></TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -381,14 +372,12 @@ export function ClientsTable() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          {/* only show Adjust Points if allowed */}
                           {canPoints && (
                             <DropdownMenuItem onClick={() => openDialog(c)}>
                               <DollarSign className="mr-2 h-4 w-4" />
                               Adjust Points
                             </DropdownMenuItem>
                           )}
-                          {/* Edit/delete controlled by customer perms */}
                           {canUpdate && (
                             <DropdownMenuItem
                               onClick={() => router.push(`/clients/${c.id}`)}
@@ -416,6 +405,7 @@ export function ClientsTable() {
           </Table>
         </div>
 
+        {/* Pagination */}
         <div className="flex items-center justify-between mt-4">
           <span className="text-sm text-muted-foreground">
             Page {page} of {totalPages}
@@ -459,7 +449,7 @@ export function ClientsTable() {
         </div>
       </Card>
 
-      {/* ─── Statistics Modal ────────────────────────────────────────── */}
+      {/* ─────────────────────── Statistics dialog ─────────────────────── */}
       <Dialog open={statsOpen} onOpenChange={setStatsOpen}>
         <DialogContent className="sm:max-w-4xl">
           <DialogHeader>
@@ -467,45 +457,42 @@ export function ClientsTable() {
           </DialogHeader>
           {statsLoading ? (
             <div className="flex items-center justify-center py-8">
-              <p>Loading...</p>
+              <p>Loading…</p>
             </div>
           ) : statsData ? (
-            <>
-              {/* inserted statistics UI */}
-              <div className="mt-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="border rounded-lg p-6 text-center">
-                    <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                      Total Orders
-                    </h3>
-                    <p className="text-3xl font-bold text-primary">
-                      {statsData.totalOrders}
-                    </p>
-                  </div>
-                  <div className="border rounded-lg p-6 text-center">
-                    <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                      Most Purchased Product
-                    </h3>
-                    <p className="text-lg font-medium">
-                      {statsData.mostPurchased?.title || "N/A"}
-                    </p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {statsData.quantityPurchased} units
-                    </p>
-                  </div>
-                  <div className="border rounded-lg p-6 text-center">
-                    <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                      Last Purchase
-                    </h3>
-                    <p className="text-lg font-medium">
-                      {statsData.lastPurchase
-                        ? formatDate(statsData.lastPurchase.createdAt)
-                        : "N/A"}
-                    </p>
-                  </div>
+            <div className="mt-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="border rounded-lg p-6 text-center">
+                  <h3 className="text-sm font-medium text-muted-foreground mb-2">
+                    Total Orders
+                  </h3>
+                  <p className="text-3xl font-bold text-primary">
+                    {statsData.totalOrders}
+                  </p>
+                </div>
+                <div className="border rounded-lg p-6 text-center">
+                  <h3 className="text-sm font-medium text-muted-foreground mb-2">
+                    Most Purchased Product
+                  </h3>
+                  <p className="text-lg font-medium">
+                    {statsData.mostPurchased?.title || "N/A"}
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {statsData.quantityPurchased} units
+                  </p>
+                </div>
+                <div className="border rounded-lg p-6 text-center">
+                  <h3 className="text-sm font-medium text-muted-foreground mb-2">
+                    Last Purchase
+                  </h3>
+                  <p className="text-lg font-medium">
+                    {statsData.lastPurchase
+                      ? formatDate(statsData.lastPurchase.createdAt)
+                      : "N/A"}
+                  </p>
                 </div>
               </div>
-            </>
+            </div>
           ) : (
             <div className="flex items-center justify-center py-8">
               <p>No data available.</p>
