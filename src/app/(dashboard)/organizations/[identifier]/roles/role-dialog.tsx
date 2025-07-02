@@ -2,7 +2,6 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { authClient } from "@/lib/auth-client"; 
 import { DialogContent }             from "@/components/ui/dialog";
 import { Button }                    from "@/components/ui/button";
 import { Input }                     from "@/components/ui/input";
@@ -64,7 +63,6 @@ export default function RoleDialog({
     });
     setSaving(false);
     if (res.ok) onSaved();
-    authClient.organization.invalidatePermissionCache?.();
   }
 
   return (
