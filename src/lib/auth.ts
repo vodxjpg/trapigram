@@ -9,12 +9,14 @@ import { createAuthMiddleware } from "better-auth/api";
 import { db, pgPool } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
-import { ac, builtinRoles } from "@/lib/permissions";
+import { ac } from "@/lib/permissions";
+import { roles } from "@/lib/roles"; // Import roles from new file
 import { v4 as uuidv4 } from "uuid";
 
 /*───────────────────────────────────────────────────────────────────
   MAIN CONFIG
 ───────────────────────────────────────────────────────────────────*/
+
 export const auth = betterAuth({
   /*──────────────────── Database ────────────────────*/
   database: pgPool,                   // ← one source of truth
@@ -250,7 +252,7 @@ export const auth = betterAuth({
     /* Organizations */
     organization({
       ac,
-      roles: builtinRoles,
+      roles,
 
       /** Invitation email */
       async sendInvitationEmail({ id, email, role, organization, inviter }) {
