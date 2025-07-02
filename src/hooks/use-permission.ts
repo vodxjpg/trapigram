@@ -1,37 +1,50 @@
+// src/hooks/use-permission.ts
 "use client";
 
 import { useCallback, useMemo, useEffect, useState } from "react";
-import { authClient } from "@/lib/auth-client";          // ✅ still needed
-import { getMember } from "@/lib/auth-client/get-member"; // ✅ custom fetcher
+import { authClient } from "@/lib/auth-client";
+import { getMember } from "@/lib/auth-client/get-member";
 
 /**
  * usePermission
  * -------------
- * Pass an `organizationId` when you know it; otherwise the hook will fall
- * back to the active org stored in the user’s session.
+ * If you pass `organizationId`, permissions are checked for that org.
+ * Otherwise the hook relies on the active organization stored in the
+ * Better-Auth session.
  *
- * Returns a function `can(perm)` with these extras:
- *   • can.loading  – true while the role is being fetched
- *   • can.role     – the resolved role (or null while loading)
+ * The returned function `can(perm)` also carries:
+ *   • can.loading  – true while the role is still loading
+ *   • can.role     – the resolved role (string or null)
  */
 export function usePermission(organizationId?: string) {
   const [role, setRole] = useState<string | null>(null); // null = loading
 
-  // 1 ─ Fetch role for the requested (or active) organisation
+  /* ──────────────────────────────────────────────────────────────
+   * 1. Load role for the requested (or active) organization
+   * ────────────────────────────────────────────────────────────── */
   useEffect(() => {
     let cancelled = false;
 
     async function loadRole() {
       try {
         const res = organizationId
-          ? await getMember({ organizationId })            // ← our endpoint
+          ? await getMember({ organizationId })            // custom endpoint
           : await authClient.organization.getActiveMember();
 
         if (!cancelled) {
-          setRole((res?.data?.role || "").toLowerCase());  // normalise case
+          const resolved = (res?.data?.role || "").toLowerCase();
+          /*  🔍  TEMPORARY DEBUG LOG — remove when satisfied  */
+          console.log(
+            "[usePermission] org =", organizationId ?? "<active>",
+            "→ role =", resolved || "<none>",
+          );
+          setRole(resolved);
         }
-      } catch {
-        if (!cancelled) setRole("");                       // treat as “no role”
+      } catch (err) {
+        if (!cancelled) {
+          console.warn("[usePermission] failed to load role:", err);
+          setRole("");                                     // treat as “no role”
+        }
       }
     }
 
@@ -42,7 +55,9 @@ export function usePermission(organizationId?: string) {
   const loading = role === null;
   const cache   = useMemo(() => new Map<string, boolean>(), [role]);
 
-  // 2 ─ Permission checker
+  /* ──────────────────────────────────────────────────────────────
+   * 2. Permission checker (memoised)
+   * ────────────────────────────────────────────────────────────── */
   const checker = useCallback(
     (perm: Record<string, string[]>) => {
       if (role === "owner") return true;   // owner bypass
@@ -61,6 +76,7 @@ export function usePermission(organizationId?: string) {
     [cache, role, loading],
   );
 
+  /* Attach metadata */
   (checker as any).loading = loading;
   (checker as any).role    = role;
 

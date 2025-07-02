@@ -100,7 +100,9 @@ export default function OrganizationDetailsPage() {
       </p>
 
       {/* Invitation form (hook will still double-check permissions) */}
-      {isOwner && <InviteMemberForm organizationId={id} />}
+      {can({ invitation: ["create"] }) && (
+  <InviteMemberForm organizationId={id} />
+)}
 
       {/* Tabs for Members / Invitations */}
       <Tabs defaultValue="members" className="w-full">
