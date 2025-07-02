@@ -29,7 +29,6 @@ export default function EditClientPage() {
 
  
   useEffect(() => {
-    const fetchClient = async () => {
       if (can.loading || !can({ customer: ["update"] })) return;
       const fetchClient = async () => {
       try {
