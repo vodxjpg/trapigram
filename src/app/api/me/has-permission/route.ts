@@ -3,15 +3,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { 
-  ac, 
-  builtinRoles, 
-  getDynamicRolesForOrg,
-  buildRoles 
-} from "@/lib/permissions";
+// Import from BOTH new files
+import { ac, buildRoles } from "@/lib/permissions/definitions"; 
+import { getDynamicRolesForOrg } from "@/lib/permissions/server";
 
 export async function POST(req: NextRequest) {
-  const session = await auth.getSession(req);
+  const session = await auth.api.getSession(req);
   if (!session?.user?.id || !session.activeOrganizationId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

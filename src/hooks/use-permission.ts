@@ -5,7 +5,7 @@
 import { useCallback, useMemo, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { getMember } from "@/lib/auth-client/get-member";
-import { Permission } from "@/lib/permissions";
+import { Permission } from "@/lib/permissions/definitions"; 
 
 // This is our new client-side fetcher
 async function checkPermissionOnServer(perm: Permission): Promise<boolean> {

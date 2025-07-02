@@ -325,7 +325,7 @@ export default function OrdersPage() {
  *  All hooks above have now executed; it’s safe to short-circuit
  *  rendering while permissions are still loading.
  * ────────────────────────────────────────────────────────────── */
-  useEffect(() => {
+ useEffect(() => {
     if (can.loading) return; // Wait until the role is loaded
 
     // Create an async function inside useEffect to check all permissions

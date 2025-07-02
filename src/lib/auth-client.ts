@@ -4,8 +4,7 @@ import { organizationClient } from "better-auth/client/plugins";
 import { magicLinkClient } from "better-auth/client/plugins";
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
 import { apiKeyClient } from "better-auth/client/plugins";
-import { ac } from "@/lib/permissions"
-import { roles } from "@/lib/roles"
+import { ac, builtinRoles } from "@/lib/permissions/definitions"; 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
 
 // Dynamically import roles only server-side
@@ -83,7 +82,7 @@ export const authClient = createAuthClient({
     apiKeyClient(),
     organizationClient({
       ac,
-      roles, // Empty object client-side, full roles server-side
+      roles: builtinRoles,
     }),
     subscriptionClientPlugin,
     magicLinkClient(),
