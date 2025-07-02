@@ -11,7 +11,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function AnnouncementsNewPage() {
   const { setHeaderTitle } = useHeaderTitle();
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   const canCreate = can({ announcements: ["create"] });
 

@@ -70,7 +70,7 @@ const TRUSTED = [
 
 export function PaymentMethodsTable() {
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   const canView   = can({ payment: ["view"] });
   const canCreate = can({ payment: ["create"] });

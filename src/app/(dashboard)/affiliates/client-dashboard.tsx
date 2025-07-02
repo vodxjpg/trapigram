@@ -10,7 +10,7 @@ import { usePermission } from "@/hooks/use-permission";
 
 export default function ClientDashboard() {
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   if (can.loading) return null;
   if (!can({ affiliates: ["view"] })) {

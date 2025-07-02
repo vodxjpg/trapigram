@@ -14,7 +14,7 @@ import useSWR from "swr"
 export default function EditProductPage() {
   const router = useRouter()
   const params = useParams() as { id: string }
-  const can = usePermission()
+  const can = usePermission(organizationId);
   // Redirect if user lacks update permission
   useEffect(() => {
     if (!can.loading && !can({ product: ["update"] })) {

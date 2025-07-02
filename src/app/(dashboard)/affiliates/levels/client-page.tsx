@@ -10,7 +10,7 @@ import { usePermission } from "@/hooks/use-permission";
 
 export default function ClientAffiliateLevelsPage() {
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   // Redirect away if no settings permission
   useEffect(() => {

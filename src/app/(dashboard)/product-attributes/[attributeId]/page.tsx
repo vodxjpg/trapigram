@@ -11,7 +11,7 @@ import { TermTable } from "./terms/term-table";
 export default function AttributeTermsPage() {
   const { setHeaderTitle } = useHeaderTitle();
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
   const { attributeId } = useParams() as { attributeId: string };
 
   // Set page title

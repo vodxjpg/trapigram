@@ -48,7 +48,7 @@ type Warehouse = {
 
 export function WarehouseTable() {
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);

@@ -9,7 +9,7 @@ import { NotificationTemplateForm } from "../components/notification-templates-f
 
 export default function NewTemplatePage() {
   const { setHeaderTitle } = useHeaderTitle();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
   const router = useRouter();
 
   useEffect(() => {

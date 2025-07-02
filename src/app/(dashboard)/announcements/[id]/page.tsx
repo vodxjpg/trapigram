@@ -14,7 +14,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function EditAnnouncementPage() {
   const params = useParams();
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   const canUpdate = can({ announcements: ["update"] });
 

@@ -10,7 +10,7 @@ import { usePermission } from "@/hooks/use-permission";
 
 export default function NewSectionPage() {
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   const canCreate = can({ sections: ["create"] });
   const [sections, setSections] = useState<any[]>([]);

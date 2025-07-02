@@ -13,7 +13,7 @@ import { ShippingMethodForm } from "../shipping-companies-form";
 export default function EditShippingMethodPage() {
   const { id } = useParams();
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   const [method, setMethod] = useState<any>(null);
   const [loading, setLoading] = useState(true);

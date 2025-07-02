@@ -123,7 +123,7 @@ function groupByProduct(lines: Product[]) {
 export default function OrderView() {
   const { id } = useParams();
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);

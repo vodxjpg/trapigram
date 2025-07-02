@@ -10,7 +10,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function ShippingCompaniesPage() {
   const { setHeaderTitle } = useHeaderTitle();
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   useEffect(() => {
     setHeaderTitle("Shipping Companies");

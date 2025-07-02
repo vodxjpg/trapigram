@@ -61,7 +61,7 @@ type ShippingMethod = {
 
 export function ShippingMethodsTable() {
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   const [methods, setMethods] = useState<ShippingMethod[]>([]);
   const [loading, setLoading] = useState(true);

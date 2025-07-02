@@ -10,7 +10,7 @@ interface Props { id: string }
 
 export function ClientEditLevelPage({ id }: Props) {
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   // Redirect away if they lack the affiliate‐settings permission
   useEffect(() => {

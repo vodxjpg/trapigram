@@ -25,7 +25,7 @@ interface TemplateRow {
 }
 
 export function NotificationTemplatesTable() {
-  const can = usePermission();
+  const can = usePermission(organizationId);;
   const canView   = can({ notifications: ["view"] });
   const canUpdate = can({ notifications: ["update"] });
   const canDelete = can({ notifications: ["delete"] });

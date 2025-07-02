@@ -13,7 +13,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function AnnouncementsPage() {
   const { setHeaderTitle } = useHeaderTitle();
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   const canView   = can({ announcements: ["view"] });
   const canCreate = can({ announcements: ["create"] });

@@ -21,7 +21,7 @@ const TELEGRAM_TOKEN_REGEX = /^[0-9]{7,10}:[A-Za-z0-9_-]{35}$/;
 
 export default function PlatformKeysPage() {
   const { identifier } = useParams();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
   const [keys, setKeys] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 

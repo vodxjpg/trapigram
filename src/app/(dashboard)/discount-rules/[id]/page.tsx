@@ -14,7 +14,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function EditDiscountRulePage() {
   const { id } = useParams();
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
   const [rule, setRule] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 

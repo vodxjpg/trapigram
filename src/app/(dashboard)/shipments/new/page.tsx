@@ -9,7 +9,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
 export default function NewShipmentPage() {
-  const can = usePermission();
+  const can = usePermission(organizationId);;
   const router = useRouter();
 
   // redirect if they can't create

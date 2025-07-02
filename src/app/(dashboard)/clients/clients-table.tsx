@@ -66,7 +66,7 @@ type Client = {
 
 export function ClientsTable() {
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   // ─── Statistics modal state ─────────────────────────────────
   const [statsOpen, setStatsOpen] = useState(false);

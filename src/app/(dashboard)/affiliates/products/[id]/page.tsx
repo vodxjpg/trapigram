@@ -14,7 +14,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function EditAffiliateProductPage() {
   const router = useRouter();
   const params = useParams() as { id: string };
-  const can = usePermission();
+  const can = usePermission(organizationId);;
   const { product, isLoading } = useAffiliateProduct(params.id);
 
   // Redirect back if no products permission

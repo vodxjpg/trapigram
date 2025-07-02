@@ -80,7 +80,7 @@ const flatten = (nodes: Node[], depth = 0): Array<Section & { depth: number }> =
 
 export function SectionsTable() {
   const router = useRouter();
-  const can = usePermission();
+  const can = usePermission(organizationId);;
 
   const canView   = can({ sections: ["view"] });
   const canCreate = can({ sections: ["create"] });
