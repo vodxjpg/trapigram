@@ -53,23 +53,26 @@ export function usePermission(organizationId?: string) {
   /* ── 2. Permission checker ───────────────────────────────────── */
   const checker = useCallback(
     (perm: Record<string, string[]>) => {
-      if (role === "owner") return true; // owner bypass
-      if (loading) return true; // optimistic while loading
-
+      if (role === "owner") return true;
+      if (loading) return true;
+  
       const key = JSON.stringify(perm);
       if (cache.has(key)) return cache.get(key)!;
-
-      // Split the role string into an array (handles multiple roles)
+  
       const userRoles = role ? role.split(",") : [];
-      const ok = userRoles.some((r) =>
-        (authClient.organization as any).checkRolePermission({
+      console.log("[usePermission] Checking permission:", perm, "for roles:", userRoles);
+  
+      const ok = userRoles.some((r) => {
+        const result = (authClient.organization as any).checkRolePermission({
           permissions: perm,
           role: r,
-        })
-      );
-
+        });
+        console.log(`[usePermission] Role ${r} check result:`, result);
+        return result;
+      });
+  
+      console.log("[usePermission] Final result:", ok);
       cache.set(key, ok);
-      console.log("[usePermission] result:", ok);
       return ok;
     },
     [cache, role, loading]
