@@ -5,7 +5,7 @@ import { verify as jwtVerify, JwtPayload } from "jsonwebtoken";
 import net from "net";
 import fs from "fs";
 import path from "path";
-import { CIDR } from "ip-cidr";               // ← NEW
+import CIDR from "ip-cidr";               // ← NEW
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -203,7 +203,7 @@ export async function getContext(
     try {
       const token = authz.slice(7);
       const payload = jwtVerify(token, JWT_PUBLIC_KEY, { algorithms: ["RS256"] }) as JwtPayload;
-     
+
       if (payload.sub !== "service-account") {
         throw new Error("sub mismatch");
       }
@@ -276,20 +276,20 @@ export async function getContext(
       ?? key?.creatorUserId            // personal key ⇒ Clerk puts it here
       ?? key?.userId                   // (older SDKs)
       ?? undefined;
-    
-    if (! ownerUserId) {
+
+    if (!ownerUserId) {
       return NextResponse.json(
         { error: "Unable to resolve key owner" },
         { status: 401 },
       );
     }
-    
+
     const tenantRow = await db
       .selectFrom("tenant")
       .select("id")
       .where("ownerUserId", "=", ownerUserId)
       .executeTakeFirst();
-    
+
     if (tenantRow) {
       return { organizationId, userId: ownerUserId, tenantId: tenantRow.id };
     }

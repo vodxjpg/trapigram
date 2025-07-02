@@ -7,10 +7,10 @@ import { magicLink, organization, apiKey } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { createAuthMiddleware } from "better-auth/api";
 
-import { db, pgPool } from "@/lib/db";            // ← central Kysely + Pool
-import { sendEmail }   from "@/lib/email";
+import { db, pgPool } from "@/lib/db";
+import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
-import { ac, owner }   from "@/lib/permissions";
+import { ac, owner } from "@/lib/permissions";
 
 import { v4 as uuidv4 } from "uuid";
 
@@ -66,9 +66,9 @@ export const auth = betterAuth({
   user: {
     fields: { is_guest: "is_guest" },
     additionalFields: {
-      phone:     { type: "string",  required: false },
-      country:   { type: "string",  required: false },
-      is_guest:  { type: "boolean", required: false, defaultValue: false },
+      phone: { type: "string", required: false },
+      country: { type: "string", required: false },
+      is_guest: { type: "boolean", required: false, defaultValue: false },
     },
   },
 
@@ -118,9 +118,9 @@ export const auth = betterAuth({
     cookieCache: { enabled: true, maxAge: 2 * 60 * 60 },
     cookieOptions: {
       httpOnly: true,
-      secure:    process.env.NODE_ENV === "production",
-      sameSite:  "lax",
-      path:      "/",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
     },
     async getSession(session) {
       const userRow = await db
@@ -151,7 +151,7 @@ export const auth = betterAuth({
   rateLimit: {
     storage: "database",
     window: 60,
-    max:    100,
+    max: 100,
     customRules: {
       "/check-email": { window: 60, max: 5 },
     },
@@ -164,7 +164,7 @@ export const auth = betterAuth({
         const email = req.query.email as string;
         if (!email) {
           return new Response(JSON.stringify({ error: "Email is required" }),
-                              { status: 400, headers: { "Content-Type": "application/json" } });
+            { status: 400, headers: { "Content-Type": "application/json" } });
         }
         try {
           const row = await db
@@ -173,11 +173,11 @@ export const auth = betterAuth({
             .where("email", "=", email)
             .executeTakeFirst();
           return new Response(JSON.stringify({ exists: !!row }),
-                              { status: 200, headers: { "Content-Type": "application/json" } });
+            { status: 200, headers: { "Content-Type": "application/json" } });
         } catch (err) {
           console.error("check-email error:", err);
           return new Response(JSON.stringify({ error: "Internal server error" }),
-                              { status: 500, headers: { "Content-Type": "application/json" } });
+            { status: 500, headers: { "Content-Type": "application/json" } });
         }
       },
     },
@@ -188,8 +188,8 @@ export const auth = betterAuth({
     tenant: {
       fields: {
         ownerUserId: { type: "string", reference: { model: "user", field: "id", onDelete: "cascade" } },
-        createdAt:   { type: "string" },
-        updatedAt:   { type: "string" },
+        createdAt: { type: "string" },
+        updatedAt: { type: "string" },
         onboardingCompleted: { type: "number", default: 0 },
       },
     },

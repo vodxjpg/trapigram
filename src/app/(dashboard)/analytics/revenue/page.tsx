@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
 import * as XLSX from "xlsx";
 import {
   CalendarIcon,
@@ -17,7 +18,7 @@ import {
   startOfDay,
   endOfDay,
 } from "date-fns";
-
+import type { DateRange } from "react-day-picker";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -33,6 +34,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  ChartConfig,
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type Order = {
@@ -50,21 +58,38 @@ type Order = {
   netProfit: number;
 };
 
-type DateRange = { from: Date; to: Date };
+type CustomDateRange = { from: Date; to: Date };
+
+// Updated chartConfig to use Total and Revenue
+const chartConfig = {
+  total: { label: "Total", color: "var(--color-desktop)" },
+  revenue: { label: "Revenue", color: "var(--color-mobile)" },
+} satisfies ChartConfig;
 
 export default function OrderReport() {
   const [currentPage, setCurrentPage] = useState(1);
-  const [dateRange, setDateRange] = useState<DateRange>({
+  const [dateRange, setDateRange] = useState<CustomDateRange>({
     from: startOfDay(subDays(new Date(), 30)),
     to: endOfDay(new Date()),
   });
   const [customDateOpen, setCustomDateOpen] = useState(false);
-  const [tempDateRange, setTempDateRange] = useState<DateRange>(dateRange);
+  const [tempDateRange, setTempDateRange] = useState<DateRange | undefined>({
+    from: dateRange.from,
+    to: dateRange.to,
+  });
 
   // ** NEW: state for real orders **
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chartData, setChartData] = useState<
+    {
+      date: string;
+      total: number;
+      revenue: number;
+    }[]
+  >([]);
+  const isMobile = useIsMobile();
 
   const rowsPerPage = 25;
 
@@ -83,14 +108,22 @@ export default function OrderReport() {
         // expecting { orders: Order[] }
         setOrders(data.orders);
         setCurrentPage(1);
+
+        const resp = await fetch(`/api/dashboard?from=${from}&to=${to}`);
+        if (!resp.ok) throw new Error("Network response was not ok");
+        const { chartData } = await resp.json();
+        setChartData(chartData);
       } catch (err: any) {
         setError(err.message || "Unknown error");
       } finally {
         setLoading(false);
       }
     }
+
     fetchOrders();
   }, [dateRange]);
+
+  const filteredData = chartData;
 
   // paging and filtering now uses real `orders`
   const filteredOrders = useMemo(() => {
@@ -114,6 +147,7 @@ export default function OrderReport() {
     const now = new Date();
     let from: Date;
     let to = endOfDay(now);
+
     switch (preset) {
       case "today":
         from = startOfDay(now);
@@ -141,11 +175,25 @@ export default function OrderReport() {
       default:
         return;
     }
+
     setDateRange({ from, to });
   }
 
   const handleCustomDateApply = () => {
-    setDateRange(tempDateRange);
+    if (tempDateRange?.from && tempDateRange?.to) {
+      setDateRange({
+        from: startOfDay(tempDateRange.from),
+        to: endOfDay(tempDateRange.to),
+      });
+      setCustomDateOpen(false);
+    }
+  };
+
+  const handleCustomDateCancel = () => {
+    setTempDateRange({
+      from: dateRange.from,
+      to: dateRange.to,
+    });
     setCustomDateOpen(false);
   };
 
@@ -167,11 +215,9 @@ export default function OrderReport() {
     const ws = XLSX.utils.json_to_sheet(dataForSheet);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Orders");
-
     const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     const blob = new Blob([wbout], { type: "application/octet-stream" });
     const url = URL.createObjectURL(blob);
-
     const a = document.createElement("a");
     a.href = url;
     a.download = `order-report_${format(new Date(), "yyyyMMdd_HHmm")}.xlsx`;
@@ -182,255 +228,354 @@ export default function OrderReport() {
   };
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Order Report</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {/* Controls */}
-          <div className="flex flex-col sm:flex-row gap-4 mb-6 items-start sm:items-center justify-between">
-            <div className="flex flex-wrap gap-2">
-              {[
-                "all",
-                "today",
-                "yesterday",
-                "last-week",
-                "last-month",
-                "last-3-months",
-                "last-year",
-              ].map((p) => (
-                <Button
-                  key={p}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDatePreset(p)}
-                >
-                  {p
-                    .replace(/-/g, " ")
-                    .replace(/\b\w/g, (c) => c.toUpperCase())}
-                </Button>
-              ))}
-
-              <Popover open={customDateOpen} onOpenChange={setCustomDateOpen}>
-                <PopoverTrigger asChild>
+    <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+      <div className="px-4 lg:px-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Order Report</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {/* Controls */}
+            <div className="flex flex-col sm:flex-row gap-4 mb-6 items-start sm:items-center justify-between">
+              <div className="flex flex-wrap gap-2">
+                {[
+                  "all",
+                  "today",
+                  "yesterday",
+                  "last-week",
+                  "last-month",
+                  "last-3-months",
+                  "last-year",
+                ].map((p) => (
                   <Button
+                    key={p}
                     variant="outline"
                     size="sm"
-                    className="justify-start text-left"
+                    onClick={() => handleDatePreset(p)}
                   >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    Custom Date Range
+                    {p
+                      .replace(/-/g, " ")
+                      .replace(/\b\w/g, (c) => c.toUpperCase())}
                   </Button>
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-auto p-0">
-                  <div className="p-4 space-y-4">
-                    <div>
-                      <label className="text-sm font-medium">From Date</label>
-                      <Calendar
-                        mode="single"
-                        selected={tempDateRange.from}
-                        onSelect={(date) =>
-                          date &&
-                          setTempDateRange((t) => ({
-                            ...t,
-                            from: startOfDay(date),
-                          }))
-                        }
-                        initialFocus
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium">To Date</label>
-                      <Calendar
-                        mode="single"
-                        selected={tempDateRange.to}
-                        onSelect={(date) =>
-                          date &&
-                          setTempDateRange((t) => ({
-                            ...t,
-                            to: endOfDay(date),
-                          }))
-                        }
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={handleCustomDateApply}>
-                        Apply
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setCustomDateOpen(false)}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
-            <Button
-              variant="default"
-              size="sm"
-              className="shrink-0"
-              onClick={exportToExcel}
-            >
-              <DownloadIcon className="mr-2 h-4 w-4" />
-              Export to Excel
-            </Button>
-          </div>
-
-          {/* Status */}
-          {loading && <div>Loading orders…</div>}
-          {error && <div className="text-red-600">Error: {error}</div>}
-          {!loading && !error && (
-            <>
-              <div className="mb-4 text-sm text-muted-foreground">
-                Showing {filteredOrders.length} orders from{" "}
-                {format(dateRange.from, "MMM dd, yyyy")} to{" "}
-                {format(dateRange.to, "MMM dd, yyyy")}
-              </div>
-
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      {[
-                        "Paid At",
-                        "Order Number",
-                        "User ID",
-                        "Country",
-                        "Total Price",
-                        "Shipping Cost",
-                        "Discount",
-                        "Cost",
-                        "Asset",
-                        "Net Profit",
-                      ].map((h) => (
-                        <TableHead
-                          key={h}
-                          className={
-                            [
-                              "Total Price",
-                              "Shipping Cost",
-                              "Discount",
-                              "Cost",
-                              "Net Profit",
-                            ].includes(h)
-                              ? "text-right"
-                              : ""
-                          }
-                        >
-                          {h}
-                        </TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {currentOrders.map((o) => (
-                      <TableRow key={o.id}>
-                        <TableCell>
-                          {format(new Date(o.datePaid), "MMM dd, yyyy HH:mm")}
-                        </TableCell>
-                        <TableCell className="font-medium">
-                          {o.orderNumber}
-                        </TableCell>
-                        <TableCell>{o.userId}</TableCell>
-                        <TableCell>{o.country}</TableCell>
-                        <TableCell className="text-right">
-                          {formatCurrency(o.totalPrice)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {formatCurrency(o.shippingCost)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {formatCurrency(o.discount)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {formatCurrency(o.cost)}
-                        </TableCell>
-                        <TableCell>{o.coin}</TableCell>
-                        <TableCell
-                          className={`text-right font-medium ${
-                            o.netProfit >= 0 ? "text-green-600" : "text-red-600"
-                          }`}
-                        >
-                          {formatCurrency(o.netProfit)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              {filteredOrders.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  No orders found for the selected date range.
-                </div>
-              )}
-
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4">
-                  <div className="text-sm text-muted-foreground">
-                    Showing {startIndex + 1} to{" "}
-                    {Math.min(endIndex, filteredOrders.length)} of{" "}
-                    {filteredOrders.length} orders
-                  </div>
-                  <div className="flex items-center space-x-2">
+                ))}
+                <Popover open={customDateOpen} onOpenChange={setCustomDateOpen}>
+                  <PopoverTrigger asChild>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-                      disabled={currentPage === 1}
+                      className="justify-start text-left min-w-[240px] bg-transparent"
                     >
-                      <ChevronLeftIcon className="h-4 w-4" /> Previous
-                    </Button>
-                    <div className="flex items-center space-x-1">
-                      {Array.from(
-                        { length: Math.min(5, totalPages) },
-                        (_, i) => {
-                          let num =
-                            totalPages <= 5
-                              ? i + 1
-                              : currentPage <= 3
-                                ? i + 1
-                                : currentPage >= totalPages - 2
-                                  ? totalPages - 4 + i
-                                  : currentPage - 2 + i;
-                          return (
-                            <Button
-                              key={num}
-                              size="sm"
-                              variant={
-                                currentPage === num ? "default" : "outline"
-                              }
-                              className="w-8 h-8 p-0"
-                              onClick={() => setCurrentPage(num)}
-                            >
-                              {num}
-                            </Button>
-                          );
-                        }
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {dateRange?.from && dateRange?.to ? (
+                        <>
+                          {format(dateRange.from, "MMM dd, yyyy")} -{" "}
+                          {format(dateRange.to, "MMM dd, yyyy")}
+                        </>
+                      ) : (
+                        <span>Pick a date range</span>
                       )}
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setCurrentPage((p) => Math.min(p + 1, totalPages))
-                      }
-                      disabled={currentPage === totalPages}
-                    >
-                      Next <ChevronRightIcon className="h-4 w-4" />
                     </Button>
-                  </div>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <div className="p-4">
+                      <Calendar
+                        initialFocus
+                        mode="range"
+                        defaultMonth={dateRange?.from || new Date()}
+                        selected={tempDateRange}
+                        onSelect={(range) => {
+                          console.log("Date range selected:", range);
+                          setTempDateRange(range);
+                        }}
+                        numberOfMonths={2}
+                      />
+                      <div className="flex items-center justify-between pt-4 border-t mt-4">
+                        <div className="text-sm text-muted-foreground">
+                          {tempDateRange?.from && tempDateRange?.to
+                            ? `${format(tempDateRange.from, "MMM dd, yyyy")} - ${format(tempDateRange.to, "MMM dd, yyyy")}`
+                            : "Select date range"}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={handleCustomDateCancel}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={handleCustomDateApply}
+                            disabled={
+                              !tempDateRange?.from || !tempDateRange?.to
+                            }
+                          >
+                            Apply
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <Button
+                variant="default"
+                size="sm"
+                className="shrink-0"
+                onClick={exportToExcel}
+              >
+                <DownloadIcon className="mr-2 h-4 w-4" />
+                Export to Excel
+              </Button>
+            </div>
+
+            {/* Status */}
+            {loading && <div>Loading orders…</div>}
+            {error && <div className="text-red-600">Error: {error}</div>}
+            {!loading && !error && (
+              <>
+                <div className="mb-4 text-sm text-muted-foreground">
+                  Showing {filteredOrders.length} orders from{" "}
+                  {format(dateRange.from, "MMM dd, yyyy")} to{" "}
+                  {format(dateRange.to, "MMM dd, yyyy")}
                 </div>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {[
+                          "Paid At",
+                          "Order Number",
+                          "User ID",
+                          "Country",
+                          "Total Price",
+                          "Shipping Cost",
+                          "Discount",
+                          "Cost",
+                          "Asset",
+                          "Net Profit",
+                        ].map((h) => (
+                          <TableHead
+                            key={h}
+                            className={
+                              [
+                                "Total Price",
+                                "Shipping Cost",
+                                "Discount",
+                                "Cost",
+                                "Net Profit",
+                              ].includes(h)
+                                ? "text-right"
+                                : ""
+                            }
+                          >
+                            {h}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {currentOrders.length === 0 ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={10}
+                            className="text-center py-8 text-muted-foreground"
+                          >
+                            No orders found for the selected date range.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        currentOrders.map((o, index) => (
+                          <TableRow key={`${o.id}-${index}`}>
+                            <TableCell>
+                              {format(
+                                new Date(o.datePaid),
+                                "MMM dd, yyyy HH:mm"
+                              )}
+                            </TableCell>
+                            <TableCell className="font-medium">
+                              {o.orderNumber}
+                            </TableCell>
+                            <TableCell>{o.userId}</TableCell>
+                            <TableCell>{o.country}</TableCell>
+                            <TableCell className="text-right">
+                              {formatCurrency(o.totalPrice)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {formatCurrency(o.shippingCost)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {formatCurrency(o.discount)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {formatCurrency(o.cost)}
+                            </TableCell>
+                            <TableCell>{o.coin}</TableCell>
+                            <TableCell
+                              className={`text-right font-medium ${o.netProfit >= 0 ? "text-green-600" : "text-red-600"}`}
+                            >
+                              {formatCurrency(o.netProfit)}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between mt-4">
+                    <div className="text-sm text-muted-foreground">
+                      Showing {startIndex + 1} to{" "}
+                      {Math.min(endIndex, filteredOrders.length)} of{" "}
+                      {filteredOrders.length} orders
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setCurrentPage((p) => Math.max(p - 1, 1))
+                        }
+                        disabled={currentPage === 1}
+                      >
+                        <ChevronLeftIcon className="h-4 w-4" /> Previous
+                      </Button>
+                      <div className="flex items-center space-x-1">
+                        {Array.from(
+                          { length: Math.min(5, totalPages) },
+                          (_, i) => {
+                            const num =
+                              totalPages <= 5
+                                ? i + 1
+                                : currentPage <= 3
+                                  ? i + 1
+                                  : currentPage >= totalPages - 2
+                                    ? totalPages - 4 + i
+                                    : currentPage - 2 + i;
+                            return (
+                              <Button
+                                key={num}
+                                size="sm"
+                                variant={
+                                  currentPage === num ? "default" : "outline"
+                                }
+                                className="w-8 h-8 p-0"
+                                onClick={() => setCurrentPage(num)}
+                              >
+                                {num}
+                              </Button>
+                            );
+                          }
+                        )}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setCurrentPage((p) => Math.min(p + 1, totalPages))
+                        }
+                        disabled={currentPage === totalPages}
+                      >
+                        Next <ChevronRightIcon className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+      <div className="px-4 lg:px-6">
+        <Card className="@container/card">
+          <CardHeader>
+            <CardTitle>Total and Revenue</CardTitle>
+          </CardHeader>
+          <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+            <ChartContainer
+              config={chartConfig}
+              className="aspect-auto h-[250px] w-full"
+            >
+              <AreaChart
+                data={filteredData}
+                margin={{ top: 20, right: 0, left: 0, bottom: 0 }}
+              >
+                <defs>
+                  <linearGradient id="fillTotal" x1="0" y1="0" x2="0" y2="1">
+                    <stop
+                      offset="5%"
+                      stopColor="var(--color-desktop)"
+                      stopOpacity={1.0}
+                    />
+                    <stop
+                      offset="95%"
+                      stopColor="var(--color-desktop)"
+                      stopOpacity={0.1}
+                    />
+                  </linearGradient>
+                  <linearGradient id="fillRevenue" x1="0" y1="0" x2="0" y2="1">
+                    <stop
+                      offset="5%"
+                      stopColor="var(--color-mobile)"
+                      stopOpacity={0.8}
+                    />
+                    <stop
+                      offset="95%"
+                      stopColor="var(--color-mobile)"
+                      stopOpacity={0.1}
+                    />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  minTickGap={32}
+                  tickFormatter={(value) =>
+                    new Date(value).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  }
+                />
+                <ChartTooltip
+                  cursor={false}
+                  defaultIndex={isMobile ? -1 : 10}
+                  content={
+                    <ChartTooltipContent
+                      labelFormatter={(value) =>
+                        new Date(value).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        })
+                      }
+                      indicator="dot"
+                    />
+                  }
+                />
+                <Area
+                  dataKey="total"
+                  type="natural"
+                  fill="url(#fillTotal)"
+                  stroke="var(--color-total)"
+                  stackId="a"
+                />
+                <Area
+                  dataKey="revenue"
+                  type="natural"
+                  fill="url(#fillRevenue)"
+                  stroke="var(--color-revenue)"
+                  stackId="a"
+                />
+              </AreaChart>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
-// src/app/(dashboard)/clients/clients-table.tsx
 "use client";
 
+import { useCallback } from "react";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -68,14 +68,55 @@ export function ClientsTable() {
   const router = useRouter();
   const can = usePermission();
 
+  // ─── Statistics modal state ─────────────────────────────────
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsData, setStatsData] = useState<{
+    totalOrders: number;
+    mostPurchased: string;
+    quantityPurchased: number;
+    lastPurchase: string;
+  } | null>(null);
+
+  const [clients, setClients] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(1);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<Client | null>(null);
+  const [delta, setDelta] = useState("");
+
+  const openStatsModal = useCallback(async (id: string) => {
+    setStatsOpen(true);
+    setStatsLoading(true);
+    try {
+      const res = await fetch(`/api/clients/${id}`);
+      const data = await res.json();
+      setStatsData({
+        totalOrders: data.totalOrders,
+        mostPurchased: data.mostPurchased,
+        quantityPurchased: data.quantityPurchased,
+        lastPurchase: data.lastPurchase,
+      });
+    } catch (err: any) {
+      toast.error(err.message);
+      setStatsData(null);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
   // customer perms for CRUD
-  const canView    = can({ customer: ["view"] });
-  const canCreate  = can({ customer: ["create"] });
-  const canUpdate  = can({ customer: ["update"] });
-  const canDelete  = can({ customer: ["delete"] });
+  const canView = can({ customer: ["view"] });
+  const canCreate = can({ customer: ["create"] });
+  const canUpdate = can({ customer: ["update"] });
+  const canDelete = can({ customer: ["delete"] });
 
   // affiliate-only perm for points adjustments
-  const canPoints  = can({ affiliates: ["points"] });
+  const canPoints = can({ affiliates: ["points"] });
 
   // enforce that they at least can see clients
   useEffect(() => {
@@ -86,18 +127,17 @@ export function ClientsTable() {
 
   if (can.loading || !canView) return null;
 
-  /* ─── table & dialog state ─── */
-  const [clients, setClients] = useState<Client[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [totalPages, setTotalPages] = useState(1);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [search, setSearch] = useState("");
-  const [debounced, setDebounced] = useState("");
-
-  const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<Client | null>(null);
-  const [delta, setDelta] = useState("");
+  function formatDate(createdAt) {
+    const date = new Date(createdAt);
+    const pad = (n) => String(n).padStart(2, "0");
+    const day = pad(date.getUTCDate());
+    const month = pad(date.getUTCMonth() + 1);
+    const year = date.getUTCFullYear();
+    const hours = pad(date.getUTCHours());
+    const mins = pad(date.getUTCMinutes());
+    const secs = pad(date.getUTCSeconds());
+    return `${day}/${month}/${year} ${hours}:${mins}:${secs}`;
+  }
 
   // debounce the search input
   useEffect(() => {
@@ -111,26 +151,38 @@ export function ClientsTable() {
     try {
       const res = await fetch(
         `/api/clients?page=${page}&pageSize=${pageSize}&search=${debounced}`,
-        { headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" } },
+        {
+          headers: {
+            "x-internal-secret":
+              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
+          },
+        }
       );
+
       if (!res.ok) throw new Error((await res.json()).error || "Fetch failed");
+
       const { clients, totalPages, currentPage } = await res.json();
+
       setClients(clients);
       setTotalPages(totalPages);
       setPage(currentPage);
 
       // now load all point balances in one request
-      const balRes = await fetch(
-        `/api/affiliate/points/balance`,
-        { headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" } }
-      );
+      const balRes = await fetch(`/api/affiliate/points/balance`, {
+        headers: {
+          "x-internal-secret":
+            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
+        },
+      });
+
       if (!balRes.ok) throw new Error("Could not load balances");
+
       const { balances } = await balRes.json();
 
       // merge points into client list
-      setClients(cs =>
-        cs.map(c => {
-          const b = balances.find(x => x.clientId === c.id);
+      setClients((cs) =>
+        cs.map((c) => {
+          const b = balances.find((x) => x.clientId === c.id);
           return { ...c, points: b?.pointsCurrent ?? 0 };
         })
       );
@@ -140,14 +192,18 @@ export function ClientsTable() {
       setLoading(false);
     }
   };
+
   useEffect(() => void fetchClients(), [page, pageSize, debounced]);
 
   // delete client
   const deleteClient = async (id: string) => {
     if (!confirm("Delete this client?")) return;
+
     await fetch(`/api/clients/${id}`, {
       method: "DELETE",
-      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" },
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
+      },
     });
     fetchClients();
   };
@@ -167,12 +223,14 @@ export function ClientsTable() {
       toast.error("Enter a non-zero integer");
       return;
     }
+
     try {
       await fetch("/api/affiliate/points", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
+          "x-internal-secret":
+            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
         },
         body: JSON.stringify({
           id: selected.id,
@@ -181,6 +239,7 @@ export function ClientsTable() {
           description: "Dashboard manual adjustment",
         }),
       });
+
       toast.success("Points updated");
       setOpen(false);
       router.push("/affiliates");
@@ -263,6 +322,7 @@ export function ClientsTable() {
                 <TableHead>Country</TableHead>
                 <TableHead>Points</TableHead>
                 <TableHead>Ref.</TableHead>
+                <TableHead>Statistics</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -292,7 +352,11 @@ export function ClientsTable() {
                           <ReactCountryFlag
                             countryCode={c.country}
                             svg
-                            style={{ width: "1em", height: "1em", marginRight: 6 }}
+                            style={{
+                              width: "1em",
+                              height: "1em",
+                              marginRight: 6,
+                            }}
                           />
                           {countriesLib.getName(c.country, "en") ?? c.country}
                         </div>
@@ -302,6 +366,16 @@ export function ClientsTable() {
                     </TableCell>
                     <TableCell>{c.points}</TableCell>
                     <TableCell>{c.referredBy ?? "-"}</TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => openStatsModal(c.id)}
+                      >
+                        <Search className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                    <TableCell className="text-right"></TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -319,7 +393,9 @@ export function ClientsTable() {
                           )}
                           {/* Edit/delete controlled by customer perms */}
                           {canUpdate && (
-                            <DropdownMenuItem onClick={() => router.push(`/clients/${c.id}`)}>
+                            <DropdownMenuItem
+                              onClick={() => router.push(`/clients/${c.id}`)}
+                            >
                               <Edit className="mr-2 h-4 w-4" />
                               Edit
                             </DropdownMenuItem>
@@ -385,6 +461,64 @@ export function ClientsTable() {
           </div>
         </div>
       </Card>
+
+      {/* ─── Statistics Modal ────────────────────────────────────────── */}
+      <Dialog open={statsOpen} onOpenChange={setStatsOpen}>
+        <DialogContent className="sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Client Statistics</DialogTitle>
+          </DialogHeader>
+          {statsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <p>Loading...</p>
+            </div>
+          ) : statsData ? (
+            <>
+              {/* inserted statistics UI */}
+              <div className="mt-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="border rounded-lg p-6 text-center">
+                    <h3 className="text-sm font-medium text-muted-foreground mb-2">
+                      Total Orders
+                    </h3>
+                    <p className="text-3xl font-bold text-primary">
+                      {statsData.totalOrders}
+                    </p>
+                  </div>
+                  <div className="border rounded-lg p-6 text-center">
+                    <h3 className="text-sm font-medium text-muted-foreground mb-2">
+                      Most Purchased Product
+                    </h3>
+                    <p className="text-lg font-medium">
+                      {statsData.mostPurchased?.title || "N/A"}
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {statsData.quantityPurchased} units
+                    </p>
+                  </div>
+                  <div className="border rounded-lg p-6 text-center">
+                    <h3 className="text-sm font-medium text-muted-foreground mb-2">
+                      Last Purchase
+                    </h3>
+                    <p className="text-lg font-medium">
+                      {statsData.lastPurchase
+                        ? formatDate(statsData.lastPurchase.createdAt)
+                        : "N/A"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center py-8">
+              <p>No data available.</p>
+            </div>
+          )}
+          <DialogFooter className="mt-6">
+            <Button onClick={() => setStatsOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

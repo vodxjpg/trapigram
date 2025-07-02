@@ -186,7 +186,7 @@ export default function DashboardPage() {
     if (!hasSeen) {
       const tour = driver({
         showProgress: true,
-        allowClose: false,
+        allowClose: true,
         overlayOpacity: 0.5,
         steps: [
           {
@@ -303,7 +303,7 @@ export default function DashboardPage() {
       tour.drive();
 
       // mark as shown
-      //localStorage.setItem("hasSeenDriverTour", "true");
+      localStorage.setItem("hasSeenDriverTour", "true");
     }
   }, []);
 
