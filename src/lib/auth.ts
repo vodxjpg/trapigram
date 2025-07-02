@@ -23,13 +23,15 @@ import { v4 as uuidv4 } from "uuid";
   MAIN CONFIG
 ───────────────────────────────────────────────────────────────────*/
 
-const dynamicRoleRows = await db                       // 👈 adjust if you use
-  .selectFrom("orgRole")                                  //    Kysely/Prisma/etc.
-  .select(["name", "permissions"])                     //    → must return:
-  .execute();                                          //    [{name, permissions}]
-
+const dynamicRoleRows = await db
+  .selectFrom("orgRole")
+  .select(["name", "permissions"])
+  .execute();
 const dynamicRoles = registerDynamicRoles(dynamicRoleRows);
-const roles        = buildRoles(dynamicRoles);         // 🔑 final object
+export const roles = buildRoles(dynamicRoles);
+console.log("Dynamic roles fetched:", dynamicRoleRows);
+console.log("Registered dynamic roles:", dynamicRoles);
+console.log("Final roles object:", roles);
 export const auth = betterAuth({
   /*──────────────────── Database ────────────────────*/
   database: pgPool,                   // ← one source of truth
@@ -88,8 +90,8 @@ export const auth = betterAuth({
   /*──────────────────── DB hooks: user.beforeCreate ─*/
   databaseHooks: {
     user: {
+      /* 1) infer name */
       beforeCreate: async (data) => {
-        /* 1) infer name */
         if (!data.name) {
           data.name = data.email.split("@")[0];
         }

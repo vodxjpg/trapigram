@@ -67,7 +67,7 @@ export function usePermission(organizationId?: string) {
           permissions: perm,
           role: r,
         });
-        console.log(`[usePermission] Role ${r} check result:`, result);
+        console.log(`[usePermission] Checking role "${r}" for permissions:`, perm, "→ Result:", result);
         return result;
       });
   
