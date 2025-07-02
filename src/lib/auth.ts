@@ -90,8 +90,8 @@ export const auth = betterAuth({
   /*──────────────────── DB hooks: user.beforeCreate ─*/
   databaseHooks: {
     user: {
-      /* 1) infer name */
       beforeCreate: async (data) => {
+        /* 1) infer name */
         if (!data.name) {
           data.name = data.email.split("@")[0];
         }
