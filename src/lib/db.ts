@@ -739,7 +739,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
     ca: supabaseCA,
-    rejectUnauthorized: false,
+    rejectUnauthorized: true,
     /** Enforce modern cipher suites; Node ≥20 negotiates TLS 1.3 by default,
      * but we pin it defensively. */
     minVersion: "TLSv1.3.0",

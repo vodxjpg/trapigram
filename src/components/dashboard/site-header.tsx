@@ -3,7 +3,7 @@
 
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
-import { useHeaderTitle } from "@/context/HeaderTitleContext";{}
+import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
 export function SiteHeader() {
   const { headerTitle } = useHeaderTitle();

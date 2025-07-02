@@ -24,7 +24,7 @@ import { v4 as uuidv4 } from "uuid";
 ───────────────────────────────────────────────────────────────────*/
 
 const dynamicRoleRows = await db                       // 👈 adjust if you use
-  .selectFrom("role")                                  //    Kysely/Prisma/etc.
+  .selectFrom("orgRole")                                  //    Kysely/Prisma/etc.
   .select(["name", "permissions"])                     //    → must return:
   .execute();                                          //    [{name, permissions}]
 
