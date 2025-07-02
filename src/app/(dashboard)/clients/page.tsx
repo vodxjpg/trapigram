@@ -1,5 +1,5 @@
 "use client";
-
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { Plus } from "lucide-react";
@@ -11,14 +11,16 @@ export default function ClientsPage() {
    const can = usePermission(); ;
   const router = useRouter();
 
-  // 1) Wait for permissions
-  if (can.loading) return null;
+  // ──────────────────────────────────────────────
+  // Redirect *after* permissions have resolved
+  // ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!can.loading && !can({ customer: ["view"] })) {
+      router.replace("/");          // ← side-effect
+    }
+  }, [can, router]);
 
-  // 2) Redirect if no view
-  if (!can({ customer: ["view"] })) {
-    router.replace("/");
-    return null;
-  }
+  if (can.loading || !can({ customer: ["view"] })) return null;
 
   const canCreate = can({ customer: ["create"] });
 

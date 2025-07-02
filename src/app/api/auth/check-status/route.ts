@@ -101,7 +101,6 @@ export async function GET(req: NextRequest) {
     // 8) Active organization
     const hasActiveOrganization = !!session.session.activeOrganizationId;
     if (!hasActiveOrganization) {
-      console.log("No active org => /select-organization");
       return NextResponse.json({ redirect: "/select-organization" });
     }
 

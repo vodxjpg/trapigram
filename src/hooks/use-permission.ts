@@ -31,10 +31,6 @@ export function usePermission(organizationId?: string) {
         if (cancelled) return;
 
         const resolved = (res?.data?.role || "").toLowerCase();
-        console.log(
-          "[usePermission] org =", organizationId ?? "<active>",
-          "→ role =", resolved || "<none>"
-        );
         setRole(resolved);
       } catch (err) {
         if (!cancelled) {
