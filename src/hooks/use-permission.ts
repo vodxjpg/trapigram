@@ -3,7 +3,7 @@
 
 import { useCallback, useMemo, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth-client";
-import { getMember }  from "@/lib/auth-client/get-member";
+import { getMember } from "@/lib/auth-client/get-member";
 
 /**
  * usePermission
@@ -17,7 +17,7 @@ import { getMember }  from "@/lib/auth-client/get-member";
  */
 export function usePermission(organizationId?: string) {
   const [role, setRole] = useState<string | null>(null); // null = loading
-
+  const [, bump] = useState(0);
   /* ── 1. Resolve role ─────────────────────────────────────────── */
   useEffect(() => {
     let cancelled = false;
@@ -44,31 +44,52 @@ export function usePermission(organizationId?: string) {
   }, [organizationId]);
 
   const loading = role === null;
-  const cache   = useMemo(() => new Map<string, boolean>(), [role]);
+  const cache = useMemo(() => new Map<string, boolean>(), [role]);
 
   /* ── 2. Permission checker ───────────────────────────────────── */
   const checker = useCallback(
     (perm: Record<string, string[]>) => {
       if (role === "owner") return true;       // owner bypass
       if (loading) return true;                // optimistic while loading
-
       const key = JSON.stringify(perm);
       if (cache.has(key)) return cache.get(key)!;
 
-      // Better-Auth’s type for `role` is overly narrow ("owner").
-      // Cast the whole call to `any` so custom roles compile.
-      const ok: boolean = (authClient.organization as any)
-        .checkRolePermission({ permissions: perm, role });
+      /* ── 1: try fast, purely-local AC check ─────────────────── */
+      let allowed: boolean | null = null;
+      try {
+        allowed = authClient.organization.checkRolePermission({
+          permissions: perm,
+          role,
+        });
+      } catch {
+        /* role not registered in the local AC → ignore */
+      }
 
-      cache.set(key, ok);
-      return ok;
+      /* ── 2: if local AC doesn’t know this role, ask the server ─ */
+      const evaluate = async () => {
+        if (allowed !== null) return allowed;  // local result was fine
+        const { data, error } =
+          await authClient.organization.hasPermission({ permissions: perm });
+        return error ? false : !!data?.allowed;
+      };
+
+      /* We store the Promise to avoid duplicate calls while it resolves */
+      const promise = evaluate().then((ok) => {
+        cache.set(key, ok);       // memoise result (true/false)
+        /* trigger React to re-evaluate callers that already rendered “false” */
+        bump((n) => n + 1);
+        return ok;
+      });
+
+      cache.set(key, promise as unknown as boolean); // type trick
+      return false;  // while awaiting we behave as “no”
     },
     [cache, role, loading],
   );
 
   /* Attach metadata */
   (checker as any).loading = loading;
-  (checker as any).role    = role;
+  (checker as any).role = role;
 
   return checker as typeof checker & { loading: boolean; role: string | null };
 }
