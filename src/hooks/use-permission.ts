@@ -69,6 +69,7 @@ export function usePermission(organizationId?: string) {
       );
 
       cache.set(key, ok);
+      console.log("[usePermission] result:", ok);
       return ok;
     },
     [cache, role, loading]
