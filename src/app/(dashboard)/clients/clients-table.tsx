@@ -119,7 +119,10 @@ export function ClientsTable() {
   const canPoints = can({ affiliates: ["points"] });
 
   // enforce that they at least can see clients
-  if (can.loading) return null;
+ /*  Safe early-return (after all hooks have run) */
+ if (can.loading || !canView) {
+   return null;
+ }
 
   function formatDate(createdAt) {
     const date = new Date(createdAt);

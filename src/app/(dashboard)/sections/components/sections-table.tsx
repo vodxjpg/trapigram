@@ -205,7 +205,7 @@ export function SectionsTable() {
                         )}
                         {canDelete && (
                           <>
-                            <DropdownMenuSeparator />
+                            <DropdownMenuSeparator className="hidden" />
                             <DropdownMenuItem
                               onClick={() => setToDelete(s)}
                               className="text-destructive hidden"
