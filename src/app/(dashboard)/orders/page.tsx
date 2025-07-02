@@ -81,10 +81,15 @@ export default function OrdersPage() {
   /* ──────────────────────────────────────────────────────────────
    *  Permission flags (computed once role is known)
    * ────────────────────────────────────────────────────────────── */
-  const canViewDetail = !can.loading && can({ order: ["view"] });
-  const canViewPricing = !can.loading && can({ order: ["view_pricing"] });
-  const canUpdate = !can.loading && can({ order: ["update"] });
-  const canUpdateTracking = !can.loading && can({ order: ["update_tracking"] });
+  const [permissions, setPermissions] = useState({
+    canViewDetail: false,
+    canViewPricing: false,
+    canUpdate: false,
+    canUpdateTracking: false,
+    canUpdateStatus: false,
+  });
+
+  
 
   // ◼︎ state for all orders via API
   const [orders, setOrders] = useState<Order[]>([]);
@@ -320,13 +325,41 @@ export default function OrdersPage() {
  *  All hooks above have now executed; it’s safe to short-circuit
  *  rendering while permissions are still loading.
  * ────────────────────────────────────────────────────────────── */
-if (can.loading) {
-  return (
-    <div className="container mx-auto py-8 px-4 text-center">
-      Loading permissions…
-    </div>
-  );
-}
+  useEffect(() => {
+    if (can.loading) return; // Wait until the role is loaded
+
+    // Create an async function inside useEffect to check all permissions
+    const checkAllPermissions = async () => {
+      const [
+        viewDetail, 
+        viewPricing, 
+        update, 
+        updateTracking,
+        updateStatus
+      ] = await Promise.all([
+        can({ order: ["view"] }),
+        can({ order: ["view_pricing"] }),
+        can({ order: ["update"] }),
+        can({ order: ["update_tracking"] }),
+        can({ order: ["update_status"] }),
+      ]);
+
+      setPermissions({
+        canViewDetail: viewDetail,
+        canViewPricing: viewPricing,
+        canUpdate: update,
+        canUpdateTracking: updateTracking,
+        canUpdateStatus: updateStatus
+      });
+    };
+
+    checkAllPermissions();
+
+  }, [can, can.loading]); // Rerun when the hook is ready
+
+  if (can.loading) {
+    return <div>Loading permissions…</div>;
+  }
 
 
   if (loading)

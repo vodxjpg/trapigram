@@ -1,4 +1,5 @@
 // src/lib/permissions.ts
+import { db } from "@/lib/db"; // Make sure db is imported
 import { createAccessControl } from "better-auth/plugins/access";
 import { defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
 
@@ -75,6 +76,31 @@ export type DynamicRoleRecord = {
   name: string;                                    // slug the UI stores
   permissions: Partial<Record<keyof StatementShape, string[]>>;
 };
+
+/**
+ * Fetches all dynamic roles for a specific organization from the database.
+ * @param organizationId The ID of the organization to fetch roles for.
+ */
+export async function getDynamicRolesForOrg(organizationId: string): Promise<Record<string, ReturnType<typeof ac.newRole>>> {
+  try {
+    const dynamicRoleRows = await db
+      .selectFrom("orgRole")
+      .select(["name", "permissions"])
+      .where("organizationId", "=", organizationId) // IMPORTANT: Roles are per-org
+      .execute();
+
+    const parsedRows: DynamicRoleRecord[] = dynamicRoleRows.map((row) => ({
+      name: row.name,
+      permissions: typeof row.permissions === "string" ? JSON.parse(row.permissions) : row.permissions,
+    }));
+    
+    // Use your existing register function
+    return registerDynamicRoles(parsedRows);
+  } catch (error) {
+    console.error(`[getDynamicRolesForOrg] Failed to fetch roles for org ${organizationId}:`, error);
+    return {}; // Return empty object on failure
+  }
+}
 
 /**
  * Creates role objects for every record fetched from the DB at start‑up.
