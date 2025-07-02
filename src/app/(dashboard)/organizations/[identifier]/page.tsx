@@ -4,6 +4,7 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { authClient } from "@/lib/auth-client"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
