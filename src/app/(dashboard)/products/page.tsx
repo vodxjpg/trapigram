@@ -15,7 +15,7 @@ import { toast } from "sonner";
 
 export default function ProductsPage() {
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);

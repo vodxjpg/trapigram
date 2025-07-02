@@ -35,7 +35,7 @@ interface Props {
 }
 
 export function InviteMemberForm({ organizationId }: Props) {
-  const can = usePermission();
+  const can = usePermission(organizationId); 
   const { roles, isLoading: rolesLoading } = useOrgRoles(organizationId);
   const [submitting, setSubmitting] = useState(false);
   const form = useForm<FormValues>({

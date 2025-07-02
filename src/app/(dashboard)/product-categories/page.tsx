@@ -12,7 +12,7 @@ import { usePermission } from "@/hooks/use-permission"
 export default function CategoriesPage() {
     const { setHeaderTitle } = useHeaderTitle();
     const router = useRouter()
-    const can = usePermission(organizationId);
+     const can = usePermission(); 
     const [isLoading, setIsLoading] = useState(false)
     useEffect(() => {
         setHeaderTitle("Product categories"); // Set the header title for this page

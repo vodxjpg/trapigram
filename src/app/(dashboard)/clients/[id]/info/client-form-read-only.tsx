@@ -31,7 +31,7 @@ const countryOptions = Object.entries(
 export default function ClientDetailView() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const [client, setClient] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 

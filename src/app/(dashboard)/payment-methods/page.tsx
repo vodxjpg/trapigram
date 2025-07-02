@@ -11,7 +11,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function PaymentMethodsPage() {
   const { setHeaderTitle } = useHeaderTitle();
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   useEffect(() => {
     setHeaderTitle("Payment Methods");

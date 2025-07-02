@@ -35,7 +35,7 @@ export function MembersTable({
   organizationSlug,
   currentUserRole,
 }: Props) {
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const { roles, isLoading: rolesLoading } = useOrgRoles(organizationId);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);

@@ -43,7 +43,7 @@ interface Warehouse {
 
 export function StockManagementDataTable() {
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   const [sorting, setSorting] = useState<SortingState>([{ id: "stock", desc: false }]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);

@@ -8,7 +8,7 @@ import { usePermission } from "@/hooks/use-permission";
 
 export function ClientNewLevelPage() {
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   useEffect(() => {
     if (!can.loading && !can({ affiliates: ["settings"] })) {

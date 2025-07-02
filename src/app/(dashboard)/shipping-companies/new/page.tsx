@@ -10,7 +10,7 @@ import { ShippingMethodForm } from "../shipping-companies-form";
 
 export default function NewShippingMethodPage() {
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   // 1) Wait for permissions to load
   useEffect(() => {

@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function EditShipmentPage() {
   const params = useParams();
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const [shipment, setShipment] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(true);
 

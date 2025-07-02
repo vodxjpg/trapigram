@@ -10,7 +10,7 @@ import { usePermission } from "@/hooks/use-permission";
 
 export default function SectionsPage() {
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   const canView   = can({ sections: ["view"] });
   const canCreate = can({ sections: ["create"] });

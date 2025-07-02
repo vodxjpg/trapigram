@@ -8,7 +8,7 @@ import { usePermission } from "@/hooks/use-permission";
 import { useRouter } from "next/navigation";
 
 export default function NewClientPage() {
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const router = useRouter();
   if (can.loading) return null;
   if (!can({ customer: ["create"] })) {

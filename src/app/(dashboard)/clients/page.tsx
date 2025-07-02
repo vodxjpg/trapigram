@@ -8,7 +8,7 @@ import { usePermission } from "@/hooks/use-permission";
 import { useRouter } from "next/navigation";
 
 export default function ClientsPage() {
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const router = useRouter();
 
   // 1) Wait for permissions

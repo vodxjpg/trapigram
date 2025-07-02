@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/page-header";
 import { StockManagementDataTable } from "../components/stock-management-data-table";
 
 export default function StockManagementPage() {
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const router = useRouter();
 
   // Redirect away if they lack "view"

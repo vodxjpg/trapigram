@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 
 export default function DiscountRulesPage() {
   const { setHeaderTitle } = useHeaderTitle();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const router = useRouter();
 
   useEffect(() => {

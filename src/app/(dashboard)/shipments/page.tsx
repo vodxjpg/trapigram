@@ -8,7 +8,7 @@ import { ShipmentsTable } from "./shipment-table";
 
 export default function ShipmentsPage() {
   const { setHeaderTitle } = useHeaderTitle();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const router = useRouter();
 
   useEffect(() => {

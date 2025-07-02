@@ -14,7 +14,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function EditCouponPage() {
   const { id } = useParams();
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const [coupon, setCoupon] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 

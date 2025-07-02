@@ -82,7 +82,7 @@ const fmtLocal = (iso: string | null) =>
 
 export function CouponsTable() {
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
 
   const [coupons, setCoupons] = useState<Coupon[]>([]);

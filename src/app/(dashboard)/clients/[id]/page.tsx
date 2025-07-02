@@ -14,7 +14,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function EditClientPage() {
   const params = useParams();
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   const [client, setClient] = useState<any>(null);
 

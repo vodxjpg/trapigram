@@ -24,7 +24,7 @@ type Organization = {
 export default function OrganizationDetailsPage() {
   const { identifier } = useParams();
   const { setHeaderTitle } = useHeaderTitle();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);

@@ -13,7 +13,7 @@ export default function EditTemplatePage() {
   const { id } = useParams();
   const router = useRouter();
   const { setHeaderTitle } = useHeaderTitle();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   const [initial, setInitial] = useState<any>(null);
   const [loading, setLoading] = useState(true);

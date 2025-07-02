@@ -75,7 +75,7 @@ interface Order {
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
 
 export default function OrdersPage() {
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
   const router = useRouter();
 
   /* ──────────────────────────────────────────────────────────────

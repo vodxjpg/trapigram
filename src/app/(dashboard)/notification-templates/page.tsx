@@ -11,7 +11,7 @@ import { NotificationTemplatesTable } from "./components/notification-templates-
 
 export default function NotificationTemplatesPage() {
   const { setHeaderTitle } = useHeaderTitle();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   useEffect(() => {
     setHeaderTitle("Notification Templates");

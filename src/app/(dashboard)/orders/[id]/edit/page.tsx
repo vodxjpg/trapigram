@@ -8,7 +8,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function OrderPage() {
   const { id } = useParams(); // pulls the [id] from the URL
   const router = useRouter();
-   const can = usePermission(organizationId);;
+    const can = usePermission(); ;
    if (can.loading) return null;       
    /* ── redirect if the user has no right to view orders ─────────── */
 if (!can({ order: ["view"] })) {

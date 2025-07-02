@@ -56,7 +56,7 @@ type TierPricing = {
 
 export function DiscountRulesTable() {
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   const [rules, setRules] = useState<TierPricing[]>([]);
   const [loading, setLoading] = useState(true);

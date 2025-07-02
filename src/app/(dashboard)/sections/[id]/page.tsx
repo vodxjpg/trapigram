@@ -11,7 +11,7 @@ import { usePermission } from "@/hooks/use-permission";
 export default function EditSectionPage() {
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   const canUpdate = can({ sections: ["update"] });
   const [section, setSection] = useState<any>(null);

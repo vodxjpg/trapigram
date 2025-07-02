@@ -69,7 +69,7 @@ type Shipment = {
 
 export function ShipmentsTable() {
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   const canView   = can({ shipping: ["view"] });
   const canCreate = can({ shipping: ["create"] });

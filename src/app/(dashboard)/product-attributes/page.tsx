@@ -9,7 +9,7 @@ import { AttributeTable } from "./attribute-table";
 
 export default function ProductAttributesPage() {
   const { setHeaderTitle } = useHeaderTitle();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   useEffect(() => {
     setHeaderTitle("Product Attributes");

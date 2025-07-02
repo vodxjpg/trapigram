@@ -41,7 +41,7 @@ type Attribute = {
 
 export function AttributeTable() {
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   const [attributes, setAttributes] = useState<Attribute[]>([]);
   const [loading, setLoading] = useState(true);

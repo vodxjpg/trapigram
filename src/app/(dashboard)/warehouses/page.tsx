@@ -10,7 +10,7 @@ import { WarehouseTable } from "./warehouse-table";
 export default function WarehousesPage() {
   const { setHeaderTitle } = useHeaderTitle();
   const router = useRouter();
-  const can = usePermission(organizationId);;
+   const can = usePermission(); ;
 
   useEffect(() => {
     setHeaderTitle("Warehouses");
