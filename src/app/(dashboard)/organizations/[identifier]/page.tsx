@@ -68,7 +68,8 @@ export default function OrganizationDetailsPage() {
   }
 
   const { id, slug, userRole } = organization;
-  const isOwner = userRole === "owner";
+  const normalizedRole = (userRole ?? "").toLowerCase();
+  const isOwner = normalizedRole === "owner"
   const canViewKeys = isOwner || can({ platformKey: ["view"] });
 
   return (
@@ -94,13 +95,8 @@ export default function OrganizationDetailsPage() {
         Manage organization members and invitations.
       </p>
 
-      {/* Invitation form for owner or manager */}
-      {["owner"].includes(userRole) && (
-        <InviteMemberForm
-          organizationId={id}
-          currentUserRole={userRole}
-        />
-      )}
+      {/* Invitation form (hook will still double-check permissions) */}
+      {isOwner && <InviteMemberForm organizationId={id} />}
 
       {/* Tabs for Members / Invitations */}
       <Tabs defaultValue="members" className="w-full">
