@@ -110,7 +110,7 @@ export function ClientsTable() {
   }, []);
 
   // customer perms for CRUD
-  const canView = can({ customer: ["view"] });
+  const canView   = true;
   const canCreate = can({ customer: ["create"] });
   const canUpdate = can({ customer: ["update"] });
   const canDelete = can({ customer: ["delete"] });
@@ -119,8 +119,7 @@ export function ClientsTable() {
   const canPoints = can({ affiliates: ["points"] });
 
   // enforce that they at least can see clients
-  if (can.loading) return null;           // still wait for the hook
-  if (!canView)     return null;    
+  if (can.loading) return null;
 
   function formatDate(createdAt) {
     const date = new Date(createdAt);

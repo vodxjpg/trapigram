@@ -1,5 +1,5 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { Plus } from "lucide-react";
@@ -11,18 +11,26 @@ export default function ClientsPage() {
    const can = usePermission(); ;
   const router = useRouter();
 
-  // ──────────────────────────────────────────────
-  // Redirect *after* permissions have resolved
-  // ──────────────────────────────────────────────
+  
+  /* ---------- permission resolved here ---------- */
+  const [mayView, setMayView] = useState<boolean | null>(null);
+
   useEffect(() => {
-    if (!can.loading && !can({ customer: ["view"] })) {
-      router.replace("/");          // ← side-effect
+    if (!can.loading) {
+      setMayView(can({ customer: ["view"] }));
     }
-  }, [can, router]);
+  }, [can]);
 
-  if (can.loading || !can({ customer: ["view"] })) return null;
+  // still figuring it out → nothing yet
+  if (mayView === null) return null;
 
-  const canCreate = can({ customer: ["create"] });
+  // didn’t pass → redirect once, then bail out
+  if (!mayView) {
+    router.replace("/");
+    return null;
+  }
+
+  const canCreate = can({ customer: ["create"] });  
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
