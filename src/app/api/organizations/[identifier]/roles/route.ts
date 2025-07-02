@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     `INSERT INTO "orgRole"(id,"organizationId",name,permissions,"createdAt")
      VALUES ($1,$2,$3,$4,now())
      RETURNING id,name,permissions,"createdAt"`,
-     [id, organizationId, name.trim().toLowerCase(), JSON.stringify(perms)],
+     [id, organizationId, name.trim(), JSON.stringify(perms)],
   );
   return NextResponse.json({ role: rows[0] }, { status: 201 });
 }
@@ -72,7 +72,7 @@ export async function PATCH(req: NextRequest) {
   const sets: string[] = [];
   const vals: any[] = [];
   let i = 1;
-  if (name)        { sets.push(`name=$${++i}`);         vals.push(name.trim().toLowerCase()); }
+  if (name)        { sets.push(`name=$${++i}`); vals.push(name.trim());}
   if (permissions) {
       sets.push(`permissions=$${++i}`);
       vals.push(JSON.stringify(cleanPermissions(permissions)));
