@@ -1,11 +1,22 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
-    // 👇 All Route Handlers will deploy as Node-js lambdas
-    runtime: 'nodejs',
+    // All Route Handlers deploy as Node-js lambdas
+    runtime: "nodejs",
   },
 
-  // --- whatever you already have -----------------
+  /* Image optimisation — allow Vercel Blob URLs */
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "**.public.blob.vercel-storage.com",
+        pathname: "/**",
+      },
+    ],
+  },
+
+  /* ── unchanged build settings ─────────────────── */
   eslint: {
     ignoreDuringBuilds: true,
   },
