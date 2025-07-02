@@ -27,14 +27,11 @@ export default function EditClientPage() {
     }
   }, [can, router]);
 
-  // 2) Do not render until permissions are known
-  if (can.loading || !can({ customer: ["update"] })) {
-    return null;
-  }
-
-  // 3) Fetch client data
+ 
   useEffect(() => {
     const fetchClient = async () => {
+      if (can.loading || !can({ customer: ["update"] })) return;
+      const fetchClient = async () => {
       try {
         const response = await fetch(`/api/clients/${params.id}`, {
           headers: {
@@ -57,7 +54,11 @@ export default function EditClientPage() {
       }
     };
     fetchClient();
-  }, [params.id, router]);
+  }, [can.loading, can, params.id, router]);
+
+  if (can.loading || !can({ customer: ["update"] })) {
+      return null;          // keeps hook order stable
+      }
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
