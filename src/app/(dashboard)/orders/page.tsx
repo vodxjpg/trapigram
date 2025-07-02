@@ -1,3 +1,4 @@
+/* src/app/(dashboard)/orders/page.tsx */
 "use client";
 
 import { useState, useEffect } from "react";
@@ -38,8 +39,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, CalendarIcon, MoreVertical, Mail, Truck } from "lucide-react";
 import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 import { toast } from "sonner";
-
-// **New imports for the dialog/modal**
 import {
   Dialog,
   DialogContent,
@@ -48,16 +47,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-// Define order status types
-type OrderStatus =
-  | "open"
-  | "underpaid"
-  | "paid"
-  | "cancelled"
-  | "refunded"
-  | "completed";
+type OrderStatus = "open" | "underpaid" | "paid" | "cancelled" | "refunded" | "completed";
 
-// **Extend Order to include trackingNumber**
 interface Order {
   id: string;
   orderKey: string;
@@ -66,37 +57,49 @@ interface Order {
   username: string;
   email: string;
   status: OrderStatus;
-  createdAt: string; // incoming ISO string
+  createdAt: string;
   total: number;
   trackingNumber?: string;
 }
 
-// Date filter options
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
 
 export default function OrdersPage() {
-   const can = usePermission(); ;
+  const can = usePermission();
   const router = useRouter();
 
-  /* ──────────────────────────────────────────────────────────────
-   *  Permission flags (computed once role is known)
-   * ────────────────────────────────────────────────────────────── */
-  const canViewDetail = !can.loading && can({ order: ["view"] });
-  const canViewPricing = !can.loading && can({ order: ["view_pricing"] });
-  const canUpdate = !can.loading && can({ order: ["update"] });
-  const canUpdateTracking = !can.loading && can({ order: ["update_tracking"] });
+  // Permission states
+  const [canViewDetail, setCanViewDetail] = useState(false);
+  const [canViewPricing, setCanViewPricing] = useState(false);
+  const [canUpdate, setCanUpdate] = useState(false);
+  const [canUpdateTracking, setCanUpdateTracking] = useState(false);
+  const [permissionsLoading, setPermissionsLoading] = useState(true);
 
-  // ◼︎ state for all orders via API
+  // Check permissions
+  useEffect(() => {
+    const checkPermissions = async () => {
+      if (can.loading) return;
+      const [viewDetail, viewPricing, update, updateTracking] = await Promise.all([
+        can({ order: ["view"] }),
+        can({ order: ["view_pricing"] }),
+        can({ order: ["update"] }),
+        can({ order: ["update_tracking"] }),
+      ]);
+      setCanViewDetail(viewDetail);
+      setCanViewPricing(viewPricing);
+      setCanUpdate(update);
+      setCanUpdateTracking(updateTracking);
+      setPermissionsLoading(false);
+    };
+    checkPermissions();
+  }, [can]);
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // **Modal state**
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [draftTracking, setDraftTracking] = useState("");
-
-  // ◼︎ filters & UI state
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -105,22 +108,14 @@ export default function OrdersPage() {
     from: Date | undefined;
     to: Date | undefined;
   }>({ from: undefined, to: undefined });
-
-  // ◼︎ pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
   type ShippingCompany = { id: string; name: string };
-
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
-    []
-  );
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
   const [shippingLoading, setShippingLoading] = useState(false);
-  const [selectedCompany, setSelectedCompany] = useState<string | undefined>(
-    undefined
-  );
+  const [selectedCompany, setSelectedCompany] = useState<string | undefined>(undefined);
 
-  // — fetch orders from /api/order on mount
   useEffect(() => {
     setLoading(true);
     fetch("/api/order")
@@ -136,9 +131,6 @@ export default function OrdersPage() {
       .finally(() => setLoading(false));
   }, []);
 
-
-
-  // — apply filters whenever inputs or orders change
   useEffect(() => {
     let result = orders.map((o) => ({
       ...o,
@@ -221,11 +213,8 @@ export default function OrdersPage() {
       }
     })();
   }, [dialogOpen]);
-  // Function to change order status via API
-  const handleStatusChange = async (
-    orderId: string,
-    newStatus: OrderStatus
-  ) => {
+
+  const handleStatusChange = async (orderId: string, newStatus: OrderStatus) => {
     try {
       const res = await fetch(`/api/order/${orderId}/change-status`, {
         method: "PATCH",
@@ -256,7 +245,6 @@ export default function OrdersPage() {
     }
   };
 
-  // **Open the tracking modal**
   const handleTracking = (orderId: string) => {
     const order = orders.find((o) => o.id === orderId);
     setSelectedOrderId(orderId);
@@ -264,10 +252,8 @@ export default function OrdersPage() {
     setDialogOpen(true);
   };
 
-  // **Save tracking to API**
   const saveTracking = async () => {
     if (!selectedOrderId) return;
-    // ensure a company is selected
     if (!selectedCompany) {
       toast.error("Please select a shipping company before saving.");
       return;
@@ -287,7 +273,6 @@ export default function OrdersPage() {
         }),
       });
       if (!res.ok) throw new Error("Failed to save tracking number");
-      // Optimistically update UI
       setOrders((prev) =>
         prev.map((o) =>
           o.id === selectedOrderId ? { ...o, trackingNumber: draftTracking } : o
@@ -301,33 +286,26 @@ export default function OrdersPage() {
     }
   };
 
-  const formatDate = (dateStr: string) =>
-    format(new Date(dateStr), "MMM dd, yyyy");
+  const formatDate = (dateStr: string) => format(new Date(dateStr), "MMM dd, yyyy");
 
   const handleDateFilterChange = (value: DateFilterOption) => {
     setDateFilter(value);
     if (value !== "custom") setDateRange({ from: undefined, to: undefined });
   };
 
-  // paginate
   const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
   const paginatedOrders = filteredOrders.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
 
-  /* ──────────────────────────────────────────────────────────────
- *  All hooks above have now executed; it’s safe to short-circuit
- *  rendering while permissions are still loading.
- * ────────────────────────────────────────────────────────────── */
-if (can.loading) {
-  return (
-    <div className="container mx-auto py-8 px-4 text-center">
-      Loading permissions…
-    </div>
-  );
-}
-
+  if (permissionsLoading || can.loading) {
+    return (
+      <div className="container mx-auto py-8 px-4 text-center">
+        Loading permissions…
+      </div>
+    );
+  }
 
   if (loading)
     return (
@@ -357,7 +335,6 @@ if (can.loading) {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Search Input */}
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -367,8 +344,6 @@ if (can.loading) {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-
-            {/* Status Filter */}
             <Select
               value={statusFilter}
               onValueChange={(v) => setStatusFilter(v)}
@@ -385,13 +360,9 @@ if (can.loading) {
                 <SelectItem value="cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
-
-            {/* Date Filter */}
             <Select
               value={dateFilter}
-              onValueChange={(v) =>
-                handleDateFilterChange(v as DateFilterOption)
-              }
+              onValueChange={(v) => handleDateFilterChange(v as DateFilterOption)}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Filter by date" />
@@ -404,8 +375,6 @@ if (can.loading) {
                 <SelectItem value="custom">Custom Range</SelectItem>
               </SelectContent>
             </Select>
-
-            {/* Custom Date Range Picker */}
             {dateFilter === "custom" && (
               <Popover>
                 <PopoverTrigger asChild>
@@ -481,9 +450,8 @@ if (can.loading) {
                         {order.firstName} {order.lastName} — {order.username} (
                         {order.email})
                       </TableCell>
-                      {/* Status Select showing only badges or editable based on permission */}
                       <TableCell>
-                        {can({ order: ["update_status"] }) ? (
+                        {canUpdate ? (
                           <Select
                             value={order.status}
                             onValueChange={(v) =>
@@ -497,50 +465,28 @@ if (can.loading) {
                               </Badge>
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem
-                                value="open"
-                                className="w-auto flex justify-left"
-                              >
-                                <Badge className={getStatusColor("open")}>
-                                  Open
-                                </Badge>
+                              <SelectItem value="open" className="w-auto flex justify-left">
+                                <Badge className={getStatusColor("open")}>Open</Badge>
                               </SelectItem>
-                              <SelectItem
-                                value="underpaid"
-                                className="w-auto flex justify-left"
-                              >
+                              <SelectItem value="underpaid" className="w-auto flex justify-left">
                                 <Badge className={getStatusColor("underpaid")}>
                                   Partially paid
                                 </Badge>
                               </SelectItem>
-                              <SelectItem
-                                value="paid"
-                                className="w-auto flex justify-left"
-                              >
-                                <Badge className={getStatusColor("paid")}>
-                                  Paid
-                                </Badge>
+                              <SelectItem value="paid" className="w-auto flex justify-left">
+                                <Badge className={getStatusColor("paid")}>Paid</Badge>
                               </SelectItem>
-                              <SelectItem
-                                value="completed"
-                                className="w-auto flex justify-left"
-                              >
+                              <SelectItem value="completed" className="w-auto flex justify-left">
                                 <Badge className={getStatusColor("completed")}>
                                   Completed
                                 </Badge>
                               </SelectItem>
-                              <SelectItem
-                                value="cancelled"
-                                className="w-auto flex justify-left"
-                              >
+                              <SelectItem value="cancelled" className="w-auto flex justify-left">
                                 <Badge className={getStatusColor("cancelled")}>
                                   Cancelled
                                 </Badge>
                               </SelectItem>
-                              <SelectItem
-                                value="refunded"
-                                className="w-auto flex justify-left"
-                              >
+                              <SelectItem value="refunded" className="w-auto flex justify-left">
                                 <Badge className={getStatusColor("refunded")}>
                                   Refunded
                                 </Badge>
@@ -549,12 +495,10 @@ if (can.loading) {
                           </Select>
                         ) : (
                           <Badge className={getStatusColor(order.status)}>
-                            {order.status.charAt(0).toUpperCase() +
-                              order.status.slice(1)}
+                            {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                           </Badge>
                         )}
                       </TableCell>
-
                       <TableCell>{formatDate(order.createdAt)}</TableCell>
                       {canViewPricing && (
                         <TableCell>${order.total.toFixed(2)}</TableCell>
@@ -570,30 +514,21 @@ if (can.loading) {
                           <DropdownMenuContent align="end">
                             {canUpdate && (
                               <DropdownMenuItem
-                                onClick={() =>
-                                  router.push(`/orders/${order.id}/edit`)
-                                }
+                                onClick={() => router.push(`/orders/${order.id}/edit`)}
                               >
                                 <Edit className="mr-2 h-4 w-4" />
                                 Edit
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuItem
-                              onClick={() =>
-                                handleOrderAction(order.id, "send-notification")
-                              }
-                              disabled={
-                                order.status === "cancelled" ||
-                                order.status === "completed"
-                              }
+                              onClick={() => handleOrderAction(order.id, "send-notification")}
+                              disabled={order.status === "cancelled" || order.status === "completed"}
                             >
                               <Mail className="mr-2 h-4 w-4" />
                               <span>Send Payment Notification</span>
                             </DropdownMenuItem>
                             {canUpdateTracking && (
-                              <DropdownMenuItem
-                                onClick={() => handleTracking(order.id)}
-                              >
+                              <DropdownMenuItem onClick={() => handleTracking(order.id)}>
                                 <Truck className="mr-2 h-4 w-4" />
                                 <span>Set tracking number</span>
                               </DropdownMenuItem>
@@ -605,10 +540,7 @@ if (can.loading) {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell
-                      colSpan={canViewPricing ? 6 : 5}
-                      className="text-center py-6"
-                    >
+                    <TableCell colSpan={canViewPricing ? 6 : 5} className="text-center py-6">
                       No orders found matching your filters
                     </TableCell>
                   </TableRow>
@@ -616,8 +548,6 @@ if (can.loading) {
               </TableBody>
             </Table>
           </div>
-
-          {/* Pagination Controls */}
           <div className="flex items-center justify-between p-4">
             <div>
               Showing{" "}
@@ -640,9 +570,7 @@ if (can.loading) {
                 variant="outline"
                 size="sm"
                 disabled={currentPage === pageCount || pageCount === 0}
-                onClick={() =>
-                  setCurrentPage((p) => Math.min(p + 1, pageCount))
-                }
+                onClick={() => setCurrentPage((p) => Math.min(p + 1, pageCount))}
               >
                 Next
               </Button>
@@ -651,7 +579,6 @@ if (can.loading) {
         </CardContent>
       </Card>
 
-      {/* — Tracking Number Dialog — */}
       {canUpdateTracking && (
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent>
@@ -664,18 +591,13 @@ if (can.loading) {
               </DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4">
-              {/* NEW: Shipping Company selector */}
               <Select
                 value={selectedCompany}
                 onValueChange={(val) => setSelectedCompany(val)}
                 disabled={shippingLoading}
               >
                 <SelectTrigger>
-                  <SelectValue
-                    placeholder={
-                      shippingLoading ? "Loading…" : "Select company"
-                    }
-                  />
+                  <SelectValue placeholder={shippingLoading ? "Loading…" : "Select company"} />
                 </SelectTrigger>
                 <SelectContent>
                   {shippingCompanies.map((c) => (
