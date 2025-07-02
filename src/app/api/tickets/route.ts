@@ -37,11 +37,7 @@ export async function GET(req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
 
-  // only check permission for non-owners
-  if (!(await isOwner(organizationId, userId))) {
-    const guard = await requireOrgPermission(req, { ticket: ["view"] });
-    if (guard) return guard;
-  }
+
 
   try {
     const { searchParams } = new URL(req.url);
@@ -89,10 +85,7 @@ export async function POST(req: NextRequest) {
   const { organizationId, userId } = ctx;
 
   // owner bypass for create
-  if (!(await isOwner(organizationId, userId))) {
-    const guard = await requireOrgPermission(req, { ticket: ["create"] });
-    if (guard) return guard;
-  }
+
 
   try {
     const data = ticketSchema.parse(await req.json());

@@ -36,15 +36,6 @@ export async function GET(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
 
-  if (!(await isOwner(organizationId, userId))) {
-    const guard = await requireOrgPermission(req, { ticket: ["view"] });
-    if (guard) {
-      return NextResponse.json(
-        { error: "You don’t have permission to view tags" },
-        { status: 403 }
-      );
-    }
-  }
 
   try {
     const { id } = await params;
@@ -81,15 +72,6 @@ export async function POST(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
 
-  if (!(await isOwner(organizationId, userId))) {
-    const guard = await requireOrgPermission(req, { ticket: ["update"] });
-    if (guard) {
-      return NextResponse.json(
-        { error: "You don’t have permission to update tags" },
-        { status: 403 }
-      );
-    }
-  }
 
   // 2) parse & validate body
   let body: any;

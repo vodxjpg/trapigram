@@ -33,13 +33,6 @@ export async function PATCH(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
 
-  if (!(await isOwner(organizationId, userId))) {
-    const guard = await requireOrgPermission(req, { ticket: ["update"] });
-    if (guard) {
-      // return a clear 403 with message for the frontend toast
-      return NextResponse.json({ error: "You don’t have permission to change ticket priority" }, { status: 403 });
-    }
-  }
 
   // 2) Extract & validate
   const { id } = await params;

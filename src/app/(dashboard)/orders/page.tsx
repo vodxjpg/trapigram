@@ -136,7 +136,7 @@ export default function OrdersPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (can.loading) return null;
+
 
   // — apply filters whenever inputs or orders change
   useEffect(() => {
@@ -315,6 +315,19 @@ export default function OrdersPage() {
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
+
+  /* ──────────────────────────────────────────────────────────────
+ *  All hooks above have now executed; it’s safe to short-circuit
+ *  rendering while permissions are still loading.
+ * ────────────────────────────────────────────────────────────── */
+if (can.loading) {
+  return (
+    <div className="container mx-auto py-8 px-4 text-center">
+      Loading permissions…
+    </div>
+  );
+}
+
 
   if (loading)
     return (

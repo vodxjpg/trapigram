@@ -25,9 +25,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-    // enforce member:invite
-  const guard = await requireOrgPermission(req, { invitation: ["create"] });
-  if (guard) return guard;
+
   const { organizationId, userId: inviterId } = ctx;
 
   const { email, role } = await req.json();

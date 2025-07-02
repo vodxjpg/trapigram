@@ -9,8 +9,6 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { invitationId: string } }
 ) {
-  const guard = await requireOrgPermission(req, { invitation: ["cancel"] });
-  if (guard) return guard;
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;

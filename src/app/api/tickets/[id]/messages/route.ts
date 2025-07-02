@@ -40,14 +40,6 @@ export async function POST(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
 
-  if (!(await isOwner(organizationId, userId))) {
-    const guard = await requireOrgPermission(req, { ticket: ["update"] });
-    if (guard)
-      return NextResponse.json(
-        { error: "You don’t have permission to post messages" },
-        { status: 403 },
-      );
-  }
 
   try {
     const { id } = await params;

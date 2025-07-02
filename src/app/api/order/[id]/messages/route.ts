@@ -59,8 +59,6 @@ export async function POST(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
 
-  const guard = await requireOrgPermission(req, { orderChat: ["view"] });
-  if (guard) return guard;
 
   try {
     const { id } = params;

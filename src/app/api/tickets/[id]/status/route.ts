@@ -33,11 +33,6 @@ export async function PATCH(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
 
-  // owner bypass
-  if (!(await isOwner(organizationId, userId))) {
-    const guard = await requireOrgPermission(req, { ticket: ["update"] });
-    if (guard) return guard;
-  }
 
   // parse & validate JSON
   let body: unknown;

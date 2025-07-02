@@ -38,11 +38,6 @@ export async function POST(req: NextRequest, { params }) {
     if (ctx instanceof NextResponse) return ctx;
     const { organizationId, userId } = ctx;
   
-    if (!(await isOwner(organizationId, userId))) {
-      const guard = await requireOrgPermission(req, { platformKey: ["create"] });
-      if (guard) return guard;
-    }
-  
     const { platform, apiKey } = await req.json();
     if (!platform || !apiKey) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
@@ -84,10 +79,7 @@ export async function POST(req: NextRequest, { params }) {
     if (ctx instanceof NextResponse) return ctx;
     const { organizationId, userId } = ctx;
   
-    if (!(await isOwner(organizationId, userId))) {
-      const guard = await requireOrgPermission(req, { platformKey: ["update"] });
-      if (guard) return guard;
-    }
+
   
     const { id, platform, apiKey } = await req.json();
     if (!id || (!platform && !apiKey)) {
@@ -131,11 +123,6 @@ export async function DELETE(req: NextRequest, { params }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
-
-  if (!(await isOwner(organizationId, userId))) {
-    const guard = await requireOrgPermission(req, { platformKey: ["delete"] });
-    if (guard) return guard;
-  }
 
   const { id } = await req.json();
   if (!id) {
