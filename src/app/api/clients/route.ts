@@ -68,6 +68,10 @@ export async function GET(req: NextRequest) {
 
 /* ---------------------- POST /api/clients ---------------------- */
 export async function POST(req: NextRequest) {
+
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
   const body = await req.json();
   const parsed = clientSchema.safeParse(body);
   if (!parsed.success) {
@@ -86,7 +90,6 @@ export async function POST(req: NextRequest) {
     referredBy = null,
   } = parsed.data;
 
-  const organizationId = req.nextUrl.searchParams.get("organizationId");
   if (!organizationId) {
     return NextResponse.json({ error: "organizationId is required" }, { status: 400 });
   }
@@ -131,7 +134,7 @@ export async function POST(req: NextRequest) {
     );
     return NextResponse.json(updateRes.rows[0], { status: 200 });
   } else {
-    // Insert new client
+    // Insert new clients
     const id = crypto.randomUUID();
     const insertRes = await pool.query(
       `
