@@ -44,7 +44,10 @@ export function usePermission(organizationId?: string) {
   }, [organizationId]);
 
   const loading = role === null;
-  const cache = useMemo(() => new Map<string, boolean>(), [role]);
+  const cache = useMemo(
+      () => new Map<string, boolean>(),
+      [role, (window as any).__permissionGeneration__]      // <── auto-flush
+    );
 
   /* ── 2. Permission checker ───────────────────────────────────── */
   const checker = useCallback(

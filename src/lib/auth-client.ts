@@ -1,13 +1,13 @@
 /* -------------------------------------------------------------------------- */
-/*  /home/zodx/Desktop/Trapyfy/src/lib/auth-client.ts                         */
+/*  /src/lib/auth-client.ts                                                   */
 /* -------------------------------------------------------------------------- */
 
-import { createAuthClient }       from "better-auth/react";
-import { organizationClient }     from "better-auth/client/plugins";
-import { magicLinkClient }        from "better-auth/client/plugins";
+import { createAuthClient }         from "better-auth/react";
+import { organizationClient }       from "better-auth/client/plugins";
+import { magicLinkClient }          from "better-auth/client/plugins";
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
-import { apiKeyClient }           from "better-auth/client/plugins";
-import { ac, owner }              from "@/lib/permissions";
+import { apiKeyClient }             from "better-auth/client/plugins";
+import { ac, owner }                from "@/lib/permissions";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
 
@@ -53,8 +53,11 @@ declare module "better-auth/react" {
         organizationId: string;
       }) => Promise<any>;
       acceptInvitation: (data: { invitationId: string }) => Promise<any>;
+
+      /* ▶︎  NEW helper so any component can flush the permission cache  */
       invalidatePermissionCache?: () => void;
     };
+
     subscription: {
       status: (data: { userId: string }) => Promise<{
         data: { hasActiveSubscription: boolean };
@@ -106,27 +109,29 @@ export const authClient = createAuthClient({
     : "https://www.trapyfy.com/api/auth",
   plugins: [
     apiKeyClient(),
-    organizationClient({
-      ac,
-      roles: { owner },
-    }),
+    organizationClient({ ac, roles: { owner } }),
     subscriptionClientPlugin,
     magicLinkClient(),
   ],
   fetchOptions: { credentials: "include" },
 });
 
-/* ────────────────────── invalidate-permission cache helper ──────────────── */
+/* ──────────────────── invalidate-permission-cache helper ─────────────────── */
 if (typeof window !== "undefined") {
-  // ① expose a helper every component can call (e.g. after saving a role)
+  // ① Expose a helper every component can call (e.g. after saving a role)
   (authClient.organization as any).invalidatePermissionCache = () => {
     window.dispatchEvent(new Event("better-auth:invalidate-cache"));
   };
 
-  // ② keep a global counter so usePermission can react
+  // ② Augment Window so TS knows about the counter we bump
+  declare global {
+    interface Window {
+      __permissionGeneration__?: number;
+    }
+  }
+
+  // ③ When the event fires, bump the global counter so usePermission re-runs
   window.addEventListener("better-auth:invalidate-cache", () => {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore – extending window dynamically
     window.__permissionGeneration__ =
       (window.__permissionGeneration__ || 0) + 1;
   });
