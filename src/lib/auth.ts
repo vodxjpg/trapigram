@@ -9,7 +9,7 @@ import { createAuthMiddleware } from "better-auth/api";
 import { db, pgPool } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
-import { ac, owner, support } from "@/lib/permissions";   // ← added support
+import { ac, owner } from "@/lib/permissions";   // ← added support
 import { v4 as uuidv4 } from "uuid";
 
 /*───────────────────────────────────────────────────────────────────
