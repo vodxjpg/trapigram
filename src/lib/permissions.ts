@@ -1,6 +1,10 @@
 // src/lib/permissions.ts
+import { StockManagement } from "@/app/(dashboard)/products/components/stock-management";
 import { createAccessControl } from "better-auth/plugins/access";
-import { defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
+import {
+  defaultStatements,
+  ownerAc,
+} from "better-auth/plugins/organization/access";
 
 /** The extra, _only_ resources we actually care about in our app */
 const domainStatements: Record<string, string[]> = {

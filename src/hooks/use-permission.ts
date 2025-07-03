@@ -1,9 +1,9 @@
-/* src/hooks/use-permission.ts */
+// src/hooks/use-permission.ts
 "use client";
 
 import { useCallback, useMemo, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth-client";
-import { getMember } from "@/lib/auth-client/get-member";
+import { getMember }  from "@/lib/auth-client/get-member";
 
 /**
  * usePermission
@@ -17,111 +17,58 @@ import { getMember } from "@/lib/auth-client/get-member";
  */
 export function usePermission(organizationId?: string) {
   const [role, setRole] = useState<string | null>(null); // null = loading
-  const [permissions, setPermissions] = useState<Record<string, boolean>>({});
-  const cache = useMemo(() => new Map<string, boolean>(), [role]);
 
-  /* ── 1. Resolve role and fetch permissions ───────────────────────── */
+  /* ── 1. Resolve role ─────────────────────────────────────────── */
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       try {
-        // Fetch the active role
         const res = organizationId
           ? await getMember({ organizationId })
           : await authClient.organization.getActiveMember();
 
         if (cancelled) return;
 
-        const resolvedRole = res?.data?.role || "";
-        console.log(
-          "[usePermission] org =",
-          organizationId ?? "<active>",
-          "→ role =",
-          resolvedRole || "<none>"
-        );
-        setRole(resolvedRole);
-
-        if (resolvedRole === "owner") {
-          setPermissions({}); // Owners have all permissions
-          return;
-        }
-
-        // Define permissions to check
-        const permsToCheck = [
-          { order: ["view"] },
-          { order: ["view_pricing"] },
-          { order: ["update_status"] },
-          { order: ["update_tracking"] },
-          { order: ["update"] },
-          { ticket: ["view"] },
-          { ticket: ["update"] },
-          // Add more as needed
-        ];
-
-        // Fetch permissions from the server
-        const results = await Promise.all(
-          permsToCheck.map(async (perm) => {
-            const result = await authClient.organization.hasPermission({ permissions: perm });
-            console.log("[usePermission] Raw hasPermission response for", perm, ":", result);
-            return result;
-          })
-        );
-
-        if (cancelled) return;
-
-        const permissionMap = permsToCheck.reduce((acc, perm, index) => {
-          const key = JSON.stringify(perm);
-          const hasPermission = results[index].data?.hasPermission || false;
-          acc[key] = hasPermission;
-          console.log(
-            "[usePermission] Checking permission:",
-            perm,
-            "for role:",
-            resolvedRole,
-            "→ Result:",
-            hasPermission
-          );
-          cache.set(key, hasPermission);
-          return acc;
-        }, {} as Record<string, boolean>);
-
-        setPermissions(permissionMap);
+        const resolved = (res?.data?.role || "").toLowerCase();
+        setRole(resolved);
       } catch (err) {
         if (!cancelled) {
-          console.warn("[usePermission] failed to load role or permissions:", err);
-          setRole(""); // Treat as guest/no role
-          setPermissions({});
+          console.warn("[usePermission] failed to load role:", err);
+          setRole("");                       // treat as guest / no role
         }
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [organizationId, cache]);
+    return () => { cancelled = true; };
+  }, [organizationId]);
+
+  const loading = role === null;
+  const cache   = useMemo(() => new Map<string, boolean>(), [role]);
 
   /* ── 2. Permission checker ───────────────────────────────────── */
   const checker = useCallback(
     (perm: Record<string, string[]>) => {
-      if (role === "owner") return true;
-      if (role === null) return true; // Optimistic during loading
+      if (role === "owner") return true;       // owner bypass
+      if (loading) return true;                // optimistic while loading
+
       const key = JSON.stringify(perm);
-      if (cache.has(key)) {
-        const cached = cache.get(key)!;
-        console.log("[usePermission] Cached result for", perm, ":", cached);
-        return cached;
-      }
-      // Fallback to server check if not cached
-      console.warn("[usePermission] Permission not cached:", perm);
-      return false; // Avoid runtime API calls for uncached permissions
+      if (cache.has(key)) return cache.get(key)!;
+
+      // Better-Auth’s type for `role` is overly narrow ("owner").
+      // Cast the whole call to `any` so custom roles compile.
+      const ok: boolean = (authClient.organization as any)
+        .checkRolePermission({ permissions: perm, role });
+
+      cache.set(key, ok);
+      return ok;
     },
-    [cache, role]
+    [cache, role, loading],
   );
 
   /* Attach metadata */
-  (checker as any).loading = role === null;
-  (checker as any).role = role;
+  (checker as any).loading = loading;
+  (checker as any).role    = role;
 
   return checker as typeof checker & { loading: boolean; role: string | null };
 }

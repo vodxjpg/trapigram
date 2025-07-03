@@ -7,7 +7,8 @@ import { organizationClient } from "better-auth/client/plugins";
 import { magicLinkClient } from "better-auth/client/plugins";
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
 import { apiKeyClient } from "better-auth/client/plugins";
-import { ac, builtinRoles as roles } from "@/lib/permissions";
+import { ac, owner} from "@/lib/permissions";
+
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
 
 /* ──────────────────────────────── TYPES ──────────────────────────────────── */
@@ -125,7 +126,7 @@ export const authClient = createAuthClient({
     apiKeyClient(),
     organizationClient({
       ac,
-      roles,
+      roles: { owner},
     }),
     subscriptionClientPlugin,
     magicLinkClient(),

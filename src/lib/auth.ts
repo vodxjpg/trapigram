@@ -9,7 +9,8 @@ import { createAuthMiddleware } from "better-auth/api";
 import { db, pgPool } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
-import { ac, builtinRoles } from "@/lib/permissions";
+import { ac, owner } from "@/lib/permissions";
+
 import { v4 as uuidv4 } from "uuid";
 
 /*───────────────────────────────────────────────────────────────────
@@ -109,33 +110,6 @@ export const auth = betterAuth({
         }
       },
     },
-     // ──────────────────────────────────────────────────────────────
- //  When a new session is created pick the user’s first org and
- //  store it in `activeOrganizationId`.  Every tab can now call
- //  getActiveMember / usePermission without a separate “setActive”.
- // ──────────────────────────────────────────────────────────────
- session: {
-   create: {
-     before: async (session) => {
-       const firstOrg = await db
-         .selectFrom("member")
-         .select("organizationId")
-         .where("userId", "=", session.userId)
-         .orderBy("createdAt")
-         .limit(1)
-         .executeTakeFirst();
-
-       if (!firstOrg) return { data: session };   // no memberships yet
-
-       return {
-         data: {
-           ...session,
-           activeOrganizationId: firstOrg.organizationId,
-         },
-       };
-     },
-   },
- },
   },
 
   /*──────────────────── Session extras ──────────────*/
@@ -250,7 +224,7 @@ export const auth = betterAuth({
     /* Organizations */
     organization({
       ac,
-      roles: builtinRoles,
+      roles: { owner },
 
       /** Invitation email */
       async sendInvitationEmail({ id, email, role, organization, inviter }) {
