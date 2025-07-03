@@ -19,9 +19,6 @@ const messagesSchema = z.object({
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  // authorization: only owners or those with orderChat:view
-const guard = await requireOrgPermission(req, { orderChat: ["view"] });
-if (guard) return guard;
   try {
     const { id } = await params;
 

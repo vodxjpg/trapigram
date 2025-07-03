@@ -223,7 +223,7 @@ export const auth = betterAuth({
     /* Organizations */
     organization({
       ac,
-      roles: { owner, support },
+      roles: { owner },
 
       /** Invitation email */
       async sendInvitationEmail({ id, email, role, organization, inviter }) {

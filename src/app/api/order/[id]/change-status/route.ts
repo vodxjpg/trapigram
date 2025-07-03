@@ -7,7 +7,6 @@ import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
 import { sendNotification } from "@/lib/notifications";
 import type { NotificationType } from "@/lib/notifications";
-import { requireOrgPermission } from "@/lib/perm-server";
 import { getRevenue } from "@/lib/revenue";
 
 
@@ -97,9 +96,6 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   // 1) context + permission guard
-  const { requireOrgPermission } = await import('@/lib/perm-server');
-  const ctxOrRes = await requireOrgPermission(req, { order: ['update_status'] });
-  if (ctxOrRes) return ctxOrRes;
   const ctx = await getContext(req) as { organizationId: string };
   const { organizationId } = ctx;
   const { id } = await params;
