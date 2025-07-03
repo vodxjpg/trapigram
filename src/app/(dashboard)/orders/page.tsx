@@ -247,7 +247,7 @@ export default function OrdersPage() {
 
   useEffect(() => {
     if (can.loading) return;
-
+  
     (async () => {
       const [viewDetail, viewPricing, update, updateTracking, updateStatus] =
         await Promise.all([
@@ -257,19 +257,17 @@ export default function OrdersPage() {
           can({ order: ["update_tracking"] }),
           can({ order: ["update_status"] }),
         ]);
-
-      const next = {
-        canViewDetail: viewDetail,
-        canViewPricing: viewPricing,
-        canUpdate: update,
-        canUpdateTracking: updateTracking,
-        canUpdateStatus: updateStatus,
-      };
-
-      console.debug("[OrdersPage] resolved permissions:", next); // ← debug
-      setPermissions(next);
+  
+      setPermissions({
+        canViewDetail:    viewDetail,
+        canViewPricing:   viewPricing,
+        canUpdate:        update,
+        canUpdateTracking:updateTracking,
+        canUpdateStatus:  updateStatus,
+      });
     })();
-  }, [can, can.loading]);
+  }, [can, can.loading, (can as any).version]);  // ← HERE
+  
 
 
   /* ---------------------------------------------------------------------- */
