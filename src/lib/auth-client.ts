@@ -2,15 +2,15 @@
 /*  /home/zodx/Desktop/Trapyfy/src/lib/auth-client.ts                       */
 /* -------------------------------------------------------------------------- */
 
-import { createAuthClient } from "better-auth/react";
-import { organizationClient } from "better-auth/client/plugins";
-import { magicLinkClient } from "better-auth/client/plugins";
+import { createAuthClient }      from "better-auth/react";
+import { organizationClient }    from "better-auth/client/plugins";
+import { magicLinkClient }       from "better-auth/client/plugins";
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
-import { apiKeyClient } from "better-auth/client/plugins";
-import { ac, owner } from "@/lib/permissions";
+import { apiKeyClient }          from "better-auth/client/plugins";
 
+import { resolveRole }       from "@/lib/auth/role-resolver";
+import { ac } from "@/lib/permissions";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
-
 /* ──────────────────────────────── TYPES ──────────────────────────────────── */
 declare module "better-auth/react" {
   interface AuthClient {
@@ -126,7 +126,7 @@ export const authClient = createAuthClient({
     apiKeyClient(),
     organizationClient({
       ac,
-      roles: { owner }, 
+      roles: resolveRole,  // <── just the object
     }),
     subscriptionClientPlugin,
     magicLinkClient(),

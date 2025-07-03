@@ -9,9 +9,10 @@ import { createAuthMiddleware } from "better-auth/api";
 import { db, pgPool } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
-import { ac, owner } from "@/lib/permissions";   // ← added support
 import { v4 as uuidv4 } from "uuid";
 
+import { resolveRole }       from "@/lib/auth/role-resolver";
+import { ac } from "@/lib/permissions";
 /*───────────────────────────────────────────────────────────────────
   MAIN CONFIG
 ───────────────────────────────────────────────────────────────────*/
@@ -223,8 +224,7 @@ export const auth = betterAuth({
     /* Organizations */
     organization({
       ac,
-      roles: { owner },
-
+      roles: resolveRole,
       /** Invitation email */
       async sendInvitationEmail({ id, email, role, organization, inviter }) {
         const inviteLink = `${process.env.NEXT_PUBLIC_APP_URL}/accept-invitation/${id}`;

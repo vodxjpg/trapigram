@@ -4,6 +4,7 @@ import { pgPool as pool } from "@/lib/db";;
 import { v4 as uuidv4 } from "uuid";
 import { cleanPermissions } from "@/lib/utils/cleanPermissions";
 import { getContext } from "@/lib/context";
+import { primeOrgRoles } from "@/lib/auth/roles-cache";
 
 
 
@@ -30,7 +31,9 @@ export async function GET(req: NextRequest) {
       ORDER BY "createdAt" ASC`,
     [organizationId],
   );
+  await primeOrgRoles(organizationId);
   return NextResponse.json({ roles: rows });
+  
 }
 
 /* ─────────────── POST create ─────────────── */
@@ -54,6 +57,7 @@ export async function POST(req: NextRequest) {
      RETURNING id,name,permissions,"createdAt"`,
      [id, organizationId, name.trim(), JSON.stringify(perms)],
   );
+  await primeOrgRoles(organizationId);
   return NextResponse.json({ role: rows[0] }, { status: 201 });
 }
 
@@ -98,5 +102,6 @@ export async function DELETE(req: NextRequest) {
   if (!roleId) return NextResponse.json({ error: "roleId required" }, { status: 400 });
 
   await pool.query(`DELETE FROM "orgRole" WHERE id=$1 AND "organizationId"=$2`, [roleId, organizationId]);
+  await primeOrgRoles(organizationId);
   return NextResponse.json({ success: true });
 }
