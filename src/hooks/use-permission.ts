@@ -79,7 +79,16 @@ export function usePermission(passedOrgId?: string) {
       return false;
     }
     const [resource, actions] = Object.entries(perm)[0];
-    const ok = actions.every(a => (grant as any)[resource]?.includes(a));
+    let ok = actions.every(a => (grant as any)[resource]?.includes(a));
+    
+    /*  ⬇️  if the local array-test failed, ask the server once                */
+    if (!ok) {
+      authClient.organization
+        .hasPermission({ permissions: perm, ...(orgId && { organizationId: orgId }) })
+        .then(({ data }) => { if (data) { ok = true; bump(v => v + 1); } })
+        .catch(() => {/* ignore – keep pessimistic false */});
+    }
+    
     console.debug("[usePermission] check", oid + ":" + role, perm, "→", ok);
     return ok;
   }, [loading, role, orgId, tick]);             // ← re-run after bump
