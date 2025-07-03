@@ -64,15 +64,5 @@ export const owner = ac.newRole({
 /*─────────────────────────────────────────────────────────────────────────────
   NEW — Support role
   ---------------------------------------------------------------------------*/
-export const support = ac.newRole({
-  order: ["update_tracking", "view_pricing", "update", "update_status"],
-  coupon: ["view", "create", "update", "delete"],
-  ticket: ["view", "update"],
-  product: ["view"],
-  customer: ["view"],
-  orderChat: ["view"],
-  affiliates: ["view", "points", "logs"],
-  stockManagement: ["view"],
-});
 
-export const builtinRoles = { owner, support };
+export const builtinRoles = { owner };
