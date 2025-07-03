@@ -269,7 +269,7 @@ export default function OrdersPage() {
       console.debug("[OrdersPage] resolved permissions:", next); // ← debug
       setPermissions(next);
     })();
-    }, [can, can.loading]);
+  }, [can.loading]); 
 
 
 
@@ -517,7 +517,7 @@ export default function OrdersPage() {
                       </TableCell>
                       {/* Status Select showing only badges or editable based on permission */}
                       <TableCell>
-                        {can({ order: ["update_status"] }) ? (
+                      {canUpdateStatus ? (
                           <Select
                             value={order.status}
                             onValueChange={(v) =>
