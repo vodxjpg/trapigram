@@ -1,24 +1,17 @@
-/* --------------------------------------------------------
-   A tiny in-memory cache of roles that live on the client.
-   -------------------------------------------------------- */
+// ─── src/lib/auth/role-registry.ts ─────────────────────────────
+import { ac, owner } from "@/lib/permissions";
 
-   import { ac, owner } from "@/lib/permissions";
+export const roleRegistry: Record<string, ReturnType<typeof ac.newRole>> = {
+  owner,                       // built-in static role
+};
 
-   /* ❶  A plain object the plugin expects */
-   export const roleRegistry: Record<string, ReturnType<typeof ac.newRole>> = {
-     owner,                            // built-in
-   };
-   
-   /* ❷  Call this every time you fetch a custom role */
-   export function registerRole(
-     organizationId: string,
-     roleName: string,
-     permissions: Record<string, string[]>,
-   ) {
-     // “support” in org A ≠ “support” in org B
-     const key = `${organizationId}:${roleName}`;
-     if (!roleRegistry[key]) {
-       roleRegistry[key] = ac.newRole(permissions);
-     }
-   }
-   
+export function registerRole(
+  orgId: string,
+  roleName: string,
+  permissions: Record<string, string[]>,
+) {
+  const key = `${orgId}:${roleName}`;
+  if (!roleRegistry[key]) {
+    roleRegistry[key] = ac.newRole(permissions);
+  }
+}

@@ -1,11 +1,12 @@
 // src/app/(dashboard)/organizations/[identifier]/roles/page.tsx
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Pencil, Trash } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useOrgRoles } from "@/hooks/use-org-roles";
+import { registerRole } from "@/lib/auth/role-registry";   // ← NEW
 import RoleDialog from "./role-dialog";
 import {
   Dialog,
@@ -20,6 +21,15 @@ export default function RolesPage() {
   const { identifier: orgId } = useParams<{ identifier: string }>();
   const router = useRouter();
   const { roles, isLoading, mutate } = useOrgRoles(orgId);
+
+  /* ------------------------------------------------------------------ */
+/*  Prime the client-side role registry every time `roles` changes    */
+/* ------------------------------------------------------------------ */
+useEffect(() => {
+  if (!roles?.length) return;
+  roles.forEach(r => registerRole(orgId, r.name, r.permissions));
+}, [orgId, roles]);
+
 
   const [dialogRole, setDialogRole] = useState<any | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<any | null>(null);
