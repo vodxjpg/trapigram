@@ -1,18 +1,9 @@
 /*───────────────────────────────────────────────────────────────────────────
-  Load an organisation’s roles from Postgres and refresh the registry
+  Prime roles from Postgres
   ───────────────────────────────────────────────────────────────────────────*/
-
-  import { pgPool }       from "@/lib/db";
-  import { roleRegistry } from "./role-registry";
-  import { ac }           from "@/lib/permissions";
+  import { pgPool }              from "@/lib/db";
+  import { roleRegistry }        from "./role-registry";
   
-  type Role = ReturnType<typeof ac.newRole>;
-  type RoleMap = Record<string, Role>;   // { roleName : Role }
-  
-  /* one per Node process ----------------------------------------------------*/
-  const local: Record<string, RoleMap> = {};
-  
-  /* helper ------------------------------------------------------------------*/
   const log = (...a: unknown[]) => console.debug("[roles-cache]", ...a);
   
   export async function primeOrgRoles(orgId: string) {
@@ -25,24 +16,13 @@
   
     log("priming", orgId, "rows:", rows.length);
   
-    const map: RoleMap = {};
-  
     for (const { name, permissions } of rows) {
-      /* build a fresh role for the registry (but we will *clone* it again
-         in resolveRole before every authorisation) */
-      const roleObj = ac.newRole(permissions);
-  
-      const key = `${orgId}:${name}`;
-      roleRegistry[key] = roleObj;   // global registry used by resolver
-      map[name]         = roleObj;   // local (legacy) cache
-  
-      log("  loaded", key, "→", permissions);
+      roleRegistry[`${orgId}:${name}`] = permissions;      // raw JSON only
+      log("  loaded", name, "→", permissions);
     }
-  
-    local[orgId] = map;              // replace whole map for that org
   }
   
-  /* legacy helper – rarely used now ----------------------------------------*/
+  /* legacy helper -----------------------------------------------------------*/
   export function getRole(orgId: string, roleName: string) {
     return roleRegistry[`${orgId}:${roleName}`];
   }

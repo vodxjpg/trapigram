@@ -1,17 +1,25 @@
-// ─── src/lib/auth/role-registry.ts ─────────────────────────────
-import { ac, owner } from "@/lib/permissions";
+/*───────────────────────────────────────────────────────────────────────────
+  Global registry               (shared client + server)
+  ───────────────────────────────────────────────────────────────────────────*/
 
-export const roleRegistry: Record<string, ReturnType<typeof ac.newRole>> = {
-  owner,                       // built-in static role
-};
+  import { ac, owner } from "@/lib/permissions";
 
-export function registerRole(
-  orgId: string,
-  roleName: string,
-  permissions: Record<string, string[]>,
-) {
-  const key = `${orgId}:${roleName}`;
-  if (!roleRegistry[key]) {
-    roleRegistry[key] = ac.newRole(permissions);
+  /** We keep only the *raw* JSON permissions here */
+  export const roleRegistry: Record<string, Record<string, string[]>> = {
+    owner: {},                                    // useless, but reserved
+  };
+  
+  /** called on the client after GET /roles */
+  export function registerRole(
+    orgId: string,
+    roleName: string,
+    permissions: Record<string, string[]>,
+  ) {
+    roleRegistry[`${orgId}:${roleName}`] = permissions;
   }
-}
+  
+  /** helper – build a fresh Role every time */
+  export function buildRole(perm: Record<string, string[]> | undefined) {
+    return perm ? ac.newRole(perm) : undefined;
+  }
+  
