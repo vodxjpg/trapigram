@@ -1,54 +1,49 @@
-/* ─── src/lib/auth/roles-cache.ts ──────────────────────────────────────────
-   Keeps the server-side roleRegistry in sync with the "orgRole" table.
-   Added detailed logs so we can see exactly what permissions are loaded
-   from the DB and when.                                                    */
+/*───────────────────────────────────────────────────────────────────────────
+  Load an organisation’s roles from Postgres and refresh the registry
+  ───────────────────────────────────────────────────────────────────────────*/
 
-   import { pgPool }       from "@/lib/db";
-   import { roleRegistry } from "./role-registry";
-   import { ac }           from "@/lib/permissions";
-   
-   type Role = ReturnType<typeof ac.newRole>;
-   type RoleMap = Record<string, Role>;        // { roleName : Role }
-   
-   /** module-local cache (one per Node process) */
-   let cache: Record<string, RoleMap> = {};    // { orgId : RoleMap }
-   
-   const dbg = (...args: unknown[]) => {
-     if (process.env.NODE_ENV !== "production")
-       console.debug("[roles-cache]", ...args);
-   };
-   
-   /* ───────────────────────── primeOrgRoles ──────────────────────────
-      Reads ALL roles of one organisation from Postgres and refreshes
-      both `roleRegistry` (global) and our local `cache`.               */
-   export async function primeOrgRoles(orgId: string) {
-     const { rows } = await pgPool.query(
-       `SELECT name, permissions
-          FROM "orgRole"
-         WHERE "organizationId" = $1`,
-       [orgId],
-     );
-   
-     dbg("priming roles for", orgId, "— rows =", rows.length);
-   
-     const map: RoleMap = {};
-   
-     for (const { name, permissions } of rows) {
-       dbg("  loading", name, "→", permissions);
-       const key  = `${orgId}:${name}`;
-       const role = ac.newRole(permissions);
-   
-       roleRegistry[key] = role;   // global registry (used by resolveRole)
-       map[name]         = role;   // local cache
-     }
-   
-     cache[orgId] = map;           // replace the whole map for that org
-   }
-   
-   /* ─────────────────────────  getRole (optional) ─────────────────────────── */
-   export function getRole(orgId: string, roleName: string) {
-     /* NOTE: this is *only* used by older code paths.
-              resolveRole() now reads directly from roleRegistry.             */
-     return roleRegistry[`${orgId}:${roleName}`];
-   }
-   
+  import { pgPool }       from "@/lib/db";
+  import { roleRegistry } from "./role-registry";
+  import { ac }           from "@/lib/permissions";
+  
+  type Role = ReturnType<typeof ac.newRole>;
+  type RoleMap = Record<string, Role>;   // { roleName : Role }
+  
+  /* one per Node process ----------------------------------------------------*/
+  const local: Record<string, RoleMap> = {};
+  
+  /* helper ------------------------------------------------------------------*/
+  const log = (...a: unknown[]) => console.debug("[roles-cache]", ...a);
+  
+  export async function primeOrgRoles(orgId: string) {
+    const { rows } = await pgPool.query(
+      `SELECT name, permissions
+         FROM "orgRole"
+        WHERE "organizationId" = $1`,
+      [orgId],
+    );
+  
+    log("priming", orgId, "rows:", rows.length);
+  
+    const map: RoleMap = {};
+  
+    for (const { name, permissions } of rows) {
+      /* build a fresh role for the registry (but we will *clone* it again
+         in resolveRole before every authorisation) */
+      const roleObj = ac.newRole(permissions);
+  
+      const key = `${orgId}:${name}`;
+      roleRegistry[key] = roleObj;   // global registry used by resolver
+      map[name]         = roleObj;   // local (legacy) cache
+  
+      log("  loaded", key, "→", permissions);
+    }
+  
+    local[orgId] = map;              // replace whole map for that org
+  }
+  
+  /* legacy helper – rarely used now ----------------------------------------*/
+  export function getRole(orgId: string, roleName: string) {
+    return roleRegistry[`${orgId}:${roleName}`];
+  }
+  
