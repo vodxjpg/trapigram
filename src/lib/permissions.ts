@@ -36,7 +36,6 @@ const domainStatements: Record<string, string[]> = {
   payment: ["view", "create", "update", "delete"],
   shipping: ["view", "create", "update", "delete"],
   notifications: ["view", "create", "update", "delete"],
-  
 };
 
 // 1) Filter out “team” (or any other you don’t want) from defaultStatements
@@ -55,13 +54,25 @@ export const statements: Record<string, string[]> = {
 // 3) Build your access-control engine
 export const ac = createAccessControl(statements);
 
-// 4) Make your owner role grant *all* of your wanted statements,
-//    but filter out “team” from ownerAc as well:
+// 4) Built-in owner role: full power
 const { team: _dropped, ...ownerDefaults } = ownerAc.statements;
-
 export const owner = ac.newRole({
-  ...ownerDefaults,      // everything except “team”
-  ...domainStatements,   // plus full power on your own resources
+  ...ownerDefaults,
+  ...domainStatements,
 });
 
-export const builtinRoles = { owner };
+/*─────────────────────────────────────────────────────────────────────────────
+  NEW — Support role
+  ---------------------------------------------------------------------------*/
+export const support = ac.newRole({
+  order: ["update_tracking", "view_pricing", "update", "update_status"],
+  coupon: ["view", "create", "update", "delete"],
+  ticket: ["view", "update"],
+  product: ["view"],
+  customer: ["view"],
+  orderChat: ["view"],
+  affiliates: ["view", "points", "logs"],
+  stockManagement: ["view"],
+});
+
+export const builtinRoles = { owner, support };

@@ -9,8 +9,7 @@ import { createAuthMiddleware } from "better-auth/api";
 import { db, pgPool } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
-import { ac, owner } from "@/lib/permissions";
-
+import { ac, owner, support } from "@/lib/permissions";   // ← added support
 import { v4 as uuidv4 } from "uuid";
 
 /*───────────────────────────────────────────────────────────────────
@@ -224,7 +223,7 @@ export const auth = betterAuth({
     /* Organizations */
     organization({
       ac,
-      roles: { owner },
+      roles: { owner, support },
 
       /** Invitation email */
       async sendInvitationEmail({ id, email, role, organization, inviter }) {
