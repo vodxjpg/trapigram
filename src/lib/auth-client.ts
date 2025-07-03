@@ -126,7 +126,7 @@ export const authClient = createAuthClient({
     apiKeyClient(),
     organizationClient({
       ac,
-      roles: { owner, support }, 
+      roles: { owner},
     }),
     subscriptionClientPlugin,
     magicLinkClient(),
