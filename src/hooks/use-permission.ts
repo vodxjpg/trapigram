@@ -86,5 +86,6 @@ export function usePermission(passedOrgId?: string) {
 
   (can as any).loading = loading;
   (can as any).role    = role;
+  (can as any).version  = tick;
   return can as typeof can & { loading: boolean; role: string | null };
 }
