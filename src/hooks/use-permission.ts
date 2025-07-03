@@ -79,7 +79,7 @@ export function usePermission(passedOrgId?: string) {
       return false;
     }
     const [resource, actions] = Object.entries(perm)[0];
-    const ok = actions.every(a => ac.can(grant.role).execute(a).on(resource).granted);
+    const ok = actions.every(a => (grant as any)[resource]?.includes(a));
     console.debug("[usePermission] check", oid + ":" + role, perm, "→", ok);
     return ok;
   }, [loading, role, orgId, tick]);             // ← re-run after bump
