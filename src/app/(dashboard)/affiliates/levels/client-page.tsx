@@ -1,3 +1,4 @@
+// src/app/(dashboard)/affiliates/levels/client-page.tsx
 "use client";
 
 import { useEffect } from "react";
@@ -6,21 +7,32 @@ import Link from "next/link";
 import { ArrowLeft, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LevelsTable } from "./levels-table";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 
 export default function ClientAffiliateLevelsPage() {
   const router = useRouter();
-   const can = usePermission(); ;
+
+  // get current organization
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  // check "settings" permission for affiliates
+  const {
+    hasPermission: canViewLevels,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { affiliates: ["settings"] });
 
   // Redirect away if no settings permission
   useEffect(() => {
-    if (!can.loading && !can({ affiliates: ["settings"] })) {
+    if (!permLoading && !canViewLevels) {
       router.replace("/affiliates");
     }
-  }, [can, router]);
+  }, [permLoading, canViewLevels, router]);
 
-  if (can.loading) return null;
-  if (!can({ affiliates: ["settings"] })) return null;
+  // guard until permission resolved
+  if (permLoading) return null;
+  if (!canViewLevels) return null;
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">

@@ -1,32 +1,50 @@
 // src/app/(dashboard)/clients/[id]/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { CouponForm } from "../coupons-form";
-import { Button } from "@/components/ui/button";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-import { toast } from "sonner";
-import { Skeleton } from "@/components/ui/skeleton";
-import { usePermission } from "@/hooks/use-permission";
+import { useState, useEffect }      from "react";
+import { useParams, useRouter }     from "next/navigation";
+import Link                         from "next/link";
+import { ArrowLeft }                from "lucide-react";
+import { toast }                    from "sonner";
+
+import { authClient }               from "@/lib/auth-client";
+import { useHasPermission }         from "@/hooks/use-has-permission";
+
+import { CouponForm }               from "../coupons-form";
+import { Button }                   from "@/components/ui/button";
+import { Skeleton }                 from "@/components/ui/skeleton";
+
+/* -------------------------------------------------------------------------- */
 
 export default function EditCouponPage() {
-  const { id } = useParams();
-  const router = useRouter();
-   const can = usePermission(); ;
-  const [coupon, setCoupon] = useState<any>(null);
+  const { id }   = useParams<{ id: string }>();
+  const router   = useRouter();
+
+  /* ── active organisation id ───────────────────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  /* ── permission (new hook) ───────────────────────────────────── */
+  const {
+    hasPermission: canUpdate,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { coupon: ["update"] });
+
+  /* ── coupon data state ───────────────────────────────────────── */
+  const [coupon,  setCoupon ] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  // redirect away if no update
+  /* ── redirect if not allowed ─────────────────────────────────── */
   useEffect(() => {
-    if (!can.loading && !can({ coupon: ["update"] })) {
+    if (!permLoading && !canUpdate) {
       router.replace("/coupons");
     }
-  }, [can, router]);
-  if (can.loading || !can({ coupon: ["update"] })) return null;
+  }, [permLoading, canUpdate, router]);
 
+  /* ── fetch coupon once permitted ─────────────────────────────── */
   useEffect(() => {
+    if (permLoading || !canUpdate) return;
+
     fetch(`/api/coupons/${id}`)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch");
@@ -38,8 +56,12 @@ export default function EditCouponPage() {
         router.push("/coupons");
       })
       .finally(() => setLoading(false));
-  }, [id, router]);
+  }, [permLoading, canUpdate, id, router]);
 
+  /* ── guards ──────────────────────────────────────────────────── */
+  if (permLoading || !canUpdate) return null;
+
+  /* ── page ────────────────────────────────────────────────────── */
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex items-center gap-2">
@@ -50,9 +72,7 @@ export default function EditCouponPage() {
         </Link>
         <div>
           <h1 className="text-3xl font-bold">Edit Coupon</h1>
-          <p className="text-muted-foreground">
-            Update coupon information
-          </p>
+          <p className="text-muted-foreground">Update coupon information</p>
         </div>
       </div>
 
@@ -70,7 +90,7 @@ export default function EditCouponPage() {
           <Skeleton className="h-10 w-32 mx-auto" />
         </div>
       ) : (
-        <CouponForm couponData={coupon} isEditing={true} />
+        <CouponForm couponData={coupon} isEditing />
       )}
     </div>
   );

@@ -1,8 +1,10 @@
+// src/app/(dashboard)/shipments/[id]/edit/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { ShipmentForm } from "../shipment-form";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -11,21 +13,34 @@ import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function EditShipmentPage() {
-  const params = useParams();
+  const params = useParams<{ id: string }>();
   const router = useRouter();
-   const can = usePermission(); ;
-  const [shipment, setShipment] = useState<any>(null);
+
+  /* ── active organisation ───────────────────────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  /* ── permission for updating shipping methods ──────────────────── */
+  const {
+    hasPermission: canUpdate,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { shipping: ["update"] });
+
+  const [shipment,    setShipment   ] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(true);
 
-  // ACL: redirect if they can't update
+  // redirect if they can't update
   useEffect(() => {
-    if (!can.loading && !can({ shipping: ["update"] })) {
+    if (!permLoading && !canUpdate) {
       router.replace("/shipments");
     }
-  }, [can, router]);
+  }, [permLoading, canUpdate, router]);
 
+  // fetch shipment data once permissions are known
   useEffect(() => {
-    if (can.loading) return;
+    if (permLoading) return;
+    if (!canUpdate) return;
+
     (async () => {
       try {
         const response = await fetch(`/api/shipments/${params.id}`, {
@@ -47,9 +62,10 @@ export default function EditShipmentPage() {
         setLoadingData(false);
       }
     })();
-  }, [can, params.id, router]);
+  }, [permLoading, canUpdate, params.id, router]);
 
-  if (can.loading || loadingData) {
+  // show skeleton while checking permissions or loading data
+  if (permLoading || loadingData) {
     return (
       <div className="container mx-auto py-6 px-6 space-y-6">
         <Skeleton className="h-12 w-full" />

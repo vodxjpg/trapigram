@@ -2,36 +2,47 @@
 
 import type React from "react";
 
-import { useState, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { Plus, Upload, Download } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ProductsDataTable } from "./components/products-data-table";
-import { PageHeader } from "@/components/page-header";
-import { Suspense } from "react";
-import { usePermission } from "@/hooks/use-permission";
-import { toast } from "sonner";
+import { useState, useRef, useEffect, Suspense } from "react";
+import { useRouter }               from "next/navigation";
+import { Plus, Upload, Download }  from "lucide-react";
+import { Button }                  from "@/components/ui/button";
+import { Input }                   from "@/components/ui/input";
+import { ProductsDataTable }       from "./components/products-data-table";
+import { PageHeader }              from "@/components/page-header";
+import { authClient }              from "@/lib/auth-client";
+import { useHasPermission }        from "@/hooks/use-has-permission";
+import { toast }                   from "sonner";
 
 export default function ProductsPage() {
   const router = useRouter();
-   const can = usePermission(); ;
+
+  
+  /* ── active organisation ─────────────────────────────────── */
+  const { data: activeOrg }  = authClient.useActiveOrganization();
+  const organizationId       = activeOrg?.id ?? null;
+
+  /* ── permission flags (new hook) ─────────────────────────── */
+  const {
+    hasPermission: canViewProducts,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { product: ["view"] });
+
+  const { hasPermission: canCreateProducts } = useHasPermission(
+    organizationId,
+    { product: ["create"] },
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Wait until we know the role
-  if (can.loading) return null;
-
-  // Deny access if user cannot view products
-  if (!can({ product: ["view"] })) {
-    return (
-      <div className="container mx-auto py-6 px-6 text-center text-red-600">
-        You don't have permission to view products.
-      </div>
-    );
-  }
+   /* ── redirect if no visibility ───────────────────────────── */
+   useEffect(() => {
+     if (!permLoading && !canViewProducts) {
+       router.replace("/dashboard");
+     }
+   }, [permLoading, canViewProducts, router]);
+  
+   if (permLoading || !canViewProducts) return null;  // guard while resolving
 
   const handleCreateProduct = () => {
     router.push("/products/new");
@@ -93,7 +104,7 @@ export default function ProductsPage() {
         actions={
           <div className="flex items-center gap-2">
             {/* Import Button - only show if user can create products */}
-            {can({ product: ["create"] }) && (
+            {canCreateProducts && (
               <Button
                 variant="outline"
                 onClick={handleImportClick}
@@ -115,7 +126,7 @@ export default function ProductsPage() {
             </Button>
 
             {/* Original Add Product Button */}
-            {can({ product: ["create"] }) && (
+            {canCreateProducts && (
               <Button onClick={handleCreateProduct} disabled={isLoading}>
                 <Plus className="mr-2 h-4 w-4" />
                 Add Product

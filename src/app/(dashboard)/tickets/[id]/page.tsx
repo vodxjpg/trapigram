@@ -1,50 +1,41 @@
+// src/app/(dashboard)/tickets/[id]/page.tsx  ← adjust path if different
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft, Paperclip, Send, Tag } from "lucide-react";
-import CreatableSelect from "react-select/creatable";
-import { toast } from "sonner";
+import React, { useState, useEffect, useMemo } from "react";
+import { useParams, useRouter }               from "next/navigation";
+import Link                                   from "next/link";
+import { ArrowLeft, Paperclip, Send, Tag }    from "lucide-react";
+import CreatableSelect                        from "react-select/creatable";
+import { toast }                              from "sonner";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { authClient }                         from "@/lib/auth-client";
+import { useHasPermission }                   from "@/hooks/use-has-permission";
+
+import { Badge }                              from "@/components/ui/badge";
+import { Button }                             from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
+  Card, CardContent, CardDescription, CardFooter,
+  CardHeader, CardTitle
 } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
+import { Textarea }                           from "@/components/ui/textarea";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem,
+  SelectTrigger, SelectValue
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogTrigger,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogClose,
+  Dialog, DialogTrigger, DialogContent,
+  DialogHeader, DialogTitle, DialogFooter, DialogClose
 } from "@/components/ui/dialog";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback }             from "@/components/ui/avatar";
 import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
+  AlertDialog, AlertDialogContent, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogCancel, AlertDialogAction
 } from "@/components/ui/alert-dialog";
+
+/* -------------------------------------------------------------------------- */
+/*  Types                                                                     */
+/* -------------------------------------------------------------------------- */
 
 type TicketHeader = {
   id: string;
@@ -65,6 +56,10 @@ type TicketMessage = {
   createdAt: Date;
 };
 
+/* -------------------------------------------------------------------------- */
+/*  Utils                                                                     */
+/* -------------------------------------------------------------------------- */
+
 const fmtLocal = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString(undefined, {
@@ -73,29 +68,56 @@ const fmtLocal = (iso: string | null) =>
       })
     : "—";
 
-export default function TicketDetail({ params }: { params: { id: string } }) {
-  const { id } = useParams<{ id: string }>();
-  const router = useRouter();
+/* -------------------------------------------------------------------------- */
+/*  Component                                                                 */
+/* -------------------------------------------------------------------------- */
 
-  const [header, setHeader] = useState<TicketHeader | null>(null);
-  const [messages, setMessages] = useState<TicketMessage[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function TicketDetail() {
+  /* ---------------- params / routing ------------------------------------ */
+  const { id }  = useParams<{ id: string }>();
+  const router  = useRouter();
 
-  const [status, setStatus] = useState<TicketHeader["status"]>("open");
-  const [priority, setPriority] = useState<TicketHeader["priority"]>("medium");
-  const [newMessage, setNewMessage] = useState("");
+  /* ---------------- permission hooks ------------------------------------ */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  const { hasPermission: canViewRaw,   isLoading: viewLoading   } =
+    useHasPermission(organizationId, { ticket: ["view"] });
+  const { hasPermission: canUpdateRaw, isLoading: updateLoading } =
+    useHasPermission(organizationId, { ticket: ["update"] });
+
+  const canView   = useMemo(() => !viewLoading   &&  canViewRaw,   [viewLoading,   canViewRaw]);
+  const canUpdate = useMemo(() => !updateLoading &&  canUpdateRaw, [updateLoading, canUpdateRaw]);
+
+  /* redirect if not allowed to view */
+  useEffect(() => {
+    if (!viewLoading && !canViewRaw) router.replace("/tickets");
+  }, [viewLoading, canViewRaw, router]);
+
+  /* before permissions resolved → render nothing */
+  if (viewLoading || !canView) return null;
+
+  /* ---------------- state ------------------------------------------------ */
+  const [header,      setHeader]      = useState<TicketHeader | null>(null);
+  const [messages,    setMessages]    = useState<TicketMessage[]>([]);
+  const [loading,     setLoading]     = useState(true);
+
+  const [status,      setStatus]      = useState<TicketHeader["status"]>("open");
+  const [priority,    setPriority]    = useState<TicketHeader["priority"]>("medium");
+  const [newMessage,  setNewMessage]  = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
 
-  const [tagsOptions, setTagsOptions] = useState<{ value: string; label: string }[]>([]);
-  const [selectedTags, setSelectedTags] = useState<typeof tagsOptions>([]);
-  const [tagsDialogOpen, setTagsDialogOpen] = useState(false);
-  const [tags, setTags] = useState<{ description: string }[]>([]);
+  const [tagsOptions,   setTagsOptions]   = useState<{ value:string; label:string }[]>([]);
+  const [selectedTags,  setSelectedTags]  = useState<typeof tagsOptions>([]);
+  const [tagsDialogOpen,setTagsDialogOpen]= useState(false);
+  const [tags,          setTags]          = useState<{ description:string }[]>([]);
 
-  // NEW: state for showing the “Close Ticket?” dialog
-  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  const [closeDialogOpen,setCloseDialogOpen] = useState(false);
 
+  /* ---------------- fetch ticket + tags --------------------------------- */
   useEffect(() => {
     (async () => {
+      setLoading(true);
       try {
         const [tRes, tagsRes] = await Promise.all([
           fetch(`/api/tickets/${id}`),
@@ -103,14 +125,16 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
         ]);
         if (!tRes.ok) throw new Error();
         const { ticket, messages } = await tRes.json();
-        const { tagList, tags } = await tagsRes.json();
+        const { tagList, tags }    = await tagsRes.json();
+
         setHeader(ticket);
         setMessages(messages);
         setStatus(ticket.status);
         setPriority(ticket.priority);
-        setTagsOptions(tagList.map((t: any) => ({ value: t.description, label: t.description })));
+
+        setTagsOptions(tagList.map((t:any) => ({ value:t.description, label:t.description })));
         setTags(tags);
-        setSelectedTags(tags.map((t: any) => ({ value: t.description, label: t.description })));
+        setSelectedTags(tags.map((t:any) => ({ value:t.description, label:t.description })));
       } catch {
         toast.error("Failed to load ticket or tags");
       } finally {
@@ -119,15 +143,16 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     })();
   }, [id]);
 
+  /* ---------------- helpers that honour canUpdate ------------------------ */
   const updateStatus = async (newStatus: TicketHeader["status"]) => {
+    if (!canUpdate) return;                         // safety guard
     setStatus(newStatus);
     try {
       const res = await fetch(`/api/tickets/${id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus })
+        body: JSON.stringify({ status: newStatus }),
       });
-      
       if (!res.ok) throw new Error();
       toast.success(`Status set to ${newStatus}`);
     } catch {
@@ -137,15 +162,13 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
   };
 
   const handleStatusChange = (newStatus: TicketHeader["status"]) => {
-    if (newStatus === "closed") {
-      // open confirmation dialog instead of Swal
-      setCloseDialogOpen(true);
-    } else {
-      updateStatus(newStatus);
-    }
+    if (!canUpdate) return;
+    if (newStatus === "closed") setCloseDialogOpen(true);
+    else updateStatus(newStatus);
   };
 
   const handlePriorityChange = async (newPriority: TicketHeader["priority"]) => {
+    if (!canUpdate) return;
     setPriority(newPriority);
     try {
       const res = await fetch(`/api/tickets/${id}/priority`, {
@@ -161,6 +184,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
   };
 
   const handleSaveTags = async () => {
+    if (!canUpdate) return;
     try {
       const res = await fetch(`/api/tickets/${id}/tags`, {
         method: "POST",
@@ -168,7 +192,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
         body: JSON.stringify({ tags: selectedTags.map((t) => t.value) }),
       });
       if (!res.ok) throw new Error();
-      toast.success("Tags created");
+      toast.success("Tags saved");
       setTagsDialogOpen(false);
       setTags(selectedTags.map((t) => ({ description: t.value })));
     } catch {
@@ -180,14 +204,19 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     e.target.files && setAttachments(Array.from(e.target.files));
 
   const handleSendMessage = async () => {
+    if (!canUpdate) return;
     if (!newMessage.trim()) {
       toast.warning("Message cannot be empty");
       return;
     }
     try {
-      const attachJson = attachments.length
-        ? JSON.stringify(attachments.map((f) => ({ name: f.name, url: "", size: f.size })))
-        : null;
+      const attachJson =
+        attachments.length
+          ? JSON.stringify(
+              attachments.map((f) => ({ name: f.name, url: "", size: f.size }))
+            )
+          : null;
+
       const res = await fetch(`/api/tickets/${id}/messages`, {
         method: "POST",
         headers: {
@@ -206,9 +235,11 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     }
   };
 
-  if (loading) return <p className="p-6">Loading…</p>;
-  if (!header) return <p className="p-6">Ticket not found.</p>;
+  /* ---------------- render guards --------------------------------------- */
+  if (loading)          return <p className="p-6">Loading…</p>;
+  if (!header)          return <p className="p-6">Ticket not found.</p>;
 
+  /* ---------------- JSX -------------------------------------------------- */
   return (
     <div className="container mx-auto py-10">
       <div className="mb-4">
@@ -220,6 +251,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
       </div>
 
       <Card>
+        {/* -------- header ------------------------------------------------- */}
         <CardHeader className="flex items-start justify-between">
           <div>
             <CardTitle className="text-lg font-semibold">
@@ -239,15 +271,19 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
           </div>
 
           <div className="flex items-center gap-4">
-            <Dialog open={tagsDialogOpen} onOpenChange={setTagsDialogOpen}>
+            {/* ---- TAGS dialog (disabled if !canUpdate) ------------------ */}
+            <Dialog
+              open={tagsDialogOpen}
+              onOpenChange={(open) => canUpdate && setTagsDialogOpen(open)}
+            >
               <DialogTrigger asChild>
-                <Button variant="outline" size="icon">
+                <Button variant="outline" size="icon" disabled={!canUpdate}>
                   <Tag className="h-4 w-4" />
                 </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Add Tags</DialogTitle>
+                  <DialogTitle>Tags</DialogTitle>
                 </DialogHeader>
                 <CreatableSelect
                   isMulti
@@ -256,27 +292,31 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
                   onChange={(v) => setSelectedTags(v as any)}
                   placeholder="Select or type tags…"
                   formatCreateLabel={(input) => `Add "${input}"`}
+                  isDisabled={!canUpdate}
                 />
                 <DialogFooter className="mt-4 flex justify-end space-x-2">
                   <DialogClose asChild>
                     <Button variant="ghost">Cancel</Button>
                   </DialogClose>
-                  <Button onClick={handleSaveTags}>Save</Button>
+                  <Button onClick={handleSaveTags} disabled={!canUpdate}>
+                    Save
+                  </Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
 
+            {/* ---- priority ------------------------------------------------ */}
             <Select
               value={priority}
               onValueChange={handlePriorityChange}
-              disabled={status === "closed"}
+              disabled={!canUpdate || status === "closed"}
             >
               <SelectTrigger className="w-[120px]">
                 <Badge
                   className={{
-                    low: "bg-green-100 text-green-800",
+                    low:    "bg-green-100 text-green-800",
                     medium: "bg-yellow-100 text-yellow-800",
-                    high: "bg-red-100 text-red-800",
+                    high:   "bg-red-100 text-red-800",
                   }[priority]}
                   variant="outline"
                 >
@@ -290,10 +330,11 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
               </SelectContent>
             </Select>
 
+            {/* ---- status -------------------------------------------------- */}
             <Select
               value={status}
               onValueChange={handleStatusChange}
-              disabled={status === "closed"}
+              disabled={!canUpdate || status === "closed"}
             >
               <SelectTrigger className="w-[150px]">
                 <SelectValue />
@@ -307,58 +348,46 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
           </div>
         </CardHeader>
 
+        {/* -------- messages --------------------------------------------- */}
         <CardContent>
           <div className="space-y-4">
-            {messages.map((message, index) => (
+            {messages.map((message) => (
               <div
-                key={index}
-                className={`flex ${message.isInternal === false ? "justify-start" : "justify-end"}`}
+                key={message.id}
+                className={`flex ${message.isInternal ? "justify-end" : "justify-start"}`}
               >
                 <div
-                  className={`flex gap-3 max-w-[80%] ${message.isInternal === false ? "flex-row" : "flex-row-reverse"}`}
+                  className={`flex gap-3 max-w-[80%] ${message.isInternal ? "flex-row-reverse" : "flex-row"}`}
                 >
-                  <Avatar
-                    className={message.isInternal === false ? "mt-1" : "mt-1"}
-                  >
+                  <Avatar className="mt-1">
                     <AvatarFallback>
-                      {message.isInternal === false
-                        ? header.firstName.charAt(0).toUpperCase()
-                        : "A"}
+                      {message.isInternal ? "A" : header.firstName.charAt(0).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
                   <div>
                     <div
                       className={`rounded-lg p-3 ${
-                        message.isInternal === false
-                          ? "bg-muted text-foreground"
-                          : "bg-primary text-primary-foreground"
+                        message.isInternal
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-foreground"
                       }`}
                     >
                       <p>{message.message}</p>
-                      {message.attachments &&
-                        message.attachments.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {message.attachments.map((attachment, i) => (
-                              <div
-                                key={i}
-                                className="flex items-center gap-1 text-sm"
-                              >
-                                <Paperclip className="h-3 w-3" />
-                                <a
-                                  href={attachment.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="underline"
-                                >
-                                  {attachment.name}
-                                </a>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                      {message.attachments?.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {message.attachments.map((att, i) => (
+                            <div key={i} className="flex items-center gap-1 text-sm">
+                              <Paperclip className="h-3 w-3" />
+                              <a href={att.url} target="_blank" rel="noopener noreferrer" className="underline">
+                                {att.name}
+                              </a>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div
-                      className={`text-xs text-muted-foreground mt-1 ${message.isInternal === false ? "text-left" : "text-right"}`}
+                      className={`text-xs text-muted-foreground mt-1 ${message.isInternal ? "text-right" : "text-left"}`}
                     >
                       {fmtLocal(message.createdAt)}
                     </div>
@@ -369,17 +398,18 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
           </div>
         </CardContent>
 
+        {/* -------- composer --------------------------------------------- */}
         <CardFooter className="flex flex-col gap-4">
           <Textarea
             placeholder={
               status === "closed"
                 ? "Ticket is closed"
-                : "Type your response here..."
+                : "Type your response here…"
             }
             className="min-h-[100px]"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            disabled={status === "closed"}
+            disabled={!canUpdate || status === "closed"}
           />
 
           <div className="flex items-center justify-between w-full">
@@ -390,8 +420,9 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
                 multiple
                 className="hidden"
                 onChange={handleAttachmentChange}
+                disabled={!canUpdate || status === "closed"}
               />
-              <Button variant="outline" size="sm" asChild>
+              <Button variant="outline" size="sm" asChild disabled={!canUpdate || status === "closed"}>
                 <label htmlFor="file-upload" className="cursor-pointer">
                   <Paperclip className="h-4 w-4 mr-2" />
                   Attach Files
@@ -404,10 +435,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
               )}
             </div>
 
-            <Button
-              onClick={handleSendMessage}
-              disabled={status === "closed"}
-            >
+            <Button onClick={handleSendMessage} disabled={!canUpdate || status === "closed"}>
               <Send className="h-4 w-4 mr-2" />
               Send Response
             </Button>
@@ -415,7 +443,7 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
         </CardFooter>
       </Card>
 
-      {/* Shadcn “Close Ticket?” confirmation */}
+      {/* -------- close confirmation ------------------------------------- */}
       <AlertDialog
         open={closeDialogOpen}
         onOpenChange={(open) => !open && setCloseDialogOpen(false)}
@@ -443,6 +471,10 @@ export default function TicketDetail({ params }: { params: { id: string } }) {
     </div>
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Small helper component                                                    */
+/* -------------------------------------------------------------------------- */
 
 function PriorityBadge({ priority }: { priority: "low" | "medium" | "high" }) {
   const variants = {

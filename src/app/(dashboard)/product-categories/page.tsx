@@ -1,35 +1,46 @@
+// src/app/(dashboard)/products/categories/page.tsx
 "use client";
 
+import { useEffect }          from "react";
+import { useRouter }         from "next/navigation";
+import { Suspense }          from "react";
 
-import { useRouter } from "next/navigation"
-import { useEffect, useState } from "react";
-import { CategoryTable } from "./category-table";
-import { useHeaderTitle } from "@/context/HeaderTitleContext";
-import { Suspense } from 'react'; // Added Suspense import
-import { usePermission } from "@/hooks/use-permission"
+import { authClient }        from "@/lib/auth-client";
+import { useHasPermission }  from "@/hooks/use-has-permission";
+import { useHeaderTitle }    from "@/context/HeaderTitleContext";
 
+import { CategoryTable }     from "./category-table";
+
+/* -------------------------------------------------------------------------- */
 
 export default function CategoriesPage() {
-    const { setHeaderTitle } = useHeaderTitle();
-    const router = useRouter()
-     const can = usePermission(); 
-    const [isLoading, setIsLoading] = useState(false)
-    useEffect(() => {
-        setHeaderTitle("Product categories"); // Set the header title for this page
-    }, [setHeaderTitle]);
+  const { setHeaderTitle } = useHeaderTitle();
+  const router             = useRouter();
 
-     // Wait until we know the role
-  if (can.loading) return null
-  
-  // Deny access if user cannot view products
-  if (!can({ product: ["view"] })) {
-    return (
-      <div className="container mx-auto py-6 px-6 text-center text-red-600">
-        You don’t have permission to view product categories.
-      </div>
-    )
-  } 
+  /* ── active organisation id ─────────────────────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
 
+  /* ── permission check: productCategories:view ───────────────────── */
+  const {
+    hasPermission: canViewCategories,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { productCategories: ["view"] });
+
+  /* ── set page title ─────────────────────────────────────────────── */
+  useEffect(() => { setHeaderTitle("Product categories"); }, [setHeaderTitle]);
+
+  /* ── redirect if no access ──────────────────────────────────────── */
+  useEffect(() => {
+    if (!permLoading && !canViewCategories) {
+      router.replace("/dashboard");
+    }
+  }, [permLoading, canViewCategories, router]);
+
+  /* ── guards during loading / redirect ───────────────────────────── */
+  if (permLoading || !canViewCategories) return null;
+
+  /* ── render ─────────────────────────────────────────────────────── */
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-col gap-2">
@@ -38,6 +49,7 @@ export default function CategoriesPage() {
           Manage your product categories and their organization.
         </p>
       </div>
+
       <Suspense fallback={<div>Loading categories table...</div>}>
         <CategoryTable />
       </Suspense>

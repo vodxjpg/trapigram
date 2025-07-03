@@ -1,3 +1,4 @@
+// src/app/(dashboard)/warehouses/share-links/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -17,6 +18,8 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Edit, Trash2, ArrowLeft, Copy } from "lucide-react";
 import Link from "next/link";
+import { authClient } from "@/lib/auth-client";                          // ← NEW
+import { useHasPermission } from "@/hooks/use-has-permission";           // ← NEW
 
 type ShareLink = {
   shareLinkId: string;
@@ -25,13 +28,37 @@ type ShareLink = {
   token: string;
   status: string;
   recipients: { userId: string; email: string; name: string | null }[];
-  products: { productId: string; variationId: string | null; title: string; cost: Record<string, number> }[];
+  products: {
+    productId: string;
+    variationId: string | null;
+    title: string;
+    cost: Record<string, number>;
+  }[];
   createdAt: string;
 };
 
 export default function ShareLinksPage() {
-  const { setHeaderTitle } = useHeaderTitle();
   const router = useRouter();
+
+  // active organization → permission hook
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  const {
+    hasPermission: canShareLinks,
+    isLoading:     shareLoading,
+  } = useHasPermission(organizationId, { warehouses: ["sharing"] });
+
+  // redirect away if no "sharing" permission
+  useEffect(() => {
+    if (!shareLoading && !canShareLinks) {
+      router.replace("/warehouses");
+    }
+  }, [shareLoading, canShareLinks, router]);
+
+  if (shareLoading || !canShareLinks) return null;
+
+  const { setHeaderTitle } = useHeaderTitle();
   const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -60,9 +87,7 @@ export default function ShareLinksPage() {
     try {
       const response = await fetch("/api/users/me/share-links", {
         method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ shareLinkId }),
       });
       if (!response.ok) throw new Error("Failed to delete share link");
@@ -88,7 +113,10 @@ export default function ShareLinksPage() {
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center gap-4">
-        <Button variant="outline" onClick={() => router.push("/warehouses")}>
+        <Button
+          variant="outline"
+          onClick={() => router.push("/warehouses")}
+        >
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back to Warehouses
         </Button>
@@ -129,30 +157,48 @@ export default function ShareLinksPage() {
                 ) : (
                   shareLinks.map((link) => (
                     <TableRow key={link.shareLinkId}>
-                      <TableCell className="font-medium">{link.warehouseName}</TableCell>
+                      <TableCell className="font-medium">
+                        {link.warehouseName}
+                      </TableCell>
                       <TableCell>
                         {link.recipients.map((r) => (
-                          <Badge key={r.userId} variant="outline" className="mr-1">
+                          <Badge
+                            key={r.userId}
+                            variant="outline"
+                            className="mr-1"
+                          >
                             {r.name || r.email}
                           </Badge>
                         ))}
                       </TableCell>
                       <TableCell>
                         {link.products.map((p) => (
-                          <Badge key={`${p.productId}-${p.variationId || "none"}`} variant="outline" className="mr-1">
+                          <Badge
+                            key={`${p.productId}-${p.variationId ?? "none"}`}
+                            variant="outline"
+                            className="mr-1"
+                          >
                             {p.title}
                           </Badge>
                         ))}
                       </TableCell>
-                      <TableCell>{new Date(link.createdAt).toLocaleDateString()}</TableCell>
+                      <TableCell>
+                        {new Date(link.createdAt).toLocaleDateString()}
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="outline" size="sm" onClick={() => handleCopyLink(link.token)}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleCopyLink(link.token)}
+                          >
                             <Copy className="h-4 w-4 mr-1" />
                             Copy Link
                           </Button>
                           <Button variant="outline" size="sm" asChild>
-                            <Link href={`/warehouses/share-links/${link.shareLinkId}`}>
+                            <Link
+                              href={`/warehouses/share-links/${link.shareLinkId}`}
+                            >
                               <Edit className="h-4 w-4 mr-1" />
                               Edit
                             </Link>

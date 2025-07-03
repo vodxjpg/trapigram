@@ -19,7 +19,8 @@ export const resourceLabels: Record<string, string> = {
     revenue:           "Revenue Reports",
     sections:          "Sections",
     payment:           "Payment Methods",
-    shipping:          "Shipping Companies",
+    shipping:          "Shipping Methods",
+    shippingMethods:   "Shipping Companies",
     notifications:     "Notification Templates",
   };
   

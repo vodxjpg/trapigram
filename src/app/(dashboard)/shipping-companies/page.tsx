@@ -5,20 +5,35 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ShippingMethodsTable } from "./shipping-companies-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 export default function ShippingCompaniesPage() {
   const { setHeaderTitle } = useHeaderTitle();
   const router = useRouter();
-   const can = usePermission(); ;
+
+  // Active organization
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  // Permission check
+  const {
+    hasPermission: canView,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { shippingMethods: ["view"] });
 
   useEffect(() => {
     setHeaderTitle("Shipping Companies");
   }, [setHeaderTitle]);
 
-  if (can.loading) return null;
-  if (!can({ shippingMethods: ["view"] })) {
-    router.replace("/");
+  // Redirect away if they don't have view permission
+  useEffect(() => {
+    if (!permLoading && !canView) {
+      router.replace("/");
+    }
+  }, [permLoading, canView, router]);
+
+  if (permLoading || !canView) {
     return null;
   }
 

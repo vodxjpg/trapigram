@@ -4,20 +4,32 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { LevelForm } from "../level-form";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 
 export function ClientNewLevelPage() {
   const router = useRouter();
-   const can = usePermission(); ;
 
+  // get current organization
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  // check "settings" permission for affiliates
+  const {
+    hasPermission: canCreateLevel,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { affiliates: ["settings"] });
+
+  // redirect if no permission
   useEffect(() => {
-    if (!can.loading && !can({ affiliates: ["settings"] })) {
+    if (!permLoading && !canCreateLevel) {
       router.replace("/affiliates");
     }
-  }, [can, router]);
+  }, [permLoading, canCreateLevel, router]);
 
-  if (can.loading) return null;
-  if (!can({ affiliates: ["settings"] })) return null;
+  // guard until permission resolved
+  if (permLoading) return null;
+  if (!canCreateLevel) return null;
 
   return (
     <div className="container mx-auto py-6">

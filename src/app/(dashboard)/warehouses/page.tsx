@@ -4,21 +4,33 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
-import { usePermission } from "@/hooks/use-permission";
 import { WarehouseTable } from "./warehouse-table";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 
 export default function WarehousesPage() {
   const { setHeaderTitle } = useHeaderTitle();
   const router = useRouter();
-   const can = usePermission(); ;
+
+  // get active organization
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  // check view permission on warehouses
+  const {
+    hasPermission: canView,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { warehouses: ["view"] });
 
   useEffect(() => {
     setHeaderTitle("Warehouses");
   }, [setHeaderTitle]);
 
-  if (can.loading) return null;
+  // wait for permission resolution
+  if (permLoading) return null;
 
-  if (!can({ warehouses: ["view"] })) {
+  // show error if not allowed
+  if (!canView) {
     return (
       <div className="container mx-auto py-6 px-6 text-center text-red-600">
         You don’t have permission to view warehouses.

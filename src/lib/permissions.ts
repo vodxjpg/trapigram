@@ -35,6 +35,7 @@ const domainStatements: Record<string, string[]> = {
   sections: ["view", "create", "update", "delete"],
   payment: ["view", "create", "update", "delete"],
   shipping: ["view", "create", "update", "delete"],
+  shippingMethods: ["view", "create", "update", "delete"],
   notifications: ["view", "create", "update", "delete"],
 };
 

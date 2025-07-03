@@ -1,28 +1,40 @@
+// src/app/(dashboard)/shipments/page.tsx
 "use client";
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { ShipmentsTable } from "./shipment-table";
 
 export default function ShipmentsPage() {
-  const { setHeaderTitle } = useHeaderTitle();
-   const can = usePermission(); ;
   const router = useRouter();
+  const { setHeaderTitle } = useHeaderTitle();
+
+  /* ── active organisation ───────────────────────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+
+  /* ── permissions ───────────────────────────────────────────────── */
+  const {
+    hasPermission: canView,
+    isLoading:     permLoading,
+  } = useHasPermission(orgId, { shipping: ["view"] });
 
   useEffect(() => {
     setHeaderTitle("Shipping methods");
   }, [setHeaderTitle]);
 
-  // redirect if they can't view
   useEffect(() => {
-    if (!can.loading && !can({ shipping: ["view"] })) {
-      router.replace("/");
+    if (!permLoading && !canView) {
+      router.replace("/"); 
     }
-  }, [can, router]);
+  }, [permLoading, canView, router]);
 
-  if (can.loading) return null;
+  if (permLoading || !canView) {
+    return null;
+  }
 
   return (
     <div className="flex flex-col gap-6 p-6">

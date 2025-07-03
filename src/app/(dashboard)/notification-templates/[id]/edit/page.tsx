@@ -3,17 +3,27 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { NotificationTemplateForm } from "../../components/notification-templates-form";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function EditTemplatePage() {
-  const { id } = useParams();
   const router = useRouter();
+  const params = useParams() as { id: string };
   const { setHeaderTitle } = useHeaderTitle();
-   const can = usePermission(); ;
+
+  /* ── active organisation ───────────────────────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+
+  /* ── permissions ───────────────────────────────────────────────── */
+  const {
+    hasPermission: canUpdate,
+    isLoading:     permLoading,
+  } = useHasPermission(orgId, { notifications: ["update"] });
 
   const [initial, setInitial] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -22,16 +32,15 @@ export default function EditTemplatePage() {
     setHeaderTitle("Edit Notification Template");
   }, [setHeaderTitle]);
 
-  // redirect if no update
   useEffect(() => {
-    if (!can.loading && !can({ notifications: ["update"] })) {
+    if (!permLoading && !canUpdate) {
       router.replace("/notification-templates");
     }
-  }, [can, router]);
+  }, [permLoading, canUpdate, router]);
 
   useEffect(() => {
-    if (!can({ notifications: ["update"] })) return;
-    fetch(`/api/notification-templates/${id}`)
+    if (!canUpdate) return;
+    fetch(`/api/notification-templates/${params.id}`)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to load template");
         return res.json();
@@ -42,16 +51,16 @@ export default function EditTemplatePage() {
         router.replace("/notification-templates");
       })
       .finally(() => setLoading(false));
-  }, [id, can, router]);
+  }, [params.id, canUpdate, router]);
 
-  if (can.loading || !can({ notifications: ["update"] })) return null;
+  if (permLoading || !canUpdate) return null;
 
   return (
     <div className="p-6">
       {loading ? (
         <Skeleton className="h-12 w-full" />
       ) : (
-        <NotificationTemplateForm id={id} initial={initial} isEditing />
+        <NotificationTemplateForm id={params.id} initial={initial} isEditing />
       )}
     </div>
   );

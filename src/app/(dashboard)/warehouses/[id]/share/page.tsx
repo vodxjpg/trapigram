@@ -3,7 +3,8 @@
 /* -------------------------------------------------------------------------- */
 /* -------------------------------------------------------------------------- */
 "use client";
-
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import React, { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
@@ -108,6 +109,26 @@ const stripVariation = (t: string) => t.split(" - ")[0];
 export default function ShareWarehousePage() {
   const router = useRouter();
   const { id: warehouseId } = useParams() as { id: string };
+
+  
+  // ── permissions ───────────────────────────────────────────────────────
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const {
+    hasPermission: canShareWarehouse,
+    isLoading:     permLoading,
+  } = useHasPermission(orgId, { warehouses: ["sharing"] });
+
+  useEffect(() => {
+    if (!permLoading && !canShareWarehouse) {
+      router.replace("/warehouses");
+    }
+  }, [permLoading, canShareWarehouse, router]);
+
+  if (permLoading || !canShareWarehouse) {
+    return null;
+  }
+  // ──────────────────────────────────────────────────────────────────────
 
   /* ------------------------------ local state --------------------------- */
   const [users, setUsers] = useState<User[]>([]);

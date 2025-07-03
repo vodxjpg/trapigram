@@ -1,4 +1,4 @@
-// src/app/(dashboard)/affiliates/client-dashboard.tsx  (CLIENT component)
+// src/app/(dashboard)/affiliates/client-dashboard.tsx
 "use client";
 
 import { useRouter } from "next/navigation";
@@ -6,25 +6,41 @@ import Link from "next/link";
 import { Suspense, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ClientsTable } from "../clients/clients-table";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 
 export default function ClientDashboard() {
   const router = useRouter();
-   const can = usePermission(); ;
 
-  if (can.loading) return null;
-  if (!can({ affiliates: ["view"] })) {
+  // get current org
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  // check permissions
+  const {
+    hasPermission: canView,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { affiliates: ["view"] });
+  const { hasPermission: canPoints }   = useHasPermission(organizationId, { affiliates: ["points"] });
+  const { hasPermission: canLevels }   = useHasPermission(organizationId, { affiliates: ["settings"] });
+  const { hasPermission: canLogs }     = useHasPermission(organizationId, { affiliates: ["logs"] });
+  const { hasPermission: canProducts } = useHasPermission(organizationId, { affiliates: ["products"] });
+
+  // redirect away if no view
+  useEffect(() => {
+    if (!permLoading && !canView) {
+      router.replace("/");
+    }
+  }, [permLoading, canView, router]);
+
+  if (permLoading) return null;
+  if (!canView) {
     return (
       <div className="container mx-auto py-6 px-6 text-center text-red-600">
         You don’t have permission to access the Affiliates dashboard.
       </div>
     );
   }
-
-  const canPoints   = can({ affiliates: ["points"] });
-  const canLevels   = can({ affiliates: ["settings"] });
-  const canLogs     = can({ affiliates: ["logs"] });
-  const canProducts = can({ affiliates: ["products"] });
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">

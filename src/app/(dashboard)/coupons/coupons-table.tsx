@@ -4,57 +4,36 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  MoreVertical,
-  Plus,
-  Search,
-  Trash2,
-  Edit,
-  Copy,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  MoreVertical, Plus, Search, Trash2, Edit, Copy,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+
+import { authClient }          from "@/lib/auth-client";
+import { useHasPermission }    from "@/hooks/use-has-permission";
+
+import { Badge }               from "@/components/ui/badge";
+import { Button }              from "@/components/ui/button";
+import { Input }               from "@/components/ui/input";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
-import { usePermission } from "@/hooks/use-permission";
-
-// ─── shadcn/ui AlertDialog ─────────────────────────────────────────────
 import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
+  AlertDialog, AlertDialogContent, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
-/* ────────────────────────────────────────────────────────────────────── */
 
+import { toast } from "sonner";
+
+/* ------------------------------------------------------------------ */
+/*  Types                                                             */
+/* ------------------------------------------------------------------ */
 type Coupon = {
   id: string;
   name: string;
@@ -72,6 +51,9 @@ type Coupon = {
   visibility: boolean;
 };
 
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                           */
+/* ------------------------------------------------------------------ */
 const fmtLocal = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString(undefined, {
@@ -80,26 +62,50 @@ const fmtLocal = (iso: string | null) =>
       })
     : "—";
 
+/* ------------------------------------------------------------------ */
+/*  Component                                                         */
+/* ------------------------------------------------------------------ */
 export function CouponsTable() {
   const router = useRouter();
-   const can = usePermission(); ;
 
+  /* ── active organisation id ───────────────────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
 
-  const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [totalPages, setTotalPages] = useState(1);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [pageSize, setPageSize] = useState(10);
+  /* ── permissions (new hook) ───────────────────────────────────── */
+  const {
+    hasPermission: canCreate,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { coupon: ["create"] });
 
-  // new: coupon selected for deletion
+  const { hasPermission: canUpdate } = useHasPermission(
+    organizationId,
+    { coupon: ["update"] },
+  );
+  const { hasPermission: canDelete } = useHasPermission(
+    organizationId,
+    { coupon: ["delete"] },
+  );
+
+  /* ── coupon state ─────────────────────────────────────────────── */
+  const [coupons,        setCoupons       ] = useState<Coupon[]>([]);
+  const [loading,        setLoading       ] = useState(true);
+  const [totalPages,     setTotalPages    ] = useState(1);
+  const [currentPage,    setCurrentPage   ] = useState(1);
+  const [searchQuery,    setSearchQuery   ] = useState("");
+  const [pageSize,       setPageSize      ] = useState(10);
+  const [sortColumn,     setSortColumn    ] = useState("name");
+  const [sortDirection,  setSortDirection ] = useState<"asc" | "desc">("asc");
   const [couponToDelete, setCouponToDelete] = useState<Coupon | null>(null);
 
+  /* ---------------------------------------------------------------- */
+  /*  Data fetching                                                   */
+  /* ---------------------------------------------------------------- */
   const fetchCoupons = async () => {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/coupons?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`
+        `/api/coupons?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
       );
       if (!res.ok) throw new Error("Failed to fetch coupons");
       const data = await res.json();
@@ -107,7 +113,7 @@ export function CouponsTable() {
         data.coupons.map((c: Coupon) => ({
           ...c,
           countries: c.countries ?? [],
-        }))
+        })),
       );
       setTotalPages(data.totalPages);
     } catch (err) {
@@ -122,8 +128,9 @@ export function CouponsTable() {
     fetchCoupons();
   }, [currentPage, pageSize, searchQuery]);
 
-  const [sortColumn, setSortColumn] = useState("name");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  /* ---------------------------------------------------------------- */
+  /*  Sorting                                                         */
+  /* ---------------------------------------------------------------- */
   const handleSort = (col: string) => {
     if (sortColumn === col) {
       setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -146,25 +153,24 @@ export function CouponsTable() {
     return 0;
   });
 
+  /* ---------------------------------------------------------------- */
+  /*  Handlers                                                        */
+  /* ---------------------------------------------------------------- */
   const handleDuplicate = async (id: string) => {
     try {
       const res = await fetch(`/api/coupons/${id}/duplicate`, { method: "POST" });
       if (!res.ok) throw new Error("Duplication failed");
       toast.success("Coupon duplicated");
       fetchCoupons();
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("Failed to duplicate coupon");
     }
   };
 
-  const handleEdit = (c: Coupon) => {
-    console.log(c)
-    router.push(`/coupons/${c.id}`)
-  };
-  const handleAdd = () => router.push("/coupons/new");
+  const handleEdit = (c: Coupon) => router.push(`/coupons/${c.id}`);
 
-  // called when user confirms in AlertDialog
+  const handleAdd  = () => router.push("/coupons/new");
+
   const confirmDelete = async () => {
     if (!couponToDelete) return;
     try {
@@ -173,16 +179,19 @@ export function CouponsTable() {
       toast.success("Coupon deleted successfully");
       setCouponToDelete(null);
       fetchCoupons();
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("Failed to delete coupon");
     }
   };
 
-  const canCreate = can({ coupon: ["create"] });
-  const canUpdate = can({ coupon: ["update"] });
-  const canDelete = can({ coupon: ["delete"] });
+  /* ---------------------------------------------------------------- */
+  /*  Guards                                                          */
+  /* ---------------------------------------------------------------- */
+  if (permLoading) return null;
 
+  /* ---------------------------------------------------------------- */
+  /*  JSX                                                             */
+  /* ---------------------------------------------------------------- */
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -199,7 +208,7 @@ export function CouponsTable() {
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Search coupons..."
+              placeholder="Search coupons…"
               className="pl-8 w-full"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -207,10 +216,13 @@ export function CouponsTable() {
           </div>
           <Button type="submit">Search</Button>
         </form>
-        <Button onClick={handleAdd}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Coupon
-        </Button>
+
+        {canCreate && (
+          <Button onClick={handleAdd}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Coupon
+          </Button>
+        )}
       </div>
 
       {/* Table */}
@@ -224,7 +236,7 @@ export function CouponsTable() {
               <TableHead>Discount</TableHead>
               <TableHead>Start Date</TableHead>
               <TableHead>Expiration Date</TableHead>
-              <TableHead>Limit Per User</TableHead>
+              <TableHead>Limit / User</TableHead>
               <TableHead
                 className="cursor-pointer"
                 onClick={() => handleSort("usageLimit")}
@@ -232,7 +244,7 @@ export function CouponsTable() {
                 Usage Limit{" "}
                 {sortColumn === "usageLimit" && (sortDirection === "asc" ? "↑" : "↓")}
               </TableHead>
-              <TableHead>Expending Minimum</TableHead>
+              <TableHead>Expending Min</TableHead>
               <TableHead>Expending Limit</TableHead>
               <TableHead>Countries</TableHead>
               <TableHead>Visibility</TableHead>
@@ -283,32 +295,30 @@ export function CouponsTable() {
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon">
                           <MoreVertical className="h-4 w-4" />
-                          <span className="sr-only">Open menu</span>
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                      {canUpdate && (
-                        <DropdownMenuItem onClick={() => handleEdit(c)}>
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
+                        {canUpdate && (
+                          <DropdownMenuItem onClick={() => handleEdit(c)}>
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
                         )}
                         {canUpdate && (
-                        <DropdownMenuItem onClick={() => handleDuplicate(c.id)}>
-                          <Copy className="mr-2 h-4 w-4" />
-                          Duplicate
-                        </DropdownMenuItem>
-                      )}
-                        {/* instead of direct delete, we set couponToDelete */}
+                          <DropdownMenuItem onClick={() => handleDuplicate(c.id)}>
+                            <Copy className="mr-2 h-4 w-4" />
+                            Duplicate
+                          </DropdownMenuItem>
+                        )}
                         {canDelete && (
-                        <DropdownMenuItem
-                          onClick={() => setCouponToDelete(c)}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                         )}
+                          <DropdownMenuItem
+                            onClick={() => setCouponToDelete(c)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -325,7 +335,7 @@ export function CouponsTable() {
           Showing page {currentPage} of {totalPages}
         </div>
         <div className="flex items-center space-x-2">
-          <p className="text-sm font-medium">Rows per page</p>
+          <p className="text-sm font-medium">Rows / page</p>
           <Select
             value={pageSize.toString()}
             onValueChange={(v) => {
@@ -381,32 +391,27 @@ export function CouponsTable() {
         </div>
       </div>
 
-      {/* ─── shadcn AlertDialog ─────────────────────────────────────────────── */}
+      {/* Delete-confirmation dialog */}
       <AlertDialog
         open={!!couponToDelete}
-        onOpenChange={(open) => {
-          if (!open) setCouponToDelete(null);
-        }}
+        onOpenChange={(open) => !open && setCouponToDelete(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Coupon?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete &quot;{couponToDelete?.name}&quot;?
+              Are you sure you want to delete “{couponToDelete?.name}”?  
               This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmDelete}
-            >
+            <AlertDialogAction onClick={confirmDelete}>
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {/* ────────────────────────────────────────────────────────────────────── */}
     </div>
   );
 }

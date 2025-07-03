@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { usePermission } from "@/hooks/use-permission";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +50,8 @@ import {
 } from "@/components/ui/dialog";
 
 import { PaymentMethodDrawer } from "./payment-drawer";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 export interface PaymentMethod {
   id: string;
@@ -70,25 +71,35 @@ const TRUSTED = [
 
 export function PaymentMethodsTable() {
   const router = useRouter();
-   const can = usePermission(); ;
 
-  const canView   = can({ payment: ["view"] });
-  const canCreate = can({ payment: ["create"] });
-  const canUpdate = can({ payment: ["update"] });
-  const canDelete = can({ payment: ["delete"] });
+  /* active organization for permission scope */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
 
-  const [methods, setMethods] = useState<PaymentMethod[]>([]);
-  const [loading, setLoading] = useState(true);
+  /* permissions */
+  const {
+    hasPermission: canView,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { payment: ["view"] });
+
+  const { hasPermission: canCreate } = useHasPermission(organizationId, { payment: ["create"] });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, { payment: ["update"] });
+  const { hasPermission: canDelete } = useHasPermission(organizationId, { payment: ["delete"] });
+
+  /* state */
+  const [methods, setMethods]       = useState<PaymentMethod[]>([]);
+  const [loading, setLoading]       = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages]   = useState(1);
+  const [pageSize, setPageSize]     = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerMode, setDrawerMode] = useState<"niftipay" | "custom">("custom");
-  const [editing, setEditing] = useState<PaymentMethod | null>(null);
+  const [drawerOpen, setDrawerOpen]   = useState(false);
+  const [drawerMode, setDrawerMode]   = useState<"niftipay" | "custom">("custom");
+  const [editing, setEditing]         = useState<PaymentMethod | null>(null);
   const [providerDialog, setProviderDialog] = useState(false);
 
+  /* fetch */
   const fetchMethods = async () => {
     setLoading(true);
     try {
@@ -110,21 +121,23 @@ export function PaymentMethodsTable() {
     }
   };
 
+  /* effects */
   useEffect(() => {
     if (canView) fetchMethods();
   }, [currentPage, pageSize, searchQuery, canView]);
 
-  // Redirect away if no view permission
   useEffect(() => {
-    if (!can.loading && !canView) {
+    if (!permLoading && !canView) {
       router.replace("/");
     }
-  }, [can.loading, canView, router]);
+  }, [permLoading, canView, router]);
 
-  if (can.loading || !canView) return null;
+  /* guard */
+  if (permLoading || !canView) return null;
 
   const niftipayRow = methods.find((m) => m.name.toLowerCase() === "niftipay") || null;
 
+  /* actions */
   const toggleActive = async (pm: PaymentMethod) => {
     if (!canUpdate) return;
     try {
@@ -143,7 +156,7 @@ export function PaymentMethodsTable() {
 
   const deleteRow = async (pm: PaymentMethod) => {
     if (!canDelete) return;
-    if (pm.name.toLowerCase() === "niftipay") return; // safety
+    if (pm.name.toLowerCase() === "niftipay") return;
     if (!confirm("Delete this payment method?")) return;
     try {
       await fetch(`/api/payment-methods/${pm.id}`, { method: "DELETE" });
@@ -158,7 +171,7 @@ export function PaymentMethodsTable() {
     mode: "niftipay" | "custom",
     row: PaymentMethod | null = null
   ) => {
-    if (!canCreate && !canUpdate) return;
+    if (!(canCreate || canUpdate)) return;
     setDrawerMode(mode);
     setEditing(row);
     setDrawerOpen(true);

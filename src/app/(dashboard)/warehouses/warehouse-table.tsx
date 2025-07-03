@@ -32,9 +32,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { WarehouseDrawer } from "./warehouse-drawer";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 
 type Warehouse = {
   id: string;
@@ -48,7 +55,23 @@ type Warehouse = {
 
 export function WarehouseTable() {
   const router = useRouter();
-   const can = usePermission(); ;
+
+  // active org for permission checks
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  // view permission
+  const {
+    hasPermission: canView,
+    isLoading:     viewLoading,
+  } = useHasPermission(organizationId, { warehouses: ["view"] });
+
+  // other permissions
+  const { hasPermission: canCreate } = useHasPermission(organizationId, { warehouses: ["create"] });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, { warehouses: ["update"] });
+  const { hasPermission: canDelete } = useHasPermission(organizationId, { warehouses: ["delete"] });
+  const { hasPermission: canShare  } = useHasPermission(organizationId, { warehouses: ["sharing"] });
+  const { hasPermission: canSync   } = useHasPermission(organizationId, { warehouses: ["synchronize"] });
 
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,22 +80,19 @@ export function WarehouseTable() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [syncToken, setSyncToken] = useState("");
 
-  const canCreate = can({ warehouses: ["create"] });
-  const canUpdate = can({ warehouses: ["update"] });
-  const canDelete = can({ warehouses: ["delete"] });
-  const canShare = can({ warehouses: ["sharing"] });
-  const canSync     = can({ warehouses: ["synchronize"] });
-
+  // redirect if no view
   useEffect(() => {
-    if (!can.loading && !can({ warehouses: ["view"] })) {
-      router.replace("/warehouses");
+    if (!viewLoading && !canView) {
+      router.replace("/dashboard");
     }
-  }, [can, router]);
+  }, [viewLoading, canView, router]);
 
+  // initial fetch once permissions resolved
   useEffect(() => {
-    if (can.loading) return;
-    fetchWarehouses();
-  }, [can]);
+    if (!viewLoading && canView) {
+      fetchWarehouses();
+    }
+  }, [viewLoading, canView]);
 
   const fetchWarehouses = async () => {
     setLoading(true);
@@ -133,8 +153,8 @@ export function WarehouseTable() {
     router.push(`/share/${token}`);
   };
 
-  if (can.loading) return null;
-  if (!can({ warehouses: ["view"] })) return null;
+  if (viewLoading) return null;
+  if (!canView) return null;
 
   return (
     <div className="space-y-4">
@@ -144,12 +164,12 @@ export function WarehouseTable() {
           <Input placeholder="Search warehouses..." className="pl-8" />
         </div>
         <div className="flex gap-2">
-      {canSync && (
-        <Button variant="outline" onClick={() => setDialogOpen(true)}>
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Sync Warehouse
-        </Button>
-      )}
+          {canSync && (
+            <Button variant="outline" onClick={() => setDialogOpen(true)}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Sync Warehouse
+            </Button>
+          )}
           {canCreate && (
             <Button onClick={handleAdd}>
               <Plus className="mr-2 h-4 w-4" />
@@ -225,7 +245,7 @@ export function WarehouseTable() {
                         {canShare && (
                           <>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem>
+                            <DropdownMenuItem asChild>
                               <Link
                                 href={`/warehouses/${warehouse.id}/share`}
                                 className="flex items-center"

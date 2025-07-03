@@ -3,7 +3,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import {
   ChevronLeft,
   ChevronRight,
@@ -69,12 +70,20 @@ type Shipment = {
 
 export function ShipmentsTable() {
   const router = useRouter();
-   const can = usePermission(); ;
 
-  const canView   = can({ shipping: ["view"] });
-  const canCreate = can({ shipping: ["create"] });
-  const canUpdate = can({ shipping: ["update"] });
-  const canDelete = can({ shipping: ["delete"] });
+
+/* ── active organization ───────────────────────────────────────── */
+const { data: activeOrg } = authClient.useActiveOrganization();
+const organizationId = activeOrg?.id ?? null;
+
+/* ── permissions ───────────────────────────────────────────────── */
+const {
+  hasPermission: canView,
+  isLoading:     permLoading,
+} = useHasPermission(organizationId, { shipping: ["view"] });
+const { hasPermission: canCreate } = useHasPermission(organizationId, { shipping: ["create"] });
+const { hasPermission: canUpdate } = useHasPermission(organizationId, { shipping: ["update"] });
+const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping: ["delete"] });
 
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -92,10 +101,10 @@ export function ShipmentsTable() {
 
   // redirect if no view
   useEffect(() => {
-    if (!can.loading && !canView) {
+    if (!permLoading && !canView) {
       router.replace("/");
     }
-  }, [can.loading, canView, router]);
+  }, [permLoading, canView, router]);
 
   // fetch only when view is allowed
   const fetchShipments = async () => {
@@ -123,7 +132,8 @@ export function ShipmentsTable() {
     if (canView) fetchShipments();
   }, [canView, currentPage, pageSize, searchQuery]);
 
-  if (can.loading || !canView) return null;
+  if (permLoading) return null;
+  if (!canView) return null;
 
   // sort by title
   const sorted = [...shipments].sort((a, b) =>

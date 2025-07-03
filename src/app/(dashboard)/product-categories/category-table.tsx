@@ -1,49 +1,39 @@
+// src/app/(dashboard)/products/categories/category-table.tsx
 "use client";
 
-import type React from "react";
-import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import Image from "next/image";
+import type React                from "react";
+import { useState, useEffect }   from "react";
+import { useRouter }             from "next/navigation";
+import Image                     from "next/image";
 import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  MoreVertical,
-  Plus,
-  Search,
-  Trash2,
-  Edit,
-  Layers,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  MoreVertical, Plus, Search, Trash2, Edit,
+}                                from "lucide-react";
+
+import { authClient }            from "@/lib/auth-client";
+import { useHasPermission }      from "@/hooks/use-has-permission";
+
+import { Button }                from "@/components/ui/button";
+import { Input }                 from "@/components/ui/input";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+}                                from "@/components/ui/table";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+}                                from "@/components/ui/dropdown-menu";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { CategoryDrawer } from "./category-drawer";
-import { getInitials } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { toast } from "sonner";
-import { usePermission } from "@/hooks/use-permission"
+  Select, SelectContent, SelectItem,
+  SelectTrigger, SelectValue,
+}                                from "@/components/ui/select";
+import { Badge }                 from "@/components/ui/badge";
+import { CategoryDrawer }        from "./category-drawer";
+import { getInitials }           from "@/lib/utils";
+import { toast }                 from "sonner";
+
+/* ------------------------------------------------------------------ */
+/*  Types                                                             */
+/* ------------------------------------------------------------------ */
 type Category = {
   id: string;
   name: string;
@@ -51,75 +41,88 @@ type Category = {
   image: string | null;
   order: number;
   parentId: string | null;
-  _count?: {
-    products?: number;
-  };
+  _count?: { products?: number };
   children?: Category[];
-  parentName?: string; // Added to store parent category name
+  parentName?: string;
 };
 
+/* ------------------------------------------------------------------ */
+/*  Component                                                         */
+/* ------------------------------------------------------------------ */
 export function CategoryTable() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [totalPages, setTotalPages] = useState(1);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [pageSize, setPageSize] = useState(10);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-  const canPerm = usePermission()
-  const canCreate = canPerm({ productCategories: ["update"] })
-  const canUpdate = canPerm({ productCategories: ["update"] })
-  const canDelete = canPerm({ productCategories: ["delete"] })
+  const router        = useRouter();
+  const searchParams  = useSearchParams();
+
+  /* ── active organisation id ───────────────────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  /* ── permissions ──────────────────────────────────────────────── */
+  const { hasPermission: canMutate,  isLoading: loadMutate  } =
+    useHasPermission(organizationId, { productCategories: ["update"] });
+  const { hasPermission: canDelete,  isLoading: loadDelete  } =
+    useHasPermission(organizationId, { productCategories: ["delete"] });
+
+  /* ── local state ──────────────────────────────────────────────── */
+  const [categories,       setCategories      ] = useState<Category[]>([]);
+  const [loading,          setLoading         ] = useState(true);
+  const [totalPages,       setTotalPages      ] = useState(1);
+  const [currentPage,      setCurrentPage     ] = useState(1);
+  const [searchQuery,      setSearchQuery     ] = useState("");
+  const [pageSize,         setPageSize        ] = useState(10);
+  const [drawerOpen,       setDrawerOpen      ] = useState(false);
+  const [editingCategory,  setEditingCategory ] = useState<Category | null>(null);
+
+  /* ---------------------------------------------------------------- */
+  /*  Fetch                                                           */
+  /* ---------------------------------------------------------------- */
   const fetchCategories = async () => {
     setLoading(true);
     try {
-      const response = await fetch(
+      const res = await fetch(
         `/api/product-categories?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
-        { credentials: "include" }
+        { credentials: "include" },
       );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to fetch categories");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to fetch categories");
       }
+      const data = await res.json();
 
-      const data = await response.json();
-      const safeCategories = data.categories.map((cat: Category) => ({
-        ...cat,
-        _count: { products: cat._count?.products ?? 0 },
-        children: cat.children ?? [],
-        parentName: cat.parentId
-          ? data.categories.find((c: Category) => c.id === cat.parentId)?.name || "Unknown"
+      const safeCats = data.categories.map((c: Category) => ({
+        ...c,
+        _count:   { products: c._count?.products ?? 0 },
+        children: c.children ?? [],
+        parentName: c.parentId
+          ? data.categories.find((x: Category) => x.id === c.parentId)?.name || "Unknown"
           : "",
       }));
 
-      // Sort by hierarchy: parents first, then children
-      const sortedCategories = safeCategories.sort((a, b) => {
-        if (!a.parentId && b.parentId) return -1; // Parents before children
-        if (a.parentId && !b.parentId) return 1;
-        if (a.parentId === b.parentId) return a.order - b.order; // Same level, use order
-        return a.parentId?.localeCompare(b.parentId || "") || 0;
+      safeCats.sort((a, b) => {
+        if (!a.parentId && b.parentId) return -1;
+        if (a.parentId && !b.parentId) return  1;
+        if (a.parentId === b.parentId) return a.order - b.order;
+        return (a.parentId?.localeCompare(b.parentId || "") ?? 0);
       });
 
-      setCategories(sortedCategories);
+      setCategories(safeCats);
       setTotalPages(data.totalPages);
       setCurrentPage(data.currentPage);
-    } catch (error) {
-      console.error("Error fetching categories:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to load categories");
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Failed to load categories");
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchCategories();
+  useEffect(() => { fetchCategories(); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, searchQuery]);
+    [currentPage, pageSize, searchQuery]);
 
+  /* ---------------------------------------------------------------- */
+  /*  Handlers                                                        */
+  /* ---------------------------------------------------------------- */
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setCurrentPage(1);
@@ -127,32 +130,26 @@ export function CategoryTable() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this category? Subcategories will become orphans.")) {
-      return;
-    }
-
+    if (!confirm(
+      "Are you sure you want to delete this category? Sub-categories will become orphans.",
+    )) return;
     try {
-      const response = await fetch(`/api/product-categories/${id}`, {
-        method: "DELETE",
-        credentials: "include",
+      const res = await fetch(`/api/product-categories/${id}`, {
+        method: "DELETE", credentials: "include",
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to delete category");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to delete category");
       }
-
-      const data = await response.json();
-      toast.success(data.message || "Category deleted successfully");
+      toast.success("Category deleted");
       fetchCategories();
-    } catch (error) {
-      console.error("Error deleting category:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to delete category");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete category");
     }
   };
 
-  const handleEdit = async (category: Category) => {
-    setEditingCategory(category);
+  const handleEdit = (cat: Category) => {
+    setEditingCategory(cat);
     setDrawerOpen(true);
   };
 
@@ -161,23 +158,50 @@ export function CategoryTable() {
     setDrawerOpen(true);
   };
 
-  const handleDrawerClose = (refreshData = false) => {
+  const handleDrawerClose = (refresh?: boolean) => {
     setDrawerOpen(false);
     setEditingCategory(null);
-    if (refreshData) {
-      fetchCategories();
-    }
+    if (refresh) fetchCategories();
   };
+
+  /* ---------------------------------------------------------------- */
+  /*  Helpers                                                         */
+  /* ---------------------------------------------------------------- */
+  const renderImage = (cat: Category) =>
+    cat.image
+      ? (
+        <Image
+          src={cat.image}
+          alt={cat.name}
+          width={40} height={40}
+          className="rounded-full object-cover"
+        />
+      )
+      : (
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+          {getInitials(cat.name)}
+        </div>
+      );
+
+  /* ---------------------------------------------------------------- */
+  /*  Render                                                          */
+  /* ---------------------------------------------------------------- */
+  const permsLoading = loadMutate || loadDelete;
+
+  if (permsLoading) {
+    return <div className="p-6">Loading permissions…</div>;
+  }
 
   return (
     <div className="space-y-4">
+      {/* Filters & Add button ------------------------------------------------ */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
         <form onSubmit={handleSearch} className="flex w-full sm:w-auto gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Search categories..."
+              placeholder="Search categories…"
               className="pl-8 w-full"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -185,14 +209,16 @@ export function CategoryTable() {
           </div>
           <Button type="submit">Search</Button>
         </form>
-        {canCreate && (
-        <Button onClick={handleAdd}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Category
-        </Button>
-       )}
+
+        {canMutate && (
+          <Button onClick={handleAdd}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Category
+          </Button>
+        )}
       </div>
 
+      {/* Table -------------------------------------------------------------- */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -205,11 +231,12 @@ export function CategoryTable() {
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
+
           <TableBody>
             {loading ? (
               <TableRow>
                 <TableCell colSpan={6} className="h-24 text-center">
-                  Loading...
+                  Loading…
                 </TableCell>
               </TableRow>
             ) : categories.length === 0 ? (
@@ -219,29 +246,15 @@ export function CategoryTable() {
                 </TableCell>
               </TableRow>
             ) : (
-              categories.map((category) => (
-                <TableRow key={category.id}>
+              categories.map((cat) => (
+                <TableRow key={cat.id}>
+                  <TableCell>{renderImage(cat)}</TableCell>
+                  <TableCell className="font-medium">{cat.name}</TableCell>
+                  <TableCell>{cat.slug}</TableCell>
                   <TableCell>
-                    {category.image ? (
-                      <Image
-                        src={category.image || "/placeholder.svg"}
-                        alt={category.name}
-                        width={40}
-                        height={40}
-                        className="rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                        {getInitials(category.name)}
-                      </div>
-                    )}
+                    <Badge variant="outline">{cat._count?.products ?? 0}</Badge>
                   </TableCell>
-                  <TableCell className="font-medium">{category.name}</TableCell>
-                  <TableCell>{category.slug}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{category._count?.products ?? 0}</Badge>
-                  </TableCell>
-                  <TableCell>{category.parentName || "None"}</TableCell>
+                  <TableCell>{cat.parentName || "None"}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -251,22 +264,20 @@ export function CategoryTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                      {canUpdate && (
-                        <DropdownMenuItem onClick={() => handleEdit(category)}>
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
-                         )}
-                                                 {canDelete && (
-                        <DropdownMenuItem
-                          onClick={() => handleDelete(category.id)}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
+                        {canMutate && (
+                          <DropdownMenuItem onClick={() => handleEdit(cat)}>
+                            <Edit className="mr-2 h-4 w-4" /> Edit
                           </DropdownMenuItem>
                         )}
-                     </DropdownMenuContent>
+                        {canDelete && (
+                          <DropdownMenuItem
+                            onClick={() => handleDelete(cat.id)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
@@ -276,6 +287,7 @@ export function CategoryTable() {
         </Table>
       </div>
 
+      {/* Pagination --------------------------------------------------------- */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
           Showing page {currentPage} of {totalPages}
@@ -285,65 +297,52 @@ export function CategoryTable() {
             <p className="text-sm font-medium">Rows per page</p>
             <Select
               value={pageSize.toString()}
-              onValueChange={(value) => {
-                setPageSize(Number(value));
-                setCurrentPage(1);
-              }}
+              onValueChange={(v) => { setPageSize(Number(v)); setCurrentPage(1); }}
             >
               <SelectTrigger className="h-8 w-[70px]">
                 <SelectValue placeholder={pageSize} />
               </SelectTrigger>
               <SelectContent side="top">
-                {[5, 10, 20, 50, 100].map((size) => (
-                  <SelectItem key={size} value={size.toString()}>
-                    {size}
+                {[5, 10, 20, 50, 100].map((n) => (
+                  <SelectItem key={n} value={n.toString()}>
+                    {n}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="flex items-center space-x-2">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setCurrentPage(1)}
-              disabled={currentPage === 1}
-            >
+            <Button variant="outline" size="icon"
+              onClick={() => setCurrentPage(1)} disabled={currentPage === 1}>
               <ChevronsLeft className="h-4 w-4" />
-              <span className="sr-only">First page</span>
             </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setCurrentPage(currentPage - 1)}
-              disabled={currentPage === 1}
-            >
+            <Button variant="outline" size="icon"
+              onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+              disabled={currentPage === 1}>
               <ChevronLeft className="h-4 w-4" />
-              <span className="sr-only">Previous page</span>
             </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setCurrentPage(currentPage + 1)}
-              disabled={currentPage === totalPages}
-            >
+            <Button variant="outline" size="icon"
+              onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+              disabled={currentPage === totalPages}>
               <ChevronRight className="h-4 w-4" />
-              <span className="sr-only">Next page</span>
             </Button>
-            <Button
-              variant="outline"
-              size="icon"
+            <Button variant="outline" size="icon"
               onClick={() => setCurrentPage(totalPages)}
-              disabled={currentPage === totalPages}
-            >
+              disabled={currentPage === totalPages}>
               <ChevronsRight className="h-4 w-4" />
-              <span className="sr-only">Last page</span>
             </Button>
           </div>
         </div>
       </div>
 
-      <CategoryDrawer open={drawerOpen} onClose={handleDrawerClose} category={editingCategory} />
+      {/* Drawer ------------------------------------------------------------- */}
+      {(canMutate || canDelete) && (
+        <CategoryDrawer
+          open={drawerOpen}
+          onClose={handleDrawerClose}
+          category={editingCategory}
+        />
+      )}
     </div>
   );
 }

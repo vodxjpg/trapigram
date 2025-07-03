@@ -1,29 +1,47 @@
 // src/app/(dashboard)/sections/page.tsx
 "use client";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
-import { SectionsTable } from "./components/sections-table";
-import { usePermission } from "@/hooks/use-permission";
+import { useEffect }                    from "react";
+import { useRouter }                    from "next/navigation";
+import { Plus }                         from "lucide-react";
+
+import { Button }                       from "@/components/ui/button";
+import { SectionsTable }                from "./components/sections-table";
+
+import { authClient }                   from "@/lib/auth-client";
+import { useHasPermission }             from "@/hooks/use-has-permission";
+
+/* -------------------------------------------------------------------------- */
 
 export default function SectionsPage() {
   const router = useRouter();
-   const can = usePermission(); ;
 
-  const canView   = can({ sections: ["view"] });
-  const canCreate = can({ sections: ["create"] });
+  /* active-org id for permission queries */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
 
-  // Redirect away if they don't have view permission
+  /* permissions */
+  const {
+    hasPermission: canView,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { sections: ["view"] });
+
+  const { hasPermission: canCreate } = useHasPermission(
+    organizationId,
+    { sections: ["create"] },
+  );
+
+  /* redirect if not allowed to view */
   useEffect(() => {
-    if (!can.loading && !canView) {
+    if (!permLoading && !canView) {
       router.replace("/");
     }
-  }, [can.loading, canView, router]);
+  }, [permLoading, canView, router]);
 
-  if (can.loading || !canView) return null;
+  /* guards */
+  if (permLoading || !canView) return null;
 
+  /* ---------------------------------------------------------------------- */
   return (
     <div className="container mx-auto py-6">
       <div className="flex justify-end mb-4">

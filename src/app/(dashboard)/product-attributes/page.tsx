@@ -1,23 +1,37 @@
 // src/app/(dashboard)/product-attributes/page.tsx
 "use client";
 
-import { useEffect } from "react";
-import { Suspense } from "react";
-import { usePermission } from "@/hooks/use-permission";
-import { useHeaderTitle } from "@/context/HeaderTitleContext";
-import { AttributeTable } from "./attribute-table";
+import { useEffect }              from "react";
+import { Suspense }               from "react";
 
+import { authClient }             from "@/lib/auth-client";
+import { useHasPermission }       from "@/hooks/use-has-permission";
+import { useHeaderTitle }         from "@/context/HeaderTitleContext";
+
+import { AttributeTable }         from "./attribute-table";
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                         */
+/* ------------------------------------------------------------------ */
 export default function ProductAttributesPage() {
   const { setHeaderTitle } = useHeaderTitle();
-   const can = usePermission(); ;
 
-  useEffect(() => {
-    setHeaderTitle("Product Attributes");
-  }, [setHeaderTitle]);
+  /* ── active organisation → permission hook ─────────────────────── */
+  const { data: activeOrg }       = authClient.useActiveOrganization();
+  const organizationId            = activeOrg?.id ?? null;
 
-  if (can.loading) return null;
+  const {
+    hasPermission: canView,       // true | false
+    isLoading:     permLoading,   // while resolving
+  } = useHasPermission(organizationId, { productAttributes: ["view"] });
 
-  if (!can({ productAttributes: ["view"] })) {
+  /* set page title in global header */
+  useEffect(() => { setHeaderTitle("Product Attributes"); }, [setHeaderTitle]);
+
+  /* ── guards ─────────────────────────────────────────────────────── */
+  if (permLoading) return null;
+
+  if (!canView) {
     return (
       <div className="container mx-auto py-6 px-6 text-center text-red-600">
         You don’t have permission to view product attributes.
@@ -25,6 +39,7 @@ export default function ProductAttributesPage() {
     );
   }
 
+  /* ── page UI ────────────────────────────────────────────────────── */
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-col gap-2">
@@ -33,7 +48,8 @@ export default function ProductAttributesPage() {
           Manage your product attributes (e.g., Brand, Color) and their terms.
         </p>
       </div>
-      <Suspense fallback={<div>Loading attributes table...</div>}>
+
+      <Suspense fallback={<div>Loading attributes table…</div>}>
         <AttributeTable />
       </Suspense>
     </div>

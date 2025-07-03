@@ -49,7 +49,8 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 
 type ShippingMethod = {
   id: string;
@@ -61,28 +62,50 @@ type ShippingMethod = {
 
 export function ShippingMethodsTable() {
   const router = useRouter();
-   const can = usePermission(); ;
 
-  const [methods, setMethods] = useState<ShippingMethod[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [totalPages, setTotalPages] = useState(1);
+  /* ―― active organisation ―― */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  /* ―― permissions ―― */
+  const {
+    hasPermission: canView,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { shippingMethods: ["view"] });
+
+  const { hasPermission: canCreate } = useHasPermission(
+    organizationId,
+    { shippingMethods: ["create"] }
+  );
+  const { hasPermission: canUpdate } = useHasPermission(
+    organizationId,
+    { shippingMethods: ["update"] }
+  );
+  const { hasPermission: canDelete } = useHasPermission(
+    organizationId,
+    { shippingMethods: ["delete"] }
+  );
+
+  const [methods, setMethods]   = useState<ShippingMethod[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [totalPages, setTotalPages]   = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize]       = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
-  const [toDelete, setToDelete] = useState<ShippingMethod | null>(null);
+  const [toDelete, setToDelete]       = useState<ShippingMethod | null>(null);
 
   // 1) Redirect away if no view permission
   useEffect(() => {
-    if (!can.loading && !can({ shippingMethods: ["view"] })) {
+    if (!permLoading && !canView) {
       router.replace("/shipping-companies");
     }
-  }, [can, router]);
+  }, [permLoading, canView, router]);
 
   // 2) Fetch when permitted
   useEffect(() => {
-    if (can.loading || !can({ shippingMethods: ["view"] })) return;
+    if (permLoading || !canView) return;
     fetchMethods();
-  }, [currentPage, pageSize, searchQuery, can]);
+  }, [currentPage, pageSize, searchQuery, permLoading, canView]);
 
   const fetchMethods = async () => {
     setLoading(true);
@@ -138,7 +161,7 @@ export function ShippingMethodsTable() {
   };
 
   // 3) While loading permissions or lacking view, render nothing
-  if (can.loading || !can({ shippingMethods: ["view"] })) return null;
+  if (permLoading || !canView) return null;
 
   return (
     <div className="space-y-4">
@@ -156,7 +179,7 @@ export function ShippingMethodsTable() {
           </div>
           <Button type="submit">Search</Button>
         </form>
-        {can({ shippingMethods: ["create"] }) && (
+        {canCreate && (
           <Button onClick={handleAdd}>
             <Plus className="mr-2 h-4 w-4" /> Add Company
           </Button>
@@ -207,12 +230,12 @@ export function ShippingMethodsTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        {can({ shippingMethods: ["update"] }) && (
+                        {canUpdate && (
                           <DropdownMenuItem onClick={() => handleEdit(m)}>
                             <Edit className="mr-2 h-4 w-4" /> Edit
                           </DropdownMenuItem>
                         )}
-                        {can({ shippingMethods: ["delete"] }) && (
+                        {canDelete && (
                           <DropdownMenuItem
                             className="text-destructive"
                             onClick={() => setToDelete(m)}

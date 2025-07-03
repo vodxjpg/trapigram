@@ -1,61 +1,77 @@
 // src/app/(dashboard)/announcements/[id]/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { AnnouncementForm } from "../announcements-form";
-import { Button } from "@/components/ui/button";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-import { toast } from "sonner";
-import { Skeleton } from "@/components/ui/skeleton";
-import { usePermission } from "@/hooks/use-permission";
+import { useState, useEffect }         from "react";
+import { useParams, useRouter }        from "next/navigation";
+import Link                            from "next/link";
+import { ArrowLeft }                   from "lucide-react";
+import { toast }                       from "sonner";
+
+import { AnnouncementForm }            from "../announcements-form";
+import { Button }                      from "@/components/ui/button";
+import { Skeleton }                    from "@/components/ui/skeleton";
+
+import { authClient }                  from "@/lib/auth-client";
+import { useHasPermission }            from "@/hooks/use-has-permission";
+
+/* -------------------------------------------------------------------------- */
 
 export default function EditAnnouncementPage() {
-  const params = useParams();
-  const router = useRouter();
-   const can = usePermission(); ;
+  const params  = useParams<{ id: string }>();
+  const router  = useRouter();
 
-  const canUpdate = can({ announcements: ["update"] });
+  /* active-org → id for permission hook */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
 
+  const {
+    hasPermission: canUpdate,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { announcements: ["update"] });
+
+  /* local state */
   const [announcement, setAnnouncement] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]           = useState(true);
 
-  // redirect if no update perms
+  /* redirect if forbidden */
   useEffect(() => {
-    if (!can.loading && !canUpdate) {
+    if (!permLoading && !canUpdate) {
       router.replace("/announcements");
     }
-  }, [can.loading, canUpdate, router]);
+  }, [permLoading, canUpdate, router]);
 
+  /* fetch data once permitted */
   useEffect(() => {
-    if (!canUpdate) return;
-    const fetchAnnouncement = async () => {
+    if (permLoading || !canUpdate) return;
+
+    (async () => {
       try {
         const res = await fetch(`/api/announcements/${params.id}`, {
           headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+            "x-internal-secret":
+              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
           },
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || "Failed to fetch announcement");
+          const { error } = await res.json().catch(() => ({}));
+          throw new Error(error || "Failed to fetch announcement");
         }
         const data = await res.json();
         setAnnouncement({ ...data, deliveryScheduled: !!data.deliveryDate });
-      } catch (error: any) {
-        console.error("Error fetching announcement:", error);
-        toast.error(error.message || "Failed to load announcement");
+      } catch (err: any) {
+        console.error("Error fetching announcement:", err);
+        toast.error(err.message || "Failed to load announcement");
         router.push("/announcements");
       } finally {
         setLoading(false);
       }
-    };
-    fetchAnnouncement();
-  }, [canUpdate, params.id, router]);
+    })();
+  }, [permLoading, canUpdate, params.id, router]);
 
-  if (can.loading || !canUpdate) return null;
+  /* guards */
+  if (permLoading || !canUpdate) return null;
 
+  /* ---------------------------------------------------------------------- */
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex items-center gap-2">

@@ -7,21 +7,31 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsForm } from "./components/settings-form";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 
 export default function ClientAffiliateSettingsPage() {
   const router = useRouter();
-   const can = usePermission(); ;
 
-  // Redirect away if they lack the "settings" permission
+  // get current organization
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  // check "settings" permission
+  const {
+    hasPermission: canSettings,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { affiliates: ["settings"] });
+
+  // redirect away if not allowed
   useEffect(() => {
-    if (!can.loading && !can({ affiliates: ["settings"] })) {
+    if (!permLoading && !canSettings) {
       router.replace("/affiliates");
     }
-  }, [can, router]);
+  }, [permLoading, canSettings, router]);
 
-  if (can.loading) return null;
-  if (!can({ affiliates: ["settings"] })) return null;
+  if (permLoading) return null;
+  if (!canSettings) return null;
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6 px-3">

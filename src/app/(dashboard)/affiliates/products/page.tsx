@@ -1,4 +1,6 @@
+// src/app/(dashboard)/affiliates/products/page.tsx
 "use client";
+
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
@@ -6,23 +8,34 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import { AffiliateProductsDataTable } from "./components/affiliate-products-data-table";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 
 export default function AffiliateProductsPage() {
   const router = useRouter();
-   const can = usePermission(); ;
 
-  // Redirect back if no products permission
+  // active organization
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  // permissions for affiliate products
+  const {
+    hasPermission: canProducts,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { affiliates: ["products"] });
+
+  // redirect if not permitted
   useEffect(() => {
-    if (!can.loading && !can({ affiliates: ["products"] })) {
+    if (!permLoading && !canProducts) {
       router.replace("/affiliates");
     }
-  }, [can, router]);
+  }, [permLoading, canProducts, router]);
 
-  if (can.loading) return null;
-  if (!can({ affiliates: ["products"] })) return null;
+  if (permLoading) return null;
+  if (!canProducts) return null;
 
-  const canCreate = can({ affiliates: ["products"] });
+  // same flag for creation
+  const canCreate = canProducts;
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">

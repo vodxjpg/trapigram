@@ -2,7 +2,8 @@
 /*  /src/app/(dashboard)/warehouses/share-links/[shareLinkId]/page.tsx        */
 /* -------------------------------------------------------------------------- */
 "use client";
-
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import React, { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
@@ -136,6 +137,27 @@ const stripVariation = (t: string) => t.split(" - ")[0];
 export default function EditShareLinkPage() {
   const router = useRouter();
   const { shareLinkId } = useParams() as Record<string, string>;
+  
+   // ── permissions ───────────────────────────────────────────────────────
+   const { data: activeOrg } = authClient.useActiveOrganization();
+   const orgId = activeOrg?.id ?? null;
+   const {
+     hasPermission: canShareLinks,
+     isLoading:     permLoading,
+   } = useHasPermission(orgId, { warehouses: ["sharing"] });
+  
+   useEffect(() => {
+     if (!permLoading && !canShareLinks) {
+       router.replace("/warehouses");
+     }
+   }, [permLoading, canShareLinks, router]);
+  
+   if (permLoading || !canShareLinks) {
+     return null;
+   }
+   // ──────────────────────────────────────────────────────────────────────
+
+
   const [shareUrl, setShareUrl] = useState<string | null>(null);
 
   const [users, setUsers] = useState<User[]>([]);

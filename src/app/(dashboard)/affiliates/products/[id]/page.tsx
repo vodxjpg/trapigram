@@ -1,31 +1,44 @@
+// src/app/(dashboard)/affiliates/products/[id]/page.tsx
 "use client";
 
 import { useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
-
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import { AffiliateProductForm } from "../components/affiliate-product-form";
 import { useAffiliateProduct } from "@/hooks/use-affiliate-product";
 import { Skeleton } from "@/components/ui/skeleton";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 
 export default function EditAffiliateProductPage() {
   const router = useRouter();
-  const params = useParams() as { id: string };
-   const can = usePermission(); ;
-  const { product, isLoading } = useAffiliateProduct(params.id);
+  const { id } = useParams<{ id: string }>();
 
-  // Redirect back if no products permission
+  // Active organization → permission context
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  // Check affiliates:products permission
+  const {
+    hasPermission: canEdit,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { affiliates: ["products"] });
+
+  // Fetch product data
+  const { product, isLoading: productLoading } = useAffiliateProduct(id);
+
+  // Redirect if unauthorized
   useEffect(() => {
-    if (!can.loading && !can({ affiliates: ["products"] })) {
-      router.replace("/affiliates");
+    if (!permLoading && !canEdit) {
+      router.replace("/affiliates/products");
     }
-  }, [can, router]);
+  }, [permLoading, canEdit, router]);
 
-  if (can.loading) return null;
-  if (!can({ affiliates: ["products"] })) return null;
+  // Guards
+  if (permLoading) return null;
+  if (!canEdit) return null;
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
@@ -35,18 +48,18 @@ export default function EditAffiliateProductPage() {
       </Button>
 
       <PageHeader
-        title={isLoading ? "Loading…" : `Edit: ${product?.title}`}
+        title={productLoading ? "Loading…" : `Edit: ${product?.title}`}
         description="Update affiliate product details"
       />
 
-      {isLoading || !product ? (
+      {productLoading || !product ? (
         <div className="space-y-4">
           <Skeleton className="h-12 w-full" />
           <Skeleton className="h-60 w-full" />
         </div>
       ) : (
         <AffiliateProductForm
-          productId={params.id}
+          productId={id}
           initialData={product}
         />
       )}
