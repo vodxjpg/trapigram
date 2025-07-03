@@ -1,7 +1,3 @@
-/* -------------------------------------------------------------------------- */
-/*  src/app/(dashboard)/orders/page.tsx – FULL REPLACEMENT                    */
-/* -------------------------------------------------------------------------- */
-
 "use client";
 
 import { useState, useEffect } from "react";
@@ -95,7 +91,6 @@ export default function OrdersPage() {
     canUpdateStatus: false,
   });
 
-  /* -> make flags easy to use in JSX */
   const {
     canViewDetail,
     canViewPricing,
@@ -248,13 +243,13 @@ export default function OrdersPage() {
   }, [dialogOpen]);
 
   /* ---------------------------------------------------------------------- */
-  /*  Permission resolution                                                 */
+  /*  Permission resolution (single effect)                                 */
   /* ---------------------------------------------------------------------- */
 
   useEffect(() => {
     if (can.loading) return;
 
-    const checkAllPermissions = async () => {
+    (async () => {
       const [viewDetail, viewPricing, update, updateTracking, updateStatus] =
         await Promise.all([
           can({ order: ["view"] }),
@@ -271,9 +266,7 @@ export default function OrdersPage() {
         canUpdateTracking: updateTracking,
         canUpdateStatus: updateStatus,
       });
-    };
-
-    checkAllPermissions();
+    })();
   }, [can, can.loading]);
 
   /* ---------------------------------------------------------------------- */
@@ -312,61 +305,73 @@ export default function OrdersPage() {
     if (value !== "custom") setDateRange({ from: undefined, to: undefined });
   };
 
-
-  /* ──────────────────────────────────────────────────────────────
- *  All hooks above have now executed; it’s safe to short-circuit
- *  rendering while permissions are still loading.
- * ────────────────────────────────────────────────────────────── */
- useEffect(() => {
-    if (can.loading) return; // Wait until the role is loaded
-
-    // Create an async function inside useEffect to check all permissions
-    const checkAllPermissions = async () => {
-      const [
-        viewDetail, 
-        viewPricing, 
-        update, 
-        updateTracking,
-        updateStatus
-      ] = await Promise.all([
-        can({ order: ["view"] }),
-        can({ order: ["view_pricing"] }),
-        can({ order: ["update"] }),
-        can({ order: ["update_tracking"] }),
-        can({ order: ["update_status"] }),
-      ]);
-
-      setPermissions({
-        canViewDetail: viewDetail,
-        canViewPricing: viewPricing,
-        canUpdate: update,
-        canUpdateTracking: updateTracking,
-        canUpdateStatus: updateStatus
+  /* status / tracking helpers (unchanged) */
+  const handleStatusChange = async (
+    orderId: string,
+    newStatus: OrderStatus
+  ) => {
+    try {
+      const res = await fetch(`/api/order/${orderId}/change-status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
       });
-    };
+      if (!res.ok) throw new Error("Failed to update status");
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+      );
+      toast.success(`Order status changed`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Error updating order status");
+    }
+  };
 
-    checkAllPermissions();
+  const handleOrderAction = (orderId: string, action: string) => {
+    if (action === "cancel") {
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId ? { ...o, status: "cancelled" } : o
+        )
+      );
+    } else if (action === "send-notification") {
+      toast.success(`Payment notification sent for order ${orderId}`);
+    }
+  };
 
-  }, [can, can.loading]); // Rerun when the hook is ready
+  const handleTracking = (orderId: string) => {
+    const order = orders.find((o) => o.id === orderId);
+    setSelectedOrderId(orderId);
+    setDraftTracking(order?.trackingNumber ?? "");
+    setDialogOpen(true);
+  };
 
-  if (can.loading) {
-    return <div>Loading permissions…</div>;
-  }
-
-
-  if (loading)
-    return (
-      <div className="container mx-auto py-8 px-4 text-center">
-        Loading orders…
-      </div>
-    );
-  if (error)
-    return (
-      <div className="container mx-auto py-8 px-4 text-center text-red-600">
-        Error loading orders: {error}
-      </div>
-    );
-
+  const saveTracking = async () => {
+    if (!selectedOrderId || !selectedCompany) return;
+    const company = shippingCompanies.find((c) => c.id === selectedCompany);
+    if (!company) return;
+    try {
+      const res = await fetch(`/api/order/${selectedOrderId}/tracking-number`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trackingNumber: draftTracking,
+          shippingCompany: company.name,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save tracking number");
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === selectedOrderId ? { ...o, trackingNumber: draftTracking } : o
+        )
+      );
+      toast.success("Tracking number saved");
+      setDialogOpen(false);
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not save tracking");
+    }
+  };
   return (
     <div className="container mx-auto py-8 px-4">
       <div className="mb-6">
