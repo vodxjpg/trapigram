@@ -1,9 +1,11 @@
-// src/hooks/use-permission.ts
+/* -------------------------------------------------------------------------- */
+/*  src/hooks/use-permission.ts — FULL REPLACEMENT                            */
+/* -------------------------------------------------------------------------- */
 "use client";
 
 import { useCallback, useMemo, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth-client";
-import { getMember }  from "@/lib/auth-client/get-member";
+import { getMember } from "@/lib/auth-client/get-member";
 
 /**
  * usePermission
@@ -31,35 +33,44 @@ export function usePermission(organizationId?: string) {
         if (cancelled) return;
 
         const resolved = (res?.data?.role || "").toLowerCase();
+        console.debug("[usePermission] resolved role:", resolved); // ← debug
         setRole(resolved);
       } catch (err) {
         if (!cancelled) {
           console.warn("[usePermission] failed to load role:", err);
-          setRole("");                       // treat as guest / no role
+          setRole(""); // treat as guest / no role
         }
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [organizationId]);
 
   const loading = role === null;
-  const cache   = useMemo(() => new Map<string, boolean>(), [role]);
+  const cache = useMemo(() => new Map<string, boolean>(), [role]);
 
   /* ── 2. Permission checker ───────────────────────────────────── */
   const checker = useCallback(
     (perm: Record<string, string[]>) => {
-      if (role === "owner") return true;       // owner bypass
-      if (loading) return true;                // optimistic while loading
+      if (role === "owner") return true; // owner bypass
+      if (loading) return true; // optimistic while loading
 
       const key = JSON.stringify(perm);
-      if (cache.has(key)) return cache.get(key)!;
+      if (cache.has(key)) {
+        console.debug("[usePermission] cache hit for", key, "->", cache.get(key));
+        return cache.get(key)!;
+      }
 
       // Better-Auth’s type for `role` is overly narrow ("owner").
       // Cast the whole call to `any` so custom roles compile.
-      const ok: boolean = (authClient.organization as any)
-        .checkRolePermission({ permissions: perm, role });
+      const ok: boolean = (authClient.organization as any).checkRolePermission({
+        permissions: perm,
+        role,
+      });
 
+      console.debug("[usePermission] checked", perm, "for role", role, "->", ok);
       cache.set(key, ok);
       return ok;
     },
@@ -68,7 +79,7 @@ export function usePermission(organizationId?: string) {
 
   /* Attach metadata */
   (checker as any).loading = loading;
-  (checker as any).role    = role;
+  (checker as any).role = role;
 
   return checker as typeof checker & { loading: boolean; role: string | null };
 }

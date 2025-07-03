@@ -131,7 +131,6 @@ export default function OrdersPage() {
   const [selectedCompany, setSelectedCompany] = useState<string | undefined>(
     undefined
   );
-
   /* ---------------------------------------------------------------------- */
   /*  Data fetching                                                         */
   /* ---------------------------------------------------------------------- */
@@ -259,15 +258,19 @@ export default function OrdersPage() {
           can({ order: ["update_status"] }),
         ]);
 
-      setPermissions({
+      const next = {
         canViewDetail: viewDetail,
         canViewPricing: viewPricing,
         canUpdate: update,
         canUpdateTracking: updateTracking,
         canUpdateStatus: updateStatus,
-      });
+      };
+
+      console.debug("[OrdersPage] resolved permissions:", next); // ← debug
+      setPermissions(next);
     })();
   }, [can, can.loading]);
+
 
   /* ---------------------------------------------------------------------- */
   /*  Render guards                                                         */
