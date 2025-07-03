@@ -258,16 +258,19 @@ export default function OrdersPage() {
           can({ order: ["update_status"] }),
         ]);
   
-      setPermissions({
-        canViewDetail:    viewDetail,
-        canViewPricing:   viewPricing,
-        canUpdate:        update,
-        canUpdateTracking:updateTracking,
-        canUpdateStatus:  updateStatus,
-      });
+      const next = {
+        canViewDetail: viewDetail,
+        canViewPricing: viewPricing,
+        canUpdate: update,
+        canUpdateTracking: updateTracking,
+        canUpdateStatus: updateStatus,
+      };
+
+      console.debug("[OrdersPage] resolved permissions:", next); // ← debug
+      setPermissions(next);
     })();
   }, [can, can.loading, (can as any).version]);  // ← HERE
-  
+
 
 
   /* ---------------------------------------------------------------------- */
