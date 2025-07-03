@@ -61,8 +61,6 @@ export const owner = ac.newRole({
   ...domainStatements,
 });
 
-/*─────────────────────────────────────────────────────────────────────────────
-  NEW — Support role
-  ---------------------------------------------------------------------------*/
+
 
 export const builtinRoles = { owner };

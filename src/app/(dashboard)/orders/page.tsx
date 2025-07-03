@@ -1,62 +1,44 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { usePermission } from "@/hooks/use-permission";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Edit } from "lucide-react";
+import { useState, useEffect }      from "react";
+import { useRouter }                from "next/navigation";
+import { useHasPermission }         from "@/hooks/use-has-permission";
+import { authClient }               from "@/lib/auth-client";
+import { Button }                   from "@/components/ui/button";
+import { Input }                    from "@/components/ui/input";
+import { Edit, Mail, MoreVertical,
+         Search, Truck, CalendarIcon } from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem,
+  SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent,
+  DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
+  Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
+import { Calendar }                 from "@/components/ui/calendar";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell,
+  TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Search, CalendarIcon, MoreVertical, Mail, Truck } from "lucide-react";
-import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
-import { toast } from "sonner";
+import { Badge }                    from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle }
+                                  from "@/components/ui/card";
+import { format, startOfDay, endOfDay,
+         subWeeks, subMonths }      from "date-fns";
+import { toast }                   from "sonner";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
+  Dialog, DialogContent, DialogHeader,
+  DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 
-/* -------------------------------------------------------------------------- */
-/*  Types                                                                     */
-/* -------------------------------------------------------------------------- */
-
-type OrderStatus =
-  | "open"
-  | "underpaid"
-  | "paid"
-  | "cancelled"
-  | "refunded"
-  | "completed";
+/* ------------------------------------------------------------------ */
+/*  Types                                                             */
+/* ------------------------------------------------------------------ */
+type OrderStatus = "open" | "underpaid" | "paid" | "cancelled" | "refunded" | "completed";
 
 interface Order {
   id: string;
@@ -70,71 +52,56 @@ interface Order {
   total: number;
   trackingNumber?: string;
 }
-
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
 type ShippingCompany = { id: string; name: string };
 
-/* -------------------------------------------------------------------------- */
-/*  Component                                                                 */
-/* -------------------------------------------------------------------------- */
-
+/* ------------------------------------------------------------------ */
+/*  Component                                                         */
+/* ------------------------------------------------------------------ */
 export default function OrdersPage() {
-  const can = usePermission();
   const router = useRouter();
 
-  /* ── permission flags ────────────────────────────────────────── */
-  const [permissions, setPermissions] = useState({
-    canViewDetail: false,
-    canViewPricing: false,
-    canUpdate: false,
-    canUpdateTracking: false,
-    canUpdateStatus: false,
-  });
+  /* ── active organisation id ───────────────────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
 
+  /* ── permission flags (new hook) ───────────────────────────────── */
+  const { hasPermission: canViewDetail    } = useHasPermission(organizationId, { order: ["view"] });
+  const { hasPermission: canViewPricing   } = useHasPermission(organizationId, { order: ["view_pricing"] });
+  const { hasPermission: canUpdate        } = useHasPermission(organizationId, { order: ["update"] });
+  const { hasPermission: canUpdateTracking} = useHasPermission(organizationId, { order: ["update_tracking"] });
   const {
-    canViewDetail,
-    canViewPricing,
-    canUpdate,
-    canUpdateTracking,
-    canUpdateStatus,
-  } = permissions;
+    hasPermission: canUpdateStatus,
+    isLoading: permissionsLoading,
+  }                                        = useHasPermission(organizationId, { order: ["update_status"] });
 
-  /* ── orders & ui state ───────────────────────────────────────── */
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  /* dialog state */
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
-  const [draftTracking, setDraftTracking] = useState("");
+  /* ── orders & ui state ────────────────────────────────────────── */
+  const [orders,           setOrders          ] = useState<Order[]>([]);
+  const [loading,          setLoading         ] = useState(true);
+  const [error,            setError           ] = useState<string | null>(null);
+  const [dialogOpen,       setDialogOpen      ] = useState(false);
+  const [selectedOrderId,  setSelectedOrderId ] = useState<string | null>(null);
+  const [draftTracking,    setDraftTracking   ] = useState("");
 
   /* filters */
-  const [filteredOrders, setFilteredOrders] = useState<Order[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [dateFilter, setDateFilter] = useState<DateFilterOption>("all");
-  const [dateRange, setDateRange] = useState<{
-    from: Date | undefined;
-    to: Date | undefined;
-  }>({ from: undefined, to: undefined });
+  const [filteredOrders,   setFilteredOrders  ] = useState<Order[]>([]);
+  const [searchQuery,      setSearchQuery     ] = useState("");
+  const [statusFilter,     setStatusFilter    ] = useState<string>("all");
+  const [dateFilter,       setDateFilter      ] = useState<DateFilterOption>("all");
+  const [dateRange,        setDateRange       ] = useState<{ from?: Date; to?: Date; }>({});
 
   /* pagination */
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage,      setCurrentPage     ] = useState(1);
   const itemsPerPage = 10;
 
   /* shipping companies */
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
-    []
-  );
-  const [shippingLoading, setShippingLoading] = useState(false);
-  const [selectedCompany, setSelectedCompany] = useState<string | undefined>(
-    undefined
-  );
-  /* ---------------------------------------------------------------------- */
-  /*  Data fetching                                                         */
-  /* ---------------------------------------------------------------------- */
+  const [shippingCompanies,setShippingCompanies] = useState<ShippingCompany[]>([]);
+  const [shippingLoading,  setShippingLoading ] = useState(false);
+  const [selectedCompany,  setSelectedCompany ] = useState<string>();
 
+  /* ---------------------------------------------------------------- */
+  /*  Data fetching                                                   */
+  /* ---------------------------------------------------------------- */
   useEffect(() => {
     setLoading(true);
     fetch("/api/order")
@@ -142,18 +109,14 @@ export default function OrdersPage() {
         if (!res.ok) throw new Error("Failed to fetch orders");
         return res.json();
       })
-      .then((data: Order[]) => {
-        setOrders(data);
-        setError(null);
-      })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false));
+      .then((data: Order[]) => { setOrders(data); setError(null); })
+      .catch((err: Error)     => setError(err.message))
+      .finally(()            => setLoading(false));
   }, []);
 
-  /* ---------------------------------------------------------------------- */
-  /*  Filters                                                               */
-  /* ---------------------------------------------------------------------- */
-
+  /* ---------------------------------------------------------------- */
+  /*  Filters                                                         */
+  /* ---------------------------------------------------------------- */
   useEffect(() => {
     let result = orders.map((o) => ({
       ...o,
@@ -162,10 +125,9 @@ export default function OrdersPage() {
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (o) =>
-          o.orderKey.toLowerCase().includes(q) ||
-          o.email.toLowerCase().includes(q)
+      result = result.filter((o) =>
+        o.orderKey.toLowerCase().includes(q) ||
+        o.email.toLowerCase().includes(q),
       );
     }
 
@@ -186,9 +148,9 @@ export default function OrdersPage() {
         result = result.filter((o) => new Date(o.createdAt) >= since);
       } else if (dateFilter === "custom" && dateRange.from) {
         const from = startOfDay(dateRange.from);
-        const to = dateRange.to ? endOfDay(dateRange.to) : endOfDay(now);
-        result = result.filter(
-          (o) => new Date(o.createdAt) >= from && new Date(o.createdAt) <= to
+        const to   = dateRange.to ? endOfDay(dateRange.to) : endOfDay(now);
+        result     = result.filter((o) =>
+          new Date(o.createdAt) >= from && new Date(o.createdAt) <= to,
         );
       }
     }
@@ -197,25 +159,18 @@ export default function OrdersPage() {
     setCurrentPage(1);
   }, [orders, searchQuery, statusFilter, dateFilter, dateRange]);
 
-  /* ---------------------------------------------------------------------- */
-  /*  Helpers                                                               */
-  /* ---------------------------------------------------------------------- */
-
+  /* ---------------------------------------------------------------- */
+  /*  Helpers                                                         */
+  /* ---------------------------------------------------------------- */
   const getStatusColor = (s: OrderStatus) => {
     switch (s) {
-      case "open":
-        return "bg-blue-500";
-      case "paid":
-        return "bg-green-500";
+      case "open"      : return "bg-blue-500";
+      case "paid"      : return "bg-green-500";
       case "cancelled":
-      case "refunded":
-        return "bg-red-500";
-      case "underpaid":
-        return "bg-orange-500";
-      case "completed":
-        return "bg-purple-500";
-      default:
-        return "bg-gray-500";
+      case "refunded"  : return "bg-red-500";
+      case "underpaid" : return "bg-orange-500";
+      case "completed" : return "bg-purple-500";
+      default          : return "bg-gray-500";
     }
   };
 
@@ -241,105 +196,53 @@ export default function OrdersPage() {
     })();
   }, [dialogOpen]);
 
-  /* ---------------------------------------------------------------------- */
-  /*  Permission resolution (single effect)                                 */
-  /* ---------------------------------------------------------------------- */
-
-  useEffect(() => {
-    if (can.loading) return;
-  
-    (async () => {
-      const [viewDetail, viewPricing, update, updateTracking, updateStatus] =
-        await Promise.all([
-          can({ order: ["view"] }),
-          can({ order: ["view_pricing"] }),
-          can({ order: ["update"] }),
-          can({ order: ["update_tracking"] }),
-          can({ order: ["update_status"] }),
-        ]);
-  
-      const next = {
-        canViewDetail: viewDetail,
-        canViewPricing: viewPricing,
-        canUpdate: update,
-        canUpdateTracking: updateTracking,
-        canUpdateStatus: updateStatus,
-      };
-
-      console.debug("[OrdersPage] resolved permissions:", next); // ← debug
-      setPermissions(next);
-    })();
-  }, [can.loading, (can as any).version]);
-
-
-
-  /* ---------------------------------------------------------------------- */
-  /*  Render guards                                                         */
-  /* ---------------------------------------------------------------------- */
-
-  if (can.loading) return <div>Loading permissions…</div>;
-  if (loading)
+  /* ---------------------------------------------------------------- */
+  /*  Render guards                                                   */
+  /* ---------------------------------------------------------------- */
+  if (permissionsLoading) {
+    return <div>Loading permissions…</div>;
+  }
+  if (loading) {
     return (
       <div className="container mx-auto py-8 px-4 text-center">
         Loading orders…
       </div>
     );
-  if (error)
+  }
+  if (error) {
     return (
       <div className="container mx-auto py-8 px-4 text-center text-red-600">
         Error loading orders: {error}
       </div>
     );
+  }
 
-  /* ---------------------------------------------------------------------- */
-  /*  JSX                                                                   */
-  /* ---------------------------------------------------------------------- */
-
-  const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
+  /* ---------------------------------------------------------------- */
+  /*  JSX                                                             */
+  /* ---------------------------------------------------------------- */
+  const pageCount       = Math.ceil(filteredOrders.length / itemsPerPage);
   const paginatedOrders = filteredOrders.slice(
     (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+    currentPage         * itemsPerPage,
   );
-
-  const formatDate = (dateStr: string) =>
-    format(new Date(dateStr), "MMM dd, yyyy");
-
-  const handleDateFilterChange = (value: DateFilterOption) => {
-    setDateFilter(value);
-    if (value !== "custom") setDateRange({ from: undefined, to: undefined });
-  };
+  const formatDate = (d: string) => format(new Date(d), "MMM dd, yyyy");
 
   /* status / tracking helpers (unchanged) */
-  const handleStatusChange = async (
-    orderId: string,
-    newStatus: OrderStatus
-  ) => {
+  const handleStatusChange = async (orderId: string, newStatus: OrderStatus) => {
     try {
       const res = await fetch(`/api/order/${orderId}/change-status`, {
-        method: "PATCH",
+        method : "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
+        body   : JSON.stringify({ status: newStatus }),
       });
       if (!res.ok) throw new Error("Failed to update status");
       setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)),
       );
       toast.success(`Order status changed`);
     } catch (err) {
       console.error(err);
       toast.error("Error updating order status");
-    }
-  };
-
-  const handleOrderAction = (orderId: string, action: string) => {
-    if (action === "cancel") {
-      setOrders((prev) =>
-        prev.map((o) =>
-          o.id === orderId ? { ...o, status: "cancelled" } : o
-        )
-      );
-    } else if (action === "send-notification") {
-      toast.success(`Payment notification sent for order ${orderId}`);
     }
   };
 
@@ -349,7 +252,6 @@ export default function OrdersPage() {
     setDraftTracking(order?.trackingNumber ?? "");
     setDialogOpen(true);
   };
-
   const saveTracking = async () => {
     if (!selectedOrderId || !selectedCompany) return;
     const company = shippingCompanies.find((c) => c.id === selectedCompany);
