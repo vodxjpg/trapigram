@@ -1,87 +1,65 @@
-// src/hooks/use-permission.ts
+// ─── src/hooks/use-permission.ts (v3 – local check, no API call) ──────────
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { authClient }   from "@/lib/auth-client";
 import { getMember }    from "@/lib/auth-client/get-member";
+import { resolveRole }  from "@/lib/auth/role-resolver";
+import { ac }           from "@/lib/permissions";          // same AC instance
+
+type Perm = Record<string, string[]>;                      // { resource: [actions] }
 
 export function usePermission(organizationId?: string) {
-  /* ───────────────────────── State ───────────────────────── */
-  const [role,    setRole] = useState<string | null>(null);     // null === loading
-  const [cache]            = useState(() => new Map<string, boolean>());
-  const [version, bump]    = useState(0);                       // bumps force re-render
+  /* ──────────────── 1. Who am I? (role) ──────────────── */
+  const [role, setRole] = useState<string | null>(null);   // null = loading
 
-  /* ───────────────── 1) Resolve active role ───────────────── */
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       try {
         const res = organizationId
           ? await getMember({ organizationId })
           : await authClient.organization.getActiveMember();
 
-        const resolvedRole = (res?.data?.role ?? "").toLowerCase();
-        console.debug("[usePermission] active role =", resolvedRole);   // 🐞
-
-        if (!cancelled) setRole(resolvedRole);
+        const r = (res?.data?.role ?? "").toLowerCase();
+        !cancelled && setRole(r);
       } catch (err) {
-        if (!cancelled) {
-          console.warn("[usePermission] failed to resolve role:", err);
-          setRole("");   // treat as guest
-        }
+        console.warn("[usePermission] could not resolve role:", err);
+        !cancelled && setRole("");                         // guest
       }
     })();
-
     return () => { cancelled = true; };
   }, [organizationId]);
 
   const loading = role === null;
 
-  /* ───────────────── 2) Permission checker ───────────────── */
-  const can = useCallback(
-    (perm: Record<string, string[]>) => {
-      const key = JSON.stringify(perm);
+  /* ──────────────── 2. Local permission checker ──────────────── */
+  const can = useCallback((perm: Perm) => {
+    if (loading) return false;                             // still resolving
 
-      /* cache hit? */
-      if (cache.has(key)) {
-        const hit = cache.get(key)!;
-        console.debug("[usePermission] cache hit", key, "→", hit);      // 🐞
-        return hit;
-      }
+    // owners shortcut
+    if (role === "owner") return true;
 
-      /* owner shortcut */
-      if (role === "owner") {
-        console.debug("[usePermission] owner shortcut → true", key);    // 🐞
-        cache.set(key, true);
-        return true;
-      }
+    // find the static GrantsRole for this user
+    const grantsRole = resolveRole({
+      organizationId: organizationId ?? "global",
+      role: role ?? "",
+    });
 
-      /* Ask the server */
-      console.debug("[usePermission] request >", perm);                 // 🐞
-      authClient.organization
-        .hasPermission({ permissions: perm, ...(organizationId && { organizationId }) })
-        .then(({ data }) => {
-          console.debug("[usePermission] reply  <", perm, "→", !!data); // 🐞
-          cache.set(key, !!data);
-          bump(v => v + 1);                                             // trigger re-render
-        })
-        .catch(err => {
-          console.error("[usePermission] error:", err);
-          cache.set(key, false);
-          bump(v => v + 1);
-        });
+    if (!grantsRole) return false;                         // no such role
 
-      cache.set(key, false);    // pessimistic until server replies
-      return false;
-    },
-    [role, organizationId, cache, version]
-  );
+    // perm is e.g. { order: ["update_status"] }
+    const [resource, actions] = Object.entries(perm)[0];
 
-  /* ───── expose extras on the function object (legacy) ───── */
+    // every action in the array must be granted
+    return actions.every((action) =>
+      ac.can(grantsRole.role).execute(action).on(resource).granted
+    );
+  }, [loading, role, organizationId]);
+
+  /* legacy flags */
   (can as any).loading = loading;
   (can as any).role    = role;
-  (can as any).version = version;
 
   return can as typeof can & { loading: boolean; role: string | null };
 }
