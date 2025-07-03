@@ -40,6 +40,13 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -78,6 +85,9 @@ export default function OrderReport() {
     to: dateRange.to,
   });
 
+  // ** NEW: currency state **
+  const [currency, setCurrency] = useState<"USD" | "GBP" | "EUR">("USD");
+
   // ** NEW: state for real orders **
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
@@ -93,26 +103,23 @@ export default function OrderReport() {
 
   const rowsPerPage = 25;
 
-  // fetch whenever dateRange changes
+  // fetch whenever dateRange or currency changes
   useEffect(() => {
     async function fetchOrders() {
       setLoading(true);
       setError(null);
       try {
-        // format the dates as ISO strings or whatever your API expects
         const from = encodeURIComponent(dateRange.from.toISOString());
         const to = encodeURIComponent(dateRange.to.toISOString());
-        const res = await fetch(`/api/report/revenue?from=${from}&to=${to}`);
+        // include currency param:
+        const res = await fetch(
+          `/api/report/revenue?from=${from}&to=${to}&currency=${currency}`
+        );
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const data = await res.json();
-        // expecting { orders: Order[] }
         setOrders(data.orders);
+        setChartData(data.chartData);
         setCurrentPage(1);
-
-        const resp = await fetch(`/api/dashboard?from=${from}&to=${to}`);
-        if (!resp.ok) throw new Error("Network response was not ok");
-        const { chartData } = await resp.json();
-        setChartData(chartData);
       } catch (err: any) {
         setError(err.message || "Unknown error");
       } finally {
@@ -121,7 +128,7 @@ export default function OrderReport() {
     }
 
     fetchOrders();
-  }, [dateRange]);
+  }, [dateRange, currency]);
 
   const filteredData = chartData;
 
@@ -318,16 +325,33 @@ export default function OrderReport() {
                   </PopoverContent>
                 </Popover>
               </div>
-
-              <Button
-                variant="default"
-                size="sm"
-                className="shrink-0"
-                onClick={exportToExcel}
-              >
-                <DownloadIcon className="mr-2 h-4 w-4" />
-                Export to Excel
-              </Button>
+              {/* Currency Select */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">Currency</span>
+                <Select
+                  value={currency}
+                  onValueChange={(v) => setCurrency(v as "USD" | "GBP" | "EUR")}
+                  className="w-24"
+                >
+                  <SelectTrigger size="sm">
+                    <SelectValue placeholder="Currency" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="USD">USD</SelectItem>
+                    <SelectItem value="GBP">GBP</SelectItem>
+                    <SelectItem value="EUR">EUR</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={exportToExcel}
+                >
+                  <DownloadIcon className="mr-2 h-4 w-4" />
+                  Export to Excel
+                </Button>
+              </div>
             </div>
 
             {/* Status */}
@@ -535,24 +559,26 @@ export default function OrderReport() {
                   axisLine={false}
                   tickMargin={8}
                   minTickGap={32}
-                  tickFormatter={(value) =>
-                    new Date(value).toLocaleDateString("en-US", {
+                  tickFormatter={(value) => {
+                    const dt = new Date(`${value}T00:00:00`);
+                    return dt.toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",
-                    })
-                  }
+                    });
+                  }}
                 />
                 <ChartTooltip
                   cursor={false}
                   defaultIndex={isMobile ? -1 : 10}
                   content={
                     <ChartTooltipContent
-                      labelFormatter={(value) =>
-                        new Date(value).toLocaleDateString("en-US", {
+                      labelFormatter={(value) => {
+                        const dt = new Date(`${value}T00:00:00`);
+                        return dt.toLocaleDateString("en-US", {
                           month: "short",
                           day: "numeric",
-                        })
-                      }
+                        });
+                      }}
                       indicator="dot"
                     />
                   }

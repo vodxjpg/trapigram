@@ -7,7 +7,6 @@
   min-height:300px;
 }
 
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -30,6 +29,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground); /* Add this */
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -63,6 +63,7 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0); /* Add this */
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -99,6 +100,7 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0); /* Add this */
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -123,5 +125,102 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* Fix for Calendar/Date Picker Component */
+@layer components {
+  .rdp {
+    --rdp-cell-size: 40px;
+    --rdp-accent-color: oklch(var(--primary));
+    --rdp-background-color: oklch(var(--background));
+    --rdp-accent-color-dark: oklch(var(--primary));
+    --rdp-background-color-dark: oklch(var(--background));
+  }
+
+  .rdp-months {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .rdp-month {
+    min-width: 248px;
+  }
+
+  .rdp-table {
+    width: 100%;
+    border-collapse: collapse;
+    border-spacing: 0;
+  }
+
+  .rdp-head_cell {
+    width: var(--rdp-cell-size);
+    height: var(--rdp-cell-size);
+    text-align: center;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: oklch(var(--muted-foreground));
+    padding: 0;
+    border: none;
+  }
+
+  .rdp-cell {
+    width: var(--rdp-cell-size);
+    height: var(--rdp-cell-size);
+    text-align: center;
+    position: relative;
+    padding: 0;
+    border: none;
+  }
+
+  .rdp-day {
+    width: var(--rdp-cell-size);
+    height: var(--rdp-cell-size);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    border: none;
+    background: transparent;
+    color: oklch(var(--foreground));
+    cursor: pointer;
+    border-radius: calc(var(--radius) - 2px);
+  }
+
+  .rdp-day:hover {
+    background-color: oklch(var(--accent));
+    color: oklch(var(--accent-foreground));
+  }
+
+  .rdp-day_selected {
+    background-color: oklch(var(--primary)) !important;
+    color: oklch(var(--primary-foreground)) !important;
+  }
+
+  .rdp-day_today {
+    background-color: oklch(var(--accent));
+    color: oklch(var(--accent-foreground));
+  }
+
+  .rdp-day_outside {
+    color: oklch(var(--muted-foreground));
+    opacity: 0.5;
+  }
+
+  .rdp-day_disabled {
+    color: oklch(var(--muted-foreground));
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .rdp-day_range_middle {
+    background-color: oklch(var(--accent));
+    color: oklch(var(--accent-foreground));
+  }
+
+  .rdp-day_range_start,
+  .rdp-day_range_end {
+    background-color: oklch(var(--primary));
+    color: oklch(var(--primary-foreground));
   }
 }
