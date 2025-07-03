@@ -55,6 +55,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     try {
         const { id } = await params;
+        console.log(id)
         const apiKey = '144659c7b175794ed4eae9bacf853944'
 
         const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`
@@ -88,7 +89,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             }, 0);
 
             let total = 0
-            let value = 0
 
             if (paymentType === 'niftipay') {
 
@@ -110,27 +110,56 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             const revenueId = uuidv4();
 
             if (country === 'GB') {
-                console.log(country)
-                const url = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=GBP&currencies=USD`;
+                const discountGBP = Number(order.discountTotal)
+                const shippingGBP = Number(order.shippingTotal)
+                const costGBP = totalCost
+                let totalGBP = Number(order.totalAmount)
+
+                const urlUSD = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=GBP&currencies=USD`;
                 const options = { method: 'GET', headers: { accept: 'application/json' } };
 
-                const res = await fetch(url, options)
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status} – ${res.statusText}`);
+                const resUSD = await fetch(urlUSD, options)
+                if (!resUSD.ok) {
+                    throw new Error(`HTTP ${resUSD.status} – ${resUSD.statusText}`);
                 }
-                const result = await res.json();
-                value = result.quotes.GBPUSD
+                const resultUSD = await resUSD.json();
+                const valueUSD = resultUSD.quotes.GBPUSD
 
-                const discount = order.discountTotal * value
-                const shipping = order.shippingTotal * value
-                const cost = totalCost * value
+                const discountUSD = discountGBP * valueUSD
+                const shippingUSD = shippingGBP * valueUSD
+                const costUSD = costGBP * valueUSD
+                let totalUSD = totalGBP * valueUSD
 
-                if (paymentType !== 'niftipay') {
-                    total = order.totalAmount * value
+                const urlEUR = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=GBP&currencies=EUR`;
+
+                const resEUR = await fetch(urlEUR, options)
+                if (!resEUR.ok) {
+                    throw new Error(`HTTP ${resEUR.status} – ${resEUR.statusText}`);
+                }
+                const resultEUR = await resEUR.json();
+                const valueEUR = resultEUR.quotes.GBPEUR
+
+                const discountEUR = discountGBP * valueEUR
+                const shippingEUR = shippingGBP * valueEUR
+                const costEUR = costGBP * valueEUR
+                let totalEUR = totalGBP * valueEUR
+
+                if (paymentType === 'niftipay') {
+                    totalUSD = total
+                    totalEUR = total * valueEUR
+                    totalGBP = total * valueUSD
                 }
 
-                const query = `INSERT INTO "orderRevenue" (id, "orderId", total, discount, shipping, cost, "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${revenueId}', '${id}', ${total.toFixed(2)}, ${discount.toFixed(2)}, ${shipping.toFixed(2)}, ${cost.toFixed(2)}, NOW(), NOW(), '${organizationId}')
+                const query = `INSERT INTO "orderRevenue" (id, "orderId", 
+                    "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
+                    "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
+                    "EURtotal", "EURdiscount", "EURshipping", "EURcost",
+                    "createdAt", "updatedAt", "organizationId")
+                    VALUES ('${revenueId}', '${id}', 
+                    ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
+                    ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
+                    ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
+                    NOW(), NOW(), '${organizationId}')
                     RETURNING *`
 
                 const resultQuery = await pool.query(query)
@@ -139,26 +168,56 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 return NextResponse.json(revenue, { status: 200 });
             } else if (euroCountries.includes(country)) {
 
-                const url = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=EUR&currencies=USD`;
+                const discountEUR = Number(order.discountTotal)
+                const shippingEUR = Number(order.shippingTotal)
+                const costEUR = totalCost
+                let totalEUR = Number(order.totalAmount)
+
+                const urlUSD = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=EUR&currencies=USD`;
                 const options = { method: 'GET', headers: { accept: 'application/json' } };
 
-                const res = await fetch(url, options)
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status} – ${res.statusText}`);
+                const resUSD = await fetch(urlUSD, options)
+                if (!resUSD.ok) {
+                    throw new Error(`HTTP ${resUSD.status} – ${resUSD.statusText}`);
                 }
-                const result = await res.json();
-                value = result.quotes.EURUSD
+                const resultUSD = await resUSD.json();
+                const valueUSD = resultUSD.quotes.EURUSD
 
-                const discount = order.discountTotal * value
-                const shipping = order.shippingTotal * value
-                const cost = totalCost * value
+                const discountUSD = discountEUR * valueUSD
+                const shippingUSD = shippingEUR * valueUSD
+                const costUSD = costEUR * valueUSD
+                let totalUSD = totalEUR * valueUSD
 
-                if (paymentType !== 'niftipay') {
-                    total = order.totalAmount * value
+                const urlGBP = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=EUR&currencies=GBP`;
+
+                const resGBP = await fetch(urlGBP, options)
+                if (!resGBP.ok) {
+                    throw new Error(`HTTP ${resGBP.status} – ${resGBP.statusText}`);
+                }
+                const resultGBP = await resGBP.json();
+                const valueGBP = resultGBP.quotes.EURGBP
+
+                const discountGBP = discountEUR * valueGBP
+                const shippingGBP = shippingEUR * valueGBP
+                const costGBP = costEUR * valueGBP
+                let totalGBP = totalEUR * valueGBP
+
+                if (paymentType === 'niftipay') {
+                    totalUSD = total
+                    totalEUR = total * valueUSD
+                    totalGBP = total * valueGBP
                 }
 
-                const query = `INSERT INTO "orderRevenue" (id, "orderId", total, discount, shipping, cost, "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${revenueId}', '${id}', ${total.toFixed(2)}, ${discount.toFixed(2)}, ${shipping.toFixed(2)}, ${cost.toFixed(2)}, NOW(), NOW(), '${organizationId}')
+                const query = `INSERT INTO "orderRevenue" (id, "orderId", 
+                    "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
+                    "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
+                    "EURtotal", "EURdiscount", "EURshipping", "EURcost",
+                    "createdAt", "updatedAt", "organizationId")
+                    VALUES ('${revenueId}', '${id}', 
+                    ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
+                    ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
+                    ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
+                    NOW(), NOW(), '${organizationId}')
                     RETURNING *`
 
                 const resultQuery = await pool.query(query)
@@ -167,16 +226,56 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 return NextResponse.json(revenue, { status: 200 });
             } else {
 
-                const discount = Number(order.discountTotal)
-                const shipping = Number(order.shippingTotal)
-                const cost = Number(totalCost)
+                const discountUSD = Number(order.discountTotal)
+                const shippingUSD = Number(order.shippingTotal)
+                const costUSD = totalCost
+                let totalUSD = Number(order.totalAmount)
 
-                if (paymentType !== 'niftipay') {
-                    total = order.totalAmount
+                const urlEUR = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=USD&currencies=EUR`;
+                const options = { method: 'GET', headers: { accept: 'application/json' } };
+
+                const resEUR = await fetch(urlEUR, options)
+                if (!resEUR.ok) {
+                    throw new Error(`HTTP ${resEUR.status} – ${resEUR.statusText}`);
+                }
+                const resultEUR = await resEUR.json();
+                const valueEUR = resultEUR.quotes.USDEUR
+
+                const discountEUR = discountUSD * valueEUR
+                const shippingEUR = shippingUSD * valueEUR
+                const costEUR = costUSD * valueEUR
+                let totalEUR = totalUSD * valueEUR
+
+                const urlGBP = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=USD&currencies=GBP`;
+
+                const resGBP = await fetch(urlGBP, options)
+                if (!resGBP.ok) {
+                    throw new Error(`HTTP ${resGBP.status} – ${resGBP.statusText}`);
+                }
+                const resultGBP = await resGBP.json();
+                const valueGBP = resultGBP.quotes.USDGBP
+
+                const discountGBP = discountUSD * valueGBP
+                const shippingGBP = shippingUSD * valueGBP
+                const costGBP = costUSD * valueGBP
+                let totalGBP = totalUSD * valueGBP
+
+                if (paymentType === 'niftipay') {
+                    totalUSD = total
+                    totalEUR = total * valueEUR
+                    totalGBP = total * valueGBP
                 }
 
-                const query = `INSERT INTO "orderRevenue" (id, "orderId", total, discount, shipping, cost, "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${revenueId}', '${id}', ${total.toFixed(2)}, ${discount.toFixed(2)}, ${shipping.toFixed(2)}, ${cost.toFixed(2)}, NOW(), NOW(), '${organizationId}')
+                const query = `INSERT INTO "orderRevenue" (id, "orderId", 
+                    "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
+                    "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
+                    "EURtotal", "EURdiscount", "EURshipping", "EURcost",
+                    "createdAt", "updatedAt", "organizationId")
+                    VALUES ('${revenueId}', '${id}', 
+                    ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
+                    ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
+                    ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
+                    NOW(), NOW(), '${organizationId}')
                     RETURNING *`
 
                 const resultQuery = await pool.query(query)
