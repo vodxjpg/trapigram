@@ -79,7 +79,12 @@ export function usePermission(passedOrgId?: string) {
       return false;
     }
     const [resource, actions] = Object.entries(perm)[0];
-    let ok = actions.every(a => (grant as any)[resource]?.includes(a));
+     const allowed = (grant as any)[resource];
+     let ok = actions.every(a =>
+       Array.isArray(allowed)          // shape A
+         ? allowed.includes(a)
+         : allowed?.[a] === true       // shape B
+     );
     
     /*  ⬇️  if the local array-test failed, ask the server once                */
     if (!ok) {
