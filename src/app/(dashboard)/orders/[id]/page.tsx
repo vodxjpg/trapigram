@@ -1,3 +1,4 @@
+// src/app/(dashboard)/orders/[id]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -20,11 +21,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 import { formatCurrency } from "@/lib/currency";
 
 /* ——————————————————— TYPES ——————————————————— */
-
 interface Product {
   id: string;
   title: string;
@@ -36,14 +37,12 @@ interface Product {
   isAffiliate: boolean;
   image: string | null;
 }
-
 interface ShippingInfo {
   address: string;
   company: string;
   method: string;
   payment: string;
 }
-
 interface Order {
   id: string;
   cartId: string;
@@ -65,7 +64,6 @@ interface Order {
   shippingInfo: ShippingInfo;
   country?: string;
 }
-
 interface Message {
   id: number;
   message: string;
@@ -74,7 +72,6 @@ interface Message {
 }
 
 /* ——————————————————— HELPERS ——————————————————— */
-
 function groupByProduct(lines: Product[]) {
   return lines
     .reduce(
@@ -113,25 +110,40 @@ function groupByProduct(lines: Product[]) {
     )
     .map((b) => ({
       ...b,
-      // sort buckets so cheapest (usually "old price") is first
-      priceBuckets: [...b.priceBuckets].sort(
-        (a, z) => a.unitPrice - z.unitPrice
-      ),
+      priceBuckets: [...b.priceBuckets].sort((a, z) => a.unitPrice - z.unitPrice),
     }));
 }
 
 export default function OrderView() {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
   const router = useRouter();
-   const can = usePermission(); ;
 
-  const [order, setOrder] = useState<Order | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  /* ── active organisation ───────────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  /* ── permissions (new hook) ────────────────────────── */
+  const {
+    hasPermission: canViewOrder,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { order: ["view"] });
+
+  const { hasPermission: canViewPricing } = useHasPermission(
+    organizationId,
+    { order: ["view_pricing"] },
+  );
+
+  const { hasPermission: canViewChat } = useHasPermission(
+    organizationId,
+    { orderChat: ["view"] },
+  );
+
+  /* ── state ─────────────────────────────────────────── */
+  const [order,    setOrder   ] = useState<Order | null>(null);
+  const [loading,  setLoading ] = useState(true);
+  const [error,    setError   ] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
-
-  const canViewPricing = can({ order: ["view_pricing"] });
 
   /* ————————— fetch order + client ————————— */
   const fetchOrderAndClient = async () => {
@@ -163,10 +175,7 @@ export default function OrderView() {
 
   /* ————————— fetch messages ————————— */
   const fetchMessages = async () => {
-    if (!id || !order) return;
-
-    // only fetch if user can view orderChat
-    if (!can({ orderChat: ["view"] })) return;
+    if (!id || !order || !canViewChat) return;
 
     fetch(`/api/order/${id}/messages`)
       .then((r) => {
@@ -188,7 +197,7 @@ export default function OrderView() {
       },
       body: JSON.stringify({
         message: newMessage,
-        clientId: order.clientId,
+        clientId: order!.clientId,
       }),
     });
 
@@ -205,11 +214,12 @@ export default function OrderView() {
     setNewMessage("");
   };
 
+  /* ————————— effects ————————— */
   useEffect(() => {
-    if (!can.loading && !can({ order: ["view"] })) {
+    if (!permLoading && !canViewOrder) {
       router.replace("/orders");
     }
-  }, [can, router]);
+  }, [permLoading, canViewOrder, router]);
 
   useEffect(() => {
     fetchOrderAndClient();
@@ -217,10 +227,10 @@ export default function OrderView() {
 
   useEffect(() => {
     fetchMessages();
-  }, [id, order, can]);
+  }, [id, order, canViewChat]);
 
-  if (can.loading) return null; // wait for role resolution
-
+  /* ————————— guards ————————— */
+  if (permLoading) return null;
   if (loading)
     return (
       <div className="container mx-auto py-8 text-center">Loading order…</div>
@@ -230,11 +240,7 @@ export default function OrderView() {
     return (
       <div className="container mx-auto py-8 text-center">
         <p className="text-red-600">Error: {error ?? "Order not found"}</p>
-        <Button
-          variant="ghost"
-          className="mt-4"
-          onClick={() => window.history.back()}
-        >
+        <Button variant="ghost" className="mt-4" onClick={() => window.history.back()}>
           Go Back
         </Button>
       </div>
@@ -247,41 +253,30 @@ export default function OrderView() {
     .filter((g) => !g.isAffiliate)
     .reduce(
       (sum, g) =>
-        sum +
-        g.priceBuckets.reduce((s, pb) => s + pb.unitPrice * pb.quantity, 0),
-      0
+        sum + g.priceBuckets.reduce((s, pb) => s + pb.unitPrice * pb.quantity, 0),
+      0,
     );
 
   const affiliatePointsTotal = grouped
     .filter((g) => g.isAffiliate)
     .reduce(
       (sum, g) =>
-        sum +
-        g.priceBuckets.reduce((s, pb) => s + pb.unitPrice * pb.quantity, 0),
-      0
+        sum + g.priceBuckets.reduce((s, pb) => s + pb.unitPrice * pb.quantity, 0),
+      0,
     );
 
   const calculatedTotal =
-    monetarySubtotal +
-    order.shipping -
-    order.discount -
-    (order.pointsRedeemedAmount ?? 0);
+    monetarySubtotal + order.shipping - order.discount - (order.pointsRedeemedAmount ?? 0);
 
   /* ————— helpers ————— */
   const fmtMoney = (n: number) => formatCurrency(n, order.country);
-  const fmtPts = (n: number) => `${n} pts`;
+  const fmtPts   = (n: number) => `${n} pts`;
   const statusClr = (s: string) =>
     (
-      ({
-        open: "bg-blue-500",
-        paid: "bg-green-500",
-        cancelled: "bg-red-500",
-        completed: "bg-purple-500",
-      }) as any
-    )[s] ?? "bg-gray-500";
+      { open: "bg-blue-500", paid: "bg-green-500", cancelled: "bg-red-500", completed: "bg-purple-500" } as const
+    )[s as keyof typeof statusClr] ?? "bg-gray-500";
 
   const fmtMsgTime = (d: Date) => format(d, "MMM d, h:mm a");
-
   return (
     <div className="container mx-auto py-8 px-4 max-w-7xl">
       {/* Back + title */}

@@ -514,18 +514,6 @@ export default function OrdersPage() {
                                 Edit
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem
-                              onClick={() =>
-                                handleOrderAction(order.id, "send-notification")
-                              }
-                              disabled={
-                                order.status === "cancelled" ||
-                                order.status === "completed"
-                              }
-                            >
-                              <Mail className="mr-2 h-4 w-4" />
-                              <span>Send Payment Notification</span>
-                            </DropdownMenuItem>
                             {canUpdateTracking && (
                               <DropdownMenuItem
                                 onClick={() => handleTracking(order.id)}
