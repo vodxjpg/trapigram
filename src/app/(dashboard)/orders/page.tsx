@@ -269,7 +269,7 @@ export default function OrdersPage() {
       console.debug("[OrdersPage] resolved permissions:", next); // ← debug
       setPermissions(next);
     })();
-  }, [can.loading]); 
+    }, [can, can.loading]);
 
 
 
