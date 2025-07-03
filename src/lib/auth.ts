@@ -319,7 +319,7 @@ The Trapyfy Team
       },
     }),
 
-    /* Next-js cookie helper */
+    /* Next-js cookie helper*/
     nextCookies(),
   ],
 });
