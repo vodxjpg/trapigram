@@ -1,28 +1,39 @@
 // src/app/(dashboard)/organizations/[identifier]/platform-keys/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
-import { usePermission } from "@/hooks/use-permission";
+import { useState, useEffect }   from "react";
+import { useParams }             from "next/navigation";
+import { authClient }            from "@/lib/auth-client";
+import { useHasPermission }      from "@/hooks/use-has-permission";   // ← NEW
 import {
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
-} from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
+  Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
+}                                from "@/components/ui/table";
+import { Button }                from "@/components/ui/button";
 import { Dialog, DialogTrigger, DialogContent } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { toast } from "sonner";
+import { Input }                 from "@/components/ui/input";
+import { toast }                 from "sonner";
 
 const TELEGRAM_TOKEN_REGEX = /^[0-9]{7,10}:[A-Za-z0-9_-]{35}$/;
 
 export default function PlatformKeysPage() {
-  const { identifier } = useParams();
-   const can = usePermission(); ;
-  const [keys, setKeys] = useState<any[]>([]);
+  const { identifier } = useParams<{ identifier: string }>();
+
+  /* ── active organisation → id for permission hook ─────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  /* ── permission checks ────────────────────────────────────── */
+  const { hasPermission: canCreate, isLoading: createLoading } =
+    useHasPermission(organizationId, { platformKey: ["create"] });
+
+  const { hasPermission: canUpdate, isLoading: updateLoading } =
+    useHasPermission(organizationId, { platformKey: ["update"] });
+
+  const { hasPermission: canDelete, isLoading: deleteLoading } =
+    useHasPermission(organizationId, { platformKey: ["delete"] });
+
+  /* ── data state ───────────────────────────────────────────── */
+  const [keys, setKeys]     = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   async function load() {
@@ -30,7 +41,7 @@ export default function PlatformKeysPage() {
     try {
       const res = await fetch(
         `/api/organizations/${identifier}/platform-keys`,
-        { credentials: "include" }
+        { credentials: "include" },
       );
       const { platformKeys } = await res.json();
       setKeys(platformKeys);
@@ -42,29 +53,22 @@ export default function PlatformKeysPage() {
     }
   }
 
-  useEffect(() => {
-    load();
-  }, [identifier]);
+  useEffect(() => { load(); }, [identifier]);
 
-  // Dialog form state
+  /* ── dialog state ─────────────────────────────────────────── */
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ id: "", platform: "telegram", apiKey: "" });
 
-  function edit(key?) {
-    if (key) {
-      setForm({ id: key.id, platform: key.platform, apiKey: key.apiKey });
-    } else {
-      setForm({ id: "", platform: "telegram", apiKey: "" });
-    }
+  function edit(key?: any) {
+    if (key) setForm({ id: key.id, platform: key.platform, apiKey: key.apiKey });
+    else     setForm({ id: "", platform: "telegram", apiKey: "" });
     setOpen(true);
   }
 
   async function save() {
-    // Validate telegram key if telegram selected
     if (form.platform === "telegram" && !TELEGRAM_TOKEN_REGEX.test(form.apiKey)) {
       return toast.error("Invalid Telegram bot key format");
     }
-
     const method = form.id ? "PATCH" : "POST";
     const res = await fetch(
       `/api/organizations/${identifier}/platform-keys`,
@@ -73,14 +77,12 @@ export default function PlatformKeysPage() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(form),
-      }
+      },
     );
-
     if (!res.ok) {
       const { error } = await res.json();
       return toast.error(error || "Failed to save");
     }
-
     toast.success("Saved");
     setOpen(false);
     load();
@@ -95,7 +97,7 @@ export default function PlatformKeysPage() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ id }),
-      }
+      },
     );
     if (!res.ok) {
       const { error } = await res.json();
@@ -105,11 +107,12 @@ export default function PlatformKeysPage() {
     load();
   }
 
+  /* ── render ───────────────────────────────────────────────── */
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-semibold">Platform Keys</h2>
-        {can({ platformKey: ["create"] }) && (
+        {!createLoading && canCreate && (
           <Button onClick={() => edit()}>Add Key</Button>
         )}
       </div>
@@ -131,7 +134,7 @@ export default function PlatformKeysPage() {
                 <TableCell>{k.platform}</TableCell>
                 <TableCell>{k.apiKey}</TableCell>
                 <TableCell className="flex gap-2">
-                  {can({ platformKey: ["update"] }) && (
+                  {!updateLoading && canUpdate && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -140,7 +143,7 @@ export default function PlatformKeysPage() {
                       Edit
                     </Button>
                   )}
-                  {can({ platformKey: ["delete"] }) && (
+                  {!deleteLoading && canDelete && (
                     <Button
                       size="sm"
                       variant="destructive"
@@ -156,16 +159,13 @@ export default function PlatformKeysPage() {
         </Table>
       )}
 
-      {/* Add / Edit Dialog */}
+      {/* Add / Edit dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger />
         <DialogContent className="space-y-4">
-          <h3 className="text-lg font-medium">
-            {form.id ? "Edit Key" : "New Key"}
-          </h3>
+          <h3 className="text-lg font-medium">{form.id ? "Edit Key" : "New Key"}</h3>
 
           <div className="flex gap-4">
-            {/* Telegram swatch */}
             <button
               type="button"
               onClick={() => setForm((f) => ({ ...f, platform: "telegram" }))}
@@ -178,7 +178,6 @@ export default function PlatformKeysPage() {
               Telegram
             </button>
 
-            {/* Coming soon */}
             <div className="flex-1 p-4 border rounded opacity-50 cursor-not-allowed text-center">
               More coming soon
             </div>
@@ -190,9 +189,7 @@ export default function PlatformKeysPage() {
               type="text"
               placeholder="Enter API key"
               value={form.apiKey}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, apiKey: e.target.value }))
-              }
+              onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
             />
             {form.platform === "telegram" && (
               <p className="text-sm text-gray-500">
@@ -202,15 +199,10 @@ export default function PlatformKeysPage() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setOpen(false)}
-            >
+            <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={save}>
-              {form.id ? "Update" : "Create"}
-            </Button>
+            <Button onClick={save}>{form.id ? "Update" : "Create"}</Button>
           </div>
         </DialogContent>
       </Dialog>

@@ -4,7 +4,7 @@
 import { useState, useEffect } from "react";
 import { MoreVertical, Trash2, UserCircle } from "lucide-react";
 import { toast } from "sonner";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";   // ← NEW
 import { useOrgRoles } from "@/hooks/use-org-roles";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,18 +35,32 @@ export function MembersTable({
   organizationSlug,
   currentUserRole,
 }: Props) {
-   const can = usePermission(); ;
+  /* ── permissions ──────────────────────────────────────────── */
+  const {
+    hasPermission: canUpdatePerm,
+    isLoading:    updateLoading,
+  } = useHasPermission(organizationId, { member: ["update_role"] });
+
+  const {
+    hasPermission: canDeletePerm,
+    isLoading:    deleteLoading,
+  } = useHasPermission(organizationId, { member: ["delete"] });
+
+  const canUpdate = currentUserRole === "owner" || canUpdatePerm;
+  const canDelete = currentUserRole === "owner" || canDeletePerm;
+
+  /* ── other hooks ───────────────────────────────────────────── */
   const { roles, isLoading: rolesLoading } = useOrgRoles(organizationId);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // fetchMembers is async, but we wrap its call in a non-async effect callback
+  /* ── fetch members ─────────────────────────────────────────── */
   async function fetchMembers() {
     setLoading(true);
     try {
       const res = await fetch(
         `/api/organizations/${organizationSlug}/members?organizationId=${organizationId}`,
-        { credentials: "include" }
+        { credentials: "include" },
       );
       if (!res.ok) throw new Error("Failed to load members");
       const { members: data } = await res.json();
@@ -61,20 +75,16 @@ export function MembersTable({
 
   useEffect(() => {
     fetchMembers();
-  }, [organizationSlug]); // <-- no async on the callback itself
+  }, [organizationSlug]);
 
-  const canUpdate = currentUserRole === "owner" || can({ member: ["update_role"] });
-  const canDelete = currentUserRole === "owner" || can({ member: ["delete"] });
-
-  // NEW – only the roles this Org actually has
-  const allRoles = [
-    "owner",               // every Org always has an owner
-    ...roles.map((r) => r.name),
-  ];
-
-
+  /* ── helpers ───────────────────────────────────────────────── */
+  const allRoles = ["owner", ...roles.map((r) => r.name)];
   const badgeVariant = (role: string) =>
-    role === "owner" ? "default" : role === "manager" ? "secondary" : "outline";
+    role === "owner"
+      ? "default"
+      : role === "manager"
+      ? "secondary"
+      : "outline";
 
   async function handleRoleChange(memberId: string, newRole: string) {
     try {
@@ -85,7 +95,7 @@ export function MembersTable({
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ role: newRole }),
-        }
+        },
       );
       if (res.status === 403) {
         toast.error("You don’t have permission to change roles");
@@ -106,11 +116,11 @@ export function MembersTable({
   async function handleRemove(memberId: string, email: string) {
     if (!confirm(`Remove ${email}?`)) return;
     const prev = members;
-    setMembers(ms => ms.filter(m => m.id !== memberId));
+    setMembers((ms) => ms.filter((m) => m.id !== memberId));
     try {
       const res = await fetch(
         `/api/organizations/${organizationSlug}/members/${memberId}?organizationId=${organizationId}`,
-        { method: "DELETE", credentials: "include" }
+        { method: "DELETE", credentials: "include" },
       );
       if (res.status === 403) {
         toast.error("You don’t have permission to remove members");
@@ -129,6 +139,7 @@ export function MembersTable({
     }
   }
 
+  /* ── render ────────────────────────────────────────────────── */
   return (
     <div className="rounded-md border">
       <Table>
@@ -163,8 +174,13 @@ export function MembersTable({
                 <TableCell>{m.user.email}</TableCell>
                 <TableCell>
                   {canUpdate && m.role !== currentUserRole && m.role !== "owner" ? (
-                    <Select value={m.role} onValueChange={(v) => handleRoleChange(m.id, v)}>
-                      <SelectTrigger className="w-[140px]"><SelectValue/></SelectTrigger>
+                    <Select
+                      value={m.role}
+                      onValueChange={(v) => handleRoleChange(m.id, v)}
+                    >
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
                         {allRoles
                           .filter((r) => r !== "owner" && r !== currentUserRole)

@@ -1,24 +1,17 @@
-// src/app/(dashboard)/organizations/[slug]/invitations-table.tsx
+// src/app/(dashboard)/organizations/[identifier]/invitations-table.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { MoreVertical, Trash2, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";          // ← NEW
 import { Button } from "@/components/ui/button";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 
@@ -36,22 +29,29 @@ interface InvitationsTableProps {
   currentUserRole: string | null;
 }
 
-export function InvitationsTable({ organizationId, organizationSlug, currentUserRole }: InvitationsTableProps) {
+export function InvitationsTable({
+  organizationId,
+  organizationSlug,
+  currentUserRole,
+}: InvitationsTableProps) {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
 
+  /* ── secured permission check ─────────────────────────────── */
+  const {
+    hasPermission: canCancelPerm,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { invitation: ["cancel"] });
+
+  /* ── fetch invitations ─────────────────────────────────────── */
   const fetchInvitations = async () => {
-    if (!organizationSlug) {
-      console.log("Skipping fetch: organizationSlug is undefined");
-      return;
-    }
+    if (!organizationSlug) return;
     setLoading(true);
     try {
-            const response = await fetch(
-                `/api/organizations/${organizationSlug}/invitations?organizationId=${organizationId}`,
-                { credentials: "include" }
-              );
-        
+      const response = await fetch(
+        `/api/organizations/${organizationSlug}/invitations?organizationId=${organizationId}`,
+        { credentials: "include" },
+      );
       if (!response.ok) {
         throw new Error(`Failed to fetch invitations: ${response.status} ${response.statusText}`);
       }
@@ -69,9 +69,12 @@ export function InvitationsTable({ organizationId, organizationSlug, currentUser
     fetchInvitations();
   }, [organizationSlug]);
 
+  /* ── helpers ───────────────────────────────────────────────── */
   const canCancel = (inv: Invitation) => {
-    if (!currentUserRole) return false;
-    if (currentUserRole === "owner") return true;
+    if (permLoading) return false;                // still checking
+    if (canCancelPerm) return true;               // explicit permission
+    if (!currentUserRole) return false;           // no role info
+    if (currentUserRole === "owner") return true; // owner always
     if (currentUserRole === "manager") {
       return inv.role !== "owner";
     }
@@ -81,14 +84,11 @@ export function InvitationsTable({ organizationId, organizationSlug, currentUser
   const handleCancelInvitation = async (invitationId: string, email: string) => {
     if (!confirm(`Are you sure you want to cancel the invitation to ${email}?`)) return;
     try {
-           const resp = await fetch(
-               `/api/organizations/${organizationSlug}/invitations/${invitationId}?organizationId=${organizationId}`,
-               {
-                 method: "DELETE",
-                 credentials: "include",
-               }
-             );
-             if (!resp.ok) throw new Error("Cancel failed");
+      const resp = await fetch(
+        `/api/organizations/${organizationSlug}/invitations/${invitationId}?organizationId=${organizationId}`,
+        { method: "DELETE", credentials: "include" },
+      );
+      if (!resp.ok) throw new Error("Cancel failed");
       toast.success(`Invitation to ${email} canceled`);
       fetchInvitations();
     } catch (error) {
@@ -98,20 +98,17 @@ export function InvitationsTable({ organizationId, organizationSlug, currentUser
   };
 
   const formatDate = (dateString: string) => {
-    if (!dateString || typeof dateString !== "string") {
-      return "Invalid Date";
-    }
     const date = new Date(dateString);
-    if (isNaN(date.getTime())) {
-      return "Invalid Date";
-    }
-    return new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }).format(date);
+    return isNaN(date.getTime())
+      ? "Invalid Date"
+      : new Intl.DateTimeFormat("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }).format(date);
   };
 
+  /* ── render ────────────────────────────────────────────────── */
   return (
     <div className="rounded-md border">
       <Table>

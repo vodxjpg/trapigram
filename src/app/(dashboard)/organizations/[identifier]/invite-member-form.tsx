@@ -10,7 +10,7 @@ import { Loader2, Send } from "lucide-react";
 
 import { authClient } from "@/lib/auth-client";
 import { useOrgRoles } from "@/hooks/use-org-roles";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission } from "@/hooks/use-has-permission";   // ← NEW
 
 import { Button } from "@/components/ui/button";
 import {
@@ -35,7 +35,12 @@ interface Props {
 }
 
 export function InviteMemberForm({ organizationId }: Props) {
-  const can = usePermission(organizationId); 
+  /* ── permissions -------------------------------------------------------- */
+  const {
+    hasPermission: canInvite,
+    isLoading:    permLoading,
+  } = useHasPermission(organizationId, { invitation: ["create"] });
+
   const { roles, isLoading: rolesLoading } = useOrgRoles(organizationId);
   const [submitting, setSubmitting] = useState(false);
   const form = useForm<FormValues>({
@@ -43,10 +48,8 @@ export function InviteMemberForm({ organizationId }: Props) {
     defaultValues: { email: "", role: "" },
   });
 
-  // only render if they have the `invitation:create` permission
-  if (!can({ invitation: ["create"] })) {
-    return null;
-  }
+  // wait until permission resolved, then bail out if not allowed
+  if (permLoading || !canInvite) return null;
 
   async function onSubmit(values: FormValues) {
     setSubmitting(true);

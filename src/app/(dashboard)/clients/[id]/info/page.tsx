@@ -1,46 +1,43 @@
 // src/app/(dashboard)/clients/[id]/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-import { toast } from "sonner";
-import ClientDetailView from "./client-form-read-only";
+import { useEffect, useMemo }              from "react";
+import { useParams, useRouter }            from "next/navigation";
+import Link                                from "next/link";
+import { ArrowLeft }                       from "lucide-react";
 
-export default function EditClientPage() {
-  const params = useParams();
-  const router = useRouter();
-  const [client, setClient] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+import { authClient }                      from "@/lib/auth-client";
+import { useHasPermission }                from "@/hooks/use-has-permission";
+import { Button }                          from "@/components/ui/button";
+import ClientDetailView                    from "./client-form-read-only";
 
+/* -------------------------------------------------------------------------- */
+
+export default function ReadOnlyClientPage() {
+  const { id }  = useParams<{ id: string }>();
+  const router  = useRouter();
+
+  /* active org → permission hook */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  const {
+    hasPermission: viewPerm,
+    isLoading:     viewLoading,
+  } = useHasPermission(organizationId, { customer: ["view"] });
+
+  const canView = useMemo(() => !viewLoading && viewPerm, [viewLoading, viewPerm]);
+
+  /* redirect if not allowed */
   useEffect(() => {
-    const fetchClient = async () => {
-      try {
-        const response = await fetch(`/api/clients/${params.id}`, {
-          headers: {
-            "x-internal-secret":
-              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-          },
-        });
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to fetch client");
-        }
-        const data = await response.json();
-        setClient(data);
-      } catch (error: any) {
-        console.error("Error fetching client:", error);
-        toast.error(error.message || "Failed to load client data");
-        router.push("/clients");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchClient();
-  }, [params.id, router]);
+    if (!viewLoading && !viewPerm) {
+      router.replace("/clients");
+    }
+  }, [viewLoading, viewPerm, router]);
 
+  if (viewLoading || !canView) return null;          // guard during resolve
+
+  /* ---------------------------------------------------------------------- */
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex items-center gap-2">
@@ -54,15 +51,15 @@ export default function EditClientPage() {
           <p className="text-muted-foreground">Client information</p>
         </div>
       </div>
-      <ClientDetailView />
+
+      {/* read-only client view – self-fetching */}
+      <ClientDetailView clientId={id} />
 
       <div className="max-w-3xl mx-auto py-10">
-        <div className="mb-4">
-          <Button variant="outline" onClick={() => router.back()}>
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Ticket
-          </Button>
-        </div>
+        <Button variant="outline" onClick={() => router.back()}>
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Back to Ticket
+        </Button>
       </div>
     </div>
   );

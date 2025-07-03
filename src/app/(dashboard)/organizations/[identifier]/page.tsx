@@ -1,19 +1,22 @@
 // src/app/(dashboard)/organizations/[identifier]/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
-import Link from "next/link";
-import { authClient } from "@/lib/auth-client"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
-import { useHeaderTitle } from "@/context/HeaderTitleContext";
-import { usePermission } from "@/hooks/use-permission";
-import { MembersTable } from "./members-table";
-import { InvitationsTable } from "./invitations-table";
-import { InviteMemberForm } from "./invite-member-form";
-import { toast } from "sonner";
+import { useState, useEffect }        from "react";
+import { useParams }                  from "next/navigation";
+import Link                           from "next/link";
+import { authClient }                 from "@/lib/auth-client";
+import {
+  Tabs, TabsList, TabsTrigger, TabsContent,
+}                                     from "@/components/ui/tabs";
+import { Button }                     from "@/components/ui/button";
+import { useHeaderTitle }             from "@/context/HeaderTitleContext";
+import { useHasPermission }           from "@/hooks/use-has-permission";
+import { MembersTable }               from "./members-table";
+import { InvitationsTable }           from "./invitations-table";
+import { InviteMemberForm }           from "./invite-member-form";
+import { toast }                      from "sonner";
 
+/* ──────────────────────────────────────────────────────────────── */
 type Organization = {
   id: string;
   name: string;
@@ -23,13 +26,13 @@ type Organization = {
 };
 
 export default function OrganizationDetailsPage() {
-  const { identifier } = useParams();
+  const { identifier }   = useParams<{ identifier: string }>();
   const { setHeaderTitle } = useHeaderTitle();
-  const can = usePermission(); 
 
   const [organization, setOrganization] = useState<Organization | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading,      setLoading     ] = useState(true);
 
+  /* ── load organisation & set active ─────────────────────────── */
   useEffect(() => {
     async function loadOrganization() {
       setLoading(true);
@@ -41,9 +44,7 @@ export default function OrganizationDetailsPage() {
         const { organization: org } = await res.json();
         setOrganization(org);
         setHeaderTitle(org.name);
-        await authClient.organization.setActive({
-            organizationId: org.id,
-          });
+        await authClient.organization.setActive({ organizationId: org.id });
       } catch (err) {
         console.error(err);
         toast.error("Failed to load organization details.");
@@ -51,34 +52,40 @@ export default function OrganizationDetailsPage() {
         setLoading(false);
       }
     }
-
     if (identifier) loadOrganization();
   }, [identifier, setHeaderTitle]);
 
+  /* ── permissions via secured hook ───────────────────────────── */
+  const organizationId = organization?.id ?? null;
+
+  const {
+    hasPermission: canViewKeysPerm,
+    isLoading:     keysPermLoading,
+  } = useHasPermission(organizationId, { platformKey: ["view"] });
+
+  const {
+    hasPermission: canCreateInvitation,
+    isLoading:     invitePermLoading,
+  } = useHasPermission(organizationId, { invitation: ["create"] });
+
+  /* ── loading / error guards ─────────────────────────────────── */
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        Loading…
-      </div>
-    );
+    return <div className="flex items-center justify-center h-full">Loading…</div>;
   }
-
   if (!organization) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        Organization not found
-      </div>
-    );
+    return <div className="flex items-center justify-center h-full">Organization not found</div>;
   }
 
+  /* ── derived flags ──────────────────────────────────────────── */
   const { id, slug, userRole } = organization;
   const normalizedRole = (userRole ?? "").toLowerCase();
-  const isOwner = normalizedRole === "owner"
-  const canViewKeys = isOwner || can({ platformKey: ["view"] });
+  const isOwner        = normalizedRole === "owner";
+  const canViewKeys    = isOwner || (keysPermLoading ? false : canViewKeysPerm);
 
+  /* ── render ─────────────────────────────────────────────────── */
   return (
     <div className="flex flex-col gap-6 p-6">
-      {/* Header with Manage Roles & Manage Keys buttons */}
+      {/* header */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold tracking-tight">{organization.name}</h1>
         <div className="flex gap-2">
@@ -99,13 +106,12 @@ export default function OrganizationDetailsPage() {
         Manage organization members and invitations.
       </p>
 
-      {/* Invitation form (hook will still double-check permissions) */}
-      {/* Invitation form shows for anyone with invitation:create */}
-{can({ invitation: ["create"] }) && (
-  <InviteMemberForm organizationId={id} />
-)}
+      {/* invitation form */}
+      {!invitePermLoading && canCreateInvitation && (
+        <InviteMemberForm organizationId={id} />
+      )}
 
-      {/* Tabs for Members / Invitations */}
+      {/* members / invitations tabs */}
       <Tabs defaultValue="members" className="w-full">
         <TabsList>
           <TabsTrigger value="members">Members</TabsTrigger>

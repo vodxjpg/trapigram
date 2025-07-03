@@ -1,37 +1,53 @@
+// src/app/(dashboard)/organizations/[identifier]/clients/page.tsx  ← keep path
 "use client";
-import { useEffect, useState } from "react"
-import { Button } from "@/components/ui/button";
-import Link from "next/link";
-import { Plus } from "lucide-react";
-import { ClientsTable } from "./clients-table";
-import { usePermission } from "@/hooks/use-permission";
-import { useRouter } from "next/navigation";
+
+import { useEffect, useState }                from "react";
+import { useRouter }                          from "next/navigation";
+import { Plus }                               from "lucide-react";
+import Link                                   from "next/link";
+
+import { authClient }                         from "@/lib/auth-client";
+import { useHasPermission }                   from "@/hooks/use-has-permission";   // ← NEW
+import { Button }                             from "@/components/ui/button";
+import { ClientsTable }                       from "./clients-table";
+
+/* -------------------------------------------------------------------------- */
 
 export default function ClientsPage() {
-   const can = usePermission(); ;
   const router = useRouter();
 
-  
-  /* ---------- permission resolved here ---------- */
+  /* ── active organisation → id for permission hook ────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
+
+  /* ── secure permission checks ─────────────────────────────────────────── */
+  const {
+    hasPermission: viewPerm,
+    isLoading:     viewLoading,
+  } = useHasPermission(organizationId, { customer: ["view"] });
+
+  const {
+    hasPermission: createPerm,
+    isLoading:     createLoading,
+  } = useHasPermission(organizationId, { customer: ["create"] });
+
+  /* ── mirror legacy local state for minimal churn ─────────────────────── */
   const [mayView, setMayView] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!can.loading) {
-      setMayView(can({ customer: ["view"] }));
-    }
-  }, [can]);
+    if (!viewLoading) setMayView(viewPerm);
+  }, [viewLoading, viewPerm]);
 
-  // still figuring it out → nothing yet
-  if (mayView === null) return null;
-
-  // didn’t pass → redirect once, then bail out
+  /* ── guards ───────────────────────────────────────────────────────────── */
+  if (mayView === null) return null;          // still resolving
   if (!mayView) {
     router.replace("/dashboard");
-    return null;
+    return null;                              // redirect
   }
 
-  const canCreate = can({ customer: ["create"] });  
+  const canCreate = createPerm && !createLoading;
 
+  /* ── page ─────────────────────────────────────────────────────────────── */
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex items-center justify-between">

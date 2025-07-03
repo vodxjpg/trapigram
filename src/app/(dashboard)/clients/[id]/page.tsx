@@ -1,36 +1,57 @@
 // src/app/(dashboard)/clients/[id]/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { ClientForm } from "../client-form";
-import { Button } from "@/components/ui/button";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-import { toast } from "sonner";
-import { Skeleton } from "@/components/ui/skeleton";
-import { usePermission } from "@/hooks/use-permission";
+import { useState, useEffect, useMemo }  from "react";
+import { useParams, useRouter }          from "next/navigation";
+import Link                              from "next/link";
+import { ArrowLeft }                     from "lucide-react";
+import { toast }                         from "sonner";
+
+import { authClient }                    from "@/lib/auth-client";         // ← NEW
+import { useHasPermission }              from "@/hooks/use-has-permission";// ← NEW
+import { ClientForm }                    from "../client-form";
+import { Button }                        from "@/components/ui/button";
+import { Skeleton }                      from "@/components/ui/skeleton";
+
+/* -------------------------------------------------------------------------- */
 
 export default function EditClientPage() {
-  const params = useParams();
-  const router = useRouter();
-   const can = usePermission(); ;
+  const params  = useParams<{ id: string }>();
+  const router  = useRouter();
 
-  const [client, setClient] = useState<any>(null);
+  /* active organisation ⟶ id for permission hook */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
 
+  /* secure permission check */
+  const {
+    hasPermission: updatePerm,
+    isLoading:     updateLoading,
+  } = useHasPermission(organizationId, { customer: ["update"] });
+
+  /* adapter so existing code (`can.loading`, `can({…})`) keeps working */
+  const can = useMemo(() => {
+    const fn = (_p: any) => updatePerm; // we already queried for "update"
+    (fn as any).loading = updateLoading;
+    return fn as typeof fn & { loading: boolean };
+  }, [updatePerm, updateLoading]);
+
+  /* client data state */
+  const [client, setClient]   = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  // 1) Redirect away if they lack the update permission
+  /* redirect if lacking permission */
   useEffect(() => {
     if (!can.loading && !can({ customer: ["update"] })) {
       router.replace("/clients");
     }
   }, [can, router]);
 
- 
+  /* fetch client once permission resolved */
   useEffect(() => {
-      if (can.loading || !can({ customer: ["update"] })) return;
-      const fetchClient = async () => {
+    if (can.loading || !can({ customer: ["update"] })) return;
+
+    const fetchClient = async () => {
       try {
         const response = await fetch(`/api/clients/${params.id}`, {
           headers: {
@@ -39,7 +60,7 @@ export default function EditClientPage() {
           },
         });
         if (!response.ok) {
-          const errorData = await response.json();
+          const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || "Failed to fetch client");
         }
         const data = await response.json();
@@ -52,13 +73,14 @@ export default function EditClientPage() {
         setLoading(false);
       }
     };
+
     fetchClient();
   }, [can.loading, can, params.id, router]);
 
-  if (can.loading || !can({ customer: ["update"] })) {
-      return null;          // keeps hook order stable
-      }
+  /* guard during permission resolve */
+  if (can.loading || !can({ customer: ["update"] })) return null;
 
+  /* ---------------------------------------------------------------------- */
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
       {/* Back button + header */}
@@ -91,8 +113,6 @@ export default function EditClientPage() {
       ) : (
         <ClientForm clientData={client} isEditing={true} />
       )}
-
-      {/* Client statistics */}
     </div>
   );
 }
