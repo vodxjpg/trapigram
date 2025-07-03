@@ -1,3 +1,7 @@
+/* -------------------------------------------------------------------------- */
+/*  src/app/(dashboard)/orders/page.tsx – FULL REPLACEMENT                    */
+/* -------------------------------------------------------------------------- */
+
 "use client";
 
 import { useState, useEffect } from "react";
@@ -38,8 +42,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, CalendarIcon, MoreVertical, Mail, Truck } from "lucide-react";
 import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 import { toast } from "sonner";
-
-// **New imports for the dialog/modal**
 import {
   Dialog,
   DialogContent,
@@ -48,7 +50,10 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-// Define order status types
+/* -------------------------------------------------------------------------- */
+/*  Types                                                                     */
+/* -------------------------------------------------------------------------- */
+
 type OrderStatus =
   | "open"
   | "underpaid"
@@ -57,7 +62,6 @@ type OrderStatus =
   | "refunded"
   | "completed";
 
-// **Extend Order to include trackingNumber**
 interface Order {
   id: string;
   orderKey: string;
@@ -66,21 +70,23 @@ interface Order {
   username: string;
   email: string;
   status: OrderStatus;
-  createdAt: string; // incoming ISO string
+  createdAt: string;
   total: number;
   trackingNumber?: string;
 }
 
-// Date filter options
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
+type ShippingCompany = { id: string; name: string };
+
+/* -------------------------------------------------------------------------- */
+/*  Component                                                                 */
+/* -------------------------------------------------------------------------- */
 
 export default function OrdersPage() {
-   const can = usePermission(); ;
+  const can = usePermission();
   const router = useRouter();
 
-  /* ──────────────────────────────────────────────────────────────
-   *  Permission flags (computed once role is known)
-   * ────────────────────────────────────────────────────────────── */
+  /* ── permission flags ────────────────────────────────────────── */
   const [permissions, setPermissions] = useState({
     canViewDetail: false,
     canViewPricing: false,
@@ -89,19 +95,26 @@ export default function OrdersPage() {
     canUpdateStatus: false,
   });
 
-  
+  /* -> make flags easy to use in JSX */
+  const {
+    canViewDetail,
+    canViewPricing,
+    canUpdate,
+    canUpdateTracking,
+    canUpdateStatus,
+  } = permissions;
 
-  // ◼︎ state for all orders via API
+  /* ── orders & ui state ───────────────────────────────────────── */
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // **Modal state**
+  /* dialog state */
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [draftTracking, setDraftTracking] = useState("");
 
-  // ◼︎ filters & UI state
+  /* filters */
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -111,12 +124,11 @@ export default function OrdersPage() {
     to: Date | undefined;
   }>({ from: undefined, to: undefined });
 
-  // ◼︎ pagination state
+  /* pagination */
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
-  type ShippingCompany = { id: string; name: string };
-
+  /* shipping companies */
   const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
     []
   );
@@ -125,7 +137,10 @@ export default function OrdersPage() {
     undefined
   );
 
-  // — fetch orders from /api/order on mount
+  /* ---------------------------------------------------------------------- */
+  /*  Data fetching                                                         */
+  /* ---------------------------------------------------------------------- */
+
   useEffect(() => {
     setLoading(true);
     fetch("/api/order")
@@ -141,9 +156,10 @@ export default function OrdersPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  /* ---------------------------------------------------------------------- */
+  /*  Filters                                                               */
+  /* ---------------------------------------------------------------------- */
 
-
-  // — apply filters whenever inputs or orders change
   useEffect(() => {
     let result = orders.map((o) => ({
       ...o,
@@ -187,6 +203,10 @@ export default function OrdersPage() {
     setCurrentPage(1);
   }, [orders, searchQuery, statusFilter, dateFilter, dateRange]);
 
+  /* ---------------------------------------------------------------------- */
+  /*  Helpers                                                               */
+  /* ---------------------------------------------------------------------- */
+
   const getStatusColor = (s: OrderStatus) => {
     switch (s) {
       case "open":
@@ -194,7 +214,6 @@ export default function OrdersPage() {
       case "paid":
         return "bg-green-500";
       case "cancelled":
-        return "bg-red-500";
       case "refunded":
         return "bg-red-500";
       case "underpaid":
@@ -206,6 +225,7 @@ export default function OrdersPage() {
     }
   };
 
+  /* fetch shipping companies when dialog opens */
   useEffect(() => {
     if (!dialogOpen) return;
     (async () => {
@@ -226,85 +246,63 @@ export default function OrdersPage() {
       }
     })();
   }, [dialogOpen]);
-  // Function to change order status via API
-  const handleStatusChange = async (
-    orderId: string,
-    newStatus: OrderStatus
-  ) => {
-    try {
-      const res = await fetch(`/api/order/${orderId}/change-status`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
+
+  /* ---------------------------------------------------------------------- */
+  /*  Permission resolution                                                 */
+  /* ---------------------------------------------------------------------- */
+
+  useEffect(() => {
+    if (can.loading) return;
+
+    const checkAllPermissions = async () => {
+      const [viewDetail, viewPricing, update, updateTracking, updateStatus] =
+        await Promise.all([
+          can({ order: ["view"] }),
+          can({ order: ["view_pricing"] }),
+          can({ order: ["update"] }),
+          can({ order: ["update_tracking"] }),
+          can({ order: ["update_status"] }),
+        ]);
+
+      setPermissions({
+        canViewDetail: viewDetail,
+        canViewPricing: viewPricing,
+        canUpdate: update,
+        canUpdateTracking: updateTracking,
+        canUpdateStatus: updateStatus,
       });
-      if (!res.ok) throw new Error("Failed to update status");
-      setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
-      );
-      toast.success(`Order status changed`);
-    } catch (err) {
-      console.error(err);
-      alert("Error updating order status");
-    }
-  };
+    };
 
-  const handleOrderAction = (orderId: string, action: string) => {
-    console.log(`Performing ${action} on order ${orderId}`);
-    if (action === "cancel") {
-      setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, status: "cancelled" } : o))
-      );
-    } else if (action === "initiate-payment") {
-      alert(`Payment initiated for order ${orderId}`);
-    } else if (action === "send-notification") {
-      alert(`Payment notification sent for order ${orderId}`);
-    }
-  };
+    checkAllPermissions();
+  }, [can, can.loading]);
 
-  // **Open the tracking modal**
-  const handleTracking = (orderId: string) => {
-    const order = orders.find((o) => o.id === orderId);
-    setSelectedOrderId(orderId);
-    setDraftTracking(order?.trackingNumber ?? "");
-    setDialogOpen(true);
-  };
+  /* ---------------------------------------------------------------------- */
+  /*  Render guards                                                         */
+  /* ---------------------------------------------------------------------- */
 
-  // **Save tracking to API**
-  const saveTracking = async () => {
-    if (!selectedOrderId) return;
-    // ensure a company is selected
-    if (!selectedCompany) {
-      toast.error("Please select a shipping company before saving.");
-      return;
-    }
-    const company = shippingCompanies.find((c) => c.id === selectedCompany);
-    if (!company) {
-      toast.error("Selected shipping company not found.");
-      return;
-    }
-    try {
-      const res = await fetch(`/api/order/${selectedOrderId}/tracking-number`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          trackingNumber: draftTracking,
-          shippingCompany: company.name,
-        }),
-      });
-      if (!res.ok) throw new Error("Failed to save tracking number");
-      // Optimistically update UI
-      setOrders((prev) =>
-        prev.map((o) =>
-          o.id === selectedOrderId ? { ...o, trackingNumber: draftTracking } : o
-        )
-      );
-      toast.success("Tracking number saved");
-      setDialogOpen(false);
-    } catch (err) {
-      console.error(err);
-      toast.error("Could not save tracking");
-    }
-  };
+  if (can.loading) return <div>Loading permissions…</div>;
+  if (loading)
+    return (
+      <div className="container mx-auto py-8 px-4 text-center">
+        Loading orders…
+      </div>
+    );
+  if (error)
+    return (
+      <div className="container mx-auto py-8 px-4 text-center text-red-600">
+        Error loading orders: {error}
+      </div>
+    );
+
+  /* ---------------------------------------------------------------------- */
+  /*  JSX                                                                   */
+  /* ---------------------------------------------------------------------- */
+
+  const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
+  const paginatedOrders = filteredOrders.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
 
   const formatDate = (dateStr: string) =>
     format(new Date(dateStr), "MMM dd, yyyy");
@@ -314,12 +312,6 @@ export default function OrdersPage() {
     if (value !== "custom") setDateRange({ from: undefined, to: undefined });
   };
 
-  // paginate
-  const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
-  const paginatedOrders = filteredOrders.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
 
   /* ──────────────────────────────────────────────────────────────
  *  All hooks above have now executed; it’s safe to short-circuit
