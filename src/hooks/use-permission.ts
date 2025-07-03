@@ -1,4 +1,4 @@
-// ─── src/hooks/use-permission.ts (v4.2 – auto-org-id) ────────────────────
+// ─── src/hooks/use-permission.ts (v4.3 – re-render after priming) ─────────
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -10,104 +10,81 @@ import { ac }             from "@/lib/permissions";
 
 type Perm = Record<string, string[]>;
 
-/* ── helper: prime the org-role registry exactly once per org ─────────── */
+/* — role-registry priming — */
 const primed = new Set<string>();
-
-async function primeRolesOnce(orgId: string) {
-  if (primed.has(orgId)) return;
+async function primeRolesOnce(orgId: string): Promise<boolean> {
+  if (primed.has(orgId)) return false;          // nothing new
   primed.add(orgId);
 
   try {
     const res = await fetch(`/api/organizations/${orgId}/roles`, {
       credentials: "include",
     });
-    if (!res.ok) {
-      console.warn("[usePermission] role fetch failed:", res.status);
-      return;
-    }
-    const { roles } = await res.json();            // [{ name, permissions }]
-    roles.forEach((r: any) =>
-      registerRole(orgId, r.name, r.permissions),
-    );
+    if (!res.ok) return false;
+
+    const { roles } = await res.json();
+    roles.forEach((r: any) => registerRole(orgId, r.name, r.permissions));
     console.debug("[usePermission] registered", roles.length, "roles for", orgId);
+    return true;                                // new roles were added
   } catch (err) {
-    console.warn("[usePermission] role fetch exception:", err);
+    console.warn("[usePermission] role fetch failed:", err);
+    return false;
   }
 }
 
-/* ── hook ──────────────────────────────────────────────────────────────── */
 export function usePermission(passedOrgId?: string) {
-  /** `null` ⇒ still loading */
-  const [state, setState] = useState<{
-    role:  string | null;
-    orgId: string | null;
-  }>({ role: null, orgId: null });
+  const [{ role, orgId }, setUser] = useState<{ role: string | null; orgId: string | null }>({
+    role: null,
+    orgId: null,
+  });
+  const [tick, bump] = useState(0);             // ← forces re-render
 
-  /* 1. resolve role + orgId ------------------------------------------------ */
+  /* 1. resolve user & org -------------------------------------------------- */
   useEffect(() => {
     let dead = false;
-
     (async () => {
       try {
-        const res = passedOrgId
+        const res  = passedOrgId
           ? await getMember({ organizationId: passedOrgId })
           : await authClient.organization.getActiveMember();
 
-        const role  = (res?.data?.role ?? "").toLowerCase();
-        const orgId = passedOrgId ?? res?.data?.organizationId ?? "";
+        const r  = (res?.data?.role ?? "").toLowerCase();
+        const id = passedOrgId ?? res?.data?.organizationId ?? "";
+        console.debug("[usePermission] active", id + ":" + r);
 
-        console.debug("[usePermission] active", orgId + ":" + role);
-        if (!dead) setState({ role, orgId });
-
-        /* prime registry asap (non-blocking) */
-        if (orgId) primeRolesOnce(orgId);
+        if (!dead) setUser({ role: r, orgId: id });
+        if (id) primeRolesOnce(id).then(added => added && bump(v => v + 1));
       } catch (err) {
         console.warn("[usePermission] member fetch failed:", err);
-        if (!dead) setState({ role: "", orgId: passedOrgId ?? "" }); // guest
+        if (!dead) setUser({ role: "", orgId: passedOrgId ?? "" });
       }
     })();
-
     return () => { dead = true; };
   }, [passedOrgId]);
 
-  const loading = state.role === null;
+  const loading = role === null;
 
-  /* 2. local checker ------------------------------------------------------- */
-  const can = useCallback(
-    (perm: Perm): boolean => {
-      if (loading) return false;            // still resolving
-      if (state.role === "owner") return true;
+  /* 2. checker ------------------------------------------------------------- */
+  const can = useCallback((perm: Perm): boolean => {
+    if (loading) return false;
+    if (role === "owner") return true;
 
-      const orgId = state.orgId || "global";
-      let grants  = resolveRole({ organizationId: orgId, role: state.role! });
+    const oid   = orgId || "global";
+    const grant = resolveRole({ organizationId: oid, role: role! });
 
-      if (!grants) {
-        // We haven’t seen roles for this org yet; ensure priming & say “no” for now
-        primeRolesOnce(orgId);
-        console.debug("[usePermission] miss – no grants yet", orgId, state.role, perm);
-        return false;
-      }
+    if (!grant) {
+      // ensure roles are primed and schedule re-eval if something new arrived
+      primeRolesOnce(oid).then(added => added && bump(v => v + 1));
+      console.debug("[usePermission] miss – no grants", oid, role, perm);
+      return false;
+    }
+    const [resource, actions] = Object.entries(perm)[0];
+    const ok = actions.every(a => ac.can(grant.role).execute(a).on(resource).granted);
+    console.debug("[usePermission] check", oid + ":" + role, perm, "→", ok);
+    return ok;
+  }, [loading, role, orgId, tick]);             // ← re-run after bump
 
-      const [resource, actions] = Object.entries(perm)[0];
-      const ok = actions.every(a =>
-        ac.can(grants.role).execute(a).on(resource).granted,
-      );
-
-      console.debug(
-        "[usePermission] check",
-        orgId + ":" + state.role,
-        perm,
-        "→",
-        ok,
-      );
-      return ok;
-    },
-    [loading, state.role, state.orgId],
-  );
-
-  /* legacy flags on the function object ----------------------------------- */
   (can as any).loading = loading;
-  (can as any).role    = state.role;
-
+  (can as any).role    = role;
   return can as typeof can & { loading: boolean; role: string | null };
 }
