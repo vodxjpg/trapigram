@@ -1,3 +1,4 @@
+// src/hooks/use-products.ts
 import useSWR from "swr"
 import type { Product } from "@/types/product"
 
@@ -19,21 +20,24 @@ const fetcher = async (url: string) => {
 // Hook for paginated product list
 export function useProducts({ page, pageSize, search }: UseProductsProps) {
   const params = new URLSearchParams({
-    page: page.toString(),
-    pageSize: pageSize.toString(),
+    page:      page.toString(),
+    pageSize:  pageSize.toString(),
     ...(search ? { search } : {}),
   })
 
-  const { data, error, mutate } = useSWR(
+  const { data, error, mutate } = useSWR<{
+    products: Product[]
+    pagination: { totalPages: number }
+  }>(
     `/api/products?${params.toString()}`,
     fetcher,
     { revalidateOnFocus: false }
   )
 
   return {
-    products: (data?.products as Product[]) || [],
-    isLoading: !data && !error,
-    totalPages: data?.pagination?.totalPages || 1,
+    products:   data?.products   || [],
+    isLoading:  !data && !error,
+    totalPages: data?.pagination?.totalPages ?? 1,
     mutate,
   }
 }
@@ -50,14 +54,14 @@ const singleProductFetcher = async (url: string) => {
 
 // Hook for a single product
 export function useProduct(productId: string) {
-  const { data, error, mutate } = useSWR(
+  const { data, error, mutate } = useSWR<Product>(
     productId ? `/api/products/${productId}` : null,
     singleProductFetcher,
     { revalidateOnFocus: false }
   )
 
   return {
-    product: data as Product | null,
+    product:   data ?? null,
     isLoading: !data && !error,
     mutate,
   }
