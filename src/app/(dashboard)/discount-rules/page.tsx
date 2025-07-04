@@ -6,28 +6,41 @@ import { useRouter } from "next/navigation";
 import { DiscountRulesTable } from "./components/discount-rules-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { Suspense } from "react";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { Button } from "@/components/ui/button";
 
 export default function DiscountRulesPage() {
   const { setHeaderTitle } = useHeaderTitle();
-   const can = usePermission(); ;
   const router = useRouter();
+
+  // ── active organization ───────────────────────────────────────────────
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  // ── permissions ────────────────────────────────────────────────────────
+  const {
+    hasPermission: canView,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { tierPricing: ["view"] });
+  const { hasPermission: canCreate } = useHasPermission(
+    organizationId,
+    { tierPricing: ["create"] },
+  );
 
   useEffect(() => {
     setHeaderTitle("Tier pricing");
   }, [setHeaderTitle]);
 
-  if (can.loading) return null;
-  if (!can({ tierPricing: ["view"] })) {
+  if (permLoading) return null;
+
+  if (!canView) {
     return (
       <div className="container mx-auto py-6 px-6 text-center text-red-600">
         You don’t have permission to view tier pricing.
       </div>
     );
   }
-
-  const canCreate = can({ tierPricing: ["create"] });
 
   return (
     <div className="flex flex-col gap-6 p-6">

@@ -3,47 +3,62 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 import { DiscountRuleForm } from "../components/discount-rules-form";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 export default function EditDiscountRulePage() {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
   const router = useRouter();
-   const can = usePermission(); ;
-  const [rule, setRule] = useState<any>(null);
+
+  // ── active organization ───────────────────────────────────────────────
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  // ── permission to update tier pricing ─────────────────────────────────
+  const {
+    hasPermission: canUpdate,
+    isLoading:     permLoading,
+  } = useHasPermission(organizationId, { tierPricing: ["update"] });
+
+  const [rule,   setRule  ] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   // redirect if no update permission
   useEffect(() => {
-    if (can.loading) return;
-    if (!can({ tierPricing: ["update"] })) {
+    if (!permLoading && !canUpdate) {
       router.replace("/discount-rules");
     }
-  }, [can, router]);
+  }, [permLoading, canUpdate, router]);
 
+  // fetch rule once we know we can update
   useEffect(() => {
-    if (!can.loading) {
-      fetch(`/api/tier-pricing/${id}`)
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to fetch");
-          return res.json();
-        })
-        .then(setRule)
-        .catch((e) => {
-          toast.error(e.message);
-          router.push("/discount-rules");
-        })
-        .finally(() => setLoading(false));
-    }
-  }, [can.loading, id, router]);
+    if (permLoading || !canUpdate) return;
+    setLoading(true);
+    fetch(`/api/tier-pricing/${id}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch");
+        return res.json();
+      })
+      .then((data) => {
+        setRule(data);
+      })
+      .catch((e) => {
+        toast.error((e as Error).message);
+        router.replace("/discount-rules");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [permLoading, canUpdate, id, router]);
 
-  if (can.loading) return null;
-  if (!can({ tierPricing: ["update"] })) return null;
+  if (permLoading) return null;
+  if (!canUpdate) return null;
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
@@ -54,10 +69,11 @@ export default function EditDiscountRulePage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-3xl font-bold">Edit tier pricing</h1>
+          <h1 className="text-3xl font-bold">Edit Tier Pricing</h1>
           <p className="text-muted-foreground">Update your rule.</p>
         </div>
       </div>
+
       {loading ? (
         <div className="space-y-4">
           <Skeleton className="h-12 w-full" />
