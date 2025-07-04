@@ -93,7 +93,6 @@ export async function GET(req: NextRequest) {
       JOIN member  m  ON m."organizationId" = o.id
       LEFT JOIN member m2 ON m2."organizationId" = o.id
       WHERE m."userId" = $1
-        AND m.role      = 'owner'
       GROUP BY
         o.id, o.name, o.slug, o.logo,
         o.countries, o.metadata, o."encryptedSecret", m.role
