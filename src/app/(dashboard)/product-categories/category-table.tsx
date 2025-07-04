@@ -3,7 +3,7 @@
 
 import type React                from "react";
 import { useState, useEffect }   from "react";
-import { useRouter }             from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Image                     from "next/image";
 import {
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
