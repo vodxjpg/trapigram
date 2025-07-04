@@ -25,17 +25,17 @@ const allCountries = getCountries().map(c => ({ code: c, name: countriesLib.getN
 /* ──────────────────────────────── */
 const stepSchema = z.object({
   fromUnits: z.coerce.number().min(1),
-  toUnits  : z.coerce.number().min(1),
-  price    : z.coerce.number().positive(),
+  toUnits: z.coerce.number().min(1),
+  price: z.coerce.number().positive(),
 })
 const productItemSchema = z
   .object({ productId: z.string().uuid().nullable(), variationId: z.string().uuid().nullable() })
   .refine(d => d.productId || d.variationId, { message: "Select either a product or a variation" })
 const formSchema = z.object({
-  name     : z.string().min(1, "Name is required"),
+  name: z.string().min(1, "Name is required"),
   countries: z.array(z.string().length(2)).min(1, "Select at least one country"),
-  products : z.array(productItemSchema).min(1, "Select at least one product or variation"),
-  steps    : z.array(stepSchema).min(1, "Add at least one step"),
+  products: z.array(productItemSchema).min(1, "Select at least one product or variation"),
+  steps: z.array(stepSchema).min(1, "Add at least one step"),
 })
 type FormValues = z.infer<typeof formSchema>
 
@@ -97,10 +97,10 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
   useEffect(() => {
     if (isEditing && discountRuleData) {
       form.reset({
-        name     : discountRuleData.name,
+        name: discountRuleData.name,
         countries: discountRuleData.countries.map(c => c.toUpperCase()),
-        products : discountRuleData.products,
-        steps    : discountRuleData.steps,
+        products: discountRuleData.products,
+        steps: discountRuleData.steps,
       })
     }
   }, [isEditing, discountRuleData, form])
@@ -132,43 +132,67 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
   // Whenever categories change, fetch all products in them and merge
   useEffect(() => {
     if (selectedCategories.length === 0) return;
-    Promise.all(
-      selectedCategories.map((catId) =>
-        fetch(
-          `/api/products?categoryId=${catId}&pageSize=1000`
-        ).then((res) => {
-          if (!res.ok) throw new Error("Failed to fetch products");
-          return res.json();
-        })
-      )
-    )
-      .then((all) => {
-        const items: { productId: string | null; variationId: string | null }[] =
-          [];
-        all.forEach((batch: any) => {
-          batch.products.forEach((p: any) => {
-            if (p.productType === "simple") {
-              items.push({ productId: p.id, variationId: null });
-            } else {
-              p.variations.forEach((v: any) => {
-                items.push({
-                  productId: null,
-                  variationId: v.id,
-                });
-              });
-            }
-          });
+
+    // Helper to grab every page of products for one category
+    async function fetchAllProductsInCategory(catId: string) {
+      const collected: any[] = [];
+      let page = 1;
+      let totalPages = 1;
+
+      do {
+        const url = `/api/products?categoryId=${catId}&pageSize=100&page=${page}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Failed to fetch products");
+        const json = await res.json();
+        collected.push(...json.products);
+        totalPages = json.pagination.totalPages;
+        page++;
+      } while (page <= totalPages);
+
+      return collected;
+    }
+
+    // IIFE to drive the async work
+    (async () => {
+      try {
+        // 1) fetch each category’s full product list
+        const batches = await Promise.all(
+          selectedCategories.map((catId) =>
+            fetchAllProductsInCategory(catId)
+          )
+        );
+
+        // 2) flatten into one array
+        const allItems = batches.flat();
+
+        // 3) convert into your product/variation tuples
+        const items: { productId: string | null; variationId: string | null }[] = [];
+        allItems.forEach((p: any) => {
+          if (p.productType === "simple") {
+            items.push({ productId: p.id, variationId: null });
+          } else {
+            p.variations.forEach((v: any) => {
+              items.push({ productId: null, variationId: v.id });
+            });
+          }
         });
+
+        // 4) merge with anything already manually added
         const existing = form.getValues("products");
         const map = new Map<string, { productId: string | null; variationId: string | null }>();
         existing.concat(items).forEach((it) => {
           const key = `${it.productId || ""}-${it.variationId || ""}`;
           map.set(key, it);
         });
+
+        // 5) write back into the form
         form.setValue("products", Array.from(map.values()));
-      })
-      .catch((err) => toast.error(err.message));
+      } catch (err: any) {
+        toast.error(err.message);
+      }
+    })();
   }, [selectedCategories, form]);
+
 
   // --- Products / Variations ---
   const [productOptions, setProductOptions] = useState<
@@ -206,7 +230,7 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
 
   const onSubmit = async (vals: FormValues) => {
     try {
-      const url    = isEditing ? `/api/tier-pricing/${(discountRuleData as any).id}` : "/api/tier-pricing"
+      const url = isEditing ? `/api/tier-pricing/${(discountRuleData as any).id}` : "/api/tier-pricing"
       const method = isEditing ? "PATCH" : "POST"
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(vals) })
       if (!res.ok) throw new Error("Save failed")
@@ -316,7 +340,7 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
                       options={productOptions}
                       getOptionValue={(o) =>
                         `${o.value.productId ?? ""}-${o.value.variationId ??
-                          ""}`
+                        ""}`
                       }
                       getOptionLabel={(o) => o.label}
                       value={productOptions.filter((o) =>
@@ -336,8 +360,8 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
               )}
             />
 
-              {/* Discount Steps */}
-              <div className="space-y-2">
+            {/* Discount Steps */}
+            <div className="space-y-2">
               <FormLabel>Price Steps</FormLabel>
               {fields.map((f, i) => (
                 <div key={f.id} className="grid grid-cols-4 items-end gap-2">
