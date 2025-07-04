@@ -360,7 +360,7 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
               )}
             />
 
-            {/* Discount Steps */}
+            {/* Discount Step */}
             <div className="space-y-2">
               <FormLabel>Price Steps</FormLabel>
               {fields.map((f, i) => (
