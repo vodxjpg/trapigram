@@ -153,40 +153,58 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
     }
 
     // IIFE to drive the async work
-    (async () => {
-      try {
-        // 1) fetch each category’s full product list
-        const batches = await Promise.all(
-          selectedCategories.map((catId) =>
-            fetchAllProductsInCategory(catId)
-          )
-        );
-
-        // 2) flatten into one array
-        const allItems = batches.flat();
-
-        // 3) convert into your product/variation tuples
-        const items: { productId: string | null; variationId: string | null }[] = [];
-        allItems.forEach((p: any) => {
-          if (p.productType === "simple") {
-            items.push({ productId: p.id, variationId: null });
-          } else {
-            p.variations.forEach((v: any) => {
-              items.push({ productId: null, variationId: v.id });
+        (async () => {
+          try {
+            // 1) fetch each category’s full product list
+            const batches = await Promise.all(
+              selectedCategories.map((catId) =>
+                fetchAllProductsInCategory(catId)
+              )
+            );
+    
+            // 2) flatten into one array
+            const allItems = batches.flat();
+    
+            // 3) convert into your product/variation tuples
+            const items: { productId: string | null; variationId: string | null }[] = [];
+            allItems.forEach((p: any) => {
+              if (p.productType === "simple") {
+                items.push({ productId: p.id, variationId: null });
+              } else {
+                p.variations.forEach((v: any) => {
+                  items.push({ productId: null, variationId: v.id });
+                });
+              }
             });
-          }
-        });
-
-        // 4) merge with anything already manually added
-        const existing = form.getValues("products");
-        const map = new Map<string, { productId: string | null; variationId: string | null }>();
-        existing.concat(items).forEach((it) => {
-          const key = `${it.productId || ""}-${it.variationId || ""}`;
-          map.set(key, it);
-        });
-
-        // 5) write back into the form
-        form.setValue("products", Array.from(map.values()));
+    
+            // ─── NEW ── also merge these into productOptions so <Select> can render them
+            const newOpts = allItems.flatMap((p: any) =>
+              p.productType === "simple"
+                ? [{ value: { productId: p.id, variationId: null }, label: p.title }]
+                : p.variations.map((v: any) => ({
+                    value: { productId: null, variationId: v.id },
+                    label: `${p.title} (${Object.values(v.attributes).join(", ")})`,
+                  }))
+            );
+            setProductOptions((prev) => {
+              const map = new Map(prev.map(o => [o.value.productId + "-" + o.value.variationId, o]));
+              newOpts.forEach(o => {
+                const key = o.value.productId + "-" + o.value.variationId;
+                if (!map.has(key)) map.set(key, o);
+              });
+              return Array.from(map.values());
+            });
+    
+            // 4) merge with anything already manually added
+            const existing = form.getValues("products");
+            const map = new Map<string, { productId: string | null; variationId: string | null }>();
+            existing.concat(items).forEach((it) => {
+              const key = `${it.productId || ""}-${it.variationId || ""}`;
+              map.set(key, it);
+            });
+    
+            // 5) write back into the form
+            form.setValue("products", Array.from(map.values()));
       } catch (err: any) {
         toast.error(err.message);
       }
