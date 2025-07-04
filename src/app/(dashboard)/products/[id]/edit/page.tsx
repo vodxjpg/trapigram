@@ -1,62 +1,59 @@
-/* -------------------------------------------------------------------------- */
-/*  EDIT-PRODUCT PAGE – permission-aware                                       */
-/* -------------------------------------------------------------------------- */
 "use client";
 
 import { useEffect }             from "react";
 import { useParams, useRouter }  from "next/navigation";
 import useSWR                    from "swr";
 import { ChevronLeft }           from "lucide-react";
-
 import { Button }                from "@/components/ui/button";
 import { PageHeader }            from "@/components/page-header";
 import { ProductForm }           from "../../components/product-form";
 import { Skeleton }              from "@/components/ui/skeleton";
-
 import { authClient }            from "@/lib/auth-client";
 import { useHasPermission }      from "@/hooks/use-has-permission";
-
-import type { Product }          from "@/types/product";  /* adjust if needed */
+import type { Product }          from "@/types/product";
 
 export default function EditProductPage() {
   const router = useRouter();
   const params = useParams() as { id: string };
 
-  /* ── active organisation id ──────────────────────────────────── */
+  // ── get org and permission ────────────────────────────────────
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId      = activeOrg?.id ?? null;
 
-  /* ── permission flag (product:update) ─────────────────────────── */
   const {
     hasPermission: canUpdateProduct,
     isLoading:     permLoading,
   } = useHasPermission(organizationId, { product: ["update"] });
 
-  /* ── redirect if permission denied ────────────────────────────── */
-  useEffect(() => {
-    if (!permLoading && !canUpdateProduct) {
-      router.replace("/products");
-    }
-  }, [permLoading, canUpdateProduct, router]);
+  // ── set up SWR, but don’t fetch until permission is granted ────
+  const key = permLoading || !canUpdateProduct
+    ? null
+    : `/api/products/${params.id}`;
 
-  /* guard while resolving / redirecting */
-  if (permLoading || !canUpdateProduct) return null;
-
-  /* ── fetch product when allowed ───────────────────────────────── */
   const { data, error } = useSWR(
-    `/api/products/${params.id}`,
+    key,
     async (url: string) => {
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to load product");
       return res.json() as Promise<{ product: Product; shared: boolean }>;
-    },
+    }
   );
 
   const isLoading = !data && !error;
   const product   = data?.product;
   const shared    = data?.shared;
 
-  /* ── render ───────────────────────────────────────────────────── */
+  // ── redirect if no permission ────────────────────────────────
+  useEffect(() => {
+    if (!permLoading && !canUpdateProduct) {
+      router.replace("/products");
+    }
+  }, [permLoading, canUpdateProduct, router]);
+
+  // ── guard while loading permission or lacking it ──────────────
+  if (permLoading || !canUpdateProduct) return null;
+
+  // ── render ─────────────────────────────────────────────────────
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
       <Button variant="ghost" className="mb-6" onClick={() => router.back()}>
@@ -86,4 +83,3 @@ export default function EditProductPage() {
     </div>
   );
 }
-
