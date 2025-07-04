@@ -281,7 +281,55 @@ The Trapyfy Team
 
             /* Seed six default sections */
             const defaultSections = [
-              /* … same objects as before … */
+              {
+                name: "help",
+                title: "Help",
+                content: `<p>Please start by reading the instructions page by typing:</p><p>⎆ /userguide</p><p>You can return to the homepage at any time by typing:</p><p>⎆ /start or /menu</p><p>During the final step, the bot will generate your invoice. Invoices are automatically cancelled if payment is not received within 60 minutes.</p><p>Your invoice will be in either Tether (USDT), Ethereum (ETH), Bitcoin (BTC), Ripple (XRP), or Solano (SOL) depending on your payment choice.</p><p>If you are new to crypto payments I would suggest setting up Coinbase/crypto.com to save on fees or you can purchase crypto with apple pay/google pay/debit card via www.swapped.com/buy/usdt</p><p>Happy shopping 🛍️</p><p>⎆ Type /menu then click the Products button</p><p>⎆ Or just type /products</p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>We believe in offering our customers the best service possible—and we will do everything to make it happen!</p><p>X</p>`,
+                videoUrl: null,
+                parentSectionId: null,
+              },
+              {
+                name: "coupons",
+                title: "Coupons",
+                content: `<p>📢 Coupons Section 📢</p><p><br /></p><p>Here you will find all available coupons we have for you.</p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>👉 You can copy the coupon code by clicking on it</p><p>👉 Just type the coupon code you would like to use in the checkout section</p><p>⚠️ Typing a discount code in the address fields will eliminate any applied discount.</p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>The Team ®</p>`,
+                videoUrl: null,
+                parentSectionId: null,
+              },
+              {
+                name: "faqs",
+                title: "Faqs",
+                content: `<p>🤔 : How do I cancel the order?</p><p>💁‍ : You are able to cancel your order just by not paying for it. Think twice before you pay. As soon as we receive the callback, there is no way your order can be canceled.</p><p>{separator}</p><p>🤔 : What do I do if I have not received my order?</p><p>💁‍ : Our experience shows that 98% percent of the reasons why customers do not receive their orders is a wrong delivery address provided. Always double-check the address before sending it to us.</p><p>If the address is correct, there is no reason why you would not receive it.</p><p>On the other hand, if the reason of your order not arriving is known to us, we will definitely find a solution.</p>`,
+                videoUrl: null,
+                parentSectionId: null,
+              },
+              {
+                name: "guide",
+                title: "User guide",
+                content: `<p>There are four places where you will interact with the bot:</p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>⚜️ Discount Codes: Type in a discount code.</p><p>⚜️ Messages: Write a message in the bot chat for support.</p><p>⚜️ Address: Enter your delivery address with a secure Privyxnote.</p><p>⚜️ Delete Order: To delete an order.</p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>👉 Please select one of the help topics by clicking the corresponding button below for more information on each process.</p><p>👉 Or you can always reach customer support</p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>The Team ®</p>`,
+                videoUrl: null,
+                parentSectionId: null,
+              },
+              {
+                name: "services",
+                title: "Services",
+                content: `<p>📢 Friendly services 📢</p><p><br /></p><p>If you want to get notified for new product launches, promotions, and staying connected in case telegram shuts us down simply register your email to our friendly service by clicking the save email button.</p>`,
+                videoUrl: null,
+                parentSectionId: null,
+              },
+              {
+                name: "affiliates",
+                title: "Affiliates",
+                content: `<p>Referral program</p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>📈 Referral Stat :</p><p><br /></p><p>👨‍👩‍👧‍👦 Referred <strong>users</strong> : {user_affiliate_referrals_count}</p><p>📦 Orders-ref users : {user_affiliate_orders_count}</p><p>Your level: {user_affiliate_level}</p><p>❇️ Available Points : {user_affiliate_points}</p><p>💸 Points already spent: {user_affiliate_points_spent}</p><p>Total points: {user_affiliate_total_points}</p><p><br /></p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>The best way to get points is inviting friends to buy with us, leaving a review for your order and joining our backup community groups.</p><p><br /></p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>How to Earn Points:</p><p>+X point for every £50 spent</p><p>+X point for leaving a review</p><p>+X point when you invite a friend through your referral link and each time they place an order</p><p>+X point when you join a backup page/channel</p><p><br /></p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>How to Spend Points:</p><p>-Points can be exchanged for items and products (Ref &amp; Earn &gt; Redeem points)</p><p><br /></p><p>We value your trust and confidence in us and sincerely appreciate you!</p>`,
+                videoUrl: null,
+                parentSectionId: null,
+              },
+              {
+                name: "intro",
+                title: "Intro",
+                content: `<p>Welcome to X self-service vape shop 🍃.</p><p><br /></p><p>Ships From/To: United Kingdom 🇬🇧 / 🇪🇺 European Union⚡️🚚</p><p>Currency: GBP / EUR 💷💶</p><p>Currently Accepting: Crypto Tether (USDT), Ethereum (ETH), Bitcoin (BTC), and Solana (SOL)</p><p><br /></p><p>Rating &amp; Reviews: {review_summary}</p><p>🆓🚚 Free UK tracked next day delivery on orders over £250 / Free EU tracked 2 - 4 days delivery on orders over €300!</p><p>⏰ Place your order before 2:00 PM Monday - Friday, and we'll dispatch it on the same day! All orders placed after 2:00 PM will be dispatched on the next business day.</p><p><br /></p><p>﹎﹎﹎﹎﹎﹎﹎</p><p>Start with Help! /userguide 📘.</p><p>Type /menu then click Products (Button) or just type in /products 📦.</p><p>Type /coupons to find discount codes 💰.Happy shopping 🛍️</p><p>﹎﹎﹎﹎﹎﹎﹎</p><p><br /></p><p>Note: For Spain and Portugal we only ship to Mainland and not the islands.</p><p><br /></p><p>Peace and Love ✌️❤️</p><p>X's team ®</p><p>Telegram Support: @Xteam 📢</p><p>Instagram: @Xteam (https://www.instagram.com/xxx/) 📸</p>`,
+                videoUrl: null,
+                parentSectionId: null,
+              },
             ];
 
             const now = new Date();
