@@ -39,7 +39,7 @@ const domainStatements: Record<string, string[]> = {
   notifications: ["view", "create", "update", "delete"],
 };
 
-// 1) Filter out “team” (or any other you don’t want) from defaultStatements
+// 1) Filter out “team” (or any other you don’t want) from defaultStatement
 const filteredDefaults: Record<string, string[]> = Object.fromEntries(
   Object.entries(defaultStatements)
     .filter(([resource]) => resource !== "team")    // <-- drop “team”
