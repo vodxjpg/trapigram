@@ -3,46 +3,43 @@
 import type React from "react";
 
 import { useState, useRef, useEffect, Suspense } from "react";
-import { useRouter }               from "next/navigation";
-import { Plus, Upload, Download }  from "lucide-react";
-import { Button }                  from "@/components/ui/button";
-import { Input }                   from "@/components/ui/input";
-import { ProductsDataTable }       from "./components/products-data-table";
-import { PageHeader }              from "@/components/page-header";
-import { authClient }              from "@/lib/auth-client";
-import { useHasPermission }        from "@/hooks/use-has-permission";
-import { toast }                   from "sonner";
+import { useRouter } from "next/navigation";
+import { Plus, Upload, Download } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ProductsDataTable } from "./components/products-data-table";
+import { PageHeader } from "@/components/page-header";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { toast } from "sonner";
 
 export default function ProductsPage() {
   const router = useRouter();
 
-  
   /* ── active organisation ─────────────────────────────────── */
-  const { data: activeOrg }  = authClient.useActiveOrganization();
-  const organizationId       = activeOrg?.id ?? null;
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
 
   /* ── permission flags (new hook) ─────────────────────────── */
-  const {
-    hasPermission: canViewProducts,
-    isLoading:     permLoading,
-  } = useHasPermission(organizationId, { product: ["view"] });
+  const { hasPermission: canViewProducts, isLoading: permLoading } =
+    useHasPermission(organizationId, { product: ["view"] });
 
   const { hasPermission: canCreateProducts } = useHasPermission(
     organizationId,
-    { product: ["create"] },
+    { product: ["create"] }
   );
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-   /* ── redirect if no visibility ───────────────────────────── */
-   useEffect(() => {
-     if (!permLoading && !canViewProducts) {
-       router.replace("/dashboard");
-     }
-   }, [permLoading, canViewProducts, router]);
-  
-   if (permLoading || !canViewProducts) return null;  // guard while resolving
+  /* ── redirect if no visibility ───────────────────────────── */
+  useEffect(() => {
+    if (!permLoading && !canViewProducts) {
+      router.replace("/dashboard");
+    }
+  }, [permLoading, canViewProducts, router]);
+
+  if (permLoading || !canViewProducts) return null; // guard while resolving
 
   const handleCreateProduct = () => {
     router.push("/products/new");
@@ -63,21 +60,23 @@ export default function ProductsPage() {
     const formData = new FormData();
     formData.append("file", file);
 
+    // ① show loading and capture its ID
+    const toastId = toast.loading("Importing file...");
+
     try {
-      toast.loading("Importing file...");
       const res = await fetch("/api/products/import", {
         method: "POST",
         body: formData,
       });
       const data = await res.json();
-      console.log(data);
+
       if (!res.ok) {
         throw new Error(data.error || "Import failed");
       }
-      toast.success("Products imported successfully");
+      toast.success("Products imported successfully", { id: toastId });
       router.refresh();
-    } catch (error) {
-      toast.error((error as Error).message);
+    } catch (err: any) {
+      toast.error(err.message, { id: toastId });
     } finally {
       setIsImporting(false);
     }

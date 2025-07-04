@@ -181,33 +181,33 @@ export async function GET(req: NextRequest) {
       const variations =
         p.productType === "variable"
           ? variationRows
-              .filter((v) => v.productId === p.id)
-              .map((v) => ({
-                id: v.id,
-                attributes:
-                  typeof v.attributes === "string"
-                    ? JSON.parse(v.attributes)
-                    : v.attributes,
-                sku: v.sku,
-                image: v.image,
-                prices: mergePriceMaps(
-                  typeof v.regularPrice === "string"
-                    ? JSON.parse(v.regularPrice)
-                    : v.regularPrice,
-                  typeof v.salePrice === "string"
-                    ? JSON.parse(v.salePrice)
-                    : v.salePrice,
-                ),
-                cost:
-                  typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
-                stock: stockRows
-                  .filter((s) => s.variationId === v.id)
-                  .reduce((acc, s) => {
-                    if (!acc[s.warehouseId]) acc[s.warehouseId] = {};
-                    acc[s.warehouseId][s.country] = s.quantity;
-                    return acc;
-                  }, {} as Record<string, Record<string, number>>),
-              }))
+            .filter((v) => v.productId === p.id)
+            .map((v) => ({
+              id: v.id,
+              attributes:
+                typeof v.attributes === "string"
+                  ? JSON.parse(v.attributes)
+                  : v.attributes,
+              sku: v.sku,
+              image: v.image,
+              prices: mergePriceMaps(
+                typeof v.regularPrice === "string"
+                  ? JSON.parse(v.regularPrice)
+                  : v.regularPrice,
+                typeof v.salePrice === "string"
+                  ? JSON.parse(v.salePrice)
+                  : v.salePrice,
+              ),
+              cost:
+                typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
+              stock: stockRows
+                .filter((s) => s.variationId === v.id)
+                .reduce((acc, s) => {
+                  if (!acc[s.warehouseId]) acc[s.warehouseId] = {};
+                  acc[s.warehouseId][s.country] = s.quantity;
+                  return acc;
+                }, {} as Record<string, Record<string, number>>),
+            }))
           : [];
 
       /* recompute stockStatus */

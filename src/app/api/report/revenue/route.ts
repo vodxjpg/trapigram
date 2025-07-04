@@ -56,7 +56,6 @@ export async function GET(req: NextRequest) {
 
         const result = await pool.query(revenueQuery, values);
         const row = result.rows
-        console.log(row)
         row.map((m) => {
             if (m.asset.length > 0) {
                 m.coin = m.asset[0].order.asset
@@ -105,7 +104,6 @@ export async function GET(req: NextRequest) {
                 revenue: byDay[key]?.revenue ?? 0,
             };
         });
-        console.log(chartData)
 
         return NextResponse.json({ orders: row, chartData: chartData }, { status: 200 });
     } catch (err) {
