@@ -48,7 +48,7 @@ import countriesLib from "i18n-iso-countries";
 import en from "i18n-iso-countries/langs/en.json";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
-import { usePermission } from "@/hooks/use-permission";
+import { useHasPermission }                   from "@/hooks/use-has-permission";   // ← NEW
 
 countriesLib.registerLocale(en);
 
@@ -72,18 +72,19 @@ type Client = {
 /*  Component                                                                */
 /* ------------------------------------------------------------------------- */
 export function ClientsTable() {
- const router = useRouter();
- // get active org for permission checks
-  const { data: activeOrg } = authClient.useActiveOrganization();
-  const orgId               = activeOrg?.id ?? null;
-    
-  // permission flags
-  const { hasPermission: canView,    isLoading: viewLoading }   = useHasPermission(orgId, { customer: ["view"] });
-  const { hasPermission: canCreate,  isLoading: createLoading } = useHasPermission(orgId, { customer: ["create"] });
-  const { hasPermission: canUpdate,  isLoading: updateLoading } = useHasPermission(orgId, { customer: ["update"] });
-  const { hasPermission: canDelete,  isLoading: deleteLoading } = useHasPermission(orgId, { customer: ["delete"] });
-  const { hasPermission: canPoints,  isLoading: pointsLoading } = useHasPermission(orgId, { affiliates: ["points"] });
-
+   const router = useRouter();
+  
+   // get active org for permission checks
+   const { data: activeOrg } = authClient.useActiveOrganization();
+   const orgId               = activeOrg?.id ?? null;
+  
+   // secure permission flags
+   const { hasPermission: canView,    isLoading: viewLoading }   = useHasPermission(orgId, { customer: ["view"] });
+   const { hasPermission: canCreate,  isLoading: createLoading } = useHasPermission(orgId, { customer: ["create"] });
+   const { hasPermission: canUpdate,  isLoading: updateLoading } = useHasPermission(orgId, { customer: ["update"] });
+   const { hasPermission: canDelete,  isLoading: deleteLoading } = useHasPermission(orgId, { customer: ["delete"] });
+   const { hasPermission: canPoints,  isLoading: pointsLoading } = useHasPermission(orgId, { affiliates: ["points"] });
+   
   /* --------------------------- local state ------------------------------ */
   const [statsOpen,    setStatsOpen]    = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -238,7 +239,8 @@ export function ClientsTable() {
   };
 
   /* --------------------------- GUARD → render --------------------------- */
-  if (can.loading || !canView) return null;
+  if (viewLoading || !canView) return null;
+ 
 
   /* --------------------------- UI -------------------------------------- */
   return (
