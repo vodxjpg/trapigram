@@ -29,8 +29,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { useProducts } from "@/hooks/use-products";
-import { usePermission } from "@/hooks/use-permission";
 import type { Product } from "../../components/products-data-table";
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
@@ -43,7 +44,30 @@ interface Warehouse {
 
 export function StockManagementDataTable() {
   const router = useRouter();
-   const can = usePermission(); ;
+ 
+
+// 1) load org context
+const { data: activeOrg } = authClient.useActiveOrganization();
+const orgId = activeOrg?.id ?? null;
+
+// 2) ask for view & update perms up front
+const {
+  hasPermission: canView,
+  isLoading:     viewLoading,
+} = useHasPermission(orgId, { stockManagement: ["view"] });
+const {
+  hasPermission: canUpdate,
+  isLoading:     updateLoading,
+} = useHasPermission(orgId, { stockManagement: ["update"] });
+
+// 3) while loading perms, render nothing
+if (viewLoading || updateLoading) return null;
+
+// 4) if no view access, redirect away
+if (!canView) {
+  router.replace("/products");
+  return null;
+}
 
   const [sorting, setSorting] = useState<SortingState>([{ id: "stock", desc: false }]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -59,19 +83,13 @@ export function StockManagementDataTable() {
   );
   const warehouses = whData?.warehouses || [];
 
-  // redirect if no view permission
-  useEffect(() => {
-    if (!can.loading && !can({ stockManagement: ["view"] })) {
-      router.replace("/products");
-    }
-  }, [can, router]);
-  if (can.loading || !can({ stockManagement: ["view"] })) return null;
+
 
   /* ------------------------------------------------------------ */
   /*  Stock-popover (per-row), only editable if they have update  */
   /* ------------------------------------------------------------ */
   function StockPopover({ product }: { product: Product }) {
-    const canUpdate = can({ stockManagement: ["update"] });
+    // reuse canUpdate from outer scope
     const [editable, setEditable] = useState<Record<string, Record<string, number>>>({});
     const [saving, setSaving] = useState(false);
 

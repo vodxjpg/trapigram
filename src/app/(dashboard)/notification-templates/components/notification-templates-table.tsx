@@ -3,7 +3,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -25,10 +26,23 @@ interface TemplateRow {
 }
 
 export function NotificationTemplatesTable() {
-   const can = usePermission(); ;
-  const canView   = can({ notifications: ["view"] });
-  const canUpdate = can({ notifications: ["update"] });
-  const canDelete = can({ notifications: ["delete"] });
+  // get active org for permission checks
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId               = activeOrg?.id ?? null;
+
+  // secure permission checks
+  const {
+    hasPermission: canView,
+    isLoading:     viewLoading,
+  } = useHasPermission(orgId, { notifications: ["view"] });
+  const {
+    hasPermission: canUpdate,
+    isLoading:     updateLoading,
+  } = useHasPermission(orgId, { notifications: ["update"] });
+  const {
+    hasPermission: canDelete,
+    isLoading:     deleteLoading,
+  } = useHasPermission(orgId, { notifications: ["delete"] });
 
   const [rows, setRows]       = useState<TemplateRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,8 +67,10 @@ export function NotificationTemplatesTable() {
     })();
   }, [canView]);
 
-  if (can.loading) return null;
+  // guard while perms resolving
+  if (viewLoading) return null;
 
+  // no view rights
   if (!canView) {
     return (
       <div className="p-6 text-center text-red-600">
@@ -95,7 +111,7 @@ export function NotificationTemplatesTable() {
               <th className="p-3 text-left">Role</th>
               <th className="p-3 text-left">Country</th>
               <th className="p-3 text-left">Subject</th>
-              { (canUpdate || canDelete) && (
+              {(canUpdate || canDelete) && (
                 <th className="p-3 text-right">Actions</th>
               )}
             </tr>
@@ -107,7 +123,7 @@ export function NotificationTemplatesTable() {
                 <td className="p-3 capitalize">{r.role}</td>
                 <td className="p-3">{r.country ?? "—"}</td>
                 <td className="p-3">{r.subject ?? "—"}</td>
-                { (canUpdate || canDelete) && (
+                {(canUpdate || canDelete) && (
                   <td className="p-3 text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -116,14 +132,14 @@ export function NotificationTemplatesTable() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        {canUpdate && (
+                        {canUpdate && !updateLoading && (
                           <DropdownMenuItem asChild>
                             <Link href={`/notification-templates/${r.id}/edit`}>
                               Edit
                             </Link>
                           </DropdownMenuItem>
                         )}
-                        {canDelete && (
+                        {canDelete && !deleteLoading && (
                           <DropdownMenuItem
                             onSelect={() => handleDelete(r.id)}
                             className="text-destructive"
@@ -141,7 +157,7 @@ export function NotificationTemplatesTable() {
             {!rows.length && (
               <tr>
                 <td
-                  colSpan={ (canUpdate || canDelete) ? 5 : 4 }
+                  colSpan={(canUpdate || canDelete) ? 5 : 4}
                   className="p-4 text-center text-muted-foreground"
                 >
                   No templates yet

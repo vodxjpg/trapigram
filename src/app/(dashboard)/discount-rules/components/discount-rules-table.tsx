@@ -42,7 +42,8 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 type Step = { fromUnits: number; toUnits: number; price: number };
 type ProdItem = { productId: string | null; variationId: string | null };
@@ -56,7 +57,28 @@ type TierPricing = {
 
 export function DiscountRulesTable() {
   const router = useRouter();
-   const can = usePermission(); ;
+  // get active org for permission checks
+const { data: activeOrg } = authClient.useActiveOrganization();
+const orgId               = activeOrg?.id ?? null;
+
+// secure permission flags for tierPricing
+const {
+  hasPermission: canView,
+  isLoading:     viewLoading,
+} = useHasPermission(orgId, { tierPricing: ["view"] });
+const {
+  hasPermission: canCreate,
+  isLoading:     createLoading,
+} = useHasPermission(orgId, { tierPricing: ["create"] });
+const {
+  hasPermission: canUpdate,
+  isLoading:     updateLoading,
+} = useHasPermission(orgId, { tierPricing: ["update"] });
+const {
+  hasPermission: canDelete,
+  isLoading:     deleteLoading,
+} = useHasPermission(orgId, { tierPricing: ["delete"] });
+ 
 
   const [rules, setRules] = useState<TierPricing[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,10 +94,10 @@ export function DiscountRulesTable() {
 
   // Redirect away if no view
   useEffect(() => {
-    if (!can.loading && !can({ tierPricing: ["view"] })) {
+    if (!viewLoading && !canView) {
       router.replace("/discount-rules");
     }
-  }, [can, router]);
+  }, [viewLoading, canView, router]);
 
   const fetchRules = async () => {
     setLoading(true);
@@ -95,8 +117,8 @@ export function DiscountRulesTable() {
   };
 
   useEffect(() => {
-    if (!can.loading) fetchRules();
-  }, [page, pageSize, search, can.loading]);
+    if (!viewLoading) fetchRules();
+      }, [page, pageSize, search, viewLoading]);
 
   const confirmDelete = async () => {
     if (!ruleToDelete) return;
@@ -110,9 +132,8 @@ export function DiscountRulesTable() {
     }
   };
 
-  if (can.loading) return null;
-  if (!can({ tierPricing: ["view"] })) return null;
-
+ if (viewLoading) return null;
+ if (!canView) return null;
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-4 sm:flex-row sm:justify-between">
@@ -133,7 +154,7 @@ export function DiscountRulesTable() {
           />
           <Button type="submit">Search</Button>
         </form>
-        {canCreate && (
+        {canCreate && !createLoading && (
           <Button onClick={() => router.push("/discount-rules/new")}>
             <Plus className="mr-2 h-4 w-4" />
             Add Rule
@@ -190,7 +211,7 @@ export function DiscountRulesTable() {
                             Edit
                           </DropdownMenuItem>
                         )}
-                        {canDelete && (
+                         {canDelete && !deleteLoading && (
                           <DropdownMenuItem
                             className="text-destructive"
                             onClick={() => setRuleToDelete(r)}

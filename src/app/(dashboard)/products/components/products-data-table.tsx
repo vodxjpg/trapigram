@@ -44,7 +44,8 @@ import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useProducts } from "@/hooks/use-products"
 import type { Attribute } from "@/types/product"
-import { usePermission } from "@/hooks/use-permission"
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission }                   from "@/hooks/use-has-permission";   // ← NEW
 // Product type definition
 export type Product = {
   id: string
@@ -72,8 +73,42 @@ export type Product = {
 }
 
 export function ProductsDataTable() {
-  const router = useRouter()
-  const canPerm = usePermission()
+ const router = useRouter()
+
+ // ── load org for permission checks
+ const { data: activeOrg } = authClient.useActiveOrganization()
+ const orgId               = activeOrg?.id ?? null
+
+ // ── permission flags
+ const {
+   hasPermission: canView,
+   isLoading:     viewLoading,
+ } = useHasPermission(orgId, { product: ["view"] })
+ const {
+   hasPermission: canCreate,
+   isLoading:     createLoading,
+ } = useHasPermission(orgId, { product: ["create"] })
+ const {
+   hasPermission: canUpdate,
+   isLoading:     updateLoading,
+ } = useHasPermission(orgId, { product: ["update"] })
+ const {
+   hasPermission: canDelete,
+   isLoading:     deleteLoading,
+ } = useHasPermission(orgId, { product: ["delete"] })
+
+ // ── wait for permission checks
+ if (viewLoading || createLoading || updateLoading || deleteLoading) {
+   return null
+ }
+
+ // ── redirect if no view access
+ if (!canView) {
+   router.replace("/dashboard")
+   return null
+ }
+
+ // now safe to load data and render table
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
@@ -301,8 +336,7 @@ export function ProductsDataTable() {
       id: "actions",
       cell: ({ row }) => {
         const product = row.original
-        const canUpdate = canPerm({ product: ["update"] })
-        const canDelete = canPerm({ product: ["delete"] })
+
         return (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
