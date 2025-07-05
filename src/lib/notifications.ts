@@ -16,7 +16,7 @@ export type NotificationType =
   | "order_refunded"
   | "order_partially_paid"
   | "order_shipped"
-  | "ticket_created"  
+  | "ticket_created"
   | "ticket_replied"
   | "order_message";
 
@@ -42,8 +42,9 @@ const applyVars = (txt: string, vars: Record<string, string>) =>
     txt,
   );
 
+/** stripTags – quick server-side HTML removal */
+const stripTags = (html: string) => html.replace(/<[^>]+>/g, "");
 
-/** HTML → Telegram-safe subset */
 const toTelegramHtml = (html: string) =>
   html
     .replace(/<\s*p[^>]*>/gi, "")
@@ -107,31 +108,26 @@ export async function sendNotification(params: SendNotificationParams) {
     .where("type", "=", type)
     .execute();
 
-  const tplUser  = pickTemplate("user",  country, templates);
+  const tplUser = pickTemplate("user", country, templates);
   const tplAdmin = pickTemplate("admin", country, templates);
-  const hasUserTpl  = !!tplUser;
+  const hasUserTpl = !!tplUser;
   const hasAdminTpl = !!tplAdmin;
 
   /* 2️⃣ subjects & bodies – generic (all channels) */
   const makeRawSub = (
     tplSubject: string | null | undefined,
     fallback: string | undefined,
-  ) => {
-    // if we fall back to the enum name, prettify it; else leave as-is
-    if (!tplSubject && !fallback) {
-      const pretty = type.replace(/_/g, " ");
-      return pretty;
-    }
-    return (tplSubject || fallback || "").trim();
-  };
+  ) => (!tplSubject && !fallback
+      ? type.replace(/_/g, " ")
+      : (tplSubject || fallback || "").trim());
 
   const rawSubUser = makeRawSub(tplUser?.subject, subject);
-  const rawSubAdm  = makeRawSub(tplAdmin?.subject, subject);
+  const rawSubAdm = makeRawSub(tplAdmin?.subject, subject);
 
-  const subjectUserGeneric  = applyVars(rawSubUser, variables);
-  const subjectAdminGeneric = applyVars(rawSubAdm,  variables);
-  const bodyUserGeneric     = applyVars(tplUser?.message  || message, variables);
-  const bodyAdminGeneric    = applyVars(tplAdmin?.message || message, variables);
+  const subjectUserGeneric = applyVars(rawSubUser, variables);
+  const subjectAdminGeneric = applyVars(rawSubAdm, variables);
+  const bodyUserGeneric = applyVars(tplUser?.message || message, variables);
+  const bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
 
   /* 2️⃣-bis subjects & bodies – e-mail only (product list hidden) */
   const varsEmail = {
@@ -140,11 +136,10 @@ export async function sendNotification(params: SendNotificationParams) {
       "Due to privacy reasons you can only see the product list in your order details page or message notification by the API",
   };
 
-  const subjectUserEmail  = applyVars(rawSubUser, varsEmail);
-  const subjectAdminEmail = applyVars(rawSubAdm,  varsEmail);
-  const bodyUserEmail     = applyVars(tplUser?.message  || message, varsEmail);
-  const bodyAdminEmail    = applyVars(tplAdmin?.message || message, varsEmail);
-
+  const subjectUserEmail = applyVars(rawSubUser, varsEmail);
+  const subjectAdminEmail = applyVars(rawSubAdm, varsEmail);
+  const bodyUserEmail = applyVars(tplUser?.message || message, varsEmail);
+  const bodyAdminEmail = applyVars(tplAdmin?.message || message, varsEmail);
 
   /* 3️⃣ support e-mail (for CC and admin fallback) */
   const supportRow = await db
@@ -176,8 +171,8 @@ export async function sendNotification(params: SendNotificationParams) {
     .where("organizationId", "=", organizationId)
     .where("role", "=", "owner")
     .execute();
-  if (ownerRows.length) {
-    const ownerIds = ownerRows.map((r) => r.userId);
+  const ownerIds = ownerRows.map((r) => r.userId);
+  if (ownerIds.length) {
     const owners = await db
       .selectFrom("user")
       .select(["email"])
@@ -232,10 +227,9 @@ export async function sendNotification(params: SendNotificationParams) {
       text: string;
       cc?: string | null;
     }) => sendEmail({ to, subject, html, text, ...(cc ? { cc } : {}) });
-  
+
     const promises: Promise<unknown>[] = [];
-  
-    /* ADMIN MAILS — send if we have any admin addresses */
+
     if (adminEmails.length) {
       promises.push(
         ...adminEmails.map((addr) =>
@@ -248,8 +242,7 @@ export async function sendNotification(params: SendNotificationParams) {
         ),
       );
     }
-  
-    /* USER MAILS — send if we have any user addresses */
+
     if (userEmails.length) {
       promises.push(
         ...userEmails.map((addr) =>
@@ -258,7 +251,7 @@ export async function sendNotification(params: SendNotificationParams) {
             subject: subjectUserEmail,
             html: bodyUserEmail,
             text: bodyUserEmail.replace(/<[^>]+>/g, ""),
-            cc: supportEmail, // CC support on every user mail
+            cc: supportEmail,
           }),
         ),
       );
@@ -267,15 +260,23 @@ export async function sendNotification(params: SendNotificationParams) {
     await Promise.all(promises);
   }
 
-  /* — IN-APP (user only) — */
-  if (channels.includes("in_app") && hasUserTpl) {
-    await dispatchInApp({
-      organizationId,
-      userId,
-      clientId,
-      message: bodyUserGeneric,
-      country,
-    });
+  /* — IN-APP — */
+  if (channels.includes("in_app")) {
+    const targets = new Set<string | null>();
+    if (userId) targets.add(userId);
+    if (clientRow?.userId) targets.add(clientRow.userId);
+    ownerIds.forEach((id) => targets.add(id));
+    if (targets.size === 0) targets.add(null);
+
+    for (const uid of targets) {
+      await dispatchInApp({
+        organizationId,
+        userId: uid,
+        clientId,
+        message: bodyUserGeneric,
+        country,
+      });
+    }
   }
 
   /* — WEBHOOK — */
@@ -306,6 +307,8 @@ async function dispatchInApp(opts: {
   country: string | null;
 }) {
   const { organizationId, userId, clientId, message, country } = opts;
+
+  const plain = stripTags(message).replace(/\s+/g, " ").trim();
   await db
     .insertInto("inAppNotifications")
     .values({
@@ -313,7 +316,7 @@ async function dispatchInApp(opts: {
       organizationId,
       userId,
       clientId,
-      title: message.slice(0, 64),
+      title: plain.slice(0, 64),
       message,
       country,
       read: false,
@@ -322,6 +325,8 @@ async function dispatchInApp(opts: {
     })
     .execute();
 }
+
+
 
 async function dispatchWebhook(opts: {
   organizationId: string;

@@ -3,10 +3,18 @@
 
 import { Bell } from "lucide-react";
 import { useState } from "react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { useNotifications } from "@/hooks/use-notifications";
 import { cn } from "@/lib/utils";
+
+/** client-side fallback strip (for old rows) */
+const stripTags = (html: string) => html.replace(/<[^>]+>/g, "");
 
 export function NotificationBell() {
   const { notifications, unreadCount, isLoading, mutate } = useNotifications();
@@ -39,15 +47,19 @@ export function NotificationBell() {
         ) : notifications.length === 0 ? (
           <DropdownMenuItem disabled>No notifications</DropdownMenuItem>
         ) : (
-          notifications.map((n) => (
-            <DropdownMenuItem
-              key={n.id}
-              className={cn("cursor-pointer", !n.read && "font-semibold")}
-              onClick={() => markRead(n.id)}
-            >
-              {n.title.length > 64 ? `${n.title.slice(0, 61)}…` : n.title}
-            </DropdownMenuItem>
-          ))
+          notifications.map((n) => {
+            const clean = stripTags(n.title).replace(/\s+/g, " ").trim();
+            const txt = clean.length > 64 ? `${clean.slice(0, 61)}…` : clean;
+            return (
+              <DropdownMenuItem
+                key={n.id}
+                className={cn("cursor-pointer", !n.read && "font-semibold")}
+                onClick={() => markRead(n.id)}
+              >
+                {txt}
+              </DropdownMenuItem>
+            );
+          })
         )}
       </DropdownMenuContent>
     </DropdownMenu>
