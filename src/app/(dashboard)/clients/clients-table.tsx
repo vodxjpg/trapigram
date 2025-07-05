@@ -105,13 +105,6 @@ export function ClientsTable() {
   const [selected,  setSelected]  = useState<Client | null>(null);
   const [delta,     setDelta]     = useState("");
 
-  /* --------------------------- permissions ------------------------------ */
-  const canView   = can({ customer: ["view"] });
-  const canCreate = can({ customer: ["create"] });
-  const canUpdate = can({ customer: ["update"] });
-  const canDelete = can({ customer: ["delete"] });
-  const canPoints = can({ affiliates: ["points"] });
-
   /* --------------------------- helpers ---------------------------------- */
   const formatDate = (d: string | Date) => {
     const date = new Date(d);
