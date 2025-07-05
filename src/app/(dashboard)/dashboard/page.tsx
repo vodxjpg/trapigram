@@ -123,6 +123,7 @@ export default function DashboardPage() {
       revenue: number;
     }[]
   >([]);
+  const [currency, setCurrency] = React.useState<"USD" | "GBP" | "EUR">("USD");
 
   // Compute from/to params for API based on selection
   const getFromToParams = (): { from: string; to: string } => {
@@ -147,7 +148,9 @@ export default function DashboardPage() {
     const fetchTotal = async () => {
       const { from, to } = getFromToParams();
       try {
-        const resp = await fetch(`/api/dashboard?from=${from}&to=${to}`);
+        const resp = await fetch(
+          `/api/dashboard?from=${from}&to=${to}&currency=${currency}`
+        );
         if (!resp.ok) throw new Error("Network response was not ok");
         const {
           orderAmount,
@@ -166,11 +169,12 @@ export default function DashboardPage() {
         setChartData(chartData);
         setGrowthRate(growthRate);
       } catch (error) {
-        console.error("Failed to fetch total orders:", error);
+        console.error("Failed to fetch dashboard:", error);
       }
     };
+
     fetchTotal();
-  }, [timeRange, customRange]);
+  }, [timeRange, customRange, currency]);
 
   React.useEffect(() => {
     if (isMobile) {
@@ -367,11 +371,21 @@ export default function DashboardPage() {
                 <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
                   {totalRevenue !== null ? `${totalRevenue}$` : "Loading..."}
                 </CardTitle>
-                <CardAction>
-                  <Badge variant="outline">
-                    <IconTrendingUp />
-                    +12.5%
-                  </Badge>
+                <CardAction className="flex items-center space-x-2">
+                  <Select
+                    value={currency}
+                    onValueChange={setCurrency}
+                    size="sm"
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="USD" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="USD">USD</SelectItem>
+                      <SelectItem value="GBP">GBP</SelectItem>
+                      <SelectItem value="EUR">EUR</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </CardAction>
               </CardHeader>
             </Card>

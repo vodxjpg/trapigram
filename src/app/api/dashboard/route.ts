@@ -42,8 +42,7 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const from = url.searchParams.get("from");
     const to = url.searchParams.get("to");
-
-    console.log(to, from)
+    const currency = url.searchParams.get("currency")
 
     if (!from || !to) {
         return NextResponse.json(
@@ -67,7 +66,7 @@ export async function GET(req: NextRequest) {
         const orders = orderResult.rows
         const orderAmount = orders.length
 
-        const revenueQuery = `SELECT * FROM "orderRevenue"
+        const revenueQuery = `SELECT "${currency}total" AS total, "${currency}discount" AS discount, "${currency}shipping" AS shipping, "${currency}cost" AS cost FROM "orderRevenue"
         WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz`;
 
         const revenueResult = await pool.query(revenueQuery, values);
@@ -127,7 +126,7 @@ export async function GET(req: NextRequest) {
             })
         }
 
-        const chartQuery = `SELECT * FROM "orderRevenue"
+        const chartQuery = `SELECT "${currency}total" AS total, "${currency}discount" AS discount, "${currency}shipping" AS shipping, "${currency}cost" AS cost, "createdAt" FROM "orderRevenue"
         WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz
         ORDER BY "createdAt" DESC`;
 
