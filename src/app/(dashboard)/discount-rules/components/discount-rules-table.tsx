@@ -88,9 +88,6 @@ const {
   const [totalPages, setTotalPages] = useState(1);
   const [ruleToDelete, setRuleToDelete] = useState<TierPricing | null>(null);
 
-  const canCreate = can({ tierPricing: ["create"] });
-  const canUpdate = can({ tierPricing: ["update"] });
-  const canDelete = can({ tierPricing: ["delete"] });
 
   // Redirect away if no view
   useEffect(() => {
