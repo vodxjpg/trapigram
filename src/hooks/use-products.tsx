@@ -52,7 +52,7 @@ const singleProductFetcher = async (url: string) => {
   return json.product as Product
 }
 
-// Hook for a single product
+// Hook for a single product only
 export function useProduct(productId: string) {
   const { data, error, mutate } = useSWR<Product>(
     productId ? `/api/products/${productId}` : null,
