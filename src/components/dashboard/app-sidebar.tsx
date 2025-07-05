@@ -104,6 +104,7 @@ const data = {
       icon: IconChartBar,
       items: [
         { title: "Revenue", url: "/analytics/revenue" },
+        { title: "Categories", url: "/analytics/category-revenue" },
         { title: "Coupons", url: "/analytics/coupons/" },
         { title: "Products", url: "/analytics/products/" },
       ],
