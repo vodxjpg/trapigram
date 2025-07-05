@@ -40,7 +40,8 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 type Section = {
   id: string;
@@ -80,19 +81,39 @@ const flatten = (nodes: Node[], depth = 0): Array<Section & { depth: number }> =
 
 export function SectionsTable() {
   const router = useRouter();
-   const can = usePermission(); ;
 
-  const canView   = can({ sections: ["view"] });
-  const canCreate = can({ sections: ["create"] });
-  const canUpdate = can({ sections: ["update"] });
-  const canDelete = can({ sections: ["delete"] });
 
-  // redirect if no view permission
-  useEffect(() => {
-    if (!can.loading && !canView) {
-      router.replace("/");
+    // permissions via useHasPermission
+    const { data: activeOrg } = authClient.useActiveOrganization();
+    const orgId = activeOrg?.id ?? null;
+  
+    const {
+      hasPermission: canView,
+      isLoading:     viewLoading,
+    } = useHasPermission(orgId, { sections: ["view"] });
+    const {
+      hasPermission: canCreate,
+      isLoading:     createLoading,
+    } = useHasPermission(orgId, { sections: ["create"] });
+    const {
+      hasPermission: canUpdate,
+      isLoading:     updateLoading,
+    } = useHasPermission(orgId, { sections: ["update"] });
+    const {
+      hasPermission: canDelete,
+      isLoading:     deleteLoading,
+    } = useHasPermission(orgId, { sections: ["delete"] });
+  
+    // wait for permissions to resolve
+    if (viewLoading || createLoading || updateLoading || deleteLoading) {
+      return null;
     }
-  }, [can.loading, canView, router]);
+  
+    // redirect if no view permission
+    if (!canView) {
+      router.replace("/");
+      return null;
+    }
 
   const [rows, setRows] = useState<Array<Section & { depth: number }>>([]);
   const [loading, setLoading] = useState(true);
@@ -115,12 +136,8 @@ export function SectionsTable() {
   };
 
   useEffect(() => {
-    if (canView) fetchSections();
+    fetchSections();
   }, [canView]);
-
-  if (can.loading || !canView) {
-    return null;
-  }
 
   const paged = rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));

@@ -1,26 +1,37 @@
+// src/app/(dashboard)/shipping-companies/new/page.tsx
 "use client";
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { Button } from "@/components/ui/button";
 import { ShippingMethodForm } from "../shipping-companies-form";
 
 export default function NewShippingMethodPage() {
   const router = useRouter();
-   const can = usePermission(); ;
 
-  // 1) Wait for permissions to load
+  // ── active organization → id for permission hook ─────────────────────────
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+
+  // ── secure permission check for creating shippingMethods ─────────────────
+  const {
+    hasPermission: canCreate,
+    isLoading: createLoading,
+  } = useHasPermission(orgId, { shippingMethods: ["create"] });
+
+  // ── redirect if no create permission ─────────────────────────────────────
   useEffect(() => {
-    if (!can.loading && !can({ shippingMethods: ["create"] })) {
+    if (!createLoading && !canCreate) {
       router.replace("/shipping-companies");
     }
-  }, [can, router]);
+  }, [createLoading, canCreate, router]);
 
-  // 2) If still loading or no create access, don't render form
-  if (can.loading || !can({ shippingMethods: ["create"] })) {
+  // ── guard while loading or lacking permission ────────────────────────────
+  if (createLoading || !canCreate) {
     return null;
   }
 

@@ -3,7 +3,8 @@
 
 import { useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { Suspense } from "react";
 import { TermTable } from "./terms/term-table";
@@ -11,7 +12,6 @@ import { TermTable } from "./terms/term-table";
 export default function AttributeTermsPage() {
   const { setHeaderTitle } = useHeaderTitle();
   const router = useRouter();
-   const can = usePermission(); ;
   const { attributeId } = useParams() as { attributeId: string };
 
   // Set page title
@@ -19,15 +19,25 @@ export default function AttributeTermsPage() {
     setHeaderTitle("Attribute Terms");
   }, [setHeaderTitle]);
 
+  // Get active organization
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+
+  // Check update permission on productAttributes
+  const {
+    hasPermission: canUpdate,
+    isLoading: updateLoading,
+  } = useHasPermission(orgId, { productAttributes: ["update"] });
+
   // Redirect if no update permission
   useEffect(() => {
-    if (!can.loading && !can({ productAttributes: ["update"] })) {
+    if (!updateLoading && !canUpdate) {
       router.replace("/product-attributes");
     }
-  }, [can, router]);
+  }, [updateLoading, canUpdate, router]);
 
-  if (can.loading) return null;
-  if (!can({ productAttributes: ["update"] })) return null;
+  if (updateLoading) return null;
+  if (!canUpdate) return null;
 
   return (
     <div className="flex flex-col gap-6 p-6">

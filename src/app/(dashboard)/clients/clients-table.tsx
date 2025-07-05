@@ -47,7 +47,8 @@ import ReactCountryFlag from "react-country-flag";
 import countriesLib from "i18n-iso-countries";
 import en from "i18n-iso-countries/langs/en.json";
 import { toast } from "sonner";
-import { usePermission } from "@/hooks/use-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission }                   from "@/hooks/use-has-permission";   // ← NEW
 
 countriesLib.registerLocale(en);
 
@@ -71,9 +72,19 @@ type Client = {
 /*  Component                                                                */
 /* ------------------------------------------------------------------------- */
 export function ClientsTable() {
-  const router = useRouter();
-  const can    = usePermission();
-
+   const router = useRouter();
+  
+   // get active org for permission checks
+   const { data: activeOrg } = authClient.useActiveOrganization();
+   const orgId               = activeOrg?.id ?? null;
+  
+   // secure permission flags
+   const { hasPermission: canView,    isLoading: viewLoading }   = useHasPermission(orgId, { customer: ["view"] });
+   const { hasPermission: canCreate,  isLoading: createLoading } = useHasPermission(orgId, { customer: ["create"] });
+   const { hasPermission: canUpdate,  isLoading: updateLoading } = useHasPermission(orgId, { customer: ["update"] });
+   const { hasPermission: canDelete,  isLoading: deleteLoading } = useHasPermission(orgId, { customer: ["delete"] });
+   const { hasPermission: canPoints,  isLoading: pointsLoading } = useHasPermission(orgId, { affiliates: ["points"] });
+   
   /* --------------------------- local state ------------------------------ */
   const [statsOpen,    setStatsOpen]    = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -95,13 +106,6 @@ export function ClientsTable() {
   const [selected,  setSelected]  = useState<Client | null>(null);
   const [delta,     setDelta]     = useState("");
 
-  /* --------------------------- permissions ------------------------------ */
-  const canView   = can({ customer: ["view"] });
-  const canCreate = can({ customer: ["create"] });
-  const canUpdate = can({ customer: ["update"] });
-  const canDelete = can({ customer: ["delete"] });
-  const canPoints = can({ affiliates: ["points"] });
-
   /* --------------------------- helpers ---------------------------------- */
   const formatDate = (d: string | Date) => {
     const date = new Date(d);
@@ -117,7 +121,7 @@ export function ClientsTable() {
 
   /* --------------------------- data fetch ------------------------------- */
   const fetchClients = async () => {
-    if (!canView) return;                     // guard – no rights ⇒ no work
+    if (!canView) return;             // guard – no rights ⇒ no work
     setLoading(true);
     try {
       const res = await fetch(
@@ -235,7 +239,8 @@ export function ClientsTable() {
   };
 
   /* --------------------------- GUARD → render --------------------------- */
-  if (can.loading || !canView) return null;
+  if (viewLoading || !canView) return null;
+ 
 
   /* --------------------------- UI -------------------------------------- */
   return (
