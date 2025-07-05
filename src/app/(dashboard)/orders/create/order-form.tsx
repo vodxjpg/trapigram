@@ -411,9 +411,9 @@ export default function OrderForm() {
 
   // — Update product quantity
   const updateQuantity = async (
-      productId: string,
-      action: "add" | "subtract"
-    ) => {
+    productId: string,
+    action: "add" | "subtract"
+  ) => {
     if (!cartId) return toast.error("Cart hasn’t been created yet!");
     try {
       const res = await fetch(`/api/cart/${cartId}/update-product`, {
@@ -425,25 +425,25 @@ export default function OrderForm() {
         const err = await res.json().catch(() => null);
         throw new Error(err?.message || "Failed to update quantity");
       }
-          // 🔸 NEW: API now returns { lines: […] }
-    const { lines } = await res.json();
+      // 🔸 NEW: API now returns { lines: […] }
+      const { lines } = await res.json();
 
-    const mapped: OrderItem[] = lines.map((l: any) => ({
-      product: {
-        id:           l.id,
-        title:        l.title,
-        sku:          l.sku,
-        description:  l.description,
-        image:        l.image,
-        price:        l.unitPrice,
-        regularPrice: { [clientCountry]: l.unitPrice },
-        stockData:    {},
-        subtotal:     l.subtotal,
-      },
-      quantity: l.quantity,
-    }));
+      const mapped: OrderItem[] = lines.map((l: any) => ({
+        product: {
+          id: l.id,
+          title: l.title,
+          sku: l.sku,
+          description: l.description,
+          image: l.image,
+          price: l.unitPrice,
+          regularPrice: { [clientCountry]: l.unitPrice },
+          stockData: {},
+          subtotal: l.subtotal,
+        },
+        quantity: l.quantity,
+      }));
 
-    setOrderItems(mapped);
+      setOrderItems(mapped);
     } catch (err: any) {
       toast.error(err.message || "Could not update quantity");
     }
@@ -731,7 +731,9 @@ export default function OrderForm() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => updateQuantity(product.id, "subtract")}
+                              onClick={() =>
+                                updateQuantity(product.id, "subtract")
+                              }
                             >
                               <Minus className="h-4 w-4" />
                             </Button>
@@ -751,14 +753,14 @@ export default function OrderForm() {
                           )}
                           <div className="flex justify-between mt-2">
                             <span className="font-medium">
-                            Unit Price: {formatCurrency(price, clientCountry)}
+                              Unit Price: {formatCurrency(price, clientCountry)}
                             </span>
                             <span className="font-medium">
                               $
                               {formatCurrency(
-                  product.subtotal ?? price * quantity,
-                  clientCountry
-                )}
+                                product.subtotal ?? price * quantity,
+                                clientCountry
+                              )}
                             </span>
                           </div>
                         </div>
@@ -791,8 +793,7 @@ export default function OrderForm() {
                         );
                         return (
                           <SelectItem key={p.id} value={p.id}>
-                            {p.title} — ${price.toFixed(2)} — Stock:{" "}
-                            {stockCount}
+                            {p.title} — ${price} — Stock: {stockCount}
                           </SelectItem>
                         );
                       })}
@@ -1036,7 +1037,9 @@ export default function OrderForm() {
                   </div>
                   <div className="flex justify-between">
                     <span>Subtotal:</span>
-                    <span className="font-medium">{formatCurrency(subtotal, clientCountry)}</span>
+                    <span className="font-medium">
+                      {formatCurrency(subtotal, clientCountry)}
+                    </span>
                   </div>
                   {couponApplied && discount > 0 && (
                     <div className="flex justify-between text-green-600">
@@ -1044,17 +1047,24 @@ export default function OrderForm() {
                         Discount
                         {discountType === "percentage" ? ` (${value}%)` : ""}:
                       </span>
-                      <span className="font-medium">–{formatCurrency(discount, clientCountry)}</span>
+                      <span className="font-medium">
+                        –{formatCurrency(discount, clientCountry)}
+                      </span>
                     </div>
                   )}
                   <div className="flex justify-between">
                     <span>Shipping:</span>
-                    <span className="font-medium">{formatCurrency(shippingCost, clientCountry)}</span>
+                    <span className="font-medium">
+                      {formatCurrency(shippingCost, clientCountry)}
+                    </span>
                   </div>
                   <Separator />
                   <div className="flex justify-between text-lg font-bold">
                     <span>Total:</span>
-                    <span> {formatCurrency(total + shippingCost, clientCountry)}</span>
+                    <span>
+                      {" "}
+                      {formatCurrency(total + shippingCost, clientCountry)}
+                    </span>
                   </div>
                 </div>
               ) : (

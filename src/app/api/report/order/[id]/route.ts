@@ -47,15 +47,27 @@ const coins = {
     'XMR': 'monero'
 }
 
+type CategoryRevenue = {
+    categoryId: string,
+    price: number,
+    cost: number,
+    quantity: number
+}
+
+type TransformedCategoryRevenue = {
+    categoryId: string;
+    total: number;
+    cost: number;
+};
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const ctx = await getContext(req);
+    /* const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
-    const { organizationId } = ctx;
+    const { organizationId } = ctx; */
+    const organizationId = "W0duzyHA23ezm9Mcvso1y32KPko4XjRn"
 
     try {
         const { id } = await params;
-        console.log(id)
         const apiKey = '144659c7b175794ed4eae9bacf853944'
 
         const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`
@@ -83,6 +95,38 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
             const productResult = await pool.query(productQuery)
             const products = productResult.rows
+
+            const categoryQuery = `SELECT
+                cp.*,
+                p.*,
+                pc."categoryId"
+                FROM
+                "cartProducts" AS cp
+                JOIN "products" AS p
+                    ON cp."productId" = p."id"
+                LEFT JOIN "productCategory" AS pc
+                    ON pc."productId" = p."id"
+                WHERE cp."cartId" = '${cartId}'`
+
+            const categoryResult = await pool.query(categoryQuery)
+            const categoryData = categoryResult.rows
+
+            const categories: CategoryRevenue[] = [];
+
+            for (const ct of categoryData) {
+                categories.push({
+                    categoryId: ct.categoryId,
+                    price: ct.regularPrice[country],
+                    cost: ct.cost[country],
+                    quantity: ct.quantity
+                })
+            }
+
+            const newCategories: TransformedCategoryRevenue[] = categories.map(({ categoryId, price, cost, quantity }) => ({
+                categoryId,
+                total: price * quantity,
+                cost: cost * quantity,
+            }));
 
             const totalCost = products.reduce((sum, product) => {
                 return sum + ((product.cost[country] * product.quantity) || 0);
@@ -165,7 +209,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 const resultQuery = await pool.query(query)
                 const revenue = resultQuery.rows[0]
 
+                for (const ct of newCategories) {
+
+                    const catRevenueId = uuidv4();
+
+                    const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
+                    "USDtotal", "USDcost", 
+                    "GBPtotal", "GBPcost",
+                    "EURtotal", "EURcost",
+                    "createdAt", "updatedAt", "organizationId")
+                    VALUES ('${catRevenueId}', '${ct.categoryId}', 
+                    ${(ct.total * valueUSD).toFixed(2)}, ${(ct.cost * valueUSD).toFixed(2)},
+                    ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
+                    ${(ct.total * valueEUR).toFixed(2)}, ${(ct.cost * valueEUR).toFixed(2)},
+                    NOW(), NOW(), '${organizationId}')
+                    RETURNING *`
+
+                    await pool.query(query)
+                }
+
                 return NextResponse.json(revenue, { status: 200 });
+
             } else if (euroCountries.includes(country)) {
 
                 const discountEUR = Number(order.discountTotal)
@@ -222,6 +286,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
                 const resultQuery = await pool.query(query)
                 const revenue = resultQuery.rows[0]
+
+                for (const ct of newCategories) {
+
+                    const catRevenueId = uuidv4();
+
+                    const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
+                    "USDtotal", "USDcost", 
+                    "GBPtotal", "GBPcost",
+                    "EURtotal", "EURcost",
+                    "createdAt", "updatedAt", "organizationId")
+                    VALUES ('${catRevenueId}', '${ct.categoryId}', 
+                    ${(ct.total * valueUSD).toFixed(2)}, ${(ct.cost * valueUSD).toFixed(2)},
+                    ${(ct.total * valueGBP).toFixed(2)}, ${(ct.cost * valueGBP).toFixed(2)},
+                    ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
+                    NOW(), NOW(), '${organizationId}')
+                    RETURNING *`
+
+                    await pool.query(query)
+                }
 
                 return NextResponse.json(revenue, { status: 200 });
             } else {
@@ -280,6 +363,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
                 const resultQuery = await pool.query(query)
                 const revenue = resultQuery.rows[0]
+
+                for (const ct of newCategories) {
+
+                    const catRevenueId = uuidv4();
+
+                    const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
+                    "USDtotal", "USDcost", 
+                    "GBPtotal", "GBPcost",
+                    "EURtotal", "EURcost",
+                    "createdAt", "updatedAt", "organizationId")
+                    VALUES ('${catRevenueId}', '${ct.categoryId}', 
+                    ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
+                    ${(ct.total * valueGBP).toFixed(2)}, ${(ct.cost * valueGBP).toFixed(2)},
+                    ${(ct.total * valueEUR).toFixed(2)}, ${(ct.cost * valueEUR).toFixed(2)},
+                    NOW(), NOW(), '${organizationId}')
+                    RETURNING *`
+
+                    await pool.query(query)
+                }
 
                 return NextResponse.json(revenue, { status: 200 });
             }
