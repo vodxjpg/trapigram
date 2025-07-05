@@ -581,15 +581,37 @@ interface DB {
   }
 
   orderRevenue: {
-    id: string,
-    orderId: string,
-    total: number,
-    discount: number,
-    shipping: number,
-    cost: number,
-    organizationId: string,
-    createdAt: Date,
-    updatedAt: Date
+    id: string;
+    orderId: string;
+    USDtotal: number;
+    USDdiscount: number;
+    USDshipping: number;
+    USDcost: number;
+    GBPtotal: number;
+    GBPdiscount: number;
+    GBPshipping: number;
+    GBPcost: number;
+    EURtotal: number;
+    EURdiscount: number;
+    EURshipping: number;
+    EURcost: number;
+    organizationId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  categoryRevenue: {
+    id: string;
+    categoryId: string;
+    USDtotal: number;
+    USDcost: number;
+    GBPtotal: number;
+    GBPcost: number;
+    EURtotal: number;
+    EURcost: number;
+    organizationId: string;
+    createdAt: Date;
+    updatedAt: Date;
   }
 
   orderMessages: {
