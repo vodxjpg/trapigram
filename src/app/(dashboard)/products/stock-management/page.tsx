@@ -1,15 +1,12 @@
 // src/app/(dashboard)/products/stock-management/page.tsx
 "use client";
-
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { Suspense, useEffect }      from "react";
 import { useRouter }               from "next/navigation";
 
-import { authClient }              from "@/lib/auth-client";
-import { useHasPermission }        from "@/hooks/use-has-permission";
-
 import { PageHeader }              from "@/components/page-header";
 import { StockManagementDataTable } from "../components/stock-management-data-table";
-
 export default function StockManagementPage() {
   const router = useRouter();
 
