@@ -1,4 +1,4 @@
-// src/app/(dashboard)/products/components/stock-management-data-table.tsx
+// src/app/(dashboard)/products/components/stock-management-data-table.ts
 "use client";
 
 import { useState, useEffect } from "react";
