@@ -1,42 +1,46 @@
-// src/app/(dashboard)/organizations/[identifier]/tickets/page.tsx
+// src/app/(dashboard)/tickets/page.tsx
 "use client";
 
-import { useEffect, useMemo }                 from "react";
-import { useRouter }                          from "next/navigation";
-import { Suspense }                           from "react";
+import { useEffect, useMemo }   from "react";
+import { Suspense }             from "react";
+import { useRouter }            from "next/navigation";
 
-import { authClient }                         from "@/lib/auth-client";
-import { useHasPermission }                   from "@/hooks/use-has-permission";
-import { useHeaderTitle }                     from "@/context/HeaderTitleContext";
-import { TicketsTable }                       from "./ticket-table";
+import { authClient }           from "@/lib/auth-client";
+import { useHasPermission }     from "@/hooks/use-has-permission";
+import { useHeaderTitle }       from "@/context/HeaderTitleContext";
+import { TicketsTable }         from "./ticket-table";
+
+/* -------------------------------------------------------------------------- */
+/*  Component                                                                 */
+/* -------------------------------------------------------------------------- */
 
 export default function TicketsPage() {
-  const router = useRouter();
-  const { setHeaderTitle } = useHeaderTitle();
+  const router            = useRouter();
+  const { setHeaderTitle} = useHeaderTitle();
 
-  /* active organisation id → permission check */
-  const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  /* ---------- permissions ------------------------------------------------ */
+  const { data: activeOrg }  = authClient.useActiveOrganization();
+  const organizationId       = activeOrg?.id ?? null;
 
-  const {
-    hasPermission: viewPerm,
-    isLoading:     viewLoading,
-  } = useHasPermission(organizationId, { ticket: ["view"] });
+  const { hasPermission: viewPerm, isLoading: viewLoading } =
+    useHasPermission(organizationId, { ticket: ["view"] });
 
-  const canView = useMemo(() => !viewLoading && viewPerm, [viewLoading, viewPerm]);
+  /* ---------- derived flag (always computed) ----------------------------- */
+  const canView = useMemo(
+    () => !viewLoading && viewPerm,
+    [viewLoading, viewPerm],
+  );
 
-  /* header & redirect */
+  /* ---------- side-effects (always run) ---------------------------------- */
   useEffect(() => {
     setHeaderTitle("Tickets");
-    if (!viewLoading && !viewPerm) {
-      router.replace("/dashboard");
-    }
+    if (!viewLoading && !viewPerm) router.replace("/dashboard");
   }, [setHeaderTitle, viewLoading, viewPerm, router]);
 
-  /* guards during resolve / redirect */
+  /* ---------- guards AFTER all hooks ------------------------------------ */
   if (viewLoading || !canView) return null;
 
-  /* ------------------------------------------------------------ */
+  /* ---------- UI --------------------------------------------------------- */
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-col gap-2">
