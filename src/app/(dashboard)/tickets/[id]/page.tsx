@@ -77,43 +77,41 @@ export default function TicketDetail() {
   const { id }  = useParams<{ id: string }>();
   const router  = useRouter();
 
-  /* ---------------- permission hooks ------------------------------------ */
+  const [header,       setHeader]        = useState<TicketHeader | null>(null);
+  const [messages,     setMessages]      = useState<TicketMessage[]>([]);
+  const [loading,      setLoading]       = useState(true);
+  const [status,       setStatus]        = useState<TicketHeader["status"]>("open");
+  const [priority,     setPriority]      = useState<TicketHeader["priority"]>("medium");
+  const [newMessage,   setNewMessage]    = useState("");
+  const [attachments,  setAttachments]   = useState<File[]>([]);
+  const [tagsOptions,  setTagsOptions]   = useState<{value:string;label:string}[]>([]);
+  const [selectedTags, setSelectedTags]  = useState<typeof tagsOptions>([]);
+  const [tagsDialogOpen, setTagsDialogOpen] = useState(false);
+  const [tags,         setTags]           = useState<{description:string}[]>([]);
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+
+
+
+  // ── Permission hooks ─────────────────────────────────────────────────────
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId      = activeOrg?.id ?? null;
-
   const { hasPermission: canViewRaw,   isLoading: viewLoading   } =
     useHasPermission(organizationId, { ticket: ["view"] });
   const { hasPermission: canUpdateRaw, isLoading: updateLoading } =
     useHasPermission(organizationId, { ticket: ["update"] });
 
-  const canView   = useMemo(() => !viewLoading   &&  canViewRaw,   [viewLoading,   canViewRaw]);
-  const canUpdate = useMemo(() => !updateLoading &&  canUpdateRaw, [updateLoading, canUpdateRaw]);
+  const canView   = useMemo(() => !viewLoading   && canViewRaw,   [viewLoading,   canViewRaw]);
+  const canUpdate = useMemo(() => !updateLoading && canUpdateRaw,[updateLoading, canUpdateRaw]);
 
-  /* redirect if not allowed to view */
+  // ── Redirect if no view right ────────────────────────────────────────────
   useEffect(() => {
     if (!viewLoading && !canViewRaw) router.replace("/tickets");
   }, [viewLoading, canViewRaw, router]);
 
-  /* before permissions resolved → render nothing */
+  // ── Guard before rendering content ───────────────────────────────────────
   if (viewLoading || !canView) return null;
 
-  /* ---------------- state ------------------------------------------------ */
-  const [header,      setHeader]      = useState<TicketHeader | null>(null);
-  const [messages,    setMessages]    = useState<TicketMessage[]>([]);
-  const [loading,     setLoading]     = useState(true);
-
-  const [status,      setStatus]      = useState<TicketHeader["status"]>("open");
-  const [priority,    setPriority]    = useState<TicketHeader["priority"]>("medium");
-  const [newMessage,  setNewMessage]  = useState("");
-  const [attachments, setAttachments] = useState<File[]>([]);
-
-  const [tagsOptions,   setTagsOptions]   = useState<{ value:string; label:string }[]>([]);
-  const [selectedTags,  setSelectedTags]  = useState<typeof tagsOptions>([]);
-  const [tagsDialogOpen,setTagsDialogOpen]= useState(false);
-  const [tags,          setTags]          = useState<{ description:string }[]>([]);
-
-  const [closeDialogOpen,setCloseDialogOpen] = useState(false);
-
+  
   /* ---------------- fetch ticket + tags --------------------------------- */
   useEffect(() => {
     (async () => {
