@@ -1,14 +1,12 @@
 // src/app/api/cart/[id]/update-product/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
-import { getStepsFor, getPriceForQuantity, tierPricing } from "@/lib/tier-pricing";
+import { getPriceForQuantity, tierPricing } from "@/lib/tier-pricing";
 import { resolveUnitPrice } from "@/lib/pricing";
-
-
 
 const cartProductSchema = z.object({
   productId: z.string(),
@@ -16,9 +14,30 @@ const cartProductSchema = z.object({
   action: z.enum(["add", "subtract"]),
 });
 
+/* ── tier helpers ─────────────────────────────────────────── */
+type Tier = {
+  id: string;
+  countries: string[];
+  products: { productId: string | null; variationId: string | null }[];
+  steps: { fromUnits: number; toUnits: number; price: string }[];
+};
+
+function findTier(
+  tiers: Tier[],
+  country: string,
+  productId: string,
+): Tier | undefined {
+  return tiers.find(
+    (t) =>
+      t.countries.includes(country) &&
+      t.products.some((p) => p.productId === productId),
+  );
+}
+
+/* ─────────────────────────────────────────────────────────── */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -45,11 +64,14 @@ export async function PATCH(
            JOIN "cartProducts"     cp ON cp."cartId"   = ca.id
           WHERE ca.id = $1
             AND (cp."productId" = $2 OR cp."affiliateProductId" = $2)`,
-        [cartId, data.productId]
+        [cartId, data.productId],
       );
       if (!cRows.length) {
         await client.query("ROLLBACK");
-        return NextResponse.json({ error: "Cart item not found" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Cart item not found" },
+          { status: 404 },
+        );
       }
       const {
         country,
@@ -73,18 +95,13 @@ export async function PATCH(
           `SELECT "regularPoints","salePoints"
              FROM "affiliateProducts"
             WHERE id = $1`,
-          [data.productId]
+          [data.productId],
         );
         const { regularPoints, salePoints } = apRows[0] as {
           regularPoints: Record<string, Record<string, number>>;
           salePoints: Record<string, Record<string, number>> | null;
         };
 
-        /* ---------- NEW lookup order ----------
-           1) sale ⇢ current level ⇢ country
-           2) sale ⇢ default      ⇢ country
-           3) regular ⇢ current level ⇢ country
-           4) regular ⇢ default      ⇢ country   */
         basePrice =
           salePoints?.[levelId]?.[country] ??
           salePoints?.default?.[country] ??
@@ -104,15 +121,17 @@ export async function PATCH(
         basePrice = p.price;
       }
 
-
       /* 3. new quantity */
       const newQty = data.action === "add" ? oldQty + 1 : oldQty - 1;
       if (newQty < 0) {
         await client.query("ROLLBACK");
-        return NextResponse.json({ error: "Quantity cannot be negative" }, { status: 400 });
+        return NextResponse.json(
+          { error: "Quantity cannot be negative" },
+          { status: 400 },
+        );
       }
 
-      /* 4. affiliate balance flow */
+      /* 4. affiliate balance flow (unchanged) */
       if (isAffiliate) {
         const deltaQty = newQty - oldQty;
         const absPoints = Math.abs(deltaQty) * basePrice;
@@ -122,7 +141,7 @@ export async function PATCH(
             `SELECT "pointsCurrent"
                FROM "affiliatePointBalances"
               WHERE "organizationId" = $1 AND "clientId" = $2`,
-            [organizationId, clientId]
+            [organizationId, clientId],
           );
           const pointsCurrent = balRows[0]?.pointsCurrent ?? 0;
 
@@ -130,8 +149,12 @@ export async function PATCH(
             if (absPoints > pointsCurrent) {
               await client.query("ROLLBACK");
               return NextResponse.json(
-                { error: "Insufficient affiliate points", required: absPoints, available: pointsCurrent },
-                { status: 400 }
+                {
+                  error: "Insufficient affiliate points",
+                  required: absPoints,
+                  available: pointsCurrent,
+                },
+                { status: 400 },
               );
             }
             await client.query(
@@ -140,39 +163,74 @@ export async function PATCH(
                      "pointsSpent"   = "pointsSpent"   + $1,
                      "updatedAt"     = NOW()
                WHERE "organizationId" = $2 AND "clientId" = $3`,
-              [absPoints, organizationId, clientId]
+              [absPoints, organizationId, clientId],
             );
             await client.query(
               `INSERT INTO "affiliatePointLogs"
                  (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
                VALUES (gen_random_uuid(),$1,$2,$3,'redeem','cart quantity update',NOW(),NOW())`,
-              [organizationId, clientId, -absPoints]
+              [organizationId, clientId, -absPoints],
             );
           } else {
             await client.query(
               `UPDATE "affiliatePointBalances"
                  SET "pointsCurrent" = "pointsCurrent" + $1,
-                     /* ↓ NEW: roll back spent points as well (never below 0) */
                      "pointsSpent"   = GREATEST("pointsSpent" - $1, 0),
                      "updatedAt"     = NOW()
                WHERE "organizationId" = $2 AND "clientId" = $3`,
-              [absPoints, organizationId, clientId]
+              [absPoints, organizationId, clientId],
             );
             await client.query(
               `INSERT INTO "affiliatePointLogs"
                  (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
                VALUES (gen_random_uuid(),$1,$2,$3,'refund','cart quantity update',NOW(),NOW())`,
-              [organizationId, clientId, absPoints]
+              [organizationId, clientId, absPoints],
             );
           }
         }
       }
 
-      /* 5. tier-pricing (cash only) */
-      const tiers = await tierPricing(organizationId) as Tier[];
-      const steps = getStepsFor(tiers, country, data.productId);
-      const price = isAffiliate ? basePrice
-        : getPriceForQuantity(steps, newQty) ?? basePrice;
+      /* 5. tier-pricing (cash only, mix-and-match) */
+      let price = basePrice;
+      if (!isAffiliate) {
+        const tiers = (await tierPricing(organizationId)) as Tier[];
+        const tier = findTier(tiers, country, data.productId);
+
+        if (tier) {
+          const tierProductIds = tier.products
+            .map((p) => p.productId)
+            .filter(Boolean) as string[];
+
+          const { rows: tierRows } = await client.query<{ quantity: number }>(
+            `SELECT quantity
+               FROM "cartProducts"
+              WHERE "cartId" = $1
+                AND "productId" = ANY($2::uuid[])`,
+            [cartId, tierProductIds],
+          );
+          const qtyBefore = tierRows.reduce(
+            (s, r) => s + Number(r.quantity),
+            0,
+          );
+          const totalTierQty = qtyBefore - oldQty + newQty;
+
+          const rawStep = getPriceForQuantity(tier.steps, totalTierQty);
+          const stepNum =
+            rawStep === undefined || rawStep === null
+              ? undefined
+              : Number(rawStep);
+          price = Number.isFinite(stepNum) ? stepNum : basePrice;
+
+          await client.query(
+            `UPDATE "cartProducts"
+                SET "unitPrice" = $1,
+                    "updatedAt" = NOW()
+              WHERE "cartId"   = $2
+                AND "productId" = ANY($3::uuid[])`,
+            [price, cartId, tierProductIds],
+          );
+        }
+      }
 
       /* 6. update cart row */
       const { rows: upd } = await client.query(
@@ -183,7 +241,7 @@ export async function PATCH(
          WHERE "cartId"   = $3
            AND ("productId" = $4 OR "affiliateProductId" = $4)
          RETURNING *`,
-        [newQty, price, cartId, data.productId]
+        [newQty, price, cartId, data.productId],
       );
 
       /* 7. stock */
@@ -191,7 +249,7 @@ export async function PATCH(
         client,
         data.productId,
         country,
-        data.action === "add" ? -1 : 1
+        data.action === "add" ? -1 : 1,
       );
 
       await client.query("COMMIT");
@@ -203,7 +261,7 @@ export async function PATCH(
             `SELECT id,title,sku,description,image
                FROM "affiliateProducts"
               WHERE id = $1`,
-            [data.productId]
+            [data.productId],
           );
           return {
             ...rows[0],
@@ -218,7 +276,7 @@ export async function PATCH(
           `SELECT id,title,sku,description,image,"regularPrice"
              FROM products
             WHERE id = $1`,
-          [data.productId]
+          [data.productId],
         );
         return {
           ...rows[0],
@@ -230,7 +288,8 @@ export async function PATCH(
       })();
 
       /* 9. cart hash */
-      const encrypted = crypto.createHash("sha256")
+      const encrypted = crypto
+        .createHash("sha256")
         .update(JSON.stringify(upd[0]))
         .digest("base64");
       await pool.query(
@@ -238,7 +297,7 @@ export async function PATCH(
             SET "cartUpdatedHash" = $1,
                 "updatedAt"      = NOW()
           WHERE id = $2`,
-        [encrypted, cartId]
+        [encrypted, cartId],
       );
 
       /* 10. full snapshot */
@@ -257,7 +316,7 @@ export async function PATCH(
                  JOIN "cartProducts" cp ON cp."productId" = p.id
                 WHERE cp."cartId" = $1
                 ORDER BY cp."createdAt"`,
-              [cid]
+              [cid],
             ),
             c.query(
               `SELECT ap.id,ap.title,ap.description,ap.image,ap.sku,
@@ -266,7 +325,7 @@ export async function PATCH(
                  JOIN "cartProducts"    cp ON cp."affiliateProductId" = ap.id
                 WHERE cp."cartId" = $1
                 ORDER BY cp."createdAt"`,
-              [cid]
+              [cid],
             ),
           ]);
 
@@ -283,13 +342,15 @@ export async function PATCH(
       await client.query("ROLLBACK");
       throw e;
     } finally {
-      /* ► new : always free the connection */
       client.release();
     }
   } catch (err: any) {
     console.error("[PATCH /api/cart/:id/update-product]", err);
     if (err instanceof z.ZodError)
       return NextResponse.json({ error: err.errors }, { status: 400 });
-    return NextResponse.json({ error: err.message ?? "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: err.message ?? "Internal server error" },
+      { status: 500 },
+    );
   }
 }
