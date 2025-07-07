@@ -132,7 +132,7 @@ export default function TicketDetail() {
         setTags(tags);
         setSelectedTags(tags.map((t:any) => ({ value:t.description, label:t.description })));
       } catch {
-        toast.error("Failed to load ticket or tags");
+        // toast.error("Failed to load ticket or tags");
       } finally {
         setLoading(false);
       }
