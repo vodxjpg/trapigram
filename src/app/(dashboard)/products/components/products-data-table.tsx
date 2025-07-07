@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 import { useEffect, useState } from "react";
 import {
@@ -12,12 +12,12 @@ import {
   getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
-} from "@tanstack/react-table"
-import { useRouter } from "next/navigation"
-import { Copy, Edit, MoreHorizontal, Trash } from "lucide-react"
-import Image from "next/image"
+} from "@tanstack/react-table";
+import { useRouter } from "next/navigation";
+import { Copy, Edit, MoreHorizontal, Trash } from "lucide-react";
+import Image from "next/image";
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,11 +25,24 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,180 +52,127 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { toast } from "sonner"
-import { Skeleton } from "@/components/ui/skeleton"
-import { useProducts } from "@/hooks/use-products"
-import type { Attribute } from "@/types/product"
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useProducts } from "@/hooks/use-products";
+import type { Attribute } from "@/types/product";
 import { authClient } from "@/lib/auth-client";
-import { useHasPermission }                   from "@/hooks/use-has-permission";   // ← NEW
+import { useHasPermission } from "@/hooks/use-has-permission"; // ← NEW
 // Product type definition
 export type Product = {
-  id: string
-  title: string
-  image: string | null
-  sku: string
-  status: "published" | "draft"
-  regularPrice: Record<string, number>
-  salePrice: Record<string, number> | null
-  stockStatus: "managed" | "unmanaged"
-  stockData: Record<string, Record<string, number>> | null
-  categories: string[]
-  attributes: Attribute[]
-  createdAt: string
-  productType: "simple" | "variable"
+  id: string;
+  title: string;
+  image: string | null;
+  sku: string;
+  status: "published" | "draft";
+  regularPrice: Record<string, number>;
+  salePrice: Record<string, number> | null;
+  stockStatus: "managed" | "unmanaged";
+  stockData: Record<string, Record<string, number>> | null;
+  categories: string[];
+  attributes: Attribute[];
+  createdAt: string;
+  productType: "simple" | "variable";
   variations: Array<{
-    id: string
-    attributes: Record<string, string>
-    sku: string
-    image: string | null
-    prices: Record<string, { regular: number; sale: number | null }>
-    cost: Record<string, number>
-    stock: Record<string, Record<string, number>>
-  }>
-}
+    id: string;
+    attributes: Record<string, string>;
+    sku: string;
+    image: string | null;
+    prices: Record<string, { regular: number; sale: number | null }>;
+    cost: Record<string, number>;
+    stock: Record<string, Record<string, number>>;
+  }>;
+};
 
 export function ProductsDataTable() {
- const router = useRouter()
+  // 1) *All* hooks go first, in a fixed order:
 
- // ── load org for permission checks
- const { data: activeOrg } = authClient.useActiveOrganization()
- const orgId               = activeOrg?.id ?? null
+  const router = useRouter();
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
 
- // ── permission flags
- const {
-   hasPermission: canView,
-   isLoading:     viewLoading,
- } = useHasPermission(orgId, { product: ["view"] })
- const {
-   hasPermission: canCreate,
-   isLoading:     createLoading,
- } = useHasPermission(orgId, { product: ["create"] })
- const {
-   hasPermission: canUpdate,
-   isLoading:     updateLoading,
- } = useHasPermission(orgId, { product: ["update"] })
- const {
-   hasPermission: canDelete,
-   isLoading:     deleteLoading,
- } = useHasPermission(orgId, { product: ["delete"] })
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { product: ["view"] }
+  );
+  const { hasPermission: canCreate, isLoading: createLoading } =
+    useHasPermission(orgId, { product: ["create"] });
+  const { hasPermission: canUpdate, isLoading: updateLoading } =
+    useHasPermission(orgId, { product: ["update"] });
+  const { hasPermission: canDelete, isLoading: deleteLoading } =
+    useHasPermission(orgId, { product: ["delete"] });
 
- // ── wait for permission checks
- if (viewLoading || createLoading || updateLoading || deleteLoading) {
-   return null
- }
-
- // ── redirect if no view access
- if (!canView) {
-   router.replace("/dashboard")
-   return null
- }
-
- // now safe to load data and render table
-  const [sorting, setSorting] = useState<SortingState>([])
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
-  const [rowSelection, setRowSelection] = useState({})
-  const [pageSize, setPageSize] = useState(10)
-  const [page, setPage] = useState(1)
-  const [search, setSearch] = useState("")
-  const [deleteProductId, setDeleteProductId] = useState<string | null>(null)
-  const [categoryMap, setCategoryMap] = useState<Record<string,string>>({});
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [rowSelection, setRowSelection] = useState({});
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
+  const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
 
   const { products, isLoading, totalPages, mutate } = useProducts({
     page,
     pageSize,
     search,
-  })
+  });
 
   useEffect(() => {
-    fetch('/api/product-categories?page=1&pageSize=1000', {
-      headers: { 'x-internal-secret': process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! }
+    fetch("/api/product-categories?page=1&pageSize=1000", {
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+      },
     })
-      .then(res => res.json())
+      .then((res) => res.json())
       .then(({ categories }) => {
-        const map: Record<string,string> = {};
+        const map: Record<string, string> = {};
         categories.forEach((c: { id: string; name: string }) => {
           map[c.id] = c.name;
         });
         setCategoryMap(map);
       })
-      .catch(() => {/* swallow or toast */});
+      .catch(() => {});
   }, []);
-  
-  
-  /* ------------------------------------------------------------ */
-  /*  NEW – duplicate handler                                     */
-  /* ------------------------------------------------------------ */
-  const handleDuplicateProduct = async (productId: string) => {
-    try {
-      const res = await fetch(`/api/products/${productId}/duplicate`, { method: "POST" })
-      if (!res.ok) throw new Error("Failed to duplicate product")
-      toast.success("Product duplicated")
-      mutate()
-    } catch (err) {
-      toast.error("Failed to duplicate product")
-    }
-  }
-
-  const handleStatusChange = async (productId: string, newStatus: "published" | "draft") => {
-    try {
-      const response = await fetch(`/api/products/${productId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      })
-      if (!response.ok) throw new Error("Failed to update product status")
-      toast.success(`Product status changed to ${newStatus}`)
-      mutate()
-    } catch (error) {
-      toast.error("Failed to update product status")
-    }
-  }
-
-  const handleDeleteProduct = async () => {
-    if (!deleteProductId) return
-    try {
-      const response = await fetch(`/api/products/${deleteProductId}`, { method: "DELETE" })
-      if (!response.ok) throw new Error("Failed to delete product")
-      toast.success("The product has been deleted successfully")
-      mutate()
-      setDeleteProductId(null)
-    } catch (error) {
-      toast.error("Failed to delete product")
-    }
-  }
 
   const columns: ColumnDef<Product>[] = [
     {
       accessorKey: "image",
       header: "Image",
       cell: ({ row }) => {
-        const image = row.original.image
-        const title = row.original.title
+        const image = row.original.image;
+        const title = row.original.title;
         const initials = title
           .split(" ")
           .slice(0, 2)
           .map((word) => word.charAt(0).toUpperCase())
           .join("")
-          .slice(0, 2)
+          .slice(0, 2);
         return (
           <div className="relative h-12 w-12">
             {image ? (
-              <Image src={image} alt={title} fill className="rounded-md object-cover" />
+              <Image
+                src={image}
+                alt={title}
+                fill
+                className="rounded-md object-cover"
+              />
             ) : (
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-200 font-medium text-gray-600">
                 {initials}
               </div>
             )}
           </div>
-        )
+        );
       },
     },
     {
       accessorKey: "title",
       header: "Product Title",
-      cell: ({ row }) => <div className="font-medium">{row.original.title}</div>,
+      cell: ({ row }) => (
+        <div className="font-medium">{row.original.title}</div>
+      ),
     },
     {
       accessorKey: "sku",
@@ -223,29 +183,40 @@ export function ProductsDataTable() {
       accessorKey: "status",
       header: "Status",
       cell: ({ row }) => {
-        const status = row.original.status
+        const status = row.original.status;
         return (
           <Select
             value={status}
-            onValueChange={(value) => handleStatusChange(row.original.id, value as "published" | "draft")}
+            onValueChange={(value) =>
+              handleStatusChange(
+                row.original.id,
+                value as "published" | "draft"
+              )
+            }
           >
             <SelectTrigger className="w-[110px]">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="published">
-                <Badge variant="outline" className="border-green-200 bg-green-50 text-green-700">
+                <Badge
+                  variant="outline"
+                  className="border-green-200 bg-green-50 text-green-700"
+                >
                   Published
                 </Badge>
               </SelectItem>
               <SelectItem value="draft">
-                <Badge variant="outline" className="border-gray-200 bg-gray-50 text-gray-700">
+                <Badge
+                  variant="outline"
+                  className="border-gray-200 bg-gray-50 text-gray-700"
+                >
                   Draft
                 </Badge>
               </SelectItem>
             </SelectContent>
           </Select>
-        )
+        );
       },
       filterFn: (row, id, value) => value.includes(row.original.status),
     },
@@ -253,31 +224,39 @@ export function ProductsDataTable() {
       accessorKey: "price",
       header: "Prices",
       cell: ({ row }) => {
-        const product = row.original
-        const country = Object.keys(product.regularPrice)[0] || "US"
+        const product = row.original;
+        const country = Object.keys(product.regularPrice)[0] || "US";
 
         if (product.productType === "simple") {
-          const salePrice = product.salePrice?.[country] ?? null
-          const regularPrice = product.regularPrice[country] ?? 0
-          const displayPrice = salePrice !== null ? salePrice : regularPrice
+          const salePrice = product.salePrice?.[country] ?? null;
+          const regularPrice = product.regularPrice[country] ?? 0;
+          const displayPrice = salePrice !== null ? salePrice : regularPrice;
           return (
             <div className="text-left">
               {displayPrice ? `$${displayPrice.toFixed(2)}` : "-"}
               {salePrice !== null && (
-                <span className="ml-2 text-sm text-gray-500 line-through">${regularPrice.toFixed(2)}</span>
+                <span className="ml-2 text-sm text-gray-500 line-through">
+                  ${regularPrice.toFixed(2)}
+                </span>
               )}
             </div>
-          )
+          );
         }
 
         /* variable */
         const variationPrices = product.variations.map((v) => {
-          const salePrice = v.prices[country]?.sale ?? null
-          const regularPrice = v.prices[country]?.regular ?? 0
-          return salePrice !== null ? salePrice : regularPrice
-        })
-        const maxPrice = variationPrices.length ? Math.max(...variationPrices) : 0
-        return <div className="text-left">{maxPrice ? `$${maxPrice.toFixed(2)}` : "-"}</div>
+          const salePrice = v.prices[country]?.sale ?? null;
+          const regularPrice = v.prices[country]?.regular ?? 0;
+          return salePrice !== null ? salePrice : regularPrice;
+        });
+        const maxPrice = variationPrices.length
+          ? Math.max(...variationPrices)
+          : 0;
+        return (
+          <div className="text-left">
+            {maxPrice ? `$${maxPrice.toFixed(2)}` : "-"}
+          </div>
+        );
       },
     },
     {
@@ -302,8 +281,8 @@ export function ProductsDataTable() {
       cell: ({ row }) => {
         const cats = row.original.categories;
         // map ids → names, falling back to the id if name not yet loaded
-        const names = cats.map(id => categoryMap[id] ?? id);
-    
+        const names = cats.map((id) => categoryMap[id] ?? id);
+
         return (
           <div className="flex flex-wrap gap-1">
             {names.length > 0 ? (
@@ -313,7 +292,9 @@ export function ProductsDataTable() {
                 </Badge>
               ))
             ) : (
-              <span className="text-xs text-muted-foreground">No categories</span>
+              <span className="text-xs text-muted-foreground">
+                No categories
+              </span>
             )}
             {names.length > 2 && (
               <Badge variant="outline" className="text-xs">
@@ -328,14 +309,18 @@ export function ProductsDataTable() {
       accessorKey: "createdAt",
       header: "Created At",
       cell: ({ row }) => {
-        const d = new Date(row.original.createdAt)
-        return <div className="text-sm">{!isNaN(d.getTime()) ? d.toLocaleDateString() : "-"}</div>
+        const d = new Date(row.original.createdAt);
+        return (
+          <div className="text-sm">
+            {!isNaN(d.getTime()) ? d.toLocaleDateString() : "-"}
+          </div>
+        );
       },
     },
     {
       id: "actions",
       cell: ({ row }) => {
-        const product = row.original
+        const product = row.original;
 
         return (
           <DropdownMenu>
@@ -346,33 +331,40 @@ export function ProductsDataTable() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+              <DropdownMenuLabel>Actions</DropdownMenuLabel>
               {canUpdate && (
-              <DropdownMenuItem onClick={() => router.push(`/products/${product.id}/edit`)}>
-                <Edit className="mr-2 h-4 w-4" />
-                Edit
-              </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => router.push(`/products/${product.id}/edit`)}
+                >
+                  <Edit className="mr-2 h-4 w-4" />
+                  Edit
+                </DropdownMenuItem>
               )}
               {canUpdate && (
-              <DropdownMenuItem onClick={() => handleDuplicateProduct(product.id)}>
-                <Copy className="mr-2 h-4 w-4" />
-                Duplicate
-              </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => handleDuplicateProduct(product.id)}
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  Duplicate
+                </DropdownMenuItem>
               )}
-              
+
               {canDelete && <DropdownMenuSeparator />}
               {canDelete && (
-              <DropdownMenuItem onClick={() => setDeleteProductId(product.id)} className="text-red-600">
-                <Trash className="mr-2 h-4 w-4" />
-                Delete
-              </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setDeleteProductId(product.id)}
+                  className="text-red-600"
+                >
+                  <Trash className="mr-2 h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
               )}
             </DropdownMenuContent>
           </DropdownMenu>
-        )
+        );
       },
     },
-  ]
+  ];
 
   const table = useReactTable({
     data: products || [],
@@ -386,7 +378,67 @@ export function ProductsDataTable() {
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
     state: { sorting, columnFilters, columnVisibility, rowSelection },
-  })
+  });
+
+  // ── wait for permission checks
+  if (viewLoading || createLoading || updateLoading || deleteLoading) {
+    return null;
+  }
+
+  // ── redirect if no view access
+  if (!canView) {
+    router.replace("/dashboard");
+    return null;
+  }
+
+  /* ------------------------------------------------------------ */
+  /*  NEW – duplicate handler                                     */
+  /* ------------------------------------------------------------ */
+  const handleDuplicateProduct = async (productId: string) => {
+    try {
+      const res = await fetch(`/api/products/${productId}/duplicate`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Failed to duplicate product");
+      toast.success("Product duplicated");
+      mutate();
+    } catch (err) {
+      toast.error("Failed to duplicate product");
+    }
+  };
+
+  const handleStatusChange = async (
+    productId: string,
+    newStatus: "published" | "draft"
+  ) => {
+    try {
+      const response = await fetch(`/api/products/${productId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!response.ok) throw new Error("Failed to update product status");
+      toast.success(`Product status changed to ${newStatus}`);
+      mutate();
+    } catch (error) {
+      toast.error("Failed to update product status");
+    }
+  };
+
+  const handleDeleteProduct = async () => {
+    if (!deleteProductId) return;
+    try {
+      const response = await fetch(`/api/products/${deleteProductId}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) throw new Error("Failed to delete product");
+      toast.success("The product has been deleted successfully");
+      mutate();
+      setDeleteProductId(null);
+    } catch (error) {
+      toast.error("Failed to delete product");
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -401,7 +453,7 @@ export function ProductsDataTable() {
           <Select
             value={table.getColumn("status")?.getFilterValue() as string}
             onValueChange={(value) => {
-              table.getColumn("status")?.setFilterValue(value)
+              table.getColumn("status")?.setFilterValue(value);
             }}
           >
             <SelectTrigger className="w-[180px]">
@@ -418,8 +470,8 @@ export function ProductsDataTable() {
           <Select
             value={pageSize.toString()}
             onValueChange={(value) => {
-              setPageSize(Number(value))
-              setPage(1)
+              setPageSize(Number(value));
+              setPage(1);
             }}
           >
             <SelectTrigger className="w-[100px]">
@@ -440,7 +492,12 @@ export function ProductsDataTable() {
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
                   <TableHead key={header.id}>
-                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(
+                          header.column.columnDef.header,
+                          header.getContext()
+                        )}
                   </TableHead>
                 ))}
               </TableRow>
@@ -450,26 +507,37 @@ export function ProductsDataTable() {
             {isLoading ? (
               Array.from({ length: 5 }).map((_, index) => (
                 <TableRow key={index}>
-                  {Array.from({ length: columns.length }).map((_, cellIndex) => (
-                    <TableCell key={cellIndex}>
-                      <Skeleton className="h-6 w-full" />
-                    </TableCell>
-                  ))}
+                  {Array.from({ length: columns.length }).map(
+                    (_, cellIndex) => (
+                      <TableCell key={cellIndex}>
+                        <Skeleton className="h-6 w-full" />
+                      </TableCell>
+                    )
+                  )}
                 </TableRow>
               ))
             ) : table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
+                <TableRow
+                  key={row.id}
+                  data-state={row.getIsSelected() && "selected"}
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext()
+                      )}
                     </TableCell>
                   ))}
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-24 text-center"
+                >
                   No products found.
                 </TableCell>
               </TableRow>
@@ -480,10 +548,19 @@ export function ProductsDataTable() {
       <div className="flex items-center justify-between space-x-2 py-4">
         <div className="text-sm text-muted-foreground">
           Showing {(page - 1) * pageSize + 1} to{" "}
-          {Math.min(page * pageSize, (products?.length || 0) + (page - 1) * pageSize)} of many entries
+          {Math.min(
+            page * pageSize,
+            (products?.length || 0) + (page - 1) * pageSize
+          )}{" "}
+          of many entries
         </div>
         <div className="flex items-center space-x-2">
-          <Button variant="outline" size="sm" onClick={() => setPage(page - 1)} disabled={page === 1 || isLoading}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage(page - 1)}
+            disabled={page === 1 || isLoading}
+          >
             Previous
           </Button>
           <Button
@@ -497,22 +574,29 @@ export function ProductsDataTable() {
         </div>
       </div>
 
-      <AlertDialog open={!!deleteProductId} onOpenChange={(open) => !open && setDeleteProductId(null)}>
+      <AlertDialog
+        open={!!deleteProductId}
+        onOpenChange={(open) => !open && setDeleteProductId(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the product.
+              This action cannot be undone. This will permanently delete the
+              product.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteProduct} className="bg-red-600 hover:bg-red-700">
+            <AlertDialogAction
+              onClick={handleDeleteProduct}
+              className="bg-red-600 hover:bg-red-700"
+            >
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  )
+  );
 }

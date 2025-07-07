@@ -5,6 +5,7 @@ import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 import * as XLSX from "xlsx";
 import sanitizeHtml from "sanitize-html";
+import { pgPool } from "@/lib/db";
 
 // Run this route in Node.js so that Buffer, FormData.arrayBuffer(), etc. work
 export const runtime = "nodejs";
@@ -35,6 +36,17 @@ type WarehouseStockEntry = {
     country: string;
     quantity: number;
 };
+
+type CategoryEntry = {
+    id: string
+}
+
+const arrayToJson = (arr) =>
+    arr.reduce((acc, pair) => {
+        const [key, value] = pair.split(":").map((s) => s.trim());
+        acc[key] = Number(value);
+        return acc;
+    }, {});
 
 export async function POST(req: Request) {
     const ctx = await getContext(req);
@@ -73,6 +85,7 @@ export async function POST(req: Request) {
             });
             return obj;
         });
+        console.log(data)
 
         const tenant = await db.selectFrom("tenant").select("id").where("ownerUserId", "=", userId).executeTakeFirst()
         if (!tenant) return NextResponse.json({ error: "No tenant found for user" }, { status: 404 })
@@ -80,117 +93,137 @@ export async function POST(req: Request) {
 
         for (const product of data) {
 
-            /* SKU handling */
-            let finalSku = product.sku
-            if (!finalSku) {
-                do {
-                    finalSku = `SKU-${uuidv4().slice(0, 8)}`
-                } while (await db.selectFrom("products").select("id")
-                    .where("sku", "=", finalSku)
-                    .where("organizationId", "=", organizationId)
-                    .executeTakeFirst())
+            if (product.id !== "") {
+                console.log("CHAO" + product.id)
             } else {
-                const exists = await db.selectFrom("products").select("id")
-                    .where("sku", "=", finalSku)
-                    .where("organizationId", "=", organizationId)
-                    .executeTakeFirst()
-                if (exists) return NextResponse.json({ error: "SKU already exists" }, { status: 400 })
-            }
-
-            const rawCategories = product.categories
-            const categories = eval(`(${rawCategories})`)
-
-            /* category validation */
-            if (categories?.length) {
-                const validIds = (await db.selectFrom("productCategories")
-                    .select("id")
-                    .where("organizationId", "=", organizationId)
-                    .execute()).map(c => c.id)
-                const bad = categories.filter(id => !validIds.includes(id))
-                if (bad.length)
-                    return NextResponse.json({ error: `Invalid category IDs: ${bad.join(", ")}` }, { status: 400 })
-            }
-
-            const productId = uuidv4()
-            const rawRegularPrice = product.regularPrice
-            const regularPrice = eval(`(${rawRegularPrice})`)
-
-            const rawSalePrice = product.salePrice
-            const salePrice = eval(`(${rawSalePrice})`)
-
-            const rawCost = product.cost
-            const cost = eval(`(${rawCost})`)
-
-            const safeDescription = cleanDescription(product.description);
-
-            await db.insertInto("products").values({
-                id: productId,
-                organizationId,
-                tenantId,
-                title: product.title,
-                description: safeDescription,
-                image: null,
-                sku: finalSku,
-                status: "published",
-                productType: "simple",
-                regularPrice: regularPrice,
-                salePrice: salePrice,
-                cost: cost ?? {},
-                allowBackorders: false,
-                manageStock: true,
-                stockStatus: "managed",
-                createdAt: new Date(),
-                updatedAt: new Date(),
-            }).execute()
-
-            const warehouseStock: WarehouseStockEntry[] = [];
-            for (let i = 1; i <= 10; i++) {
-                const wKey = `warehouseId${i}`
-                const cKey = `country${i}`
-                const qKey = `quantity${i}`
-                if (product[wKey]) {
-                    warehouseStock.push({
-                        warehouseId: product[wKey],
-                        productId,
-                        variationId: null,
-                        country: product[cKey],
-                        quantity: product[qKey]
-                    })
+                /* SKU handling */
+                let finalSku = product.sku
+                if (!finalSku) {
+                    do {
+                        finalSku = `SKU-${uuidv4().slice(0, 8)}`
+                    } while (await db.selectFrom("products").select("id")
+                        .where("sku", "=", finalSku)
+                        .where("organizationId", "=", organizationId)
+                        .executeTakeFirst())
+                } else {
+                    const exists = await db.selectFrom("products").select("id")
+                        .where("sku", "=", finalSku)
+                        .where("organizationId", "=", organizationId)
+                        .executeTakeFirst()
+                    if (exists) return NextResponse.json({ error: "SKU already exists" }, { status: 400 })
                 }
-            }
 
-            if (warehouseStock?.length) {
+                const slugs = product.categories
+                const catArray = slugs
+                    .split(",")
+                    .map(s => s.trim());
 
-                for (const entry of warehouseStock) {
+                const categories: CategoryEntry[] = [];
 
+                for (const cat of catArray) {
+                    const catQuery = `SELECT id FROM "productCategories" WHERE slug = '${cat}' AND "organizationId" = '${organizationId}'`
+                    const catResult = await pgPool.query(catQuery)
+                    categories.push(catResult.rows[0].id)
+                }
+                //const rawCategories = product.categories
+                //const categories = eval(`(${rawCategories})`)
+
+                /* category validation */
+                if (categories?.length) {
+                    const validIds = (await db.selectFrom("productCategories")
+                        .select("id")
+                        .where("organizationId", "=", organizationId)
+                        .execute()).map(c => c.id)
+                    const bad = categories.filter(id => !validIds.includes(id))
+                    if (bad.length)
+                        return NextResponse.json({ error: `Invalid category IDs: ${bad.join(", ")}` }, { status: 400 })
+                }
+
+                const productId = uuidv4()
+
+                const rp = product.regularPrice
+                const rawRegularPrice = rp
+                    .split(",")
+                    .map(s => s.trim());
+                //const regularPrice = eval(`(${rawRegularPrice})`)
+                const regularPrice = arrayToJson(rawRegularPrice)
+
+                const sp = product.salePrice
+                const rawSalePrice = sp
+                    .split(",")
+                    .map(s => s.trim());
+                //const salePrice = eval(`(${rawSalePrice})`)
+                const salePrice = arrayToJson(rawSalePrice)
+
+                const ct = product.cost
+                const rawCost = ct
+                    .split(",")
+                    .map(s => s.trim());
+                //const cost = eval(`(${rawCost})`)
+                const cost = arrayToJson(rawCost)
+
+                const safeDescription = cleanDescription(product.description);
+
+                await db.insertInto("products").values({
+                    id: productId,
+                    organizationId,
+                    tenantId,
+                    title: product.title,
+                    description: safeDescription,
+                    image: null,
+                    sku: finalSku,
+                    status: product.published === 1 ? "published" : "draft",
+                    productType: product.productType,
+                    regularPrice: regularPrice,
+                    salePrice: salePrice,
+                    cost: cost ?? {},
+                    allowBackorders: false,
+                    manageStock: true,
+                    stockStatus: "managed",
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                }).execute()
+
+                const countries = product.countries
+                const countryArray = countries
+                    .split(",")
+                    .map(s => s.trim());
+
+                const stocks = product.stock
+                const stockArray = stocks
+                    .split(",")
+                    .map(s => s.trim());
+
+                console.log(countryArray.length)
+
+                for (let i = 0; i < countryArray.length; i++) {
                     await db.insertInto("warehouseStock").values({
                         id: uuidv4(),
-                        warehouseId: entry.warehouseId,
+                        warehouseId: product.warehouseId,
                         productId,                        // ← use the local const `productId`
-                        variationId: entry.variationId,
-                        country: entry.country,
-                        quantity: entry.quantity,
+                        variationId: null,
+                        country: countryArray[i],
+                        quantity: stockArray[i],
                         organizationId,
                         tenantId,
                         createdAt: new Date(),
                         updatedAt: new Date(),
                     }).execute()
+                }
 
+                if (categories?.length) {
+                    for (const cid of categories) {
+                        await db.insertInto("productCategory").values({ productId, categoryId: cid }).execute()
+                    }
                 }
             }
 
-            if (categories?.length) {
-                for (const cid of categories) {
-                    await db.insertInto("productCategory").values({ productId, categoryId: cid }).execute()
-                }
-            }
+            return NextResponse.json({
+                sheetName: firstSheetName,
+                rows: data,
+                rowCount: data.length,
+            });
         }
-
-        return NextResponse.json({
-            sheetName: firstSheetName,
-            rows: data,
-            rowCount: data.length,
-        });
     } catch (err: any) {
         console.error("Import XLSX error:", err);
         return NextResponse.json({ error: err.message || err.toString() }, { status: 500 });
