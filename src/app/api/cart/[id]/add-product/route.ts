@@ -133,12 +133,12 @@ export async function POST(
             .map(p => p.productId)
             .filter(Boolean) as string[];
 
-          /* current qty of all products in this tier inside the cart */
+          /* ▼ cast array to text[] instead of uuid[] */
           const { rows: sumRow } = await client.query(
             `SELECT COALESCE(SUM(quantity),0)::int AS qty
                FROM "cartProducts"
               WHERE "cartId" = $1
-                AND "productId" = ANY($2::uuid[])`,
+                AND "productId" = ANY($2::text[])`,
             [cartId, tierIds],
           );
           const qtyBefore   = Number(sumRow[0].qty);
@@ -153,7 +153,7 @@ export async function POST(
                 SET "unitPrice" = $1,
                     "updatedAt" = NOW()
               WHERE "cartId"   = $2
-                AND "productId" = ANY($3::uuid[])`,
+                AND "productId" = ANY($3::text[])`,
             [unitPrice, cartId, tierIds],
           );
         }
