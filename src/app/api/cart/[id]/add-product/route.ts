@@ -7,26 +7,26 @@ import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { resolveUnitPrice } from "@/lib/pricing";
 import { adjustStock } from "@/lib/stock";
-import { getStepsFor, getPriceForQuantity, tierPricing } from "@/lib/tier-pricing";
-
+import {
+  tierPricing,
+  getPriceForQuantity,
+  type Tier,
+} from "@/lib/tier-pricing";
 /* ───────────────────────────────────────────────────────────── */
 
 const cartProductSchema = z.object({
   productId: z.string(),
-  quantity : z.number().int().positive(),
+  quantity: z.number().int().positive(),
 });
 
-/** Find the single tier-pricing rule that matches both product and country */
-function findTier(
-  tiers: Tier[],
-  country: string,
-  productId: string,
-): Tier | null {
+function findTier(tiers: Tier[], country: string, productId: string): Tier | null {
   return (
     tiers.find(
-      t =>
+      (t) =>
         t.countries.includes(country) &&
-        t.products.some(p => p.productId === productId || p.variationId === productId),
+        t.products.some(
+          (p) => p.productId === productId || p.variationId === productId,
+        ),
     ) ?? null
   );
 }
@@ -43,7 +43,7 @@ export async function POST(
     const { id: cartId } = await params;
     const body = cartProductSchema.parse(await req.json());
 
-    /* ────── cart’s country & level (one round-trip) ────── */
+    /* client context */
     const { rows: clientRows } = await pool.query(
       `SELECT c.country, c."levelId"
          FROM carts ca
@@ -56,7 +56,7 @@ export async function POST(
 
     const { country, levelId } = clientRows[0];
 
-    /* ────── base price resolution ────── */
+    /* price resolution */
     const { price: basePrice, isAffiliate } = await resolveUnitPrice(
       body.productId,
       country,
@@ -68,7 +68,6 @@ export async function POST(
         { status: 400 },
       );
 
-    /* ───────────── main transaction ───────────── */
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -111,7 +110,7 @@ export async function POST(
       }
 
       /* 2) ▼ upsert cartProducts row */
-      const { rows: existing } = await client.query(
+     const { rows: existing } = await client.query(
         `SELECT id, quantity
            FROM "cartProducts"
           WHERE "cartId" = $1
@@ -122,18 +121,17 @@ export async function POST(
       let quantity = body.quantity;
       if (existing.length) quantity += existing[0].quantity;
 
-      /* 3) ▼ tier-pricing: mix-and-match logic (cash only) */
+      /* mix-and-match tier pricing */
       let unitPrice = basePrice;
       if (!isAffiliate) {
         const tiers = (await tierPricing(organizationId)) as Tier[];
-        const tier  = findTier(tiers, country, body.productId);
+        const tier = findTier(tiers, country, body.productId);
 
         if (tier) {
           const tierIds = tier.products
-            .map(p => p.productId)
+            .map((p) => p.productId)
             .filter(Boolean) as string[];
 
-          /* ▼ cast array to text[] instead of uuid[] */
           const { rows: sumRow } = await client.query(
             `SELECT COALESCE(SUM(quantity),0)::int AS qty
                FROM "cartProducts"
@@ -141,18 +139,17 @@ export async function POST(
                 AND "productId" = ANY($2::text[])`,
             [cartId, tierIds],
           );
-          const qtyBefore   = Number(sumRow[0].qty);
-          const qtyAfter    = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
-          const stepsNumber = tier.steps.map(s => ({ ...s, price: Number(s.price) }));
 
-          unitPrice = getPriceForQuantity(stepsNumber, qtyAfter) ?? basePrice;
+          const qtyBefore = Number(sumRow[0].qty);
+          const qtyAfter = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
 
-          /* apply new unit price to **all** items in this tier */
+          unitPrice = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
+
           await client.query(
             `UPDATE "cartProducts"
                 SET "unitPrice" = $1,
                     "updatedAt" = NOW()
-              WHERE "cartId"   = $2
+              WHERE "cartId" = $2
                 AND "productId" = ANY($3::text[])`,
             [unitPrice, cartId, tierIds],
           );

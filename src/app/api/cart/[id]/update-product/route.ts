@@ -1,35 +1,36 @@
-// src/app/api/cart/[id]/update-product/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
-import { getStepsFor, getPriceForQuantity, tierPricing } from "@/lib/tier-pricing";
+import {
+  tierPricing,
+  getPriceForQuantity,
+  type Tier,
+} from "@/lib/tier-pricing";
 import { resolveUnitPrice } from "@/lib/pricing";
 
-/* ───────────────────────────────────────────────────────────── */
+/* ─────────────────────────────── */
 
 const cartProductSchema = z.object({
   productId: z.string(),
-  quantity : z.number().optional(),
-  action   : z.enum(["add", "subtract"]),
+  quantity: z.number().optional(),
+  action: z.enum(["add", "subtract"]),
 });
 
-/** Same helper as in add-product route */
-function findTier(
-  tiers: Tier[],
-  country: string,
-  productId: string,
-): Tier | null {
+function findTier(tiers: Tier[], country: string, productId: string): Tier | null {
   return (
     tiers.find(
-      t =>
+      (t) =>
         t.countries.includes(country) &&
-        t.products.some(p => p.productId === productId || p.variationId === productId),
+        t.products.some(
+          (p) => p.productId === productId || p.variationId === productId,
+        ),
     ) ?? null
   );
 }
+
 
 export async function PATCH(
   req: NextRequest,
@@ -43,7 +44,6 @@ export async function PATCH(
   try {
     const data = cartProductSchema.parse(await req.json());
 
-    /* ───────────── DB work ───────────── */
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -178,33 +178,30 @@ export async function PATCH(
       let pricePerUnit = basePrice;
       if (!isAffiliate) {
         const tiers = (await tierPricing(organizationId)) as Tier[];
-        const tier  = findTier(tiers, country, data.productId);
+        const tier = findTier(tiers, country, data.productId);
 
         if (tier) {
           const tierIds = tier.products
-            .map(p => p.productId)
+            .map((p) => p.productId)
             .filter(Boolean) as string[];
 
-          /* ▼ cast array to text[] */
           const { rows: sumRow } = await client.query(
             `SELECT COALESCE(SUM(quantity),0)::int AS qty
                FROM "cartProducts"
-              WHERE "cartId"   = $1
+              WHERE "cartId" = $1
                 AND "productId" = ANY($2::text[])`,
             [cartId, tierIds],
           );
-          const qtyBefore   = Number(sumRow[0].qty);
-          const qtyAfter    = qtyBefore - oldQty + newQty;
-          const stepsNumber = tier.steps.map(s => ({ ...s, price: Number(s.price) }));
+          const qtyBefore = Number(sumRow[0].qty);
+          const qtyAfter = qtyBefore - oldQty + newQty;
 
-          pricePerUnit = getPriceForQuantity(stepsNumber, qtyAfter) ?? basePrice;
+          pricePerUnit = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
 
-          /* Apply new price to **all** tier products in cart */
           await client.query(
             `UPDATE "cartProducts"
                 SET "unitPrice" = $1,
                     "updatedAt" = NOW()
-              WHERE "cartId"   = $2
+              WHERE "cartId" = $2
                 AND "productId" = ANY($3::text[])`,
             [pricePerUnit, cartId, tierIds],
           );
