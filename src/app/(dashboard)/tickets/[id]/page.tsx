@@ -1,4 +1,4 @@
-// src/app/(dashboard)/tickets/[id]/page.tsx  ← adjust path if different
+// src/app/(dashboard)/tickets/[id]/page.tsx
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
@@ -77,6 +77,7 @@ export default function TicketDetail() {
   const { id }  = useParams<{ id: string }>();
   const router  = useRouter();
 
+  /* ---------------- state ------------------------------------------------ */
   const [header,       setHeader]        = useState<TicketHeader | null>(null);
   const [messages,     setMessages]      = useState<TicketMessage[]>([]);
   const [loading,      setLoading]       = useState(true);
@@ -89,8 +90,6 @@ export default function TicketDetail() {
   const [tagsDialogOpen, setTagsDialogOpen] = useState(false);
   const [tags,         setTags]           = useState<{description:string}[]>([]);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
-
-
 
   // ── Permission hooks ─────────────────────────────────────────────────────
   const { data: activeOrg } = authClient.useActiveOrganization();
@@ -108,12 +107,11 @@ export default function TicketDetail() {
     if (!viewLoading && !canViewRaw) router.replace("/tickets");
   }, [viewLoading, canViewRaw, router]);
 
-  // ── Guard before rendering content ───────────────────────────────────────
-  if (viewLoading || !canView) return null;
-
-  
   /* ---------------- fetch ticket + tags --------------------------------- */
   useEffect(() => {
+    // Always run the hook; abort early to keep hook order stable.
+    if (!canView || !id) return;
+
     (async () => {
       setLoading(true);
       try {
@@ -139,11 +137,14 @@ export default function TicketDetail() {
         setLoading(false);
       }
     })();
-  }, [id]);
+  }, [id, canView]);
+
+  /* ---------------- guards AFTER all hooks ------------------------------ */
+  if (viewLoading || !canView) return null;
 
   /* ---------------- helpers that honour canUpdate ------------------------ */
   const updateStatus = async (newStatus: TicketHeader["status"]) => {
-    if (!canUpdate) return;                         // safety guard
+    if (!canUpdate) return;
     setStatus(newStatus);
     try {
       const res = await fetch(`/api/tickets/${id}/status`, {

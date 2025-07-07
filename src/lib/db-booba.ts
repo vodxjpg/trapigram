@@ -744,14 +744,25 @@ if (!process.env.DATABASE_URL.startsWith("postgres://")) {
  * (statement-timeout, keep-alive, etc.) stay the same so behaviour
  * matches production as closely as possible.
  */
+const isProd = process.env.NODE_ENV === "production";
+
+/* strip every ssl_min_protocol_version param that may be present
+   (Heroku build-pack, psql env-vars, etc.) */
+const cleanDbUrl = process.env.DATABASE_URL!.replace(
+  /[?&]ssl_?min_?protocol_?version=[^&]+/gi,
+  ""
+);
+
 const pgPool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: false,                                    // ← NO TLS LOCALLY
+  connectionString: cleanDbUrl,
+  ssl: isProd
+    ? { rejectUnauthorized: false, minVersion: "TLSv1.3" } // ✔︎ always valid
+    : false,                                               // ← local dev
   max: Number(process.env.PG_POOL_MAX ?? 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 2_000,
   keepAlive: true,
-  statement_timeout: 5_000,                      // server-side kill
+  statement_timeout: 5_000,
 });
 
 /* Nice diagnostics when hacking locally */
