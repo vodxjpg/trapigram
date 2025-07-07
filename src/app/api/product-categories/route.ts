@@ -45,21 +45,37 @@ export async function GET(req: NextRequest) {
 
     /* rows */
     let rowsSql = `
-      SELECT id, name, slug, image, "order", "parentId",
-             "organizationId", "createdAt", "updatedAt"
-      FROM "productCategories"
-      WHERE "organizationId" = $1
+       SELECT
+     pc.id,
+     pc.name,
+     pc.slug,
+     pc.image,
+     pc."order",
+     pc."parentId",
+     pc."organizationId",
+     pc."createdAt",
+     pc."updatedAt",
+     /* ---- new ---- */
+     COUNT(pcp."productId")            AS product_count
+   FROM "productCategories" pc
+   /* count relations; still works if none exist                      */
+   LEFT JOIN "productCategoryProducts" pcp
+     ON pc.id = pcp."categoryId"
+   WHERE pc."organizationId" = $1
     `;
     const rowsVals: any[] = [organizationId];
     if (search) {
       rowsSql  += ` AND (name ILIKE $2 OR slug ILIKE $2)`;
       rowsVals.push(`%${search}%`);
     }
-    rowsSql += `
-      ORDER BY "order" ASC, "createdAt" DESC
-      LIMIT  $${rowsVals.length + 1}
-      OFFSET $${rowsVals.length + 2}
-    `;
+     rowsSql += `
+       GROUP BY pc.id, pc.name, pc.slug, pc.image,
+                pc."order", pc."parentId",
+                pc."organizationId", pc."createdAt", pc."updatedAt"
+       ORDER BY pc."order" ASC, pc."createdAt" DESC
+       LIMIT  $${rowsVals.length + 1}
+       OFFSET $${rowsVals.length + 2}
+     `;
     rowsVals.push(pageSize, (page - 1) * pageSize);
 
     const [{ count }]    = (await pool.query(countSql, countVals)).rows;
