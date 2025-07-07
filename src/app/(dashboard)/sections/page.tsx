@@ -46,7 +46,7 @@ export default function SectionsPage() {
     <div className="container mx-auto py-6">
       <div className="flex justify-end mb-4">
         {canCreate && (
-          <Button onClick={() => router.push("/sections/new")}>
+          <Button className="hidden" onClick={() => router.push("/sections/new")}>
             <Plus className="mr-2 h-4 w-4" />
             New Section
           </Button>
