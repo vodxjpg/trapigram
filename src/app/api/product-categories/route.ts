@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
      COUNT(pcp."productId")            AS product_count
    FROM "productCategories" pc
    /* count relations; still works if none exist                      */
-   LEFT JOIN "productCategoryProducts" pcp
+   LEFT JOIN "productCategory" pcp
      ON pc.id = pcp."categoryId"
    WHERE pc."organizationId" = $1
     `;
