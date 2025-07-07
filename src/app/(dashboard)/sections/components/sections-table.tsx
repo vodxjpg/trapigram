@@ -82,46 +82,23 @@ const flatten = (nodes: Node[], depth = 0): Array<Section & { depth: number }> =
 export function SectionsTable() {
   const router = useRouter();
 
+  // ── permissions via useHasPermission
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId               = activeOrg?.id ?? null;
+  const { hasPermission: canView,    isLoading: viewLoading   } = useHasPermission(orgId, { sections: ["view"] });
+  const { hasPermission: canCreate,  isLoading: createLoading } = useHasPermission(orgId, { sections: ["create"] });
+  const { hasPermission: canUpdate,  isLoading: updateLoading } = useHasPermission(orgId, { sections: ["update"] });
+  const { hasPermission: canDelete,  isLoading: deleteLoading } = useHasPermission(orgId, { sections: ["delete"] });
 
-    // permissions via useHasPermission
-    const { data: activeOrg } = authClient.useActiveOrganization();
-    const orgId = activeOrg?.id ?? null;
-  
-    const {
-      hasPermission: canView,
-      isLoading:     viewLoading,
-    } = useHasPermission(orgId, { sections: ["view"] });
-    const {
-      hasPermission: canCreate,
-      isLoading:     createLoading,
-    } = useHasPermission(orgId, { sections: ["create"] });
-    const {
-      hasPermission: canUpdate,
-      isLoading:     updateLoading,
-    } = useHasPermission(orgId, { sections: ["update"] });
-    const {
-      hasPermission: canDelete,
-      isLoading:     deleteLoading,
-    } = useHasPermission(orgId, { sections: ["delete"] });
-  
-    // wait for permissions to resolve
-    if (viewLoading || createLoading || updateLoading || deleteLoading) {
-      return null;
-    }
-  
-    // redirect if no view permission
-    if (!canView) {
-      router.replace("/");
-      return null;
-    }
-
-  const [rows, setRows] = useState<Array<Section & { depth: number }>>([]);
-  const [loading, setLoading] = useState(true);
-  const [toDelete, setToDelete] = useState<Section | null>(null);
-  const pageSizeOptions = [10, 20, 50];
-  const [pageSize, setPageSize] = useState(10);
+  // ── state hooks (always called)
+  const [rows, setRows]           = useState<Array<Section & { depth: number }>>([]);
+  const [loading, setLoading]     = useState(true);
+  const [toDelete, setToDelete]   = useState<Section | null>(null);
+  const pageSizeOptions           = [10, 20, 50];
+  const [pageSize, setPageSize]   = useState(10);
   const [pageIndex, setPageIndex] = useState(0);
 
+  // ── data fetching (always callable)
   const fetchSections = async () => {
     setLoading(true);
     try {
@@ -135,11 +112,30 @@ export function SectionsTable() {
     }
   };
 
+  // ── fetch when view permission granted
   useEffect(() => {
-    fetchSections();
+    if (canView) {
+      fetchSections();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canView]);
 
-  const paged = rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+  // ── redirect if no view permission
+  useEffect(() => {
+    if (!viewLoading && !canView) {
+      router.replace("/");
+    }
+  }, [viewLoading, canView, router]);
+
+  // ── guards before rendering
+  if (viewLoading || createLoading || updateLoading || deleteLoading) {
+    return null;
+  }
+  if (!canView) {
+    return null;
+  }
+
+  const paged    = rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
 
   const confirmDelete = async () => {
@@ -213,19 +209,17 @@ export function SectionsTable() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {canUpdate && (
-                          <DropdownMenuItem
-                            onClick={() => router.push(`/sections/${s.id}`)}
-                          >
+                          <DropdownMenuItem onClick={() => router.push(`/sections/${s.id}`)}>
                             <Edit className="mr-2 h-4 w-4" />
                             Edit
                           </DropdownMenuItem>
                         )}
                         {canDelete && (
                           <>
-                            <DropdownMenuSeparator className="hidden" />
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem
                               onClick={() => setToDelete(s)}
-                              className="text-destructive hidden"
+                              className="text-destructive"
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
                               Delete
