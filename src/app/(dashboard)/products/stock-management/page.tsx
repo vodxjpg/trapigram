@@ -20,7 +20,7 @@ export default function StockManagementPage() {
     isLoading:     permLoading,
   } = useHasPermission(organizationId, { stockManagement: ["view"] });
 
-  /* ── redirect if not allowed ────────────────────────────────────── */
+  /* ── redirect if not allowed please ────────────────────────────────────── */
   useEffect(() => {
     if (!permLoading && !canView) {
       router.replace("/products");
