@@ -38,7 +38,7 @@ import { StockManagement } from "./stock-management"
 import { ProductAttributes } from "./product-attributes"
 import { ProductVariations } from "./product-variations"
 import { PriceManagement } from "./price-management"
-import { CostManagement } from "./cost-management"
+
 
 // --------------------------------------------------
 //  helpers / types
@@ -101,7 +101,7 @@ const quillFormats = [
 // --------------------------------------------------
 //  component
 // --------------------------------------------------
-export function ProductForm({ productId, initialData, shared = false,}: ProductFormProps = {}) {
+export function ProductForm({ productId, initialData, shared = false, }: ProductFormProps = {}) {
   const router = useRouter()
 
   // --------------------------------------------------
@@ -183,27 +183,27 @@ export function ProductForm({ productId, initialData, shared = false,}: ProductF
     resolver: zodResolver(productSchema),
     defaultValues: initialData
       ? {
-          title: initialData.title ?? "",
-          description: initialData.description ?? "",
-          image: initialData.image ?? null,
-          sku: initialData.sku ?? "",
-          status: initialData.status ?? "draft",
-          productType: initialData.productType ?? "simple",
-          categories: initialData.categories ?? [],
-          allowBackorders: initialData.allowBackorders ?? false,
-          manageStock: initialData.manageStock ?? false,
-        }
+        title: initialData.title ?? "",
+        description: initialData.description ?? "",
+        image: initialData.image ?? null,
+        sku: initialData.sku ?? "",
+        status: initialData.status ?? "draft",
+        productType: initialData.productType ?? "simple",
+        categories: initialData.categories ?? [],
+        allowBackorders: initialData.allowBackorders ?? false,
+        manageStock: initialData.manageStock ?? false,
+      }
       : {
-          title: "",
-          description: "",
-          image: null,
-          sku: "",
-          status: "draft",
-          productType: "simple",
-          categories: [],
-          allowBackorders: false,
-          manageStock: false,
-        },
+        title: "",
+        description: "",
+        image: null,
+        sku: "",
+        status: "draft",
+        productType: "simple",
+        categories: [],
+        allowBackorders: false,
+        manageStock: false,
+      },
   })
 
   // reset form when initialData changes (edit mode)
@@ -303,12 +303,10 @@ export function ProductForm({ productId, initialData, shared = false,}: ProductF
 
   const generateSku = () => `ORG-${uuidv4().slice(0, 8)}`
 
-  // --------------------------------------------------
-  //  image upload
-  // --------------------------------------------------
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  /* --------------------------------------------------
+     image upload  (click OR drag-&-drop)
+  -------------------------------------------------- */
+  const uploadFile = async (file: File) => {
     const fd = new FormData()
     fd.append("file", file)
     const res = await fetch("/api/upload", { method: "POST", body: fd })
@@ -316,6 +314,17 @@ export function ProductForm({ productId, initialData, shared = false,}: ProductF
     const { filePath } = await res.json()
     setImagePreview(filePath)
     form.setValue("image", filePath)
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) uploadFile(file)
+  }
+
+  const handleDrop = (e: React.DragEvent<HTMLLabelElement>) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files?.[0]
+    if (file) uploadFile(file)
   }
 
   // --------------------------------------------------
@@ -373,14 +382,14 @@ export function ProductForm({ productId, initialData, shared = false,}: ProductF
 
       const payload = {
         ...values,
-        prices:        productType === "simple" ? prices : undefined,
-        cost:          productType === "simple" ? costs  : undefined,
+        prices: productType === "simple" ? prices : undefined,
+        cost: productType === "simple" ? costs : undefined,
         warehouseStock: warehouseStock.length ? warehouseStock : undefined,
         attributes,
-        variations:    productType === "variable" ? variations : [],
+        variations: productType === "variable" ? variations : [],
       }
 
-      const url    = productId ? `/api/products/${productId}` : "/api/products"
+      const url = productId ? `/api/products/${productId}` : "/api/products"
       const method = productId ? "PATCH" : "POST"
 
       const res = await fetch(url, {
@@ -439,30 +448,37 @@ export function ProductForm({ productId, initialData, shared = false,}: ProductF
                 <CardDescription>
                   Enter the basic details of your product
                 </CardDescription>
-                {shared  && (
-                <div className="rounded-md bg-yellow-50 p-4 mt-4">
-                  <p className="text-sm text-yellow-700">
-                    <strong>Note:</strong> This is a shared product. You can only edit{" "}
-                    <em>Title</em>, <em>Description</em>, <em>Status</em>,{" "}
-                    <em>Prices</em>.
-                  </p>
-                </div>
-              )}
+                {shared && (
+                  <div className="rounded-md bg-yellow-50 p-4 mt-4">
+                    <p className="text-sm text-yellow-700">
+                      <strong>Note:</strong> This is a shared product. You can only edit{" "}
+                      <em>Title</em>, <em>Description</em>, <em>Status</em>,{" "}
+                      <em>Prices</em>.
+                    </p>
+                  </div>
+                )}
               </CardHeader>
-              
+
               <CardContent className="space-y-6">
-                
-             
+
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Left Column: Image, Status, Categories */}
                   <div className="space-y-6">
                     <FormItem>
                       <FormLabel>Featured Image</FormLabel>
-                      <div className="flex flex-col gap-4">
+
+                      {/* clickable *and* droppable wrapper */}
+                      <label
+                        htmlFor="image-upload"
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={handleDrop}
+                        className="group relative flex w-full h-64 cursor-pointer items-center justify-center rounded-md border border-dashed border-gray-300 transition-colors hover:border-primary/70 hover:bg-muted/50"
+                      >
                         {imagePreview ? (
-                          <div className="relative w-full h-64">
+                          <>
                             <Image
-                              src={imagePreview || "/placeholder.svg"}
+                              src={imagePreview}
                               alt="Product preview"
                               fill
                               className="object-cover rounded-md"
@@ -472,38 +488,33 @@ export function ProductForm({ productId, initialData, shared = false,}: ProductF
                               variant="destructive"
                               size="icon"
                               className="absolute top-2 right-2 h-8 w-8"
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation()
                                 setImagePreview(null)
                                 form.setValue("image", null)
                               }}
                             >
                               <X className="h-4 w-4" />
                             </Button>
-                          </div>
+                          </>
                         ) : (
-                          <div className="border border-dashed border-gray-300 rounded-md p-6 flex flex-col items-center justify-center w-full h-64">
-                            <Upload className="h-12 w-12 text-gray-400" />
-                            <span className="text-sm text-gray-500 mt-2">Upload Image</span>
+                          <div className="flex flex-col items-center text-center">
+                            <Upload className="h-10 w-10 text-gray-400 transition-colors group-hover:text-primary" />
+                            <span className="mt-2 text-sm text-gray-500">
+                              Click or drag&nbsp;an&nbsp;image&nbsp;here
+                            </span>
                           </div>
                         )}
-                        <div>
-                          <Input
-                            type="file"
-                            accept="image/*"
-                            id="image-upload"
-                            className="hidden"
-                            onChange={(e) => handleImageUpload(e)}
-                          />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => document.getElementById("image-upload")?.click()}
-                            className="w-full"
-                          >
-                            {imagePreview ? "Change Image" : "Upload Image"}
-                          </Button>
-                        </div>
-                      </div>
+
+                        {/* hidden input stretches full area via absolute positioning */}
+                        <Input
+                          id="image-upload"
+                          type="file"
+                          accept="image/*"
+                          onChange={handleInputChange}
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                        />
+                      </label>
                     </FormItem>
                     <FormField
                       control={form.control}
@@ -693,21 +704,18 @@ export function ProductForm({ productId, initialData, shared = false,}: ProductF
                 <CardDescription>Configure prices per country and stock management</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                
+
                 {productType === "simple" && (
                   <>
-                    <PriceManagement
-                      title="Prices per country"
+                   <PriceManagement
+                      title="Cost & Prices per country"
                       countries={orgCountries}
                       priceData={prices}
-                      onChange={setPrices}
-                    />
-                    <CostManagement
-                      title="Cost per country"
-                      countries={orgCountries}
                       costData={costs}
-                      onChange={setCosts}
+                      onPriceChange={setPrices}
+                      onCostChange={setCosts}
                     />
+                   
                   </>
                 )}
 
@@ -767,7 +775,7 @@ export function ProductForm({ productId, initialData, shared = false,}: ProductF
                 <CardDescription>Add attributes like color, size, etc.</CardDescription>
               </CardHeader>
               <CardContent>
-            
+
                 {productType === "variable" && (
                   <div className="rounded-lg border p-4 bg-blue-50 mb-4">
                     <p className="text-sm text-blue-700">
