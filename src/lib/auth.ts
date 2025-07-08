@@ -25,32 +25,19 @@ export const auth = betterAuth({
     process.env.NEXT_PUBLIC_APP_URL,
   ],
 
+  /*──────────────────── Hooks ───────────────────────*/
   hooks: {
     after: createAuthMiddleware(async (ctx) => {
-      const newSession = ctx.context.newSession;
-
-      // Preserve your magic-link logging
-      if (ctx.path === "/api/auth/magic-link/verify" && newSession?.user) {
-        console.log(
-          `hooks.after: User ${newSession.user.email} just verified magic link.`
-        );
-      }
-
-      // When any new session is created, revoke all other sessions
-      if (newSession?.session) {
-        // build a plain HeadersInit object from ctx.headers
-        const headersInit: Record<string, string> = {};
-        ctx.headers?.forEach((value, key) => {
-          headersInit[key] = value;
-        });
-
-        await auth.api.revokeOtherSessions({
-          headers: headersInit,
-        });
+      if (ctx.path === "/api/auth/magic-link/verify") {
+        const newSession = ctx.context.newSession;
+        if (newSession?.user) {
+          console.log(
+            `hooks.after: User ${newSession.user.email} just verified magic link.`,
+          );
+        }
       }
     }),
   },
-
 
   /*──────────────────── Email & Password ────────────*/
   emailAndPassword: {
@@ -127,12 +114,8 @@ export const auth = betterAuth({
 
   /*──────────────────── Session extras ──────────────*/
   session: {
-      // expire after 1 hour, never automatically refresh
-      expiresIn: 60 * 60,
-      disableSessionRefresh: true,
-      // still cache session data in cookie for performance
-      cookieCache: { enabled: true, maxAge: 2 * 60 * 60 },
-      cookieOptions: {
+    cookieCache: { enabled: true, maxAge: 2 * 60 * 60 },
+    cookieOptions: {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
@@ -213,6 +196,7 @@ export const auth = betterAuth({
 
   /*──────────────────── Plugins ─────────────────────*/
   plugins: [
+    nextCookies(),
     /* API-key plugin */
     apiKey({
       enableMetadata: true,
@@ -384,6 +368,6 @@ The Trapyfy Team
     }),
 
     /* Next-js cookie helper*/
-    nextCookies(),
+
   ],
 });
