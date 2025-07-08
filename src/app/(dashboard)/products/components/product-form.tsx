@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -306,6 +306,7 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
   /* --------------------------------------------------
      image upload  (click OR drag-&-drop)
   -------------------------------------------------- */
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const uploadFile = async (file: File) => {
     const fd = new FormData()
     fd.append("file", file)
@@ -487,11 +488,12 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                               type="button"
                               variant="destructive"
                               size="icon"
-                              className="absolute top-2 right-2 h-8 w-8"
+                              className="absolute top-2 right-2 h-8 w-8 z-20"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 setImagePreview(null)
                                 form.setValue("image", null)
+                                if (fileInputRef.current) fileInputRef.current.value = ""
                               }}
                             >
                               <X className="h-4 w-4" />
@@ -506,13 +508,15 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                           </div>
                         )}
 
-                        {/* hidden input stretches full area via absolute positioning */}
+                         {/* hidden input – sits *under* the delete button */}
+                        
                         <Input
                           id="image-upload"
                           type="file"
                           accept="image/*"
                           onChange={handleInputChange}
-                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                          ref={fileInputRef}
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0 z-0"
                         />
                       </label>
                     </FormItem>

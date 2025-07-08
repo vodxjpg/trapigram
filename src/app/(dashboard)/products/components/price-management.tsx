@@ -89,8 +89,8 @@ export function PriceManagement({
                 <TableRow>
                   <TableHead>Country</TableHead>
                   <TableHead className="w-[120px] text-right">Cost</TableHead>
-                  <TableHead className="w-[120px] text-right">Regular</TableHead>
-                  <TableHead className="w-[120px] text-right">Sale&nbsp;(opt.)</TableHead>
+                  <TableHead className="w-[120px] text-right">Regular price</TableHead>
+                  <TableHead className="w-[120px] text-right">Sale price (opt.)</TableHead>
                 </TableRow>
               </TableHeader>
 

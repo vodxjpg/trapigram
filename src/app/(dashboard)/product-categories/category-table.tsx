@@ -23,6 +23,10 @@ import {
   DropdownMenuTrigger,
 }                                from "@/components/ui/dropdown-menu";
 import {
+    Dialog, DialogContent, DialogHeader, DialogTitle,
+    DialogDescription, DialogFooter, DialogTrigger,
+  }                                from "@/components/ui/dialog";
+import {
   Select, SelectContent, SelectItem,
   SelectTrigger, SelectValue,
 }                                from "@/components/ui/select";
@@ -129,10 +133,10 @@ export function CategoryTable() {
     fetchCategories();
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm(
-      "Are you sure you want to delete this category? Sub-categories will become orphans.",
-    )) return;
+    /* ---------------- Dialog-driven delete ----------------- */
+    const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
+  
+    const handleDelete = async (id: string) => {
     try {
       const res = await fetch(`/api/product-categories/${id}`, {
         method: "DELETE", credentials: "include",
@@ -269,14 +273,14 @@ export function CategoryTable() {
                             <Edit className="mr-2 h-4 w-4" /> Edit
                           </DropdownMenuItem>
                         )}
-                        {canDelete && (
-                          <DropdownMenuItem
-                            onClick={() => handleDelete(cat.id)}
-                            className="text-destructive focus:text-destructive"
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete
-                          </DropdownMenuItem>
-                        )}
+                                             {canDelete && (
+                       <DropdownMenuItem
+                         onClick={() => setDeleteTarget(cat)}
+                         className="text-destructive focus:text-destructive"
+                       >
+                         <Trash2 className="mr-2 h-4 w-4" /> Delete
+                       </DropdownMenuItem>
+                     )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -343,6 +347,40 @@ export function CategoryTable() {
           category={editingCategory}
         />
       )}
+
+    {/* ---------- Delete confirmation dialog ---------- */}
+    {canDelete && (
+      <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete category</DialogTitle>
+            <DialogDescription>
+              Deleting a category means sub-categories and products won’t have any
+              category attached to them. You will need to adjust them manually.
+              Are you sure you would like to continue?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="sm:justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => setDeleteTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                if (!deleteTarget) return;
+                await handleDelete(deleteTarget.id);
+                setDeleteTarget(null);
+              }}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )}
     </div>
   );
 }
