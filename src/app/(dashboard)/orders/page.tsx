@@ -174,28 +174,43 @@ export default function OrdersPage() {
       default          : return "bg-gray-500";
     }
   };
+/* fetch shipping companies when the dialog opens */
+useEffect(() => {
+  if (!dialogOpen) return;
+  (async () => {
+    setShippingLoading(true);
+    try {
+      const res = await fetch("/api/shipping-companies", {
+        headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+      });
+      if (!res.ok) throw new Error("Failed to fetch shipping companies");
 
-  /* fetch shipping companies when dialog opens */
+      // API returns { shippingMethods: [...] }
+      const { shippingMethods } = await res.json();
+      setShippingCompanies(shippingMethods);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setShippingLoading(false);
+    }
+  })();
+}, [dialogOpen]);
+
+  /* ------------------------------------------------------------- */
+  /*  Pre-select the saved company when the dialog opens            */
+  /* ------------------------------------------------------------- */
   useEffect(() => {
-    if (!dialogOpen) return;
-    (async () => {
-      setShippingLoading(true);
-      try {
-        const compRes = await fetch("/api/shipping-companies", {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
-        });
-        if (!compRes.ok) throw new Error("Failed to fetch shipping companies");
-        const comps: { companies: ShippingCompany[] } = await compRes.json();
-        setShippingCompanies(comps.shippingMethods);
-      } catch (err: any) {
-        toast.error(err.message);
-      } finally {
-        setShippingLoading(false);
-      }
-    })();
-  }, [dialogOpen]);
+    /* dialog not visible yet, or companies not loaded → skip */
+    if (!dialogOpen || !selectedOrderId || shippingCompanies.length === 0) return;
+
+    const order = orders.find(o => o.id === selectedOrderId);
+    if (!order?.shippingCompany) return;
+
+    /* find the option whose *name* matches what we stored */
+    const match = shippingCompanies.find(c => c.name === order.shippingCompany);
+    if (match) setSelectedCompany(match.id);
+  }, [dialogOpen, selectedOrderId, shippingCompanies, orders]);
+
 
   /* ---------------------------------------------------------------- */
   /*  Render guards                                                   */

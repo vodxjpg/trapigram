@@ -159,7 +159,9 @@ export async function GET(req: NextRequest) {
       lastName: o.lastName,
       username: o.username,
       email: o.email,
-      shippingCompany: o.shippingCompany,
+      shippingCompany: o.shippingService /* <-- note lower-case in pg result */
+      ?? o.shippingService        // pg camel-case → JS
+      ?? null,
     }));
     return NextResponse.json(orders, { status: 200 });
   } catch (err) {
