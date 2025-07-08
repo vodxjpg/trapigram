@@ -1,189 +1,290 @@
+/* ------------------------------------------------------------------ */
+/*  Product-Attributes – inline create / manage                       */
+/* ------------------------------------------------------------------ */
 "use client"
 
 import { useState, useEffect } from "react"
 import { Plus, Trash, Check } from "lucide-react"
+import slugify from "slugify"                                   // <-- add this tiny dep
 import type { Attribute } from "@/types/product"
 
 import { Button } from "@/components/ui/button"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import { Label } from "@/components/ui/label"
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table"
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog"
+import {
+  Input,
+} from "@/components/ui/input"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { toast } from "sonner"
 
-interface ProductAttributesProps {
+interface Props {
   attributes: Attribute[]
-  onAttributesChange: (attributes: Attribute[]) => void
+  onAttributesChange: (a: Attribute[]) => void
   productType: string
 }
 
-export function ProductAttributes({ attributes, onAttributesChange, productType }: ProductAttributesProps) {
-  const [availableAttributes, setAvailableAttributes] = useState<Array<{ id: string; name: string }>>([])
-  const [selectedAttributeId, setSelectedAttributeId] = useState<string>("")
-  const [isLoading, setIsLoading] = useState(false)
+/* small helper – auto slug but keep user edits */
+const autoSlug = (v: string) => slugify(v, { lower: true, strict: true })
 
-  // Fetch available attributes on component mount
-  useEffect(() => {
-    async function fetchAttributes() {
-      setIsLoading(true)
-      try {
-        const response = await fetch("/api/product-attributes")
-        if (!response.ok) throw new Error("Failed to fetch attributes")
-        const data = await response.json()
-        setAvailableAttributes(data.attributes)
-      } catch (error) {
-        console.error("Error fetching attributes:", error)
-        toast.error("Failed to load product attributes")
-      } finally {
-        setIsLoading(false)
-      }
-    }
+export function ProductAttributes({ attributes, onAttributesChange, productType }: Props) {
+  /* ---------------------------------------------------------------- */
+  /*  Fetch available attributes once                                 */
+  /* ---------------------------------------------------------------- */
+  const [available, setAvailable] = useState<Array<{ id: string; name: string }>>([])
+  const [loading,   setLoading]   = useState(false)
 
-    fetchAttributes()
-  }, [])
-
-  const addAttribute = async () => {
-    if (!selectedAttributeId) return
-
-    // Check if attribute is already added
-    if (attributes.some((attr) => attr.id === selectedAttributeId)) {
-      toast.error("This attribute is already added")
-      return
-    }
-
-    setIsLoading(true)
+  const loadAttributes = async () => {
+    setLoading(true)
     try {
-      // Fetch attribute terms
-      const response = await fetch(`/api/product-attributes/${selectedAttributeId}/terms`)
-      if (!response.ok) throw new Error("Failed to fetch attribute terms")
-      const data = await response.json()
+      const r = await fetch("/api/product-attributes?page=1&pageSize=1000")
+      const j = await r.json()
+      setAvailable(j.attributes)
+    } catch { toast.error("Couldn’t load attributes") } finally { setLoading(false) }
+  }
+  useEffect(() => { loadAttributes() }, [])
 
-      const selectedAttribute = availableAttributes.find((attr) => attr.id === selectedAttributeId)
-      if (!selectedAttribute) return
+  /* ---------------------------------------------------------------- */
+  /*  “Add attribute” flow                                            */
+  /* ---------------------------------------------------------------- */
+  const [picker, setPicker] = useState("")           // selected ID in dropdown
+  const [showNewAttr, setShowNewAttr] = useState(false)
+  const [attrName, setAttrName] = useState("")
+  const [attrSlug, setAttrSlug] = useState("")
+  const [savingAttr, setSavingAttr] = useState(false)
 
-      const newAttribute: Attribute = {
-        id: selectedAttributeId,
-        name: selectedAttribute.name,
-        terms: data.terms || [],
+  const createAttribute = async () => {
+    if (!attrName.trim() || !attrSlug.trim()) return
+    setSavingAttr(true)
+    try {
+      const r = await fetch("/api/product-attributes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: attrName.trim(), slug: attrSlug.trim() }),
+      })
+      if (!r.ok) throw new Error()
+      const created = await r.json()
+      toast.success("Attribute created")
+      setShowNewAttr(false)
+      setAttrName(""); setAttrSlug("")
+      await loadAttributes()
+      setPicker(created.id)          // auto-select the new one
+      handleAddAttribute(created.id, created.name, []) // add empty attr object
+    } catch { toast.error("Could not create attribute") } finally { setSavingAttr(false) }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Add attribute that already exists in list                       */
+  /* ---------------------------------------------------------------- */
+  const handleAddAttribute = async (id?: string, name?: string, terms?: any[]) => {
+    const targetId = id ?? picker
+    if (!targetId) return
+    if (attributes.some(a => a.id === targetId)) {
+      toast.error("Attribute already added"); return
+    }
+    try {
+      const resp   = await fetch(`/api/product-attributes/${targetId}/terms?page=1&pageSize=1000`)
+      const data   = await resp.json()
+      const insert = {
+        id: targetId,
+        name: name ?? (available.find(a => a.id === targetId)?.name ?? "—"),
+        terms: terms ?? data.terms ?? [],
         useForVariations: false,
         selectedTerms: [],
       }
-
-      onAttributesChange([...attributes, newAttribute])
-      setSelectedAttributeId("")
-    } catch (error) {
-      console.error("Error adding attribute:", error)
-      toast.error("Failed to add attribute")
-    } finally {
-      setIsLoading(false)
-    }
+      onAttributesChange([...attributes, insert])
+      setPicker("")
+    } catch { toast.error("Failed to fetch attribute terms") }
   }
 
-  const removeAttribute = (attributeId: string) => {
-    onAttributesChange(attributes.filter((attr) => attr.id !== attributeId))
+  /* ---------------------------------------------------------------- */
+  /*  Term creation dialog state                                      */
+  /* ---------------------------------------------------------------- */
+  const [termModalFor, setTermModalFor] = useState<Attribute | null>(null)
+  const [termName, setTermName]   = useState("")
+  const [termSlug, setTermSlug]   = useState("")
+  const [savingTerm, setSavingTerm] = useState(false)
+
+  const createTerm = async () => {
+    if (!termModalFor) return
+    if (!termName.trim() || !termSlug.trim()) return
+    setSavingTerm(true)
+    try {
+      const r = await fetch(`/api/product-attributes/${termModalFor.id}/terms`, {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify({ name: termName.trim(), slug: termSlug.trim() }),
+      })
+      if (!r.ok) throw new Error()
+      const created = await r.json()
+      toast.success("Term created")
+      /* mutate parent attribute locally */
+      onAttributesChange(attributes.map(a => a.id === termModalFor.id
+        ? { ...a, terms:[...a.terms, created], selectedTerms:[...a.selectedTerms, created.id] }
+        : a))
+      setTermModalFor(null); setTermName(""); setTermSlug("")
+    } catch { toast.error("Could not create term") } finally { setSavingTerm(false) }
   }
 
-  const toggleUseForVariations = (attributeId: string, value: boolean) => {
-    onAttributesChange(
-      attributes.map((attr) => (attr.id === attributeId ? { ...attr, useForVariations: value } : attr)),
-    )
-  }
+  /* ---------------------------------------------------------------- */
+  /*  misc helpers                                                    */
+  /* ---------------------------------------------------------------- */
+  const removeAttribute = (id: string) =>
+    onAttributesChange(attributes.filter(a => a.id !== id))
 
-  const toggleTermSelection = (attributeId: string, termId: string) => {
-    onAttributesChange(
-      attributes.map((attr) => {
-        if (attr.id === attributeId) {
-          const selectedTerms = [...attr.selectedTerms]
-          if (selectedTerms.includes(termId)) {
-            return { ...attr, selectedTerms: selectedTerms.filter((id) => id !== termId) }
-          } else {
-            return { ...attr, selectedTerms: [...selectedTerms, termId] }
-          }
-        }
-        return attr
-      }),
-    )
-  }
+  const toggleUseForVar = (id: string, v:boolean) =>
+    onAttributesChange(attributes.map(a => a.id===id ? {...a,useForVariations:v}:a))
 
+  const toggleTerm = (attrId:string, termId:string) =>
+    onAttributesChange(attributes.map(a => {
+      if (a.id!==attrId) return a
+      const sel = a.selectedTerms.includes(termId)
+        ? a.selectedTerms.filter(t=>t!==termId)
+        : [...a.selectedTerms, termId]
+      return {...a, selectedTerms:sel}
+    }))
+
+  /* ---------------------------------------------------------------- */
+  /*  Render                                                          */
+  /* ---------------------------------------------------------------- */
   return (
     <div className="space-y-6">
-      <div className="flex items-end gap-4">
-        <div className="flex-1">
-          <Label htmlFor="attribute-select">Add Attribute</Label>
-          <Select value={selectedAttributeId} onValueChange={setSelectedAttributeId} disabled={isLoading}>
-            <SelectTrigger id="attribute-select">
-              <SelectValue placeholder="Select an attribute" />
-            </SelectTrigger>
+      {/* Top row – picker + new button */}
+      <div className="flex flex-wrap gap-4">
+        <div className="flex-1 min-w-[200px]">
+          <Label>Add Attribute</Label>
+          <Select value={picker} onValueChange={setPicker} disabled={loading}>
+            <SelectTrigger><SelectValue placeholder="Select attribute" /></SelectTrigger>
             <SelectContent>
-              {availableAttributes.map((attribute) => (
-                <SelectItem key={attribute.id} value={attribute.id}>
-                  {attribute.name}
-                </SelectItem>
-              ))}
+              {available.map(a =>
+                <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+              )}
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={addAttribute} disabled={!selectedAttributeId || isLoading}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add
-        </Button>
+        <Button onClick={() => handleAddAttribute()} disabled={!picker}>Add</Button>
+        <Button type="button" variant="outline" onClick={()=>setShowNewAttr(true)}>+ New&nbsp;attribute</Button>
       </div>
 
+      {/* Existing attributes table */}
       {attributes.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground">
-          No attributes added yet. Select an attribute from the dropdown above.
-        </div>
+        <p className="text-center py-8 text-muted-foreground">No attributes added.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Terms</TableHead>
-              {productType === "variable" && <TableHead className="w-[150px]">Use for Variations</TableHead>}
-              <TableHead className="w-[80px]"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {attributes.map((attribute) => (
-              <TableRow key={attribute.id}>
-                <TableCell className="font-medium">{attribute.name}</TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-2">
-                    {attribute.terms.map((term) => (
-                      <Badge
-                        key={term.id}
-                        variant={attribute.selectedTerms.includes(term.id) ? "default" : "outline"}
-                        className="cursor-pointer"
-                        onClick={() => toggleTermSelection(attribute.id, term.id)}
-                      >
-                        {attribute.selectedTerms.includes(term.id) && <Check className="mr-1 h-3 w-3" />}
-                        {term.name}
-                      </Badge>
-                    ))}
-                    {attribute.terms.length === 0 && (
-                      <span className="text-muted-foreground text-sm">No terms available</span>
-                    )}
-                  </div>
-                </TableCell>
-                {productType === "variable" && (
-                  <TableCell>
-                    <Switch
-                      checked={attribute.useForVariations}
-                      onCheckedChange={(checked) => toggleUseForVariations(attribute.id, checked)}
-                    />
-                  </TableCell>
-                )}
-                <TableCell>
-                  <Button variant="ghost" size="icon" onClick={() => removeAttribute(attribute.id)}>
-                    <Trash className="h-4 w-4" />
-                  </Button>
-                </TableCell>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Terms</TableHead>
+                {productType==="variable" && <TableHead>For&nbsp;Variations</TableHead>}
+                <TableHead />
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {attributes.map(attr=>(
+                <TableRow key={attr.id}>
+                  <TableCell className="font-medium">{attr.name}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-2">
+                      {attr.terms.map(t=>(
+                        <Badge
+                          key={t.id}
+                          variant={attr.selectedTerms.includes(t.id)?"default":"outline"}
+                          onClick={()=>toggleTerm(attr.id,t.id)}
+                          className="cursor-pointer select-none"
+                        >
+                          {attr.selectedTerms.includes(t.id) && <Check className="mr-1 h-3 w-3" />}
+                          {t.name}
+                        </Badge>
+                      ))}
+                      {/* add-term chip */}
+                      <Badge
+                        variant="secondary"
+                        className="cursor-pointer select-none"
+                        onClick={()=>{ setTermModalFor(attr); setTermName(""); setTermSlug("")}}
+                      >
+                        <Plus className="h-3 w-3" />&nbsp;Add term
+                      </Badge>
+                    </div>
+                  </TableCell>
+                  {productType==="variable" && (
+                    <TableCell>
+                      <Switch checked={attr.useForVariations} onCheckedChange={v=>toggleUseForVar(attr.id,v)} />
+                    </TableCell>
+                  )}
+                  <TableCell>
+                    <Button variant="ghost" size="icon" onClick={()=>removeAttribute(attr.id)}>
+                      <Trash className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
+
+      {/* ───────────────────────── New Attribute Dialog ───────────────────── */}
+      <Dialog open={showNewAttr} onOpenChange={setShowNewAttr}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader><DialogTitle>New Attribute</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Name</Label>
+              <Input value={attrName} onChange={e=>{
+                setAttrName(e.target.value)
+                setAttrSlug(autoSlug(e.target.value))
+              }} />
+            </div>
+            <div>
+              <Label>Slug</Label>
+              <Input value={attrSlug} onChange={e=>setAttrSlug(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={()=>setShowNewAttr(false)}>Cancel</Button>
+            <Button disabled={!attrName||!attrSlug||savingAttr} onClick={createAttribute}>
+              {savingAttr?"Saving…":"Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ───────────────────────── New Term Dialog ────────────────────────── */}
+      <Dialog open={!!termModalFor} onOpenChange={()=>setTermModalFor(null)}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader><DialogTitle>
+            New term for “{termModalFor?.name}”
+          </DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Name</Label>
+              <Input value={termName} onChange={e=>{
+                setTermName(e.target.value)
+                setTermSlug(autoSlug(e.target.value))
+              }} />
+            </div>
+            <div>
+              <Label>Slug</Label>
+              <Input value={termSlug} onChange={e=>setTermSlug(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={()=>setTermModalFor(null)}>Cancel</Button>
+            <Button disabled={!termName||!termSlug||savingTerm} onClick={createTerm}>
+              {savingTerm?"Saving…":"Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
