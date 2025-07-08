@@ -540,13 +540,14 @@
      return (
        <div className="space-y-4">
          {/* Toolbar */}
-         <div className="flex items-center justify-between">
-           <div className="flex items-center gap-2">
+         {/* mobile ⇨ stack & wrap │ ≥sm ⇨ old inline layout */}
+         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+         <div className="flex flex-col gap-2 flex-wrap sm:flex-row sm:items-center">
              <Input
                placeholder="Search products..."
                value={search}
                onChange={(e) => setSearch(e.target.value)}
-               className="max-w-sm"
+               className="w-full sm:max-w-sm"
              />
    
              {/* ----------- FIX: clear filter when selecting 'all' -- */}
@@ -564,7 +565,7 @@
                  }
                }}
              >
-               <SelectTrigger className="w-[180px]">
+                <SelectTrigger className="w-full sm:w-[180px]">
                  <SelectValue placeholder="Filter by status" />
                </SelectTrigger>
                <SelectContent>
@@ -588,7 +589,7 @@
          setPage(1);
        }}
      >
-       <SelectTrigger className="w-[180px]">
+        <SelectTrigger className="w-full sm:w-[180px]">
          <SelectValue placeholder="Filter by category" />
        </SelectTrigger>
        <SelectContent>
@@ -615,7 +616,7 @@
          setPage(1);
        }}
      >
-       <SelectTrigger className="w-[180px]">
+        <SelectTrigger className="w-full sm:w-[180px]">
          <SelectValue placeholder="Filter by attribute" />
        </SelectTrigger>
        <SelectContent>
@@ -630,7 +631,7 @@
            </div>
 
                 
-   
+         {/* PAGE-SIZE selector stays right on desktop, drops below on mobile */}
            <div className="flex items-center gap-2">
              <Select
                value={pageSize.toString()}
@@ -639,7 +640,7 @@
                  setPage(1);
                }}
              >
-               <SelectTrigger className="w-[100px]">
+               <SelectTrigger className="w-full sm:w-[100px]">
                  <SelectValue placeholder="Page size" />
                </SelectTrigger>
                <SelectContent>
@@ -652,7 +653,7 @@
          </div>
    
          {/* Table */}
-         <div className="rounded-md border">
+         <div className="rounded-md border overflow-x-auto">
            <Table>
              <TableHeader>
                {table.getHeaderGroups().map((headerGroup) => (
