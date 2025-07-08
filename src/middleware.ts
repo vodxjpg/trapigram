@@ -1,10 +1,7 @@
-/*───────────────────────────────────────────────────────────────────
-  src/middleware.ts          — FULL REPLACEMENT
-───────────────────────────────────────────────────────────────────*/
-
+// middleware.ts  (FULL, HARDENED 2025-06-30)
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie }          from "better-auth/cookies";
-import { auth }                      from "@/lib/auth";          // ← NEW (DB validation)
+import { auth }                      from "@/lib/auth";   
 import { enforceRateLimit }          from "@/lib/rateLimiter";
 
 /*──────────────────── Config ────────────────────*/
@@ -39,17 +36,21 @@ function applyCorsHeaders(res: Response, origin: string) {
   res.headers.set("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
   res.headers.set("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
   res.headers.set("Vary", "Origin");
-  applySecurityHeaders(res);
+  applySecurityHeaders(res);                     // piggy-back security headers
 }
 
-/* Resolve caller IP */
-function clientIp(req: NextRequest): string {
-  const cf = req.headers.get("cf-connecting-ip");
-  if (cf) return cf;
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  return (req as any).ip ?? "";
-}
+/* Resolve caller IP:
+   • Cloudflare → CF-Connecting-IP
+   • Vercel / others → x-forwarded-for first element
+   • Fallback to req.ip  */
+   function clientIp(req: NextRequest): string {
+    const cf = req.headers.get("cf-connecting-ip");
+    if (cf) return cf;
+    const xff = req.headers.get("x-forwarded-for");
+    if (xff) return xff.split(",")[0].trim();
+    return (req as any).ip ?? "";
+  }
+  
 
 /*──────────────────── Middleware ────────────────────*/
 export async function middleware(req: NextRequest) {
@@ -72,7 +73,7 @@ export async function middleware(req: NextRequest) {
 
     /* Rate-limit */
     try {
-      await enforceRateLimit(req, clientIp(req));
+      await enforceRateLimit(req, clientIp(req));   // pass resolved IP
     } catch (rateRes: any) {
       if (rateRes instanceof Response) {
         applyCorsHeaders(rateRes, allowOrigin);
@@ -90,7 +91,7 @@ export async function middleware(req: NextRequest) {
   /*────────────────────────────────────────
     2️⃣  Auth & public-page logic
   ────────────────────────────────────────*/
-  const lower  = pathname.toLowerCase();
+  const lower = pathname.toLowerCase();
   const PUBLIC = [
     "/", "/login", "/sign-up", "/forgot-password", "/verify-email",
     "/check-email", "/accept-invitation/",
@@ -121,9 +122,8 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  /*────────────────────────────────────────
-    4️⃣  Central policy check
-  ────────────────────────────────────────*/
+  
+  /* Central policy check */
   const checkUrl = new URL("/api/auth/check-status", req.url);
   checkUrl.searchParams.set("originalPath", pathname);
 
@@ -133,18 +133,16 @@ export async function middleware(req: NextRequest) {
     credentials: "include",
   });
 
+  /* network / DB hiccup → allow */
   if (!policyRes.ok) return NextResponse.next();
 
   const { redirect } = await policyRes.json();
   if (redirect && redirect !== pathname) {
     return NextResponse.redirect(new URL(redirect, req.url));
   }
-
   return NextResponse.next();
 }
 
-/* NodeJS runtime lets us import the Better Auth server instance */
 export const config = {
-  runtime : "nodejs",
-  matcher : ["/api/:path*", "/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/api/:path*", "/((?!_next/static|_next/image|favicon.ico).*)"],
 };
