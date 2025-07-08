@@ -109,11 +109,20 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  /* Session required */
+  /*────────────────────────────────────────
+    3️⃣  Validate session token *with DB*
+  ────────────────────────────────────────*/
   if (!getSessionCookie(req)) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
+  const session = await auth.api.getSession({ headers: req.headers });
+  if (!session) {
+    /* Token was revoked (e.g. user logged in elsewhere) */
+    return NextResponse.redirect(new URL("/login", req.url));
+  }
+
+  
   /* Central policy check */
   const checkUrl = new URL("/api/auth/check-status", req.url);
   checkUrl.searchParams.set("originalPath", pathname);
