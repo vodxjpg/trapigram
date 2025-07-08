@@ -60,7 +60,7 @@ const data = {
       url: "/products",
       icon: IconListDetails,
       items: [
-        { title: "View all", url: "/products" },
+        { title: "View all products", url: "/products" },
         { title: "Add new product", url: "/products/new" },
         { title: "Product categories", url: "/product-categories" },
         { title: "Product attributes", url: "/product-attributes" },

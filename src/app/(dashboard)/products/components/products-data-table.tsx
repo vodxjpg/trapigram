@@ -16,7 +16,7 @@
      useReactTable,
    } from "@tanstack/react-table";
    import { useRouter } from "next/navigation";
-   import { Copy, Edit, MoreHorizontal, Trash } from "lucide-react";
+   import { Copy, Edit, MoreHorizontal, Trash, ArrowUpDown } from "lucide-react";
    import Image from "next/image";
    
    import { Button } from "@/components/ui/button";
@@ -237,10 +237,35 @@
              ? true
              : row.original.status === value,
        },
-       {
-         accessorKey: "price",
-         header: "Prices",
-         cell: ({ row }) => {
+           /* ────────────── Price (sortable) ────────────── */
+           {
+             /* numeric accessor so sorting is correct */
+             accessorKey: "price",
+             accessorFn: (product) => {
+               const country  = Object.keys(product.regularPrice)[0] || "US";
+               if (product.productType === "simple") {
+                 const sale   = product.salePrice?.[country] ?? null;
+                 return sale ?? product.regularPrice[country] ?? 0;
+               }
+               /* variable → use highest variation price */
+               const prices = product.variations.map((v) => {
+                 const sale = v.prices[country]?.sale ?? null;
+                 const reg  = v.prices[country]?.regular ?? 0;
+                 return sale ?? reg;
+               });
+               return prices.length ? Math.max(...prices) : 0;
+             },
+             header: ({ column }) => (
+               <Button
+                 variant="ghost"
+                 className="px-0 hover:bg-transparent"
+                 onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+               >
+                 Price
+                 <ArrowUpDown className="ml-1 h-3 w-3" />
+               </Button>
+             ),
+             cell: ({ row }) => {
            const product = row.original;
            const country = Object.keys(product.regularPrice)[0] || "US";
    
@@ -319,11 +344,22 @@
              </div>
            );
          },
+         enableSorting: true,
        },
-       {
-         accessorKey: "createdAt",
-         header: "Created At",
-         cell: ({ row }) => {
+           /* ────────────── Created At (sortable) ────────────── */
+    {
+      accessorKey: "createdAt",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="px-0 hover:bg-transparent"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Created&nbsp;At
+          <ArrowUpDown className="ml-1 h-3 w-3" />
+        </Button>
+      ),
+      cell: ({ row }) => {
            const d = new Date(row.original.createdAt);
            return (
              <div className="text-sm">
@@ -378,6 +414,7 @@
              </DropdownMenu>
            );
          },
+         enableSorting: true,
        },
      ];
    
