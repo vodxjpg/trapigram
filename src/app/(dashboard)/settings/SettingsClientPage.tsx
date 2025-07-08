@@ -7,13 +7,22 @@ import { Separator } from "@/components/ui/separator";
 import { ProfileForm } from "@/components/settings/profile-form";
 import { AccountForm } from "@/components/settings/account-form";
 import { ApiKeyGenerator } from "@/components/settings/api-key-input";
-import { useUser } from "@/hooks/use-user"; // your hook for current user
+import { useUser } from "@/hooks/use-user";
 
 export default function SettingsClientPage() {
   const { user, isLoading: userLoading } = useUser();
   const [tabValue, setTabValue] = useState<"profile" | "account" | "apikey">("profile");
 
-  // update header title
+  // On mount, read ?tab= from URL
+  useEffect(() => {
+    const params = new URL(window.location.href).searchParams;
+    const t = params.get("tab");
+    if (t === "profile" || t === "account" || t === "apikey") {
+      setTabValue(t);
+    }
+  }, []);
+
+  // Update header title once
   useEffect(() => {
     const event = new CustomEvent("update-header-title", {
       detail: {
@@ -25,8 +34,15 @@ export default function SettingsClientPage() {
   }, []);
 
   if (userLoading) return null;
-
   const isGuest = user?.is_guest === true;
+
+  const handleTabChange = (value: string) => {
+    const v = value as "profile" | "account" | "apikey";
+    setTabValue(v);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", v);
+    window.history.replaceState({}, "", url);
+  };
 
   return (
     <div className="container max-w-6xl py-6 px-6 space-y-6 m-auto">
@@ -37,11 +53,7 @@ export default function SettingsClientPage() {
         </p>
       </div>
       <Separator />
-      <Tabs
-        value={tabValue}
-        onValueChange={(value) => setTabValue(value as typeof tabValue)}
-        className="w-full"
-      >
+      <Tabs value={tabValue} onValueChange={handleTabChange} className="w-full">
         <TabsList className="grid w-full md:w-auto md:inline-flex grid-cols-2 md:grid-cols-4 gap-2 h-auto">
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="account">Account</TabsTrigger>

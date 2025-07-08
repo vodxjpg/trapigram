@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth-client";
 import toast from "react-hot-toast";
-import { useUser } from "@/hooks/use-user"; // hook for current user
+import { useUser } from "@/hooks/use-user";
 
 export function ApiKeyGenerator() {
   const { user, isLoading: userLoading } = useUser();
@@ -22,7 +22,6 @@ export function ApiKeyGenerator() {
   const [currentKeyId, setCurrentKeyId] = useState<string | null>(null);
   const [fullKeys, setFullKeys] = useState<Record<string, string>>({});
 
-  // don't allow guests at all
   if (userLoading) return null;
   if (user?.is_guest) {
     return (
@@ -32,9 +31,20 @@ export function ApiKeyGenerator() {
     );
   }
 
+  // Fetch list and hydrate fullKeys from localStorage
   useEffect(() => {
     fetchApiKeys();
   }, []);
+
+  useEffect(() => {
+    // load any previously stored full keys
+    const stored: Record<string, string> = {};
+    apiKeys.forEach((k) => {
+      const key = localStorage.getItem(`fullApiKey_${k.id}`);
+      if (key) stored[k.id] = key;
+    });
+    setFullKeys(stored);
+  }, [apiKeys]);
 
   const fetchApiKeys = async () => {
     try {
@@ -45,8 +55,7 @@ export function ApiKeyGenerator() {
       }
       setApiKeys(data || []);
       if (data && data.length > 0 && !apiKey) {
-        const latestKey = data[data.length - 1];
-        setCurrentKeyId(latestKey.id);
+        setCurrentKeyId(data[data.length - 1].id);
       }
     } catch {
       toast.error("Unexpected error while fetching API keys.");
@@ -55,11 +64,10 @@ export function ApiKeyGenerator() {
 
   const toggleVisibility = () => setShowApiKey((v) => !v);
 
-  const handleGenerate = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoadingGenerate(true);
-    const isDuplicate = apiKeys.some((k) => k.name === apiKeyName);
-    if (isDuplicate) {
+    if (apiKeys.some((k) => k.name === apiKeyName)) {
       toast.error("An API key with this name already exists.");
       setLoadingGenerate(false);
       return;
@@ -74,9 +82,12 @@ export function ApiKeyGenerator() {
       if (error) {
         toast.error(error.message || "Failed to generate API key.");
       } else if (data) {
+        // save full key in state and localStorage
         setApiKey(data.key);
         setCurrentKeyId(data.id);
-        setFullKeys((p) => ({ ...p, [data.id]: data.key }));
+        setFullKeys((prev) => ({ ...prev, [data.id]: data.key }));
+        localStorage.setItem(`fullApiKey_${data.id}`, data.key);
+
         await fetchApiKeys();
         toast.success("API key generated successfully!");
       }
@@ -127,11 +138,12 @@ export function ApiKeyGenerator() {
           setApiKeyName("");
           setCurrentKeyId(null);
         }
-        setFullKeys((prev) => {
-          const next = { ...prev };
-          delete next[keyId];
-          return next;
-        });
+        // remove from fullKeys & localStorage
+        const next = { ...fullKeys };
+        delete next[keyId];
+        setFullKeys(next);
+        localStorage.removeItem(`fullApiKey_${keyId}`);
+
         toast.success("API key deleted successfully!");
       }
     } catch {
@@ -142,7 +154,6 @@ export function ApiKeyGenerator() {
   };
 
   const handleCopy = (keyId: string) => {
-    // If we have it in fullKeys (especially just-generated), copy the full key
     const full = fullKeys[keyId];
     if (full) {
       navigator.clipboard
@@ -150,13 +161,11 @@ export function ApiKeyGenerator() {
         .then(() => toast.success("Full API key copied!"))
         .catch(() => toast.error("Failed to copy API key."));
     } else if (keyId === currentKeyId && apiKey) {
-      // Fallback for immediately generated key stored in state
       navigator.clipboard
         .writeText(apiKey)
         .then(() => toast.success("Full API key copied!"))
         .catch(() => toast.error("Failed to copy API key."));
     } else {
-      // Otherwise only the prefix is available
       const k = apiKeys.find((k) => k.id === keyId);
       navigator.clipboard
         .writeText(k.start + "…")
