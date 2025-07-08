@@ -41,6 +41,12 @@ type CategoryEntry = {
     id: string
 }
 
+type VariationEntry = {
+    id: string,
+    name: string,
+    terms: string,
+}
+
 const arrayToJson = (arr) =>
     arr.reduce((acc, pair) => {
         const [key, value] = pair.split(":").map((s) => s.trim());
@@ -85,7 +91,6 @@ export async function POST(req: Request) {
             });
             return obj;
         });
-        console.log(data)
 
         const tenant = await db.selectFrom("tenant").select("id").where("ownerUserId", "=", userId).executeTakeFirst()
         if (!tenant) return NextResponse.json({ error: "No tenant found for user" }, { status: 404 })
@@ -184,31 +189,153 @@ export async function POST(req: Request) {
                     updatedAt: new Date(),
                 }).execute()
 
-                const countries = product.countries
-                const countryArray = countries
-                    .split(",")
-                    .map(s => s.trim());
+                if (product.productType === "simple") {
+                    const countries = product.countries
+                    const countryArray = countries
+                        .split(",")
+                        .map(s => s.trim());
 
-                const stocks = product.stock
-                const stockArray = stocks
-                    .split(",")
-                    .map(s => s.trim());
+                    const stocks = product.stock
+                    const stockArray = stocks
+                        .split(",")
+                        .map(s => s.trim());
 
-                console.log(countryArray.length)
+                    for (let i = 0; i < countryArray.length; i++) {
 
-                for (let i = 0; i < countryArray.length; i++) {
-                    await db.insertInto("warehouseStock").values({
-                        id: uuidv4(),
-                        warehouseId: product.warehouseId,
-                        productId,                        // ← use the local const `productId`
-                        variationId: null,
-                        country: countryArray[i],
-                        quantity: stockArray[i],
-                        organizationId,
-                        tenantId,
-                        createdAt: new Date(),
-                        updatedAt: new Date(),
-                    }).execute()
+                        const variations: VariationEntry[] = [];
+
+                        if (product[`attributeVariation${i}`] !== "" && product[`attributeVariation${i}`] === 0) {
+                            const terms = product[`attributeValues${i}`]
+                            const termsArray = terms
+                                .split(",")
+                                .map(s => s.trim());
+
+                            const name = product[`attributeName${i}`]
+                            const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
+                            const nameResult = await pgPool.query(nameQuery)
+                            const nameId = nameResult.rows[0].id
+
+                            for (const t of termsArray) {
+                                const nameQuery = `SELECT id FROM "productAttributeTerms" WHERE slug = '${t}'`
+                                const nameResult = await pgPool.query(nameQuery)
+                                const id = nameResult.rows[0].id
+                                const obj = {}
+                                obj[nameId] = id
+
+                                variations.push({
+                                    id: uuidv4(),
+                                    name: nameId,
+                                    terms: obj
+                                })
+                            }
+                        }
+
+                        await db.insertInto("warehouseStock").values({
+                            id: uuidv4(),
+                            warehouseId: product.warehouseId,
+                            productId,                        // ← use the local const `productId`
+                            variationId: null,
+                            country: countryArray[i],
+                            quantity: stockArray[i],
+                            organizationId,
+                            tenantId,
+                            createdAt: new Date(),
+                            updatedAt: new Date(),
+                        }).execute()
+
+                        for (const vari of variations) {
+                            await db.insertInto("productAttributeValues")
+                                .values({ productId, attributeId: vari.name, termId: vari.terms[vari.name] })
+                                .execute()
+                        }
+
+                    }
+
+
+                }
+
+                if (product.productType === "variable") {
+                    const countries = product.countries
+                    const countryArray = countries
+                        .split(",")
+                        .map(s => s.trim());
+
+                    const stocks = product.stock
+                    const stockArray = stocks
+                        .split(",")
+                        .map(s => s.trim());
+
+                    const variations: VariationEntry[] = [];
+
+                    for (let i = 1; i <= 2; i++) {
+
+                        if (product[`attributeVariation${i}`] !== "" && product[`attributeVariation${i}`] === 1) {
+
+                            const terms = product[`attributeValues${i}`]
+                            const termsArray = terms
+                                .split(",")
+                                .map(s => s.trim());
+
+                            const name = product[`attributeName${i}`]
+                            const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
+                            const nameResult = await pgPool.query(nameQuery)
+                            const nameId = nameResult.rows[0].id
+
+                            for (const t of termsArray) {
+                                const nameQuery = `SELECT id FROM "productAttributeTerms" WHERE slug = '${t}'`
+                                const nameResult = await pgPool.query(nameQuery)
+                                const id = nameResult.rows[0].id
+                                const obj = {}
+                                obj[nameId] = id
+
+                                variations.push({
+                                    id: uuidv4(),
+                                    name: nameId,
+                                    terms: obj
+                                })
+                            }
+                        }
+                        console.log(variations)
+                    }
+
+                    for (const vari of variations) {
+                        await db.insertInto("productVariations").values({
+                            id: vari.id,
+                            productId,
+                            attributes: vari.terms,
+                            sku: `SKU-${uuidv4().slice(0, 8)}`,
+                            image: null,
+                            regularPrice,
+                            salePrice,
+                            cost: cost ?? {},
+                            createdAt: new Date(),
+                            updatedAt: new Date(),
+                        }).execute()
+                    }
+
+                    for (const vari of variations) {
+                        for (let i = 0; i < countryArray.length; i++) {
+                            await db.insertInto("warehouseStock").values({
+                                id: uuidv4(),
+                                warehouseId: product.warehouseId,
+                                productId,                        // ← use the local const `productId`
+                                variationId: vari.id,
+                                country: countryArray[i],
+                                quantity: stockArray[i],
+                                organizationId,
+                                tenantId,
+                                createdAt: new Date(),
+                                updatedAt: new Date(),
+                            }).execute()
+                        }
+                    }
+
+                    for (const vari of variations) {
+                        await db.insertInto("productAttributeValues")
+                            .values({ productId, attributeId: vari.name, termId: vari.terms[vari.name] })
+                            .execute()
+                    }
+
                 }
 
                 if (categories?.length) {
@@ -217,13 +344,14 @@ export async function POST(req: Request) {
                     }
                 }
             }
-
-            return NextResponse.json({
-                sheetName: firstSheetName,
-                rows: data,
-                rowCount: data.length,
-            });
         }
+
+        return NextResponse.json({
+            sheetName: firstSheetName,
+            rows: data,
+            rowCount: data.length,
+        });
+
     } catch (err: any) {
         console.error("Import XLSX error:", err);
         return NextResponse.json({ error: err.message || err.toString() }, { status: 500 });
