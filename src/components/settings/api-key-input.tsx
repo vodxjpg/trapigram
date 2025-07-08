@@ -21,6 +21,7 @@ export function ApiKeyGenerator() {
   const [apiKeys, setApiKeys] = useState<any[]>([]);
   const [currentKeyId, setCurrentKeyId] = useState<string | null>(null);
   const [fullKeys, setFullKeys] = useState<Record<string, string>>({});
+  const [loadingKeys, setLoadingKeys] = useState(true);
 
   if (userLoading) return null;
   if (user?.is_guest) {
@@ -31,13 +32,11 @@ export function ApiKeyGenerator() {
     );
   }
 
-  // Fetch list and hydrate fullKeys from localStorage
   useEffect(() => {
     fetchApiKeys();
   }, []);
 
   useEffect(() => {
-    // load any previously stored full keys
     const stored: Record<string, string> = {};
     apiKeys.forEach((k) => {
       const key = localStorage.getItem(`fullApiKey_${k.id}`);
@@ -47,18 +46,21 @@ export function ApiKeyGenerator() {
   }, [apiKeys]);
 
   const fetchApiKeys = async () => {
+    setLoadingKeys(true);
     try {
       const { data, error } = await authClient.apiKey.list();
       if (error) {
         toast.error("Failed to load API keys.");
-        return;
-      }
-      setApiKeys(data || []);
-      if (data && data.length > 0 && !apiKey) {
-        setCurrentKeyId(data[data.length - 1].id);
+      } else {
+        setApiKeys(data || []);
+        if (data && data.length > 0 && !apiKey) {
+          setCurrentKeyId(data[data.length - 1].id);
+        }
       }
     } catch {
       toast.error("Unexpected error while fetching API keys.");
+    } finally {
+      setLoadingKeys(false);
     }
   };
 
@@ -82,12 +84,10 @@ export function ApiKeyGenerator() {
       if (error) {
         toast.error(error.message || "Failed to generate API key.");
       } else if (data) {
-        // save full key in state and localStorage
         setApiKey(data.key);
         setCurrentKeyId(data.id);
         setFullKeys((prev) => ({ ...prev, [data.id]: data.key }));
         localStorage.setItem(`fullApiKey_${data.id}`, data.key);
-
         await fetchApiKeys();
         toast.success("API key generated successfully!");
       }
@@ -138,12 +138,10 @@ export function ApiKeyGenerator() {
           setApiKeyName("");
           setCurrentKeyId(null);
         }
-        // remove from fullKeys & localStorage
         const next = { ...fullKeys };
         delete next[keyId];
         setFullKeys(next);
         localStorage.removeItem(`fullApiKey_${keyId}`);
-
         toast.success("API key deleted successfully!");
       }
     } catch {
@@ -175,6 +173,16 @@ export function ApiKeyGenerator() {
         .catch(() => toast.error("Failed to copy API key."));
     }
   };
+
+  if (loadingKeys) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        <div className="h-6 bg-gray-200 rounded w-1/3" />
+        <div className="h-40 bg-gray-200 rounded" />
+        <div className="h-6 bg-gray-200 rounded w-2/3" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
