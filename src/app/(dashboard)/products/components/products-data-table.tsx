@@ -542,7 +542,7 @@
          {/* Toolbar */}
          {/* mobile ⇨ stack & wrap │ ≥sm ⇨ old inline layout */}
          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-         <div className="flex flex-col gap-2 flex-wrap sm:flex-row sm:items-center">
+         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
              <Input
                placeholder="Search products..."
                value={search}
