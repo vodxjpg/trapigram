@@ -159,6 +159,7 @@ export async function GET(req: NextRequest) {
       lastName: o.lastName,
       username: o.username,
       email: o.email,
+      shippingCompany: o.shippingCompany,
     }));
     return NextResponse.json(orders, { status: 200 });
   } catch (err) {

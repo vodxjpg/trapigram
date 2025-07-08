@@ -50,6 +50,7 @@ interface Order {
   status: OrderStatus;
   createdAt: string;
   total: number;
+  shippingCompany?: string;
   trackingNumber?: string;
 }
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
@@ -245,13 +246,16 @@ export default function OrdersPage() {
       toast.error("Error updating order status");
     }
   };
-
   const handleTracking = (orderId: string) => {
-    const order = orders.find((o) => o.id === orderId);
+    const order = orders.find(o => o.id === orderId)!;
     setSelectedOrderId(orderId);
-    setDraftTracking(order?.trackingNumber ?? "");
+    setDraftTracking(order.trackingNumber ?? "");
+    // find the company ID for the previously saved name (if any):
+    const prevCompany = shippingCompanies.find(c => c.name === order.shippingCompany);
+    setSelectedCompany(prevCompany?.id);
     setDialogOpen(true);
   };
+  
   const saveTracking = async () => {
     if (!selectedOrderId || !selectedCompany) return;
     const company = shippingCompanies.find((c) => c.id === selectedCompany);
@@ -391,6 +395,8 @@ export default function OrdersPage() {
                   <TableHead>Status</TableHead>
                   <TableHead>Date</TableHead>
                   {canViewPricing && <TableHead>Total</TableHead>}
+                  <TableHead>Shipping Company</TableHead>
+                  <TableHead>Tracking&nbsp;#</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -495,6 +501,20 @@ export default function OrdersPage() {
                       {canViewPricing && (
                         <TableCell>${order.total.toFixed(2)}</TableCell>
                       )}
+                      {/* Shipping Company */}
+         <TableCell>
+           {order.shippingCompany ?? (
+             <span className="text-muted-foreground">—</span>
+           )}
+         </TableCell>
+         {/* Tracking Number */}
+         <TableCell>
+           {order.trackingNumber ? (
+             <code className="font-mono">{order.trackingNumber}</code>
+           ) : (
+             <span className="text-muted-foreground">—</span>
+           )}
+         </TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -519,7 +539,7 @@ export default function OrdersPage() {
                                 onClick={() => handleTracking(order.id)}
                               >
                                 <Truck className="mr-2 h-4 w-4" />
-                                <span>Set tracking number</span>
+                                <span>{order.trackingNumber ? "Update tracking number" : "Set tracking number"}</span>
                               </DropdownMenuItem>
                             )}
                           </DropdownMenuContent>
@@ -580,12 +600,11 @@ export default function OrdersPage() {
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>
-                {selectedOrderId &&
-                orders.find((o) => o.id === selectedOrderId)?.trackingNumber
-                  ? "Edit Tracking Number"
-                  : "Set Tracking Number"}
-              </DialogTitle>
+            <DialogTitle>
+  {orders.find(o => o.id === selectedOrderId)?.trackingNumber
+    ? "Update Tracking Number"
+    : "Set Tracking Number"}
+</DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               {/* NEW: Shipping Company selector */}

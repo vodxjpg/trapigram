@@ -1,18 +1,17 @@
-/*───────────────────────────────────────────────────────────────────
-  src/components/auth/login-form.tsx          — FULL REPLACEMENT
-───────────────────────────────────────────────────────────────────*/
 "use client";
 
-import { useForm }              from "react-hook-form";
-import { zodResolver }          from "@hookform/resolvers/zod";
-import { z }                    from "zod";
-import toast                    from "react-hot-toast";
-import { cn }                   from "@/lib/utils";
-import { authClient }           from "@/lib/auth-client";
-import { Button }               from "@/components/ui/button";
-import { Input }                from "@/components/ui/input";
-import { Label }                from "@/components/ui/label";
+import { useState }            from "react";
+import { useForm }             from "react-hook-form";
+import { zodResolver }         from "@hookform/resolvers/zod";
+import { z }                   from "zod";
+import toast                   from "react-hot-toast";
+import { cn }                  from "@/lib/utils";
+import { authClient }          from "@/lib/auth-client";
+import { Button }              from "@/components/ui/button";
+import { Input }               from "@/components/ui/input";
+import { Label }               from "@/components/ui/label";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Eye, EyeOff }         from "lucide-react";
 
 const loginSchema = z.object({
   email   : z.string().email("Invalid email address"),
@@ -25,6 +24,7 @@ export function LoginForm(
   const router       = useRouter();
   const searchParams = useSearchParams();
   const invitationId = searchParams.get("invitationId");
+  const [showPwd, setShowPwd] = useState(false);
 
   const {
     register,
@@ -36,13 +36,10 @@ export function LoginForm(
   });
 
   const passwordValue = watch("password");
-
-  const go = (path: string) =>
-    (window.location.href = path);
+  const go = (path: string) => (window.location.href = path);
 
   async function onSubmit(data: z.infer<typeof loginSchema>) {
     try {
-      /* quick email existence check */
       const chk = await fetch(`/api/auth/check-email?email=${encodeURIComponent(data.email)}`);
       const { exists, error } = await chk.json();
       if (!chk.ok) throw new Error(error || "Email check failed");
@@ -51,7 +48,6 @@ export function LoginForm(
         return;
       }
 
-      /* ────────── PASSWORD SIGN-IN ────────── */
       if (data.password) {
         const { error: signErr } = await authClient.signIn.email({
           email   : data.email,
@@ -65,17 +61,13 @@ export function LoginForm(
           );
           return;
         }
-
-        /* 🔑  TERMINATE all other sessions right now */
         await authClient.revokeOtherSessions();
-
         go(invitationId
           ? `/accept-invitation/${invitationId}`
           : "/dashboard");
         return;
       }
 
-      /* ────────── MAGIC-LINK SIGN-IN ────────── */
       const ml = await authClient.signIn.magicLink({
         email      : data.email,
         callbackURL: invitationId
@@ -132,12 +124,24 @@ export function LoginForm(
               Forgot your password?
             </a>
           </div>
-          <Input
-            id="password"
-            type="password"
-            placeholder="Please enter your password"
-            {...register("password")}
-          />
+          <div className="relative">
+            <Input
+              id="password"
+              type={showPwd ? "text" : "password"}
+              placeholder="Please enter your password"
+              {...register("password")}
+              className="pr-10"      // make room for the eye icon
+            />
+            <button
+              type="button"
+              onClick={() => setShowPwd((v) => !v)}
+              className="absolute inset-y-0 right-2 flex items-center"
+            >
+              {showPwd 
+                ? <EyeOff className="h-5 w-5 text-muted-foreground" /> 
+                : <Eye    className="h-5 w-5 text-muted-foreground" />}
+            </button>
+          </div>
           {errors.password && (
             <p className="text-red-500 text-sm">{errors.password.message}</p>
           )}
