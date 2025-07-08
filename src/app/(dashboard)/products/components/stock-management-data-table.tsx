@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { ArrowUpDown, Edit } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
@@ -43,29 +44,30 @@ interface Warehouse {
 }
 
 export function StockManagementDataTable() {
-  // router for imperatively redirecting
   const router = useRouter();
 
-  // ── 1) active org & permission hooks
+  // 1) Active org & permissions
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const orgId               = activeOrg?.id ?? null;
-  const { hasPermission: canView,    isLoading: viewLoading   } = useHasPermission(orgId, { stockManagement: ["view"] });
-  const { hasPermission: canUpdate,  isLoading: updateLoading } = useHasPermission(orgId, { stockManagement: ["update"] });
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canView, isLoading: viewLoading } =
+    useHasPermission(orgId, { stockManagement: ["view"] });
+  const { hasPermission: canUpdate, isLoading: updateLoading } =
+    useHasPermission(orgId, { stockManagement: ["update"] });
 
-  // ── 2) table state hooks (always called)
-  const [sorting, setSorting]                 = useState<SortingState>([{ id: "stock", desc: false }]);
-  const [columnFilters, setColumnFilters]     = useState<ColumnFiltersState>([]);
+  // 2) Table state
+  const [sorting, setSorting] = useState<SortingState>([{ id: "stock", desc: false }]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-  const [page, setPage]                       = useState(1);
-  const [pageSize, setPageSize]               = useState(10);
-  const [search, setSearch]                   = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [search, setSearch] = useState("");
 
-  // ── 3) data hooks (always called)
+  // 3) Data
   const { products, isLoading, totalPages, mutate } = useProducts({ page, pageSize, search });
-  const { data: whData }                            = useSWR<{ warehouses: Warehouse[] }>("/api/warehouses", fetcher);
-  const warehouses                                   = whData?.warehouses || [];
+  const { data: whData } = useSWR<{ warehouses: Warehouse[] }>("/api/warehouses", fetcher);
+  const warehouses = whData?.warehouses || [];
 
-  // ── 4) table creation (always called)
+  // 4) Table setup
   const table = useReactTable({
     data: products || [],
     columns: [
@@ -83,7 +85,12 @@ export function StockManagementDataTable() {
           return (
             <div className="relative h-10 w-10">
               {image ? (
-                <Image src={image} alt={title} fill className="object-cover rounded-md" />
+                <Image
+                  src={image}
+                  alt={title}
+                  fill
+                  className="object-cover rounded-md"
+                />
               ) : (
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-200 font-medium text-gray-600">
                   {initials}
@@ -97,7 +104,16 @@ export function StockManagementDataTable() {
       { accessorKey: "sku", header: "SKU" },
       {
         id: "stock",
-        header: "Stock",
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            className="px-0 hover:bg-transparent"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          >
+            Stock
+            <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
+        ),
         accessorFn: (row) =>
           Object.values(row.stockData || {}).reduce(
             (sum, byCountry) =>
@@ -105,6 +121,7 @@ export function StockManagementDataTable() {
             0
           ),
         cell: ({ row }) => <StockPopover product={row.original} />,
+        enableSorting: true,
         sortingFn: "basic",
       },
     ],
@@ -117,29 +134,18 @@ export function StockManagementDataTable() {
     getPaginationRowModel: getPaginationRowModel(),
   });
 
-  // ── 5) redirect effect & early-return *after* all hooks
+  // 5) Redirect if no view permission
   useEffect(() => {
-    if (!viewLoading && !canView) {
-      router.replace("/products");
-    }
+    if (!viewLoading && !canView) router.replace("/products");
   }, [viewLoading, canView, router]);
 
-  if (viewLoading || updateLoading) {
-    return null;
-  }
-  if (!canView) {
-    return null;
-  }
+  if (viewLoading || updateLoading || !canView) return null;
 
-  /* ------------------------------------------------------------ */
-  /*  Stock-popover (per-row), only editable if they have update  */
-  /* ------------------------------------------------------------ */
+  // Stock popover component
   function StockPopover({ product }: { product: Product }) {
-    // reuse canUpdate from outer scope
     const [editable, setEditable] = useState<Record<string, Record<string, number>>>({});
-    const [saving, setSaving]     = useState(false);
+    const [saving, setSaving] = useState(false);
 
-    // normalize incoming data
     useEffect(() => {
       const norm: Record<string, Record<string, number>> = {};
       for (const [wid, countries] of Object.entries(product.stockData || {})) {
@@ -160,14 +166,15 @@ export function StockManagementDataTable() {
 
     const handleSave = async () => {
       setSaving(true);
-      const warehouseStock = Object.entries(editable).flatMap(([warehouseId, countries]) =>
-        Object.entries(countries).map(([country, quantity]) => ({
-          warehouseId,
-          productId: product.id,
-          variationId: null,
-          country,
-          quantity,
-        }))
+      const warehouseStock = Object.entries(editable).flatMap(
+        ([warehouseId, countries]) =>
+          Object.entries(countries).map(([country, quantity]) => ({
+            warehouseId,
+            productId: product.id,
+            variationId: null,
+            country,
+            quantity,
+          }))
       );
       await fetch(`/api/products/${product.id}`, {
         method: "PATCH",
@@ -184,12 +191,12 @@ export function StockManagementDataTable() {
       0
     );
 
-    // if they can't update, just show the sum:
+    // Non-editable view
     if (!canUpdate) {
       return (
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size="sm">
+            <Button variant="outline" size="sm">
               {editableSum}
             </Button>
           </PopoverTrigger>
@@ -197,11 +204,18 @@ export function StockManagementDataTable() {
       );
     }
 
+    // Editable view
     return (
       <Popover>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm">
-            {editableSum}
+          <Button
+            variant="outline"
+            size="sm"
+            title="Click to update stock"
+            className="flex items-center space-x-1"
+          >
+            <span>{editableSum}</span>
+            <Edit className="h-4 w-4 text-gray-500" />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-64">
@@ -209,20 +223,29 @@ export function StockManagementDataTable() {
             <div key={w.id} className="mb-4">
               <div className="mb-1 font-medium">{w.name}</div>
               {w.countries.map((c) => (
-                <div key={c} className="mb-1 flex items-center justify-between">
+                <div
+                  key={c}
+                  className="mb-1 flex items-center justify-between"
+                >
                   <span className="text-sm">{c}</span>
                   <Input
                     type="number"
                     min={0}
                     className="w-20"
                     value={editable[w.id]?.[c] ?? 0}
-                    onChange={(e) => handleChange(w.id, c, parseInt(e.target.value) || 0)}
+                    onChange={(e) =>
+                      handleChange(w.id, c, parseInt(e.target.value) || 0)
+                    }
                   />
                 </div>
               ))}
             </div>
           ))}
-          <Button className="w-full" onClick={handleSave} disabled={saving}>
+          <Button
+            className="w-full"
+            onClick={handleSave}
+            disabled={saving}
+          >
             {saving ? "Saving…" : "Save"}
           </Button>
         </PopoverContent>
@@ -230,9 +253,7 @@ export function StockManagementDataTable() {
     );
   }
 
-  /* ------------------------------------------------------------ */
-  /*  Render                                                      */
-  /* ------------------------------------------------------------ */
+  // Render
   return (
     <div className="space-y-4">
       <Input
@@ -248,7 +269,9 @@ export function StockManagementDataTable() {
               <TableRow key={hg.id}>
                 {hg.headers.map((h) => (
                   <TableHead key={h.id}>
-                    {h.isPlaceholder ? null : flexRender(h.column.columnDef.header, h.getContext())}
+                    {h.isPlaceholder
+                      ? null
+                      : flexRender(h.column.columnDef.header, h.getContext())}
                   </TableHead>
                 ))}
               </TableRow>
@@ -270,14 +293,20 @@ export function StockManagementDataTable() {
                   <TableRow key={row.id}>
                     {row.getVisibleCells().map((cell) => (
                       <TableCell key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext()
+                        )}
                       </TableCell>
                     ))}
                   </TableRow>
                 ))
               : (
                 <TableRow>
-                  <TableCell colSpan={table.getVisibleLeafColumns().length} className="py-6 text-center">
+                  <TableCell
+                    colSpan={table.getVisibleLeafColumns().length}
+                    className="py-6 text-center"
+                  >
                     No products found.
                   </TableCell>
                 </TableRow>
@@ -286,10 +315,18 @@ export function StockManagementDataTable() {
         </Table>
       </div>
       <div className="flex justify-between py-4">
-        <Button variant="outline" onClick={() => setPage((p) => p - 1)} disabled={page === 1 || isLoading}>
+        <Button
+          variant="outline"
+          onClick={() => setPage((p) => p - 1)}
+          disabled={page === 1 || isLoading}
+        >
           Previous
         </Button>
-        <Button variant="outline" onClick={() => setPage((p) => p + 1)} disabled={page === totalPages || isLoading}>
+        <Button
+          variant="outline"
+          onClick={() => setPage((p) => p + 1)}
+          disabled={page === totalPages || isLoading}
+        >
           Next
         </Button>
       </div>
