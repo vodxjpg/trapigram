@@ -139,7 +139,7 @@ export const auth = betterAuth({
     expiresIn: 60 * 60,
     disableSessionRefresh: true,
     // still cache session data in cookie for performance
-    cookieCache: { enabled: true, maxAge: 2 * 60 * 60 },
+    cookieCache: { enabled: false },
     cookieOptions: {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
