@@ -2,7 +2,7 @@
    (unchanged file header kept for clarity) */
    "use client";
 
-   import { useEffect, useState } from "react";
+   import { useEffect, useState, useMemo } from "react";
    import {
      type ColumnDef,
      type ColumnFiltersState,
@@ -119,6 +119,8 @@
      const [search, setSearch] = useState("");
      const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
      const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
+     const [categoryOptions, setCategoryOptions] = useState<{id:string;name:string}[]>([]);
+     const [attributeOptions, setAttributeOptions] = useState<{id:string;name:string}[]>([]);
    
      const { products, isLoading, totalPages, mutate } = useProducts({
        page,
@@ -142,8 +144,21 @@
              map[c.id] = c.name;
            });
            setCategoryMap(map);
+           setCategoryOptions(categories);
          })
          .catch(() => {});
+              // NEW: load all attributes for the filter UI
+     fetch("/api/product-attributes?page=1&pageSize=1000", {
+       headers: {
+         "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+       },
+     })
+       .then((res) => res.json())
+       .then(({ attributes }) => {
+         // attributes come back as {id,name,...}
+         setAttributeOptions(attributes);
+       })
+       .catch(() => {});
      }, []);
    
      /* ---------------------------------------------------------- */
@@ -345,7 +360,30 @@
            );
          },
          enableSorting: true,
+         filterFn: (row, _id, value) => row.original.categories.includes(value),
        },
+        /* ────────────── Attribute Filtered Column ────────────── */
+ {
+   accessorKey: "attributes",
+   header: "Attributes",
+   cell: ({ row }) => {
+     const attrs = row.original.attributes;
+     return attrs.length > 0 ? (
+       <div className="flex flex-wrap gap-1">
+         {attrs.map((a) => (
+           <Badge key={a.id} variant="secondary" className="text-xs">
+             {a.name}
+           </Badge>
+         ))}
+       </div>
+     ) : (
+       <span className="text-xs text-muted-foreground">—</span>
+     );
+   },
+   // only show rows whose attributes array contains the selected id
+   filterFn: (row, _id, value) =>
+     row.original.attributes.some((a) => a.id === value),
+ },
            /* ────────────── Created At (sortable) ────────────── */
     {
       accessorKey: "createdAt",
@@ -536,6 +574,61 @@
                </SelectContent>
              </Select>
            </div>
+
+                {/* ────────── New: Category Filter ────────── */}
+     <Select
+       value={
+         (table.getColumn("categories")?.getFilterValue() as string) ??
+         "all"
+       }
+       onValueChange={(value) => {
+         const col = table.getColumn("categories");
+         if (!col) return;
+         if (value === "all") col.setFilterValue(undefined);
+         else col.setFilterValue(value);
+         // also reset page
+         setPage(1);
+       }}
+     >
+       <SelectTrigger className="w-[180px]">
+         <SelectValue placeholder="Filter by category" />
+       </SelectTrigger>
+       <SelectContent>
+         <SelectItem value="all">All Categories</SelectItem>
+         {categoryOptions.map((c) => (
+           <SelectItem key={c.id} value={c.id}>
+             {c.name}
+           </SelectItem>
+         ))}
+       </SelectContent>
+     </Select>
+
+     {/* ────────── New: Attribute Filter ────────── */}
+     <Select
+       value={
+         (table.getColumn("attributes")?.getFilterValue() as string) ??
+         "all"
+       }
+       onValueChange={(value) => {
+         const col = table.getColumn("attributes");
+         if (!col) return;
+         if (value === "all") col.setFilterValue(undefined);
+         else col.setFilterValue(value);
+         setPage(1);
+       }}
+     >
+       <SelectTrigger className="w-[180px]">
+         <SelectValue placeholder="Filter by attribute" />
+       </SelectTrigger>
+       <SelectContent>
+         <SelectItem value="all">All Attributes</SelectItem>
+         {attributeOptions.map((a) => (
+           <SelectItem key={a.id} value={a.id}>
+             {a.name}
+           </SelectItem>
+         ))}
+       </SelectContent>
+     </Select>
    
            <div className="flex items-center gap-2">
              <Select
