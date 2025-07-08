@@ -573,9 +573,7 @@
                  <SelectItem value="draft">Draft</SelectItem>
                </SelectContent>
              </Select>
-           </div>
-
-                {/* ────────── New: Category Filter ────────── */}
+             {/* ────────── New: Category Filter ────────── */}
      <Select
        value={
          (table.getColumn("categories")?.getFilterValue() as string) ??
@@ -629,6 +627,9 @@
          ))}
        </SelectContent>
      </Select>
+           </div>
+
+                
    
            <div className="flex items-center gap-2">
              <Select
