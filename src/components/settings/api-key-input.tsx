@@ -142,15 +142,27 @@ export function ApiKeyGenerator() {
   };
 
   const handleCopy = (keyId: string) => {
+    // If we have it in fullKeys (especially just-generated), copy the full key
     const full = fullKeys[keyId];
     if (full) {
-      navigator.clipboard.writeText(full)
+      navigator.clipboard
+        .writeText(full)
+        .then(() => toast.success("Full API key copied!"))
+        .catch(() => toast.error("Failed to copy API key."));
+    } else if (keyId === currentKeyId && apiKey) {
+      // Fallback for immediately generated key stored in state
+      navigator.clipboard
+        .writeText(apiKey)
         .then(() => toast.success("Full API key copied!"))
         .catch(() => toast.error("Failed to copy API key."));
     } else {
+      // Otherwise only the prefix is available
       const k = apiKeys.find((k) => k.id === keyId);
-      navigator.clipboard.writeText(k.start + "...")
-        .then(() => toast.error("Partial key copied. Regenerate to get full."))
+      navigator.clipboard
+        .writeText(k.start + "…")
+        .then(() =>
+          toast.error("Partial key copied. Regenerate to reveal the full key.")
+        )
         .catch(() => toast.error("Failed to copy API key."));
     }
   };
@@ -210,7 +222,7 @@ export function ApiKeyGenerator() {
         <div className="space-y-4">
           <h3 className="text-lg font-semibold">Your API Keys</h3>
           <p className="text-sm text-muted-foreground">
-            Full keys are only available right after creation. Regenerate older keys to reveal.
+            Full keys are only available immediately after creation. Regenerate older keys to reveal them.
           </p>
           <ul className="space-y-2">
             {apiKeys.map((key) => (

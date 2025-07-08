@@ -1,7 +1,7 @@
 // src/app/(dashboard)/settings/SettingsClientPage.tsx
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { ProfileForm } from "@/components/settings/profile-form";
@@ -11,6 +11,7 @@ import { useUser } from "@/hooks/use-user"; // your hook for current user
 
 export default function SettingsClientPage() {
   const { user, isLoading: userLoading } = useUser();
+  const [tabValue, setTabValue] = useState<"profile" | "account" | "apikey">("profile");
 
   // update header title
   useEffect(() => {
@@ -36,7 +37,11 @@ export default function SettingsClientPage() {
         </p>
       </div>
       <Separator />
-      <Tabs defaultValue="profile" className="w-full">
+      <Tabs
+        value={tabValue}
+        onValueChange={(value) => setTabValue(value as typeof tabValue)}
+        className="w-full"
+      >
         <TabsList className="grid w-full md:w-auto md:inline-flex grid-cols-2 md:grid-cols-4 gap-2 h-auto">
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="account">Account</TabsTrigger>
