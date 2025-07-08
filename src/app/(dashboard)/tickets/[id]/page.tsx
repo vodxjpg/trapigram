@@ -109,7 +109,7 @@ export default function TicketDetail() {
 
   /* ---------------- fetch ticket + tags --------------------------------- */
   useEffect(() => {
-    // Always run the hook; abort early to keep hook order stable.
+    // Always run the hook; abort early to keep hook order stble.
     if (!canView || !id) return;
 
     (async () => {
