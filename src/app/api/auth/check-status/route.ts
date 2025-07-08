@@ -1,24 +1,26 @@
-// /home/zodx/Desktop/Trapyfy/src/app/api/auth/check-status/route.ts
+/*───────────────────────────────────────────────────────────────────
+  src/app/api/auth/check-status/route.ts     — FULL REPLACEMENT
+───────────────────────────────────────────────────────────────────*/
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { pgPool as pool } from "@/lib/db";;
+import { auth }                      from "@/lib/auth";
+import { pgPool as pool }            from "@/lib/db";
 
-// nothing
 export async function GET(req: NextRequest) {
   try {
-    // 0) Get the original path from query param, so we know what page the user is *really* requesting
+    /* 0️⃣  Where was the user heading originally? */
     const searchParams = new URL(req.url).searchParams;
     const originalPath = searchParams.get("originalPath") || "";
-    console.log("Check-status => originalPath is:", originalPath);
+    console.log("check-status → originalPath:", originalPath);
 
-    // 1) getSession from Better Auth (mostly to confirm user is logged in)
+    /* 1️⃣  Validate the cookie against the DB.
+           If the token row was deleted (single-session logic), we get null. */
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session) {
-      console.log("No session => /login");
+      console.log("check-status → token revoked → redirect /login");
       return NextResponse.json({ redirect: "/login" }, { status: 401 });
     }
-    console.log("Session data:", session);
+    console.log("check-status → session OK for user", session.user.id);
 
     const user = session.user as {
       id: string;
@@ -26,89 +28,69 @@ export async function GET(req: NextRequest) {
       is_guest?: boolean;
     };
 
-    // 2) Check if user is guest from DB perspective
+    /* 2️⃣  Guest / password logic (unchanged) */
     const isGuest = user.is_guest ?? false;
 
-    // 3) Check if user has a credential-based password
     const { rows: credRows } = await pool.query(
       `SELECT 1 FROM account
-       WHERE "userId" = $1
-         AND "providerId" = 'credential'
-       LIMIT 1`,
-      [user.id]
+       WHERE "userId" = $1 AND "providerId" = 'credential' LIMIT 1`,
+      [user.id],
     );
     const hasPassword = credRows.length > 0;
-    console.log(
-      `User ${user.id} => is_guest=${isGuest}, hasPassword=${hasPassword}`
-    );
 
-    // 4) If user is guest AND no password => default to /set-password
-    //    BUT skip if the *original path* is /accept-invitation/...
-    if (isGuest && !hasPassword) {
-      if (originalPath.startsWith("/accept-invitation/")) {
-        console.log(
-          "User is guest with no password, but they're on accept-invitation => skipping forced /set-password"
-        );
-        // We'll let them proceed so the invitation can get accepted
-      } else {
-        console.log("Guest user, no credential => /set-password");
-        return NextResponse.json({ redirect: "/set-password" });
-      }
+    if (isGuest && !hasPassword && !originalPath.startsWith("/accept-invitation/")) {
+      console.log("Guest without password → /set-password");
+      return NextResponse.json({ redirect: "/set-password" });
     }
 
-    // 5) Subscription checks as before
+    /* 3️⃣  Subscription / tenant / onboarding checks (unchanged) */
     const { rows: subscriptions } = await pool.query(
       `SELECT * FROM subscription
        WHERE "userId" = $1
          AND (status = 'trialing' OR status = 'active')`,
-      [user.id]
+      [user.id],
     );
     const now = new Date();
-    const hasValidSubscription = subscriptions.some((sub) => {
-      const trialEnd = sub.trialEnd ? new Date(sub.trialEnd) : null;
+    const hasValidSub = subscriptions.some((sub) => {
+      const trialEnd  = sub.trialEnd  ? new Date(sub.trialEnd)  : null;
       const periodEnd = sub.periodEnd ? new Date(sub.periodEnd) : null;
       return (
         (sub.status === "trialing" || sub.status === "active") &&
-        (!trialEnd || trialEnd > now) &&
+        (!trialEnd  || trialEnd  > now) &&
         (!periodEnd || periodEnd > now)
       );
     });
-    if (!hasValidSubscription && !isGuest) {
-      console.log("No valid subscription => /subscribe");
+    if (!hasValidSub && !isGuest) {
+      console.log("No valid subscription → /subscribe");
       return NextResponse.json({ redirect: "/subscribe" });
     }
 
-    // 6) Tenant check
     const { rows: tenants } = await pool.query(
-      `SELECT "onboardingCompleted" FROM tenant
-       WHERE "ownerUserId" = $1`,
-      [user.id]
+      `SELECT "onboardingCompleted" FROM tenant WHERE "ownerUserId" = $1`,
+      [user.id],
     );
     if (!tenants.length && !isGuest) {
-      console.log("No tenant => /subscribe");
+      console.log("No tenant → /subscribe");
       return NextResponse.json({ redirect: "/subscribe" });
     }
 
-    // 7) Onboarding
     if (!isGuest) {
-      const onboardingCompleted = tenants[0]?.onboardingCompleted === -1;
-      if (!onboardingCompleted && !isGuest) {
-        console.log("Onboarding not completed => /onboarding");
+      const onboardingDone = tenants[0]?.onboardingCompleted === -1;
+      if (!onboardingDone) {
+        console.log("Onboarding incomplete → /onboarding");
         return NextResponse.json({ redirect: "/onboarding" });
       }
     }
 
-    // 8) Active organization
-    const hasActiveOrganization = !!session.session.activeOrganizationId;
-    if (!hasActiveOrganization) {
+    /* 4️⃣  Active organisation present? */
+    if (!session.session.activeOrganizationId) {
       return NextResponse.json({ redirect: "/select-organization" });
     }
 
-    // 9) All checks ok => no forced redirect
-    console.log("All checks passed => no redirect");
+    /* 5️⃣  All checks passed → allow navigation */
     return NextResponse.json({ redirect: null });
-  } catch (error) {
-    console.error("Error in check-status route:", error);
+  } catch (err) {
+    console.error("check-status error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

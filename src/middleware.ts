@@ -1,7 +1,6 @@
 // middleware.ts  (FULL, HARDENED 2025-06-30)
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie }          from "better-auth/cookies";
-import { auth }                      from "@/lib/auth";   
 import { enforceRateLimit }          from "@/lib/rateLimiter";
 
 /*──────────────────── Config ────────────────────*/
@@ -109,20 +108,11 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  /*────────────────────────────────────────
-    3️⃣  Validate session token *with DB*
-  ────────────────────────────────────────*/
+  /* Session required */
   if (!getSessionCookie(req)) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  const session = await auth.api.getSession({ headers: req.headers });
-  if (!session) {
-    /* Token was revoked (e.g. user logged in elsewhere) */
-    return NextResponse.redirect(new URL("/login", req.url));
-  }
-
-  
   /* Central policy check */
   const checkUrl = new URL("/api/auth/check-status", req.url);
   checkUrl.searchParams.set("originalPath", pathname);
