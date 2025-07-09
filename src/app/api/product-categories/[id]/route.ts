@@ -118,43 +118,64 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
+  const { id } = await params;
+  const client = await pool.connect();
+
   try {
-    const { id } = await params;
+    await client.query("BEGIN");
 
-    // Start a transaction to update children and delete the parent
-    await pool.query("BEGIN");
+    // 1) Remove all product–category links for this category
+    await client.query(
+      `DELETE FROM "productCategory"
+       WHERE "categoryId" = $1`,
+      [id]
+    );
 
-    // Set children's parentId to null (make them orphans)
-    const updateChildrenQuery = `
-      UPDATE "productCategories"
-      SET "parentId" = NULL, "updatedAt" = NOW()
-      WHERE "parentId" = $1 AND "organizationId" = $2
-    `;
-    await pool.query(updateChildrenQuery, [id, organizationId]);
+    // 2) Orphan any sub-categories that had this as parent
+    await client.query(
+      `UPDATE "productCategories"
+       SET "parentId" = NULL, "updatedAt" = NOW()
+       WHERE "parentId" = $1
+         AND "organizationId" = $2`,
+      [id, organizationId]
+    );
 
-    // Delete the parent category
-    const deleteQuery = `
-      DELETE FROM "productCategories"
-      WHERE id = $1 AND "organizationId" = $2
-      RETURNING *
-    `;
-    const result = await pool.query(deleteQuery, [id, organizationId]);
+    // 3) Finally delete the category itself
+    const { rowCount } = await client.query(
+      `DELETE FROM "productCategories"
+       WHERE id = $1
+         AND "organizationId" = $2`,
+      [id, organizationId]
+    );
 
-    if (result.rows.length === 0) {
-      await pool.query("ROLLBACK");
-      return NextResponse.json({ error: "Category not found" }, { status: 404 });
+    if (rowCount === 0) {
+      await client.query("ROLLBACK");
+      return NextResponse.json(
+        { error: "Category not found" },
+        { status: 404 }
+      );
     }
 
-    await pool.query("COMMIT");
-    return NextResponse.json({ message: "Category deleted successfully, subcategories orphaned" });
-  } catch (error: any) {
-    await pool.query("ROLLBACK");
-    console.error("[DELETE /api/product-categories/[id]] error:", error);
-    return NextResponse.json({ error: "Failed to delete category" }, { status: 500 });
+    await client.query("COMMIT");
+    return NextResponse.json({
+      message: "Category deleted successfully. Products unlinked & subcategories orphaned.",
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[DELETE /api/product-categories/[id]] error:", err);
+    return NextResponse.json(
+      { error: "Failed to delete category" },
+      { status: 500 }
+    );
+  } finally {
+    client.release();
   }
 }
