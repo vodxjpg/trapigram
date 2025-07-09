@@ -202,9 +202,10 @@ const handleBulkDelete = async () => {
                       return (
                         <Checkbox
                           checked={all}
+                          aria-checked={some ? "mixed" : all}
                           onCheckedChange={table.getToggleAllPageRowsSelectedHandler()}
                     // communicate the “mixed” state via aria-checked
-                    aria-checked={somePage ? "mixed" : allPage}
+                
                   />
                 );
               },
