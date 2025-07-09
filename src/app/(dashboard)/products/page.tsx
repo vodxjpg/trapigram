@@ -1,10 +1,8 @@
 "use client";
 
-import type React from "react";
-
-import { useState, useRef, useEffect, Suspense } from "react";
+import React, { useState, useRef, useEffect, Suspense } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Upload, Download } from "lucide-react";
+import { Plus, Upload, Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProductsDataTable } from "./components/products-data-table";
@@ -20,7 +18,7 @@ export default function ProductsPage() {
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
 
-  /* ── permission flags (new hook) ─────────────────────────── */
+  /* ── permission flags ────────────────────────────────────── */
   const { hasPermission: canViewProducts, isLoading: permLoading } =
     useHasPermission(organizationId, { product: ["view"] });
 
@@ -28,10 +26,18 @@ export default function ProductsPage() {
     organizationId,
     { product: ["create"] }
   );
+
+  /* ── estado de botones ───────────────────────────────────── */
   const [isLoading, setIsLoading] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+
+  /* ── estados modal import ────────────────────────────────── */
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
   /* ── redirect if no visibility ───────────────────────────── */
   useEffect(() => {
     if (!permLoading && !canViewProducts) {
@@ -39,29 +45,37 @@ export default function ProductsPage() {
     }
   }, [permLoading, canViewProducts, router]);
 
-  if (permLoading || !canViewProducts) return null; // guard while resolving
+  if (permLoading || !canViewProducts) return null; // guard
 
+  /* ── handlers ────────────────────────────────────────────── */
   const handleCreateProduct = () => {
     router.push("/products/new");
   };
 
-  const handleImportClick = () => {
-    setIsImporting(true);
-    fileInputRef.current?.click();
+  const openImportModal = () => {
+    setImportMessage(null);
+    setImportErrors([]);
+    setShowImportModal(true);
+  };
+
+  const closeImportModal = () => {
+    setShowImportModal(false);
+    setIsImporting(false);
+    setImportMessage(null);
+    setImportErrors([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleFileChange = async () => {
     const files = fileInputRef.current?.files;
-    if (!files || files.length === 0) {
-      setIsImporting(false);
-      return;
-    }
-    const file = files[0];
-    const formData = new FormData();
-    formData.append("file", file);
+    if (!files || files.length === 0) return;
 
-    // ① show loading and capture its ID
-    const toastId = toast.loading("Importing file...");
+    const formData = new FormData();
+    formData.append("file", files[0]);
+
+    setIsImporting(true);
+    setImportMessage(null);
+    setImportErrors([]);
 
     try {
       const res = await fetch("/api/products/import", {
@@ -69,14 +83,26 @@ export default function ProductsPage() {
         body: formData,
       });
       const data = await res.json();
+      console.log(data);
 
-      if (!res.ok) {
-        throw new Error(data.error || "Import failed");
+      if (res.status === 207 && data.errors) {
+        // Partial success with errors
+        setImportMessage(`❌ Some rows failed to import`);
+        setImportErrors(
+          data.errors.map((e: any) => `Row ${e.row}: ${e.error}`)
+        );
+      } else if (!res.ok) {
+        // General error
+        setImportMessage(`❌ ${data.error || "Import failed"}`);
+      } else {
+        // Success
+        setImportMessage(
+          `✅ ${data.rowCount} product(s) imported successfully`
+        );
+        router.refresh();
       }
-      toast.success("Products imported successfully", { id: toastId });
-      router.refresh();
     } catch (err: any) {
-      toast.error(err.message, { id: toastId });
+      setImportMessage(`❌ ${err.message}`);
     } finally {
       setIsImporting(false);
     }
@@ -84,6 +110,7 @@ export default function ProductsPage() {
 
   const handleExport = async () => {
     setIsExporting(true);
+    // export logic...
   };
 
   return (
@@ -91,30 +118,83 @@ export default function ProductsPage() {
       {/* Hidden file input */}
       <Input
         ref={fileInputRef}
+        id="file-upload"
         type="file"
         accept=".xlsx"
         onChange={handleFileChange}
         className="hidden"
       />
 
+      {/* Import Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md relative">
+            <button
+              className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
+              onClick={closeImportModal}
+            >
+              <X size={20} />
+            </button>
+            <h2 className="text-xl font-semibold mb-4">Import Products</h2>
+
+            {/* Dropzone area */}
+            <label
+              htmlFor="file-upload"
+              className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-6 cursor-pointer hover:border-gray-400 transition"
+            >
+              <Upload className="mb-2 h-6 w-6 text-gray-500" />
+              <span className="font-medium">Load File</span>
+              <span className="text-sm text-gray-500 mt-1">
+                Select or drag the import file here
+              </span>
+            </label>
+
+            {/* Message */}
+            {importMessage && (
+              <p
+                className={`mt-4 text-center font-medium ${
+                  importMessage.startsWith("✅")
+                    ? "text-green-600"
+                    : "text-red-600"
+                }`}
+              >
+                {importMessage}
+              </p>
+            )}
+
+            {/* Detailed errors */}
+            {importErrors.length > 0 && (
+              <ul className="mt-2 text-red-600 list-disc list-inside text-sm">
+                {importErrors.map((err, i) => (
+                  <li key={i}>{err}</li>
+                ))}
+              </ul>
+            )}
+
+            {/* Loader overlay */}
+            {isImporting && (
+              <div className="absolute inset-0 bg-white/75 flex items-center justify-center rounded-xl">
+                <span>Importing...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <PageHeader
         title="Products"
         description="Manage your product catalog"
         actions={
           <div className="flex items-center gap-2">
-            {/* Import Button - only show if user can create products */}
             {canCreateProducts && (
               <Button
                 variant="outline"
-                onClick={handleImportClick}
+                onClick={openImportModal}
                 disabled={isImporting}
               >
-                <Upload className="mr-2 h-4 w-4" />
-                {isImporting ? "Importing..." : "Import"}
+                <Upload className="mr-2 h-4 w-4" /> Import
               </Button>
             )}
-
-            {/* Export Button - show if user can view products */}
             <Button
               variant="outline"
               onClick={handleExport}
@@ -123,12 +203,9 @@ export default function ProductsPage() {
               <Download className="mr-2 h-4 w-4" />
               {isExporting ? "Exporting..." : "Export"}
             </Button>
-
-            {/* Original Add Product Button */}
             {canCreateProducts && (
               <Button onClick={handleCreateProduct} disabled={isLoading}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Product
+                <Plus className="mr-2 h-4 w-4" /> Add Product
               </Button>
             )}
           </div>
