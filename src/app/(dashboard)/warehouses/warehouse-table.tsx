@@ -158,12 +158,12 @@ export function WarehouseTable() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between gap-4 sm:flex-wrap">
+      <div className="flex justify-between gap-4 flex-wrap">
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Search warehouses..." className="pl-8" />
         </div>
-        <div className="flex gap-2 sm:flex-wrap">
+        <div className="flex gap-2 flex-wrap">
           {canSync && (
             <Button variant="outline" onClick={() => setDialogOpen(true)}>
               <RefreshCw className="mr-2 h-4 w-4" />
