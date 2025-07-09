@@ -169,7 +169,9 @@
    4a) Bulk‐delete handler
 ---------------------------------------------------------- */
 const handleBulkDelete = async () => {
-    const selectedIds = Object.keys(rowSelection).filter((id) => rowSelection[id]);
+  const selectedIds = table
+      .getSelectedRowModel()
+      .flatRows.map((r) => r.original.id);
     if (!selectedIds.length) return;
     try {
       const res = await fetch("/api/products", {
@@ -195,12 +197,12 @@ const handleBulkDelete = async () => {
           {
               id: "select",
               header: ({ table }) => {
-                const allPage = table.getIsAllPageRowsSelected();
-                const somePage = table.getIsSomePageRowsSelected();
-                return (
-                  <Checkbox
-                    checked={allPage}
-                    onCheckedChange={table.getToggleAllPageRowsSelectedHandler()}
+                      const all = table.getIsAllPageRowsSelected();
+                      const some = table.getIsSomePageRowsSelected();
+                      return (
+                        <Checkbox
+                          checked={all}
+                          onCheckedChange={table.getToggleAllPageRowsSelectedHandler()}
                     // communicate the “mixed” state via aria-checked
                     aria-checked={somePage ? "mixed" : allPage}
                   />
@@ -528,7 +530,7 @@ const handleBulkDelete = async () => {
        onRowSelectionChange: setRowSelection,
        state: { sorting, columnFilters, columnVisibility, rowSelection },
      });
-   
+     table.options.getRowId = (originalRow) => originalRow.id;
      /* ---------------------------------------------------------- */
      /*  5) Permission gates                                       */
      /* ---------------------------------------------------------- */
