@@ -169,42 +169,43 @@
    4a) Bulk‐delete handler
 ---------------------------------------------------------- */
 const handleBulkDelete = async () => {
-  const selectedIds = Object.keys(rowSelection).filter((id) => rowSelection[id]);
-  if (!selectedIds.length) return;
-  try {
-    await Promise.all(
-      selectedIds.map((id) =>
-        fetch(`/api/products/${id}`, { method: "DELETE" })
-      )
-    );
-    toast.success(`Deleted ${selectedIds.length} product(s)`);
-    setRowSelection({});
-    mutate();
-  } catch {
-    toast.error("Failed to delete selected products");
-  } finally {
-    setBulkDeleteOpen(false);
-  }
-};
+    const selectedIds = Object.keys(rowSelection).filter((id) => rowSelection[id]);
+    if (!selectedIds.length) return;
+    try {
+      const res = await fetch("/api/products", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success(`Deleted ${selectedIds.length} product(s)`);
+      setRowSelection({});
+      mutate();
+    } catch {
+      toast.error("Failed to delete selected products");
+    } finally {
+      setBulkDeleteOpen(false);
+    }
+  };
    
      /* ---------------------------------------------------------- */
      /*  3) Table column defs                                      */
      /* ---------------------------------------------------------- */
      const columns: ColumnDef<Product>[] = [
-      {
-        id: "select",
-        header: ({ table }) => {
-          const all = table.getIsAllRowsSelected();
-          const some = table.getIsSomeRowsSelected();
-          return (
-            <Checkbox
-              checked={all}
-              onCheckedChange={table.getToggleAllRowsSelectedHandler()}
-              // communicate the “mixed” state via aria-checked
-              aria-checked={some ? "mixed" : all}
-            />
-          );
-        },
+          {
+              id: "select",
+              header: ({ table }) => {
+                const allPage = table.getIsAllPageRowsSelected();
+                const somePage = table.getIsSomePageRowsSelected();
+                return (
+                  <Checkbox
+                    checked={allPage}
+                    onCheckedChange={table.getToggleAllPageRowsSelectedHandler()}
+                    // communicate the “mixed” state via aria-checked
+                    aria-checked={somePage ? "mixed" : allPage}
+                  />
+                );
+              },
         cell: ({ row }) => {
           const sel = row.getIsSelected();
           const some = row.getIsSomeSelected();

@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { propagateDeleteDeep } from "@/lib/propagate-delete";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 
@@ -453,3 +454,50 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  DELETE – bulk delete                                              */
+/* ------------------------------------------------------------------ */
+export async function DELETE(req: NextRequest) {
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId } = ctx;
+  
+    try {
+      const { ids } = await req.json();
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return NextResponse.json(
+          { error: "No product IDs provided" },
+          { status: 400 }
+        );
+      }
+  
+      // verify ownership
+      const valid = await db
+        .selectFrom("products")
+        .select("id")
+        .where("id", "in", ids)
+        .where("organizationId", "=", organizationId)
+        .execute();
+      const validIds = valid.map((r) => r.id);
+      if (validIds.length !== ids.length) {
+        return NextResponse.json(
+          { error: "Some products not found or unauthorized" },
+          { status: 404 }
+        );
+      }
+  
+      // cascade‐delete all selected products in one go
+      await propagateDeleteDeep(db, validIds);
+  
+      return NextResponse.json({
+        message: `Deleted ${validIds.length} product(s)`,
+      });
+    } catch (err) {
+      console.error("[PRODUCTS_BULK_DELETE]", err);
+      return NextResponse.json(
+        { error: "Internal server error" },
+        { status: 500 }
+      );
+    }
+  }
