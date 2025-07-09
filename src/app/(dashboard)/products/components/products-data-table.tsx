@@ -8,6 +8,7 @@
      type ColumnFiltersState,
      type SortingState,
      type VisibilityState,
+     type RowSelectionState,
      flexRender,
      getCoreRowModel,
      getFilteredRowModel,
@@ -58,6 +59,7 @@
    import { toast } from "sonner";
    import { Skeleton } from "@/components/ui/skeleton";
    import { useProducts } from "@/hooks/use-products";
+   import { Checkbox } from "@/components/ui/checkbox";
    import type { Attribute } from "@/types/product";
    import { authClient } from "@/lib/auth-client";
    import { useHasPermission } from "@/hooks/use-has-permission";
@@ -113,9 +115,11 @@
      const [sorting, setSorting] = useState<SortingState>([]);
      const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
      const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-     const [rowSelection, setRowSelection] = useState({});
+     const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+
      const [pageSize, setPageSize] = useState(10);
      const [page, setPage] = useState(1);
+     const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
      const [search, setSearch] = useState("");
      const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
      const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
@@ -160,13 +164,63 @@
        })
        .catch(() => {});
      }, []);
+
+     /* ----------------------------------------------------------
+   4a) Bulk‐delete handler
+---------------------------------------------------------- */
+const handleBulkDelete = async () => {
+  const selectedIds = Object.keys(rowSelection).filter((id) => rowSelection[id]);
+  if (!selectedIds.length) return;
+  try {
+    await Promise.all(
+      selectedIds.map((id) =>
+        fetch(`/api/products/${id}`, { method: "DELETE" })
+      )
+    );
+    toast.success(`Deleted ${selectedIds.length} product(s)`);
+    setRowSelection({});
+    mutate();
+  } catch {
+    toast.error("Failed to delete selected products");
+  } finally {
+    setBulkDeleteOpen(false);
+  }
+};
    
      /* ---------------------------------------------------------- */
      /*  3) Table column defs                                      */
      /* ---------------------------------------------------------- */
      const columns: ColumnDef<Product>[] = [
+      {
+        id: "select",
+        header: ({ table }) => {
+          const all = table.getIsAllRowsSelected();
+          const some = table.getIsSomeRowsSelected();
+          return (
+            <Checkbox
+              checked={all}
+              onCheckedChange={table.getToggleAllRowsSelectedHandler()}
+              // communicate the “mixed” state via aria-checked
+              aria-checked={some ? "mixed" : all}
+            />
+          );
+        },
+        cell: ({ row }) => {
+          const sel = row.getIsSelected();
+          const some = row.getIsSomeSelected();
+          return (
+            <Checkbox
+              checked={sel}
+              onCheckedChange={row.getToggleSelectedHandler()}
+              aria-checked={some ? "mixed" : sel}
+            />
+          );
+        },
+        enableSorting: false,
+      },
        {
          accessorKey: "image",
+           
          header: "Image",
          cell: ({ row }) => {
            const image = row.original.image;
@@ -460,6 +514,7 @@
      /*  4) Table instance                                         */
      /* ---------------------------------------------------------- */
      const table = useReactTable({
+        enableRowSelection: true,
        data: products || [],
        columns,
        onSortingChange: setSorting,
@@ -589,6 +644,16 @@
          setPage(1);
        }}
      >
+      {/* ─── bulk delete ─── */}
+        {canDelete && Object.values(rowSelection).some(Boolean) && (
+          <Button
+            variant="destructive"
+            onClick={() => setBulkDeleteOpen(true)}
+            className="ml-2"
+          >
+            Delete Selected ({Object.values(rowSelection).filter(Boolean).length})
+          </Button>
+        )}
         <SelectTrigger className="w-full sm:w-[180px]">
          <SelectValue placeholder="Filter by category" />
        </SelectTrigger>
@@ -651,6 +716,28 @@
              </Select>
            </div>
          </div>
+
+             {/* ───── bulk delete confirmation ───── */}
+    <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete selected products?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This will permanently delete {Object.values(rowSelection).filter(Boolean).length}{" "}
+            product(s). This action cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleBulkDelete}
+            className="bg-red-600 hover:bg-red-700"
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
    
          {/* Table */}
          <div className="rounded-md border overflow-x-auto">
