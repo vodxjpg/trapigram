@@ -1,10 +1,10 @@
+// src/app/api/product-attributes/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 
-// nothing
 const attributeSchema = z.object({
   name: z.string().min(1, "Name is required"),
   slug: z.string().min(1, "Slug is required"),
@@ -16,33 +16,29 @@ export async function GET(req: NextRequest) {
   const { organizationId } = ctx;
 
   try {
+    const { searchParams } = new URL(req.url);
+    const page     = Number(searchParams.get("page"))     || 1;
+    const pageSize = Number(searchParams.get("pageSize")) || 10;
+    const search   = searchParams.get("search") || "";
 
-  const { searchParams } = new URL(req.url);
-  const page = Number(searchParams.get("page")) || 1;
-  const pageSize = Number(searchParams.get("pageSize")) || 10;
-  const search = searchParams.get("search") || "";
-
-  const countQuery = `
-    SELECT COUNT(*) FROM "productAttributes"
-    WHERE "organizationId" = $1 ${search ? "AND (name ILIKE $2 OR slug ILIKE $2)" : ""}
-  `;
-  const countValues = [organizationId, ...(search ? [`%${search}%`] : [])];
-
-  const query = `
-    SELECT id, name, slug, "organizationId", "createdAt", "updatedAt",
-           (SELECT COUNT(*) FROM "productAttributeTerms" WHERE "attributeId" = pa.id) as term_count
-    FROM "productAttributes" pa
-    WHERE "organizationId" = $1 ${search ? "AND (name ILIKE $2 OR slug ILIKE $2)" : ""}
-    ORDER BY "createdAt" DESC
-    LIMIT $${countValues.length + 1} OFFSET $${countValues.length + 2}
-  `;
-  const values = [...countValues, pageSize, (page - 1) * pageSize];
-
-  
+    const countQuery = `
+      SELECT COUNT(*) FROM "productAttributes"
+      WHERE "organizationId" = $1 ${search ? "AND (name ILIKE $2 OR slug ILIKE $2)" : ""}
+    `;
+    const countValues = [organizationId, ...(search ? [`%${search}%`] : [])];
     const countResult = await pool.query(countQuery, countValues);
     const totalRows = Number(countResult.rows[0].count);
     const totalPages = Math.ceil(totalRows / pageSize);
 
+    const query = `
+      SELECT id, name, slug, "organizationId", "createdAt", "updatedAt",
+             (SELECT COUNT(*) FROM "productAttributeTerms" WHERE "attributeId" = pa.id) as term_count
+      FROM "productAttributes" pa
+      WHERE "organizationId" = $1 ${search ? "AND (name ILIKE $2 OR slug ILIKE $2)" : ""}
+      ORDER BY "createdAt" DESC
+      LIMIT $${countValues.length + 1} OFFSET $${countValues.length + 2}
+    `;
+    const values = [...countValues, pageSize, (page - 1) * pageSize];
     const result = await pool.query(query, values);
     const attributes = result.rows.map((row) => ({
       ...row,
@@ -51,7 +47,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ attributes, totalPages, currentPage: page });
   } catch (error) {
-    console.error("[GET /api/product-attributes] error:", error);
+    console.error("[GET /api/product-attributes]", error);
     return NextResponse.json({ error: "Failed to fetch attributes" }, { status: 500 });
   }
 }
@@ -63,8 +59,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const parsedAttribute = attributeSchema.parse(body);
-    const { name, slug } = parsedAttribute;
+    const { name, slug } = attributeSchema.parse(body);
     const attributeId = uuidv4();
 
     const slugCheck = await pool.query(
@@ -76,15 +71,54 @@ export async function POST(req: NextRequest) {
     }
 
     const query = `
-    INSERT INTO "productAttributes" (id, name, slug, "organizationId", "createdAt", "updatedAt")
-    VALUES ($1, $2, $3, $4, NOW(), NOW())
-    RETURNING *
+      INSERT INTO "productAttributes" (id, name, slug, "organizationId", "createdAt", "updatedAt")
+      VALUES ($1, $2, $3, $4, NOW(), NOW())
+      RETURNING *
     `;
     const result = await pool.query(query, [attributeId, name, slug, organizationId]);
     return NextResponse.json(result.rows[0], { status: 201 });
   } catch (error) {
-    console.error("[POST /api/product-attributes] error:", error);
-    if (error instanceof z.ZodError) return NextResponse.json({ error: error.errors }, { status: 400 });
+    console.error("[POST /api/product-attributes]", error);
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: error.errors }, { status: 400 });
+    }
     return NextResponse.json({ error: "Failed to create attribute" }, { status: 500 });
+  }
+}
+
+// ==================================================================
+// DELETE /api/product-attributes → bulk‐delete attributes
+// ==================================================================
+export async function DELETE(req: NextRequest) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+  const { ids } = await req.json() as { ids: string[] };
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    // remove all terms
+    await client.query(
+      `DELETE FROM "productAttributeTerms" WHERE "attributeId" = ANY($1)`,
+      [ids]
+    );
+    // delete attributes
+    const { rowCount } = await client.query(
+      `DELETE FROM "productAttributes"
+       WHERE id = ANY($1) AND "organizationId" = $2`,
+      [ids, organizationId]
+    );
+    await client.query("COMMIT");
+    return NextResponse.json({ deletedCount: rowCount });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[DELETE /api/product-attributes]", err);
+    return NextResponse.json(
+      { error: "Failed to bulk-delete attributes" },
+      { status: 500 }
+    );
+  } finally {
+    client.release();
   }
 }

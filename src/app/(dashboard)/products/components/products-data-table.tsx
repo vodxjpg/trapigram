@@ -193,33 +193,39 @@ export function ProductsDataTable() {
   /*  3) Table column defs                                      */
   /* ---------------------------------------------------------- */
   const columns: ColumnDef<Product>[] = [
-    {
-      id: "select",
-      header: ({ table }) => {
-        // select/deselect *all rows in the table*
-        const allRows = table.getIsAllRowsSelected();
-        const someRows = table.getIsSomeRowsSelected();
-        return (
-          <Checkbox
-            checked={allRows}
-            aria-checked={someRows ? "mixed" : allRows}
-            onCheckedChange={table.getToggleAllRowsSelectedHandler()}
-          />
-        );
-      },
-      cell: ({ row }) => {
-        const sel = row.getIsSelected();
-        const some = row.getIsSomeSelected();
-        return (
-          <Checkbox
-            checked={sel}
-            onCheckedChange={row.getToggleSelectedHandler()}
-            aria-checked={some ? "mixed" : sel}
-          />
-        );
-      },
-      enableSorting: false,
-    },
+     {
+         id: "select",
+         header: ({ table }) => {
+           // select/deselect *all rows in the table*
+           const allRows = table.getIsAllRowsSelected();
+           const someRows = table.getIsSomeRowsSelected();
+           return (
+             <Checkbox
+               className="h-4 w-4"
+               checked={allRows}
+               aria-checked={someRows ? "mixed" : allRows}
+               onCheckedChange={(checked) =>
+                 table.toggleAllRowsSelected(!!checked)
+               }
+             />
+           );
+         },
+         cell: ({ row }) => {
+           const isSel = row.getIsSelected();
+           const isSome = row.getIsSomeSelected();
+           return (
+             <Checkbox
+               className="h-4 w-4"
+               checked={isSel}
+               aria-checked={isSome ? "mixed" : isSel}
+               onCheckedChange={(checked) =>
+                 row.toggleSelected(!!checked)
+               }
+             />
+           );
+         },
+         enableSorting: false,
+       },
     {
       accessorKey: "image",
       header: "Image",
