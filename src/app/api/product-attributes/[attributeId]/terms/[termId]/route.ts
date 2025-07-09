@@ -59,25 +59,41 @@ export async function DELETE(
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
+  const { attributeId, termId } = await params;
 
+  // We don’t have orgId on values table, so we scope by attributeId + termId
+  const client = await pool.connect();
   try {
-    const { attributeId, termId } = await params;
+    await client.query("BEGIN");
 
-    const query = `
-      DELETE FROM "productAttributeTerms"
-      WHERE id = $1 AND "attributeId" = $2 AND "organizationId" = $3
-      RETURNING *
-    `;
-    const result = await pool.query(query, [termId, attributeId, organizationId]);
+    // 1) Delete any productAttributeValues pointing to this term
+    await client.query(
+      `DELETE FROM "productAttributeValues"
+       WHERE "termId" = $1
+         AND "attributeId" = $2`,
+      [termId, attributeId]
+    );
 
-    if (result.rowCount === 0) {
+    // 2) Delete the term itself
+    const { rowCount } = await client.query(
+      `DELETE FROM "productAttributeTerms"
+       WHERE id = $1
+         AND "attributeId" = $2`,
+      [termId, attributeId]
+    );
+
+    if (rowCount === 0) {
+      await client.query("ROLLBACK");
       return NextResponse.json({ error: "Term not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ message: "Term deleted successfully" });
-  } catch (error) {
-    console.error("[DELETE /api/product-attributes/[attributeId]/terms/[termId]] error:", error);
+    await client.query("COMMIT");
+    return NextResponse.json({ message: "Term and its values deleted successfully" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[DELETE /api/product-attributes/[attributeId]/terms/[termId]] error:", err);
     return NextResponse.json({ error: "Failed to delete term" }, { status: 500 });
+  } finally {
+    client.release();
   }
 }
