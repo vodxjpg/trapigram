@@ -89,23 +89,52 @@ export async function DELETE(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  try {
-    const { attributeId } = await params;
+  const { attributeId } = await params;
+  const client = await pool.connect();
 
-    const query = `
-      DELETE FROM "productAttributes"
-      WHERE id = $1 AND "organizationId" = $2
-      RETURNING *
-    `;
-    const result = await pool.query(query, [attributeId, organizationId]);
+  try {
+    await client.query("BEGIN");
+
+    // 1) delete all terms for this attribute
+    await client.query(
+      `DELETE FROM "productAttributeTerms"
+       WHERE "attributeId" = $1
+         AND "organizationId" = $2`,
+      [attributeId, organizationId]
+    );
+
+    // 2) delete the attribute itself
+    const result = await client.query(
+      `DELETE FROM "productAttributes"
+       WHERE id = $1
+         AND "organizationId" = $2
+       RETURNING *`,
+      [attributeId, organizationId]
+    );
 
     if (result.rowCount === 0) {
-      return NextResponse.json({ error: "Attribute not found" }, { status: 404 });
+      await client.query("ROLLBACK");
+      return NextResponse.json(
+        { error: "Attribute not found" },
+        { status: 404 }
+      );
     }
 
-    return NextResponse.json({ message: "Attribute deleted successfully" });
+    await client.query("COMMIT");
+    return NextResponse.json(
+      { message: "Attribute and its terms deleted successfully" }
+    );
   } catch (error) {
-    console.error("[DELETE /api/product-attributes/[attributeId]] error:", error);
-    return NextResponse.json({ error: "Failed to delete attribute" }, { status: 500 });
+    await client.query("ROLLBACK");
+    console.error(
+      "[DELETE /api/product-attributes/[attributeId]] error:",
+      error
+    );
+    return NextResponse.json(
+      { error: "Failed to delete attribute" },
+      { status: 500 }
+    );
+  } finally {
+    client.release();
   }
 }
