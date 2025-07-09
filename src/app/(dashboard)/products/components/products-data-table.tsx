@@ -197,17 +197,16 @@ const handleBulkDelete = async () => {
           {
               id: "select",
               header: ({ table }) => {
-                      const all = table.getIsAllPageRowsSelected();
-                      const some = table.getIsSomePageRowsSelected();
-                      return (
-                        <Checkbox
-                          checked={all}
-                          aria-checked={some ? "mixed" : all}
-                          onCheckedChange={table.getToggleAllPageRowsSelectedHandler()}
-                    // communicate the “mixed” state via aria-checked
-                
-                  />
-                );
+                          // select/deselect *all rows on the current page*
+                          const allPage = table.getIsAllPageRowsSelected();
+                          const somePage = table.getIsSomePageRowsSelected();
+                          return (
+                            <Checkbox
+                              checked={allPage}
+                              aria-checked={somePage ? "mixed" : allPage}
+                              onCheckedChange={table.getToggleAllPageRowsSelectedHandler()}
+                            />
+                          );
               },
         cell: ({ row }) => {
           const sel = row.getIsSelected();
@@ -519,6 +518,7 @@ const handleBulkDelete = async () => {
      /* ---------------------------------------------------------- */
      const table = useReactTable({
         enableRowSelection: true,
+        getRowId: (originalRow) => originalRow.id,
        data: products || [],
        columns,
        onSortingChange: setSorting,
@@ -531,7 +531,7 @@ const handleBulkDelete = async () => {
        onRowSelectionChange: setRowSelection,
        state: { sorting, columnFilters, columnVisibility, rowSelection },
      });
-     table.options.getRowId = (originalRow) => originalRow.id;
+   
      /* ---------------------------------------------------------- */
      /*  5) Permission gates                                       */
      /* ---------------------------------------------------------- */
