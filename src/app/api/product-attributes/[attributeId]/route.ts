@@ -95,24 +95,40 @@ export async function DELETE(
   try {
     await client.query("BEGIN");
 
-    // 1) delete all terms for this attribute
-    await client.query(
-      `DELETE FROM "productAttributeTerms"
+    // 1) Gather all term IDs for this attribute:
+    const { rows: termRows } = await client.query(
+      `SELECT id
+       FROM "productAttributeTerms"
        WHERE "attributeId" = $1
          AND "organizationId" = $2`,
       [attributeId, organizationId]
     );
+    const termIds = termRows.map(r => r.id);
+    if (termIds.length) {
+      // 2) Delete all product‐attribute values pointing to those term IDs
+      await client.query(
+        `DELETE FROM "productAttributeValues"
+         WHERE "termId" = ANY($1)
+           AND "organizationId" = $2`,
+        [termIds, organizationId]
+      );
+      // 3) Delete the terms themselves
+      await client.query(
+        `DELETE FROM "productAttributeTerms"
+         WHERE "attributeId" = $1
+           AND "organizationId" = $2`,
+        [attributeId, organizationId]
+      );
+    }
 
-    // 2) delete the attribute itself
-    const result = await client.query(
+    // 4) Finally delete the attribute
+    const { rowCount } = await client.query(
       `DELETE FROM "productAttributes"
        WHERE id = $1
-         AND "organizationId" = $2
-       RETURNING *`,
+         AND "organizationId" = $2`,
       [attributeId, organizationId]
     );
-
-    if (result.rowCount === 0) {
+    if (rowCount === 0) {
       await client.query("ROLLBACK");
       return NextResponse.json(
         { error: "Attribute not found" },
@@ -121,15 +137,12 @@ export async function DELETE(
     }
 
     await client.query("COMMIT");
-    return NextResponse.json(
-      { message: "Attribute and its terms deleted successfully" }
-    );
-  } catch (error) {
+    return NextResponse.json({
+      message: "Attribute and all its terms & values deleted"
+    });
+  } catch (err) {
     await client.query("ROLLBACK");
-    console.error(
-      "[DELETE /api/product-attributes/[attributeId]] error:",
-      error
-    );
+    console.error("[DELETE attribute] error:", err);
     return NextResponse.json(
       { error: "Failed to delete attribute" },
       { status: 500 }
