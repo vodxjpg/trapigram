@@ -151,12 +151,6 @@ const {
           />
           <Button type="submit">Search</Button>
         </form>
-        {canCreate && !createLoading && (
-          <Button onClick={() => router.push("/discount-rules/new")}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Rule
-          </Button>
-        )}
       </div>
 
       <div className="rounded-md border">

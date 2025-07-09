@@ -191,6 +191,7 @@ export function WarehouseTable() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>ID</TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Organizations</TableHead>
               <TableHead>Countries</TableHead>
@@ -200,19 +201,20 @@ export function WarehouseTable() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">
+                <TableCell colSpan={5} className="h-24 text-center">
                   Loading...
                 </TableCell>
               </TableRow>
             ) : warehouses.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">
+                <TableCell colSpan={5} className="h-24 text-center">
                   No warehouses found.
                 </TableCell>
               </TableRow>
             ) : (
               warehouses.map((warehouse) => (
                 <TableRow key={warehouse.id}>
+                  <TableCell>{warehouse.id}</TableCell>
                   <TableCell className="font-medium">{warehouse.name}</TableCell>
                   <TableCell>
                     {warehouse.organizationId.map((id) => (

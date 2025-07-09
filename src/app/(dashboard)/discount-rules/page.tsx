@@ -9,6 +9,9 @@ import { Suspense } from "react";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { Button } from "@/components/ui/button";
+import {
+  Plus,
+} from "lucide-react";
 
 export default function DiscountRulesPage() {
   const { setHeaderTitle } = useHeaderTitle();
@@ -51,8 +54,9 @@ export default function DiscountRulesPage() {
         </div>
         {canCreate && (
           <Button onClick={() => router.push("/discount-rules/new")}>
-            Add Rule
-          </Button>
+          <Plus className="mr-2 h-4 w-4" />
+          Add Rule
+        </Button>
         )}
       </div>
       <Suspense fallback={<div>Loading tier pricing table…</div>}>

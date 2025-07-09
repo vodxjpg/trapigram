@@ -240,7 +240,7 @@ export default function TicketDetail() {
 
   /* ---------------- JSX -------------------------------------------------- */
   return (
-    <div className="container mx-auto py-10">
+    <div className="container mx-auto py-10 px-3">
       <div className="mb-4">
         <Button asChild variant="outline" size="sm">
           <Link href="/tickets" className="flex items-center gap-1">
@@ -251,7 +251,7 @@ export default function TicketDetail() {
 
       <Card>
         {/* -------- header ------------------------------------------------- */}
-        <CardHeader className="flex items-start justify-between">
+        <CardHeader className="flex items-start justify-between sm:flex-wrap">
           <div>
             <CardTitle className="text-lg font-semibold">
               {header.title}{" "}
@@ -269,7 +269,7 @@ export default function TicketDetail() {
             </CardDescription>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 sm:mt-2">
             {/* ---- TAGS dialog (disabled if !canUpdate) ------------------ */}
             <Dialog
               open={tagsDialogOpen}
