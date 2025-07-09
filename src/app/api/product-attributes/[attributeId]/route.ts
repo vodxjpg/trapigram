@@ -95,8 +95,8 @@ export async function DELETE(
   try {
     await client.query("BEGIN");
 
-    // 1) Gather all term IDs for this attribute:
-    const { rows: termRows } = await client.query(
+    // 1) Gather all term IDs for this attribute (and org)
+    const { rows: termRows } = await client.query< { id: string } >(
       `SELECT id
        FROM "productAttributeTerms"
        WHERE "attributeId" = $1
@@ -104,13 +104,13 @@ export async function DELETE(
       [attributeId, organizationId]
     );
     const termIds = termRows.map(r => r.id);
+
     if (termIds.length) {
       // 2) Delete all product‐attribute values pointing to those term IDs
       await client.query(
         `DELETE FROM "productAttributeValues"
-         WHERE "termId" = ANY($1)
-           AND "organizationId" = $2`,
-        [termIds, organizationId]
+         WHERE "termId" = ANY($1)`,
+        [termIds]
       );
       // 3) Delete the terms themselves
       await client.query(
@@ -128,6 +128,7 @@ export async function DELETE(
          AND "organizationId" = $2`,
       [attributeId, organizationId]
     );
+
     if (rowCount === 0) {
       await client.query("ROLLBACK");
       return NextResponse.json(
