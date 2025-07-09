@@ -346,6 +346,7 @@ export function PaymentMethodsTable() {
           Page {currentPage} of {totalPages}
         </div>
         <div className="flex items-center space-x-2">
+        <div className="flex-row sm:flex-col">
           <p className="text-sm font-medium">Rows per page</p>
           <Select
             value={String(pageSize)}
@@ -365,6 +366,7 @@ export function PaymentMethodsTable() {
               ))}
             </SelectContent>
           </Select>
+          </div>
           <Button
             variant="outline"
             size="icon"

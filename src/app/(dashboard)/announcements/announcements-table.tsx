@@ -336,6 +336,7 @@ export function AnnouncementsTable() {
         </div>
         <div className="flex items-center space-x-2">
           <div className="flex items-center space-x-2">
+            <div className="flex-row sm:flex-col">
             <p className="text-sm font-medium">Rows per page</p>
             <Select
               value={pageSize.toString()}
@@ -355,6 +356,7 @@ export function AnnouncementsTable() {
                 ))}
               </SelectContent>
             </Select>
+            </div>
           </div>
           <div className="flex items-center space-x-2">
             <Button

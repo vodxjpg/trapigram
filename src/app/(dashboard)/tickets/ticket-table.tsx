@@ -306,6 +306,7 @@ export function TicketsTable() {
           Page {currentPage} of {totalPages}
         </div>
         <div className="flex items-center space-x-2">
+        <div className="flex-row sm:flex-col">
           <p className="text-sm font-medium">Rows per page</p>
           <Select
             value={pageSize.toString()}
@@ -325,6 +326,7 @@ export function TicketsTable() {
               ))}
             </SelectContent>
           </Select>
+          </div>
           <Button
             variant="outline"
             size="icon"
