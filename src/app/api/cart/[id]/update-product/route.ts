@@ -112,12 +112,15 @@ export async function PATCH(
         basePrice = p.price;
       }
 
-      /* 3) new quantity */
-      const newQty = data.action === "add" ? oldQty + 1 : oldQty - 1;
-      if (newQty < 0) {
-        await client.query("ROLLBACK");
-        return NextResponse.json({ error: "Quantity cannot be negative" }, { status: 400 });
-      }
+          /* 3) work out the new quantity */
+          const newQty = data.action === "add" ? oldQty + 1 : oldQty - 1;
+          if (newQty < 0) {
+            await client.query("ROLLBACK");
+            return NextResponse.json(
+              { error: "Quantity cannot be negative" },
+              { status: 400 },
+            );
+          }
 
       /* 4) affiliate balance flow (unchanged) */
       if (isAffiliate) {
@@ -208,17 +211,30 @@ export async function PATCH(
         }
       }
 
-      /* 6) update target cart row */
-      const { rows: upd } = await client.query(
-        `UPDATE "cartProducts"
-           SET quantity   = $1,
-               "unitPrice" = $2,
-               "updatedAt" = NOW()
-         WHERE "cartId"   = $3
-           AND ("productId" = $4 OR "affiliateProductId" = $4)
-         RETURNING *`,
-        [newQty, pricePerUnit, cartId, data.productId],
-      );
+         /* 6) persist the change
+               – if the new quantity is zero, *delete* the row             */
+         let upd;
+         if (newQty === 0) {
+           await client.query(
+             `DELETE FROM "cartProducts"
+                WHERE "cartId"   = $1
+                  AND ("productId" = $2 OR "affiliateProductId" = $2)`,
+             [cartId, data.productId],
+           );
+           upd = [];
+         } else {
+           const { rows } = await client.query(
+             `UPDATE "cartProducts"
+                  SET quantity    = $1,
+                      "unitPrice" = $2,
+                      "updatedAt" = NOW()
+                WHERE "cartId"   = $3
+                  AND ("productId" = $4 OR "affiliateProductId" = $4)
+              RETURNING *`,
+             [newQty, pricePerUnit, cartId, data.productId],
+           );
+           upd = rows;
+         }
 
       /* 7) stock adjust */
       await adjustStock(
@@ -263,10 +279,10 @@ export async function PATCH(
         };
       })();
 
-      /* 9) cart hash */
+    /* 9) cart hash (skip when the row was deleted) */
       const encrypted = crypto
         .createHash("sha256")
-        .update(JSON.stringify(upd[0]))
+        .update(JSON.stringify(upd))
         .digest("base64");
       await pool.query(
         `UPDATE carts
