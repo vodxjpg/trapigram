@@ -64,20 +64,25 @@ export async function GET(req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
   const { searchParams } = new URL(req.url);
-  const filterOrderKey = searchParams.get("orderKey");
+
+  /* Accept both ?orderKey=123 and ?reference=123 -------------------- */
+  const filterOrderKey =
+    searchParams.get("orderKey") ?? searchParams.get("reference");
+
   const filterClientId = searchParams.get("clientId");
-  const filterStatus     = searchParams.get("status");
-  const filterReferral   = searchParams.get("referralAwarded");
+  const filterStatus   = searchParams.get("status");
+  const filterReferral = searchParams.get("referralAwarded");
 
   try {
     /* 1) Single order ------------------------------------------------- */
     if (filterOrderKey) {
       const sql = `
         SELECT o.*, c."firstName", c."lastName", c."username", c.email
-        FROM   orders o
-        JOIN   clients c ON c.id = o."clientId"
-        WHERE  o."organizationId" = $1 AND o."orderKey" = $2
-        LIMIT  1
+          FROM orders o
+          JOIN clients c ON c.id = o."clientId"
+         WHERE o."organizationId" = $1
+           AND o."orderKey"       = $2
+         LIMIT 1
       `;
       const r = await pool.query(sql, [organizationId, filterOrderKey]);
       if (!r.rowCount)
@@ -85,15 +90,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(r.rows[0], { status: 200 });
     }
 
-  /* 2) Orders by client – newest first */
+    /* 2) Orders by client – newest first ------------------------------ */
     if (filterClientId) {
-      /* ---------- dynamic WHERE ------------------------------------- */
       const clauses: string[] = [
         `o."organizationId" = $1`,
         `o."clientId"       = $2`,
       ];
       const vals: unknown[] = [organizationId, filterClientId];
-    
+
       if (filterStatus) {
         clauses.push(`o.status = $${vals.length + 1}`);
         vals.push(filterStatus);
@@ -102,13 +106,13 @@ export async function GET(req: NextRequest) {
         clauses.push(`o."referralAwarded" = $${vals.length + 1}`);
         vals.push(filterReferral === "true");
       }
-    
+
       const sql = `
         SELECT o.*, c."firstName", c."lastName", c."username", c.email
-        FROM   orders o
-        JOIN   clients c ON c.id = o."clientId"
-        WHERE  ${clauses.join(" AND ")}
-        ORDER BY o."dateCreated" DESC
+          FROM orders o
+          JOIN clients c ON c.id = o."clientId"
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY o."dateCreated" DESC
       `;
       const r = await pool.query(sql, vals);
       const orders = r.rows.map(o => ({
@@ -127,10 +131,9 @@ export async function GET(req: NextRequest) {
     }
 
     /* 3) Full list ---------------------------------------------------- */
-    /* ------- optional filters even when no clientId is given -------- */
     const clauses: string[] = [`o."organizationId" = $1`];
     const vals: unknown[]   = [organizationId];
-    
+
     if (filterStatus) {
       clauses.push(`o.status = $${vals.length + 1}`);
       vals.push(filterStatus);
@@ -139,13 +142,13 @@ export async function GET(req: NextRequest) {
       clauses.push(`o."referralAwarded" = $${vals.length + 1}`);
       vals.push(filterReferral === "true");
     }
-    
+
     const listSql = `
       SELECT o.*, c."firstName", c."lastName", c."username", c.email
-      FROM   orders o
-      JOIN   clients c ON c.id = o."clientId"
-      WHERE  ${clauses.join(" AND ")}
-      ORDER BY o."dateCreated" DESC
+        FROM orders o
+        JOIN clients c ON c.id = o."clientId"
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY o."dateCreated" DESC
     `;
     const r = await pool.query(listSql, vals);
     const orders = r.rows.map(o => ({
@@ -159,16 +162,13 @@ export async function GET(req: NextRequest) {
       lastName: o.lastName,
       username: o.username,
       email: o.email,
-      shippingCompany: o.shippingService /* <-- note lower-case in pg result */
-      ?? o.shippingService        // pg camel-case → JS
-      ?? null,
+      shippingCompany: o.shippingService ?? o.shippingService ?? null,
     }));
     return NextResponse.json(orders, { status: 200 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
 }
-
 /* ================================================================== */
 /* POST – create order                                                */
 /* ================================================================== */
