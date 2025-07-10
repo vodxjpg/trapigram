@@ -166,7 +166,7 @@ export default function ProductsPage() {
                 Browse files
               </Button>
             </div>
-            <div className="flex flex-col items-center text-left"><small><a href="/how-to-import-products" target="_blank">Learn how to import products<</a></small></div>
+            <div className="flex flex-col items-center text-left"><small><a href="/how-to-import-products" target="_blank">Learn how to import products</a></small></div>
             {importMessage && (
               <p
                 className={`mt-4 text-center whitespace-pre-line font-medium ${
