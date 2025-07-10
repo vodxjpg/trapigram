@@ -4,7 +4,12 @@ import { pgPool as pool } from "@/lib/db";;
 import crypto from "crypto"
 import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
-
+import {
+    tierPricing,
+    getPriceForQuantity,
+    type Tier,
+} from "@/lib/tier-pricing";
+import { resolveUnitPrice } from "@/lib/pricing";
 
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || ""
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || ""
@@ -50,7 +55,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         const body = await req.json();
         const data = cartProductSchema.parse(body); // throws if invalid
 
-        const insert = `
+        const delSql = `
         DELETE FROM "cartProducts" 
         WHERE "cartId" = $1 AND ( "productId" = $2 OR "affiliateProductId" = $2 )
         RETURNING *
@@ -60,44 +65,46 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
             data.productId
         ];
 
-        const result = await pool.query(insert, vals);
+        const result = await pool.query(delSql, vals);
         const deleted = result.rows[0]; // gives us old quantity
         /* ---------- NEW: affiliate refund ---------- */
         if (deleted?.affiliateProductId) {
             const pointsToRollback = deleted.quantity * deleted.unitPrice;
-        
+
             // clientId is on carts, fetch once
             const { rows: clRows } = await pool.query(
-            `SELECT "clientId" FROM carts WHERE id = $1`, [id]
+                `SELECT "clientId" FROM carts WHERE id = $1`, [id]
             );
             const clientId = clRows[0]?.clientId;
-        
+
             if (clientId) {
-            await pool.query(
-                `UPDATE "affiliatePointBalances"
+                await pool.query(
+                    `UPDATE "affiliatePointBalances"
                 SET "pointsCurrent" = "pointsCurrent" + $1,
                     "pointsSpent"   = GREATEST("pointsSpent" - $1, 0),
                     "updatedAt"     = NOW()
                 WHERE "organizationId" = $2 AND "clientId" = $3`,
-                [pointsToRollback, ctx.organizationId, clientId]
-            );
-        
-            await pool.query(
-                `INSERT INTO "affiliatePointLogs"
+                    [pointsToRollback, ctx.organizationId, clientId]
+                );
+
+                await pool.query(
+                    `INSERT INTO "affiliatePointLogs"
                 (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
                 VALUES (gen_random_uuid(),$1,$2,$3,'refund','cart line removed',NOW(),NOW())`,
-                [ctx.organizationId, clientId,  pointsToRollback]
-            );
+                    [ctx.organizationId, clientId, pointsToRollback]
+                );
             }
         }
-        /* country lookup (same query as other routes) */
+        /* country + level lookup – we need both for tier recalculation */
         const { rows: cRows } = await pool.query(
-            `SELECT clients.country
+            `SELECT clients.country, clients."levelId"
           FROM clients
           JOIN carts ON carts."clientId" = clients.id
          WHERE carts.id = $1`,
             [id],
         );
+        const country = cRows[0]?.country as string;
+        const levelId = cRows[0]?.levelId as string;
         const country = cRows[0]?.country as string;
 
         const released = result.rows[0]?.quantity ?? 0;
@@ -111,6 +118,68 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
             WHERE id = '${id}'
             RETURNING *`)
 
+
+        /* ────────────────────────────────────────────────────────────
+           ▶  NEW: tier-pricing re-evaluation after a line is removed
+        ──────────────────────────────────────────────────────────── */
+        if (deleted && !deleted.affiliateProductId) {
+            const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
+            const tier = tiers.find(
+                (t) =>
+                    t.countries.includes(country) &&
+                    t.products.some(
+                        (p) =>
+                            p.productId === deleted.productid ||
+                            p.variationId === deleted.productid,
+                    ),
+            );
+
+            if (tier) {
+                const tierIds = tier.products
+                    .map((p) => p.productId)
+                    .filter(Boolean) as string[];
+
+                /* new combined quantity of *all* products in this tier      */
+                const { rows: qRows } = await pool.query(
+                    `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                         FROM "cartProducts"
+                        WHERE "cartId" = $1
+                          AND "productId" = ANY($2::text[])`,
+                    [id, tierIds],
+                );
+                const qtyAfter = Number(qRows[0].qty);
+
+                /* decide the correct unit-price for the tier                */
+                let newUnit = getPriceForQuantity(tier.steps, qtyAfter);
+
+                if (newUnit === null) {
+                    /* below first tier – fall back to the individual base
+                       price of *each* product                                */
+                    for (const pid of tierIds) {
+                        const { price } = await resolveUnitPrice(pid, country, levelId);
+                        await pool.query(
+                            `UPDATE "cartProducts"
+                              SET "unitPrice" = $1,
+                                  "updatedAt" = NOW()
+                            WHERE "cartId"   = $2
+                              AND "productId" = $3`,
+                            [price, id, pid],
+                        );
+                    }
+                } else {
+                    /* still within a tier bracket – apply the same price to
+                       all eligible lines                                     */
+                    await pool.query(
+                        `UPDATE "cartProducts"
+                            SET "unitPrice" = $1,
+                                "updatedAt" = NOW()
+                          WHERE "cartId"   = $2
+                            AND "productId" = ANY($3::text[])`,
+                        [newUnit, id, tierIds],
+                    );
+                }
+            }
+        }
 
         return NextResponse.json(result.rows[0], { status: 201 });
     } catch (err: any) {
