@@ -543,14 +543,19 @@ export function ProductsDataTable() {
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
     state: { sorting, columnFilters, columnVisibility, rowSelection },
   });
-
+/* ────────────────────────────────────────────────────────────────
+ *  Whenever `pageSize` changes (from the <Select>) update
+ *  react-table’s own page-size so it stops slicing at 10.
+ * ────────────────────────────────────────────────────────────────*/
+useEffect(() => {
+    table.setPageSize(pageSize);
+  }, [pageSize, table]);
 
   /* ---------------------------------------------------------- */
   /*  6) Bulk delete (needs `table`)                             */
