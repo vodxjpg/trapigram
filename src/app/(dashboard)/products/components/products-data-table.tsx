@@ -644,9 +644,11 @@ export function ProductsDataTable() {
           <Select
            value={statusFilter || "all"}
            onValueChange={(v) => {
-             setStatusFilter(v === "all" ? "" : (v as "published" | "draft"));
-             setPage(1);
-           }}
+            startTransition(() => {
+              setStatusFilter(v === "all" ? "" : (v as "published" | "draft"));
+              setPage(1);
+            });
+          }}
           >
             <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue placeholder="Filter by status" />
@@ -662,8 +664,10 @@ export function ProductsDataTable() {
           <Select
             value={categoryFilter || "all"}
             onValueChange={(v) => {
-              setCategoryFilter(v === "all" ? "" : v);
-              setPage(1);
+              startTransition(() => {
+                setCategoryFilter(v === "all" ? "" : v);
+                setPage(1);
+              });
             }}
           >
             <SelectTrigger className="w-full sm:w-[180px]">
@@ -684,9 +688,11 @@ export function ProductsDataTable() {
     
                value={attributeFilter || "all"}
                onValueChange={(v) => {
-                 setAttributeFilter(v === "all" ? "" : v);
-                 setPage(1);
-               }}
+                startTransition(() => {
+                  setAttributeFilter(v === "all" ? "" : v);
+                  setPage(1);
+                });
+              }}
           >
             <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue placeholder="Filter by attribute" />
