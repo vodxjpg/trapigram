@@ -146,7 +146,7 @@ export default function ProductsPage() {
               <X size={20} />
             </button>
             <h2 className="text-xl font-semibold mb-4">Import Products</h2>
-
+            <p className="text-left"><a href="https://bjol9ok8s3a6bkjs.public.blob.vercel-storage.com/product-import-update-example-QF5kH2bLyT7dReogJAIYEuvvED6Ppl.xlsx" target="_blank">Download a template</a> to see the import format</p>
             <div
               onDrop={handleDrop}
               onDragOver={handleDragOver}
@@ -166,7 +166,7 @@ export default function ProductsPage() {
                 Browse files
               </Button>
             </div>
-
+            <div className="flex flex-col items-center text-left"><small><a href="/how-to-import-products" target="_blank">Learn how to import products<</a></small></div>
             {importMessage && (
               <p
                 className={`mt-4 text-center whitespace-pre-line font-medium ${
