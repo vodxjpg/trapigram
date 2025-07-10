@@ -111,12 +111,22 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         if (released)
             await adjustStock(pool, data.productId, country, +released);
 
-        const encryptedResponse = encryptSecretNode(JSON.stringify(result.rows[0]))
-
-        await pool.query(`UPDATE carts 
-            SET "cartUpdatedHash" = '${encryptedResponse}', "updatedAt" = NOW()
-            WHERE id = '${id}'
-            RETURNING *`)
+               /* ▸ hash AFTER all price updates so it represents the true cart */
+               const { rows: lines } = await pool.query(
+                 `SELECT COALESCE("productId","affiliateProductId")   AS pid,
+                         quantity,"unitPrice"
+                    FROM "cartProducts"
+                   WHERE "cartId" = $1`,
+                 [id],
+               );
+               const newHash = encryptSecretNode(JSON.stringify(lines));
+               await pool.query(
+                 `UPDATE carts
+                      SET "cartUpdatedHash" = $1,
+                          "updatedAt"       = NOW()
+                    WHERE id = $2`,
+                 [newHash, id],
+               );
 
 
         /* ────────────────────────────────────────────────────────────
@@ -129,8 +139,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
                     t.countries.includes(country) &&
                     t.products.some(
                         (p) =>
-                            p.productId === deleted.productid ||
-                            p.variationId === deleted.productid,
+                            p.productId   === deleted.productId ||
+                        p.variationId === deleted.productId,
                     ),
             );
 
