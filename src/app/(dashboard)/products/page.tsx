@@ -66,16 +66,13 @@ export default function ProductsPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handleFileChange = async () => {
-    const files = fileInputRef.current?.files;
-    if (!files || files.length === 0) return;
-
-    const formData = new FormData();
-    formData.append("file", files[0]);
-
+  const processFile = async (file: File) => {
     setIsImporting(true);
     setImportMessage(null);
     setImportErrors([]);
+
+    const formData = new FormData();
+    formData.append("file", file);
 
     try {
       const res = await fetch("/api/products/import", {
@@ -97,7 +94,7 @@ export default function ProductsPage() {
       } else {
         // Success
         setImportMessage(
-          `✅ ${data.rowCount} product(s) imported successfully`
+          `✅ ${data.successCount} product(s) created successfully. \n✅ ${data.editCount} product(s) updated successfully.`
         );
         router.refresh();
       }
@@ -108,6 +105,19 @@ export default function ProductsPage() {
     }
   };
 
+  const handleFileChange = () => {
+    const file = fileInputRef.current?.files?.[0];
+    if (file) processFile(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) processFile(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+
   const handleExport = async () => {
     setIsExporting(true);
     // export logic...
@@ -115,7 +125,7 @@ export default function ProductsPage() {
 
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
-      {/* Hidden file input */}
+      {/* hidden file input */}
       <Input
         ref={fileInputRef}
         id="file-upload"
@@ -125,7 +135,7 @@ export default function ProductsPage() {
         className="hidden"
       />
 
-      {/* Import Modal */}
+      {/* import modal */}
       {showImportModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 w-full max-w-md relative">
@@ -137,22 +147,29 @@ export default function ProductsPage() {
             </button>
             <h2 className="text-xl font-semibold mb-4">Import Products</h2>
 
-            {/* Dropzone area */}
-            <label
-              htmlFor="file-upload"
+            <div
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
               className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-6 cursor-pointer hover:border-gray-400 transition"
             >
               <Upload className="mb-2 h-6 w-6 text-gray-500" />
-              <span className="font-medium">Load File</span>
+              <span className="font-medium">Drag &amp; Drop file here</span>
               <span className="text-sm text-gray-500 mt-1">
-                Select or drag the import file here
+                or click to select
               </span>
-            </label>
+              <Button
+                variant="outline"
+                className="mt-3"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isImporting}
+              >
+                Browse files
+              </Button>
+            </div>
 
-            {/* Message */}
             {importMessage && (
               <p
-                className={`mt-4 text-center font-medium ${
+                className={`mt-4 text-center whitespace-pre-line font-medium ${
                   importMessage.startsWith("✅")
                     ? "text-green-600"
                     : "text-red-600"
@@ -162,7 +179,6 @@ export default function ProductsPage() {
               </p>
             )}
 
-            {/* Detailed errors */}
             {importErrors.length > 0 && (
               <ul className="mt-2 text-red-600 list-disc list-inside text-sm">
                 {importErrors.map((err, i) => (
@@ -171,7 +187,6 @@ export default function ProductsPage() {
               </ul>
             )}
 
-            {/* Loader overlay */}
             {isImporting && (
               <div className="absolute inset-0 bg-white/75 flex items-center justify-center rounded-xl">
                 <span>Importing...</span>
@@ -192,7 +207,8 @@ export default function ProductsPage() {
                 onClick={openImportModal}
                 disabled={isImporting}
               >
-                <Upload className="mr-2 h-4 w-4" /> Import
+                <Upload className="mr-2 h-4 w-4" />
+                Import
               </Button>
             )}
             <Button
@@ -205,7 +221,8 @@ export default function ProductsPage() {
             </Button>
             {canCreateProducts && (
               <Button onClick={handleCreateProduct} disabled={isLoading}>
-                <Plus className="mr-2 h-4 w-4" /> Add Product
+                <Plus className="mr-2 h-4 w-4" />
+                Add Product
               </Button>
             )}
           </div>
