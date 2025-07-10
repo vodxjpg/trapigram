@@ -1,4 +1,4 @@
-// src/app/(dashboard)/products/categories/category-table.tsx
+// src/app/(dashboard)/products/categories/category-tabl.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
