@@ -58,7 +58,7 @@ export default function ClientDashboard() {
           </Link>
         )}
         {canLogs && (
-          <Link href="/affiliates/logs">
+          <Link href="/affiliates/registries">
             <Button variant="secondary">Affiliate Logs</Button>
           </Link>
         )}
