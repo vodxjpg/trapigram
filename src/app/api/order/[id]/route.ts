@@ -125,6 +125,11 @@ const subtotal = products
     cartId:    order.cartId,
     status:    order.status,
     country:   order.country,
+    orderMeta: order.orderMeta ?                        // jsonb → JS object
+    (typeof order.orderMeta === "string"
+       ? JSON.parse(order.orderMeta)        // pg hasn’t parsed
+       : order.orderMeta)                   // pg already parsed
+  : [],
     products,
     coupon:    order.couponCode,
     couponType:    order.couponType,
