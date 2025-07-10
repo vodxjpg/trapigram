@@ -223,7 +223,7 @@ export async function POST(req: Request) {
                                 .split(",")
                                 .map(s => s.trim());
 
-                            const name = product[`attributeName${i}`]
+                            const name = product[`attributeSlug${i}`]
                             const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
                             const nameResult = await pgPool.query(nameQuery)
 
@@ -325,7 +325,7 @@ export async function POST(req: Request) {
 
                             let nameId = ""
 
-                            const name = product[`attributeName${i}`]
+                            const name = product[`attributeSlug${i}`]
                             const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
                             const nameResult = await pgPool.query(nameQuery)
 
@@ -546,7 +546,7 @@ export async function POST(req: Request) {
                                 .split(",")
                                 .map(s => s.trim());
 
-                            const name = product[`attributeName${i}`]
+                            const name = product[`attributeSlug${i}`]
                             const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
                             const nameResult = await pgPool.query(nameQuery)
 
@@ -648,7 +648,7 @@ export async function POST(req: Request) {
 
                             let nameId = ""
 
-                            const name = product[`attributeName${i}`]
+                            const name = product[`attributeSlug${i}`]
                             const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
                             const nameResult = await pgPool.query(nameQuery)
 
