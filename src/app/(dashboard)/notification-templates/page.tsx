@@ -58,7 +58,8 @@ export default function NotificationTemplatesPage() {
             Notification Templates
           </h1>
           <p className="text-muted-foreground">
-            Create and manage e-mail / in-app template bodies.
+            Create and manage e-mail / in-app template bodies <br></br>
+            and use <b>/notification_group COUNTRY_CODE</b> (e.g IT) to make the bot send you notifications of that country in a telegram group
           </p>
         </div>
         {canCreate && (

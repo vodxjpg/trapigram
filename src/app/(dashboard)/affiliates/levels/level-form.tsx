@@ -235,12 +235,17 @@ export function LevelForm({ id }: Props) {
       render={({ field }) => (
         <FormItem>
           <FormLabel>{label}</FormLabel>
-
+          <div className=""> 
+          <span className="text-xs">{`{user}`} - Output user's name or username </span>&nbsp;<br></br>
+          <span className="text-xs">{`{mention}`} - Mention the user in a group (only for when the bot is within the same tele group as the user)</span>&nbsp;<br></br>
+          <span className="text-xs">{`{level_name}`} - Output user's level name</span>&nbsp;<br></br>
+          </div>
           {/* ① real toolbar HTML */}
           <QuillToolbar id={toolbarId} />
 
           {/* ② editor */}
           <FormControl>
+          
             <ReactQuill
               theme="snow"
               modules={quillModules}
@@ -249,7 +254,7 @@ export function LevelForm({ id }: Props) {
               className="h-56 rounded-b border border-input"
             />
           </FormControl>
-
+         
           <FormMessage />
         </FormItem>
       )}
