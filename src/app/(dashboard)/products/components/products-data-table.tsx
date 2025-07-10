@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback, startTransition } from "react";
+import { useDebounce } from "@/hooks/use-debounce";   // ← add
 import {
   type ColumnDef,
   type ColumnFiltersState,
@@ -118,7 +119,11 @@ export function ProductsDataTable() {
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [search, setSearch] = useState("");
+  /** ----------------------------------------------------------------
+   *  Search text
+   *  ---------------------------------------------------------------- */
+  const [query,     setQuery]     = useState("");   // bound to the <Input>
+  const  debounced               = useDebounce(query, 300);
   const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
 
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
@@ -128,11 +133,11 @@ export function ProductsDataTable() {
   const [attributeOptions, setAttributeOptions] = useState<
     { id: string; name: string }[]
   >([]);
-
+ 
   const { products: productsRaw, isLoading, totalPages, mutate } = useProducts({
     page,
     pageSize,
-    search,
+    search: debounced,
   });
 
   const products = productsRaw ?? [];
@@ -616,11 +621,17 @@ export function ProductsDataTable() {
       {/* Toolbar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Input
-            placeholder="Search products..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full sm:max-w-sm"
+        <Input
+          placeholder="Search products..."
+          value={query}
+          onChange={(e) => {
+            const txt = e.target.value;
+            startTransition(() => {
+              setQuery(txt);   // instant UI update
+              setPage(1);      // reset page without blocking paint
+            });
+          }}
+          className="w-full sm:max-w-sm"
           />
 
           {/* Status filter */}
