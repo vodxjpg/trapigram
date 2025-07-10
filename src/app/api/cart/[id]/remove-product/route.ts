@@ -105,7 +105,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         );
         const country = cRows[0]?.country as string;
         const levelId = cRows[0]?.levelId as string;
-        const country = cRows[0]?.country as string;
+
 
         const released = result.rows[0]?.quantity ?? 0;
         if (released)
