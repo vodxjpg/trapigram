@@ -122,8 +122,12 @@ export function ProductsDataTable() {
   /** ----------------------------------------------------------------
    *  Search text
    *  ---------------------------------------------------------------- */
-  const [query,     setQuery]     = useState("");   // bound to the <Input>
-  const  debounced               = useDebounce(query, 300);
+ const [query, setQuery] = useState("");           // search text
+ const debounced         = useDebounce(query, 300);
+  // individual server-side filters
+  const [statusFilter,    setStatusFilter]    = useState<"published" | "draft" | "">("");
+  const [categoryFilter,  setCategoryFilter]  = useState<string>(""); // categoryId or ""
+  const [attributeFilter, setAttributeFilter] = useState<string>(""); // attributeId or ""
   const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
 
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
@@ -135,11 +139,13 @@ export function ProductsDataTable() {
   >([]);
  
   const { products: productsRaw, isLoading, totalPages, mutate } = useProducts({
-    page,
-    pageSize,
-    search: debounced,
-  });
-
+      page,
+      pageSize,
+      search:      debounced,
+      status:      statusFilter || undefined,
+      categoryId:  categoryFilter || undefined,
+      attributeId: attributeFilter || undefined,
+    });
   const products = productsRaw ?? [];
 
   /* keep `page` within valid range */
@@ -636,14 +642,11 @@ export function ProductsDataTable() {
 
           {/* Status filter */}
           <Select
-            value={
-              (table.getColumn("status")?.getFilterValue() as string) ?? "all"
-            }
-            onValueChange={(value) => {
-              const col = table.getColumn("status");
-              if (!col) return;
-              col.setFilterValue(value === "all" ? undefined : value);
-            }}
+           value={statusFilter || "all"}
+           onValueChange={(v) => {
+             setStatusFilter(v === "all" ? "" : (v as "published" | "draft"));
+             setPage(1);
+           }}
           >
             <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue placeholder="Filter by status" />
@@ -657,14 +660,9 @@ export function ProductsDataTable() {
 
           {/* Category filter */}
           <Select
-            value={
-              (table.getColumn("categories")?.getFilterValue() as string) ??
-              "all"
-            }
-            onValueChange={(value) => {
-              const col = table.getColumn("categories");
-              if (!col) return;
-              col.setFilterValue(value === "all" ? undefined : value);
+            value={categoryFilter || "all"}
+            onValueChange={(v) => {
+              setCategoryFilter(v === "all" ? "" : v);
               setPage(1);
             }}
           >
@@ -683,16 +681,12 @@ export function ProductsDataTable() {
 
           {/* Attribute filter */}
           <Select
-            value={
-              (table.getColumn("attributes")?.getFilterValue() as string) ??
-              "all"
-            }
-            onValueChange={(value) => {
-              const col = table.getColumn("attributes");
-              if (!col) return;
-              col.setFilterValue(value === "all" ? undefined : value);
-              setPage(1);
-            }}
+    
+               value={attributeFilter || "all"}
+               onValueChange={(v) => {
+                 setAttributeFilter(v === "all" ? "" : v);
+                 setPage(1);
+               }}
           >
             <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue placeholder="Filter by attribute" />

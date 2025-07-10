@@ -3,10 +3,14 @@ import useSWR from "swr"
 import type { Product } from "@/types/product"
 
 interface UseProductsProps {
-  page: number
-  pageSize: number
-  search?: string
-}
+   page: number
+   pageSize: number
+   search?: string
+   /* ───────── new optional filters ───────── */
+   status?: "published" | "draft"
+   categoryId?: string
+   attributeId?: string
+ }
 
 // Generic fetcher returns parsed JSON directly
 const fetcher = async (url: string) => {
@@ -18,12 +22,22 @@ const fetcher = async (url: string) => {
 }
 
 // Hook for paginated product list
-export function useProducts({ page, pageSize, search }: UseProductsProps) {
-  const params = new URLSearchParams({
-    page:      page.toString(),
-    pageSize:  pageSize.toString(),
-    ...(search ? { search } : {}),
-  })
+export function useProducts({
+    page,
+    pageSize,
+    search,
+    status,
+    categoryId,
+    attributeId,
+  }: UseProductsProps) {
+ const params = new URLSearchParams({
+     page:     page.toString(),
+     pageSize: pageSize.toString(),
+     ...(search      ? { search }      : {}),
+     ...(status      ? { status }      : {}),
+     ...(categoryId  ? { categoryId }  : {}),
+     ...(attributeId ? { attributeId } : {}),
+   })
 
   const { data, error, mutate } = useSWR<{
     products: Product[]

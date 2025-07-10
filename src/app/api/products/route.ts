@@ -93,6 +93,12 @@ export async function GET(req: NextRequest) {
     const pageSize = parseInt(searchParams.get("pageSize") || "10");
     const search = searchParams.get("search") || "";
     const categoryId = searchParams.get("categoryId") || "";
+    const rawStatus = searchParams.get("status");            // string | null
+    const status: "published" | "draft" | undefined =
+      rawStatus === "published" || rawStatus === "draft"
+        ? rawStatus
+        : undefined;                  
+    const attributeId = searchParams.get("attributeId") || "";
 
     /* -------- STEP 1 – product IDs with proper limit/offset ----- */
     let idQuery = db
@@ -111,6 +117,17 @@ export async function GET(req: NextRequest) {
           .select("productId")
           .where("categoryId", "=", categoryId),
       );
+      if (status)
+        idQuery = idQuery.where("status", "=", status);  // status is now the right type
+if (attributeId)
+  idQuery = idQuery.where(
+    "id",
+    "in",
+    db
+      .selectFrom("productAttributeValues")
+      .select("productId")
+      .where("attributeId", "=", attributeId),
+  );
 
     const idRows = await idQuery
       .limit(pageSize)
@@ -265,8 +282,8 @@ export async function GET(req: NextRequest) {
       .select(db.fn.count("id").as("total"))
       .where("organizationId", "=", organizationId)
       .where("tenantId", "=", tenantId)
-      .$if(search, (q) => q.where("title", "ilike", `%${search}%`))
-      .$if(categoryId, (q) =>
+      .$if(Boolean(search),      q => q.where("title", "ilike", `%${search}%`))
+        .$if(Boolean(categoryId),  q =>
         q.where(
           "id",
           "in",
@@ -276,6 +293,18 @@ export async function GET(req: NextRequest) {
             .where("categoryId", "=", categoryId),
         ),
       )
+      .$if(!!status, q => q.where("status", "=", status!))   // `status!` is safe here
+
+        .$if(Boolean(attributeId), q =>
+             q.where(
+               "id",
+               "in",
+               db
+                 .selectFrom("productAttributeValues")
+                 .select("productId")
+                 .where("attributeId", "=", attributeId),
+             ),
+         )
       .executeTakeFirst();
     const total = Number(totalRes?.total || 0);
 
