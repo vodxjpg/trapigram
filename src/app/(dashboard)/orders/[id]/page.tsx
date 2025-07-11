@@ -1,7 +1,7 @@
 // src/app/(dashboard)/orders/[id]/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, CreditCard, Package, Truck, Send } from "lucide-react";
 import Image from "next/image";
@@ -174,21 +174,22 @@ export default function OrderView() {
   };
 
   /* ————————— fetch messages ————————— */
-  const fetchMessages = async () => {
+  const fetchMessages = useCallback(async () => {
     if (!id || !order || !canViewChat) return;
-
-    fetch(`/api/order/${id}/messages`)
-      .then((r) => {
-        if (!r.ok) throw new Error("Forbidden");
-        return r.json();
-      })
-      .then((d) => setMessages(d.messages))
-      .catch(console.error);
-  };
+  
+    try {
+      const res = await fetch(`/api/order/${id}/messages`);
+      if (!res.ok) throw new Error("Forbidden");
+      const data = await res.json();
+      setMessages(data.messages.map(msg => ({ ...msg, createdAt: new Date(msg.createdAt) })));
+    } catch (err) {
+      console.error('Error fetching messages:', err);
+    }
+  }, [id, order, canViewChat]);
 
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
-
+  
     const res = await fetch(`/api/order/${id}/messages`, {
       method: "POST",
       headers: {
@@ -200,7 +201,7 @@ export default function OrderView() {
         clientId: order!.clientId,
       }),
     });
-
+  
     const m = await res.json();
     setMessages((prev) => [
       ...prev,
@@ -208,7 +209,7 @@ export default function OrderView() {
         id: m.messages.id,
         message: m.messages.message,
         isInternal: m.messages.isInternal,
-        createdAt: m.messages.createdAt,
+        createdAt: new Date(m.messages.createdAt),
       },
     ]);
     setNewMessage("");
@@ -228,8 +229,14 @@ if (!permLoading && !canViewOrder) {
   }, [id]);
 
   useEffect(() => {
-    fetchMessages();
-  }, [id, order, canViewChat]);
+    if (!canViewChat) return;
+  
+    fetchMessages(); // Initial fetch
+  
+    const intervalId = setInterval(fetchMessages, 5000); // Poll every 5 seconds
+  
+    return () => clearInterval(intervalId); // Cleanup on unmount or dependency change
+  }, [fetchMessages, canViewChat]);
 
   /* ————————— guards ————————— */
   if (permLoading) return null;
