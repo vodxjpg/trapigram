@@ -97,8 +97,16 @@ export async function POST(
     const saved = result.rows[0];
     saved.attachments = JSON.parse(saved.attachments);
 
-    /* 🔔 NEW – broadcast to live listeners */
-    emit(id, saved);
+   /* 🔔 NEW – broadcast to live listeners
+   1. in-memory (still useful during dev / single process)                */
+emit(id, saved);
+
+/*   2. cross-process via Postgres LISTEN/NOTIFY                           */
+await pool.query(
+  `NOTIFY "ticket_${id.replace(/-/g, "")}",
+           $1::text`,                        /* payload must be TEXT        */
+  [JSON.stringify(saved)],
+);
 
     /* 4️⃣-bis notify client on public reply */
     if (!parsed.isInternal) {
