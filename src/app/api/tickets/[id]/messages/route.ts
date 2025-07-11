@@ -102,12 +102,11 @@ export async function POST(
 emit(id, saved);
 
 /*   2. cross-process via Postgres LISTEN/NOTIFY                           */
+const chan = `ticket_${id.replace(/-/g, "")}`;      // same channel name as /events
 await pool.query(
-  `NOTIFY "ticket_${id.replace(/-/g, "")}",
-           $1::text`,                        /* payload must be TEXT        */
-  [JSON.stringify(saved)],
+  'SELECT pg_notify($1, $2)',                       // placeholders ARE allowed here
+  [chan, JSON.stringify(saved)],                    // payload → JSON string
 );
-
     /* 4️⃣-bis notify client on public reply */
     if (!parsed.isInternal) {
       const {
