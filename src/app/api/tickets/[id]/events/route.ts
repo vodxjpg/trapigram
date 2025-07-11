@@ -62,7 +62,7 @@ export async function GET(
       }
 
       /* if client aborts early (tab closed, route change, …) */
-      controller.signal.addEventListener("abort", close);
+      _req.signal.addEventListener("abort", close);
     },
   });
 
