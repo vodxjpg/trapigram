@@ -23,12 +23,14 @@ export async function GET(req: NextRequest) {
     const { total, positive, neutral, negative } = rows[0];
 
     return NextResponse.json(
-      { summary: {
-          total:     Number(total),
-          positive:  Number(positive),
-          neutral:   Number(neutral),
-          negative:  Number(negative),
-        } },
+      {
+        summary: {
+          total: Number(total),
+          positive: Number(positive),
+          neutral: Number(neutral),
+          negative: Number(negative),
+        }
+      },
       { status: 200 },
     );
   } catch (err) {

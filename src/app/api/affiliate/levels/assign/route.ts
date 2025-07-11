@@ -40,11 +40,11 @@ export async function POST(req: NextRequest) {
     const balRow = balRes.rows[0] ?? { pointsCurrent: 0, pointsSpent: 0 };
 
     let pointsCurrent = Number(balRow.pointsCurrent ?? 0);
-    let pointsSpent   = Number(balRow.pointsSpent   ?? 0);
+    let pointsSpent = Number(balRow.pointsSpent ?? 0);
 
     /* sanitise – never let NaN/Infinity through */
     if (!Number.isFinite(pointsCurrent)) pointsCurrent = 0;
-    if (!Number.isFinite(pointsSpent))   pointsSpent   = 0;
+    if (!Number.isFinite(pointsSpent)) pointsSpent = 0;
 
     /* lifetime points decide the level */
     const lifetimePoints = pointsCurrent + pointsSpent;
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
       [organizationId, lifetimePoints],
     );
 
-    const level   = levelRes.rows[0] ?? null;
+    const level = levelRes.rows[0] ?? null;
     const levelId = level ? level.id : null;
 
     /* 4️⃣ persist on client row --------------------------------------*/
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
 
     /* 5️⃣ done -------------------------------------------------------*/
     return NextResponse.json({
-      client:        rows[0],
+      client: rows[0],
       assignedLevel: level,           // may be null
       balance: {
         pointsCurrent,

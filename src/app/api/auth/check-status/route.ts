@@ -3,7 +3,7 @@
 ───────────────────────────────────────────────────────────────────*/
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth }   from "@/lib/auth";
+import { auth } from "@/lib/auth";
 import { pgPool } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     }
 
     const currentSessionId = session.session.id as string;
-    const userId           = session.user.id as string;
+    const userId = session.user.id as string;
 
     /* 2️⃣ single-session check: is this the LATEST session row? */
     const { rows: [latest] } = await pgPool.query<
@@ -65,11 +65,11 @@ export async function GET(req: NextRequest) {
     );
     const now = new Date();
     const hasValidSub = subscriptions.some((sub) => {
-      const trialEnd  = sub.trialEnd  ? new Date(sub.trialEnd)  : null;
+      const trialEnd = sub.trialEnd ? new Date(sub.trialEnd) : null;
       const periodEnd = sub.periodEnd ? new Date(sub.periodEnd) : null;
       return (
         (sub.status === "trialing" || sub.status === "active") &&
-        (!trialEnd  || trialEnd  >  now) &&
+        (!trialEnd || trialEnd > now) &&
         (!periodEnd || periodEnd > now)
       );
     });

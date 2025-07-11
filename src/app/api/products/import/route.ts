@@ -107,20 +107,23 @@ export async function POST(req: Request) {
         // process each product row separately
         for (let i = 0; i < data.length; i++) {
             const product = data[i];
-            const rowNumber = i + 3; // header + skipped row
-            console.log(product.id)
+            const rowNumber = i + 3;
+            const hasId = product.id && product.id !== "no-id";
+            const lookUpValue = hasId ? product.id : product.sku;
 
-            let productId = product.id
-            const productSku = product.sku
-            const productQuery = `SELECT * FROM products WHERE id = '${productId}' OR sku ='${productSku}'`
-            const productResult = await pgPool.query(productQuery)
+            // 1) find existing by id or sku
+            const findQuery = hasId
+                ? `SELECT * FROM products WHERE id = $1`
+                : `SELECT * FROM products WHERE sku = $1`;
+            const res = await pgPool.query(findQuery, [lookUpValue]);
 
-            if (productResult.rows.length > 0) {
+            if (res.rows.length > 0) {
+                const productType = res.rows[0].productType
                 //Update product code
-                console.log("UPDATING" + product.id)
+                const productId = res.rows[0].id
+                console.log("UPDATING" + productId)
                 // --- UPDATE product ---
-                const existing = productResult.rows[0];
-                productId = existing.id
+                const existing = res.rows[0];
                 const safeDescription = cleanDescription(product.description);
 
                 const rp = product.regularPrice
@@ -141,264 +144,256 @@ export async function POST(req: Request) {
                     .map(s => s.trim());
                 const cost = arrayToJson(rawCost)
 
-                // update core product fields
-                await db
-                    .updateTable("products")
-                    .set({
-                        title: product.title,
-                        description: safeDescription,
-                        sku: product.sku || existing.sku,
-                        status: product.published === 1 ? "published" : "draft",
-                        productType: product.productType,
-                        regularPrice,
-                        salePrice,
-                        cost,
-                        updatedAt: new Date(),
-                    })
-                    .where("id", "=", existing.id)
-                    .execute();
+                // start with the timestamp
+                const updatePayload: Record<string, any> = {
+                    updatedAt: new Date(),
+                };
+
+                // only include each field if the incoming cell wasn’t empty
+                if (product.title && product.title.trim() !== "") {
+                    updatePayload.title = product.title;
+                }
+
+                if (product.description && product.description.trim() !== "") {
+                    updatePayload.description = safeDescription;
+                }
+
+                if (hasId && product.sku && product.sku.trim() !== "") {
+                    updatePayload.sku = product.sku;
+                }
+
+                if (product.published !== "" && (product.published === 1 || product.published === 0)) {
+                    updatePayload.status = product.published === 1 ? "published" : "draft";
+                }
+
+                if (product.productType && product.productType.trim() !== "") {
+                    updatePayload.productType = product.productType;
+                }
+
+                if (product.regularPrice && product.regularPrice.trim() !== "") {
+                    updatePayload.regularPrice = regularPrice;
+                }
+
+                if (product.salePrice && product.salePrice.trim() !== "") {
+                    updatePayload.salePrice = salePrice;
+                }
+
+                if (product.cost && product.cost.trim() !== "") {
+                    updatePayload.cost = cost;
+                }
+
+                // now run the update
+                try {
+                    await db
+                        .updateTable("products")
+                        .set(updatePayload)
+                        .where("id", "=", existing.id)
+                        .execute();
+                } catch (opErr: any) {
+                    rowErrors.push({
+                        row: rowNumber,
+                        error: `Failed to update product ${lookUpValue}: ${opErr.message}`,
+                    });
+                    // skip further operations on this row
+                    throw opErr;
+                }
 
                 // clear old categories and values
-                await db.deleteFrom("productCategory").where("productId", "=", existing.id).execute();
-                await db.deleteFrom("productAttributeValues").where("productId", "=", existing.id).execute();
-                await db.deleteFrom("warehouseStock").where("productId", "=", existing.id).execute();
-                await db.deleteFrom("productVariations").where("productId", "=", existing.id).execute();
+                let newCategories = false
+                let newAttributes = false
+                let newWarehouse = false
+                const checkCategories = (product.categories && product.categories.trim() !== "")
+
+                if (checkCategories) {
+                    await db.deleteFrom("productCategory").where("productId", "=", existing.id).execute();
+                    newCategories = true
+                }
+
+                const attributeSlugs1 = (product.attributeSlug1 && product.attributeSlug1.trim() !== "")
+                const attributeSlugs2 = (product.attributeSlug2 && product.attributeSlug2.trim() !== "")
+                const checkAttributeSlugs = (attributeSlugs1 || attributeSlugs2)
+
+                const attributeValues1 = (product.attributeValues1 && product.attributeValues1.trim() !== "")
+                const attributeValues2 = (product.attributeValues2 && product.attributeValues2.trim() !== "")
+                const checkAttributeValues = (attributeValues1 || attributeValues2)
+
+                const attributeVariation1 = (product.attributeVariation1 && product.attributeVariation1 != "")
+                const attributeVariation2 = (product.attributeVariation2 && product.attributeVariation2 != "")
+                const checkAttributeVariations = (attributeVariation1 || attributeVariation2)
+
+                const attribute1 = (product.attributeSlug1 && product.attributeSlug1.trim() !== "" && product.attributeValues1 && product.attributeValues1.trim() !== "" && product.attributeVariation1 && product.attributeVariation1 != "")
+                const attribute2 = (product.attributeSlug2 && product.attributeSlug2.trim() !== "" && product.attributeValues2 && product.attributeValues2.trim() !== "" && product.attributeVariation2 && product.attributeVariation2 != "")
+
+                if (!attribute1) {
+                    product.attributeSlug1 = ""
+                    product.attributeValues1 = ""
+                    product.attributeVariation1 = ""
+                }
+
+                if (!attribute2) {
+                    product.attributeSlug2 = ""
+                    product.attributeValues2 = ""
+                    product.attributeVariation2 = ""
+                }
+
+                if (checkAttributeVariations) {
+                    await db.deleteFrom("productAttributeValues").where("productId", "=", existing.id).execute();
+                    await db.deleteFrom("productVariations").where("productId", "=", existing.id).execute();
+                    await db.deleteFrom("warehouseStock").where("productId", "=", existing.id).execute();
+                    newAttributes = true
+                }
+                const checkWarehouse = (product.warehouseId && product.warehouseId.trim() !== "")
+                const checkCountries = (product.countries && product.countries.trim() !== "")
+                const checkStock = (product.stock && product.stock.trim() !== "")
+
+                if (checkWarehouse && checkCountries && checkStock) {
+                    newWarehouse = true
+                }
+
+                if (checkAttributeSlugs && checkAttributeValues && checkAttributeVariations) {
+                    newAttributes = true
+                }
 
                 const categories: CategoryEntry[] = [];
 
-                const slugs = product.categories
-                const catArray = slugs
-                    .split(",")
-                    .map(s => s.trim());
+                if (newCategories) {
+                    const slugs = product.categories
+                    const catArray = slugs
+                        .split(",")
+                        .map(s => s.trim());
 
-                for (const cat of catArray) {
-                    const catQuery = `SELECT id FROM "productCategories" WHERE slug = '${cat}' AND "organizationId" = '${organizationId}'`
-                    const catResult = await pgPool.query(catQuery)
+                    for (const cat of catArray) {
+                        const catQuery = `SELECT id FROM "productCategories" WHERE slug = '${cat}' AND "organizationId" = '${organizationId}'`
+                        const catResult = await pgPool.query(catQuery)
 
-                    if (catResult.rows.length > 0) {
-                        categories.push(catResult.rows[0].id)
-                    }
+                        if (catResult.rows.length > 0) {
+                            categories.push(catResult.rows[0].id)
+                        }
 
-                    if (catResult.rows.length === 0) {
-                        const name = capitalizeFirstLetter(cat)
-                        const categoryId = uuidv4()
-                        const newCategoryQuery = `INSERT INTO "productCategories"(id, name, slug, image, "order", "parentId", "organizationId", "createdAt", "updatedAt")
+                        if (catResult.rows.length === 0) {
+                            const name = capitalizeFirstLetter(cat)
+                            const categoryId = uuidv4()
+                            const newCategoryQuery = `INSERT INTO "productCategories"(id, name, slug, image, "order", "parentId", "organizationId", "createdAt", "updatedAt")
                             VALUES ('${categoryId}', '${name}', '${cat}', ${null}, 0, ${null}, '${organizationId}', NOW(), NOW())
                             RETURNING *`
 
-                        await pgPool.query(newCategoryQuery)
+                            try {
+                                await pgPool.query(newCategoryQuery)
+                            } catch (opErr: any) {
+                                rowErrors.push({
+                                    row: rowNumber,
+                                    error: `Failed to update categories ${lookUpValue}: ${opErr.message}`,
+                                });
+                            }
 
-                        categories.push(categoryId)
-                    }
+                            categories.push(categoryId)
+                        }
 
-                    /* category validation */
-                    if (categories?.length) {
-                        const validIds = (await db.selectFrom("productCategories")
-                            .select("id")
-                            .where("organizationId", "=", organizationId)
-                            .execute()).map(c => c.id)
-                        const bad = categories.filter(id => !validIds.includes(id))
-                        if (bad.length) throw new Error(`Invalid category IDs: ${bad.join(", ")}`)
+                        /* category validation */
+                        if (categories?.length) {
+                            const validIds = (await db.selectFrom("productCategories")
+                                .select("id")
+                                .where("organizationId", "=", organizationId)
+                                .execute()).map(c => c.id)
+                            const bad = categories.filter(id => !validIds.includes(id))
+                            if (bad.length) throw new Error(`Invalid category IDs: ${bad.join(", ")}`)
+                        }
                     }
                 }
 
-                if (product.productType === "simple") {
-                    const countries = product.countries
-                    const countryArray = countries
-                        .split(",")
-                        .map(s => s.trim());
+                if (productType === "simple") {
 
-                    const stocks = product.stock
-                    const stockArray = stocks
-                        .split(",")
-                        .map(s => s.trim());
+                    if (newAttributes) {
+                        const variations: VariationEntry[] = [];
 
-                    const variations: VariationEntry[] = [];
+                        for (let i = 1; i <= 2; i++) {
 
-                    for (let i = 1; i <= 2; i++) {
+                            if (product[`attributeVariation${i}`] !== "" && product[`attributeVariation${i}`] === 0) {
+                                const terms = product[`attributeValues${i}`]
+                                const termsArray = terms
+                                    .split(",")
+                                    .map(s => s.trim());
 
-                        if (product[`attributeVariation${i}`] !== "" && product[`attributeVariation${i}`] === 0) {
-                            const terms = product[`attributeValues${i}`]
-                            const termsArray = terms
-                                .split(",")
-                                .map(s => s.trim());
-
-                            const name = product[`attributeSlug${i}`]
-                            const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
-                            const nameResult = await pgPool.query(nameQuery)
-
-                            let nameId = ""
-
-                            if (nameResult.rows.length > 0) {
-                                nameId = nameResult.rows[0].id
-                            }
-
-                            if (nameResult.rows.length === 0) {
-                                const attName = capitalizeFirstLetter(name)
-                                const attId = uuidv4()
-                                const newAttQuery = `INSERT INTO "productAttributes"(id, name, slug, "organizationId", "createdAt", "updatedAt")
-                                        VALUES ('${attId}', '${attName}', '${name}', '${organizationId}', NOW(), NOW())
-                                        RETURNING *`
-
-                                await pgPool.query(newAttQuery)
-
-                                nameId = attId
-                            }
-
-                            for (const t of termsArray) {
-                                const nameQuery = `SELECT id FROM "productAttributeTerms" WHERE slug = '${t}'`
+                                const name = product[`attributeSlug${i}`]
+                                const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
                                 const nameResult = await pgPool.query(nameQuery)
 
-                                let termId = ""
-                                const obj = {}
+                                let nameId = ""
 
                                 if (nameResult.rows.length > 0) {
-                                    termId = nameResult.rows[0].id
-                                    obj[nameId] = termId
+                                    nameId = nameResult.rows[0].id
                                 }
 
                                 if (nameResult.rows.length === 0) {
-                                    const attTerm = capitalizeFirstLetter(t)
-                                    termId = uuidv4()
-                                    const newAttQuery = `INSERT INTO "productAttributeTerms"(id, "attributeId", name, slug, "organizationId", "createdAt", "updatedAt")
-                                        VALUES ('${termId}', '${nameId}', '${attTerm}', '${t}', '${organizationId}', NOW(), NOW())
-                                        RETURNING *`
-
-                                    await pgPool.query(newAttQuery)
-                                    obj[nameId] = termId
-                                }
-
-
-                                variations.push({
-                                    id: uuidv4(),
-                                    name: nameId,
-                                    terms: obj
-                                })
-                            }
-                        }
-                    }
-
-                    for (let i = 0; i < countryArray.length; i++) {
-
-                        await db.insertInto("warehouseStock").values({
-                            id: uuidv4(),
-                            warehouseId: product.warehouseId,
-                            productId,                        // ← use the local const `productId`
-                            variationId: null,
-                            country: countryArray[i],
-                            quantity: stockArray[i],
-                            organizationId,
-                            tenantId,
-                            createdAt: new Date(),
-                            updatedAt: new Date(),
-                        }).execute()
-                    }
-
-                    for (const vari of variations) {
-                        await db.insertInto("productAttributeValues")
-                            .values({ productId, attributeId: vari.name, termId: vari.terms[vari.name] })
-                            .execute()
-                    }
-                }
-
-                if (product.productType === "variable") {
-                    const countries = product.countries
-                    const countryArray = countries
-                        .split(",")
-                        .map(s => s.trim());
-
-                    const stocks = product.stock
-                    const stockArray = stocks
-                        .split(",")
-                        .map(s => s.trim());
-
-                    const variations: VariationEntry[] = [];
-
-                    for (let i = 1; i <= 2; i++) {
-
-                        if (product[`attributeVariation${i}`] !== "" && product[`attributeVariation${i}`] === 1) {
-
-                            const terms = product[`attributeValues${i}`]
-                            const termsArray = terms
-                                .split(",")
-                                .map(s => s.trim());
-
-                            let nameId = ""
-
-                            const name = product[`attributeSlug${i}`]
-                            const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
-                            const nameResult = await pgPool.query(nameQuery)
-
-                            if (nameResult.rows.length > 0) {
-                                nameId = nameResult.rows[0].id
-                            }
-
-                            if (nameResult.rows.length === 0) {
-                                const attName = capitalizeFirstLetter(name)
-                                const attId = uuidv4()
-                                const newAttQuery = `INSERT INTO "productAttributes"(id, name, slug, "organizationId", "createdAt", "updatedAt")
+                                    const attName = capitalizeFirstLetter(name)
+                                    const attId = uuidv4()
+                                    const newAttQuery = `INSERT INTO "productAttributes"(id, name, slug, "organizationId", "createdAt", "updatedAt")
                                         VALUES ('${attId}', '${attName}', '${name}', '${organizationId}', NOW(), NOW())
                                         RETURNING *`
 
-                                await pgPool.query(newAttQuery)
+                                    await pgPool.query(newAttQuery)
 
-                                nameId = attId
-                            }
-
-                            for (const t of termsArray) {
-                                const nameQuery = `SELECT id FROM "productAttributeTerms" WHERE slug = '${t}'`
-                                const nameResult = await pgPool.query(nameQuery)
-
-                                let termId = ""
-                                const obj = {}
-
-                                if (nameResult.rows.length > 0) {
-                                    termId = nameResult.rows[0].id
-                                    obj[nameId] = termId
+                                    nameId = attId
                                 }
 
-                                if (nameResult.rows.length === 0) {
-                                    const attTerm = capitalizeFirstLetter(t)
-                                    termId = uuidv4()
-                                    const newAttQuery = `INSERT INTO "productAttributeTerms"(id, "attributeId", name, slug, "organizationId", "createdAt", "updatedAt")
+                                for (const t of termsArray) {
+                                    const nameQuery = `SELECT id FROM "productAttributeTerms" WHERE slug = '${t}'`
+                                    const nameResult = await pgPool.query(nameQuery)
+
+                                    let termId = ""
+                                    const obj = {}
+
+                                    if (nameResult.rows.length > 0) {
+                                        termId = nameResult.rows[0].id
+                                        obj[nameId] = termId
+                                    }
+
+                                    if (nameResult.rows.length === 0) {
+                                        const attTerm = capitalizeFirstLetter(t)
+                                        termId = uuidv4()
+                                        const newAttQuery = `INSERT INTO "productAttributeTerms"(id, "attributeId", name, slug, "organizationId", "createdAt", "updatedAt")
                                         VALUES ('${termId}', '${nameId}', '${attTerm}', '${t}', '${organizationId}', NOW(), NOW())
                                         RETURNING *`
 
-                                    await pgPool.query(newAttQuery)
-                                    obj[nameId] = termId
-                                }
+                                        await pgPool.query(newAttQuery)
+                                        obj[nameId] = termId
+                                    }
 
-                                variations.push({
-                                    id: uuidv4(),
-                                    name: nameId,
-                                    terms: obj
-                                })
+
+                                    variations.push({
+                                        id: uuidv4(),
+                                        name: nameId,
+                                        terms: obj
+                                    })
+                                }
                             }
+                        }
+
+                        for (const vari of variations) {
+                            await db.insertInto("productAttributeValues")
+                                .values({ productId, attributeId: vari.name, termId: vari.terms[vari.name] })
+                                .execute()
                         }
                     }
 
-                    for (const vari of variations) {
-                        await db.insertInto("productVariations").values({
-                            id: vari.id,
-                            productId,
-                            attributes: vari.terms,
-                            sku: `SKU-${uuidv4().slice(0, 8)}`,
-                            image: null,
-                            regularPrice,
-                            salePrice,
-                            cost: cost ?? {},
-                            createdAt: new Date(),
-                            updatedAt: new Date(),
-                        }).execute()
-                    }
+                    if (newWarehouse) {
+                        const countries = product.countries
+                        const countryArray = countries
+                            .split(",")
+                            .map(s => s.trim());
 
-                    for (const vari of variations) {
+                        const stocks = product.stock
+                        const stockArray = stocks
+                            .split(",")
+                            .map(s => s.trim());
+
                         for (let i = 0; i < countryArray.length; i++) {
+
                             await db.insertInto("warehouseStock").values({
                                 id: uuidv4(),
                                 warehouseId: product.warehouseId,
                                 productId,                        // ← use the local const `productId`
-                                variationId: vari.id,
+                                variationId: null,
                                 country: countryArray[i],
                                 quantity: stockArray[i],
                                 organizationId,
@@ -408,24 +403,160 @@ export async function POST(req: Request) {
                             }).execute()
                         }
                     }
-
-                    for (const vari of variations) {
-                        await db.insertInto("productAttributeValues")
-                            .values({ productId, attributeId: vari.name, termId: vari.terms[vari.name] })
-                            .execute()
-                    }
-
                 }
 
-                if (categories?.length) {
-                    for (const cid of categories) {
-                        await db.insertInto("productCategory").values({ productId, categoryId: cid }).execute()
+                if (productType === "variable") {
+
+                    const variations: VariationEntry[] = [];
+
+                    if (newAttributes) {
+
+                        for (let i = 1; i <= 2; i++) {
+
+                            if (product[`attributeVariation${i}`] !== "" && product[`attributeVariation${i}`] === 1) {
+
+                                const terms = product[`attributeValues${i}`]
+                                const termsArray = terms
+                                    .split(",")
+                                    .map(s => s.trim());
+
+                                let nameId = ""
+
+                                const name = product[`attributeSlug${i}`]
+                                const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
+                                const nameResult = await pgPool.query(nameQuery)
+
+                                if (nameResult.rows.length > 0) {
+                                    nameId = nameResult.rows[0].id
+                                }
+
+                                if (nameResult.rows.length === 0) {
+                                    const attName = capitalizeFirstLetter(name)
+                                    const attId = uuidv4()
+                                    const newAttQuery = `INSERT INTO "productAttributes"(id, name, slug, "organizationId", "createdAt", "updatedAt")
+                                        VALUES ('${attId}', '${attName}', '${name}', '${organizationId}', NOW(), NOW())
+                                        RETURNING *`
+
+                                    await pgPool.query(newAttQuery)
+
+                                    nameId = attId
+                                }
+
+                                for (const t of termsArray) {
+                                    const nameQuery = `SELECT id FROM "productAttributeTerms" WHERE slug = '${t}'`
+                                    const nameResult = await pgPool.query(nameQuery)
+
+                                    let termId = ""
+                                    const obj = {}
+
+                                    if (nameResult.rows.length > 0) {
+                                        termId = nameResult.rows[0].id
+                                        obj[nameId] = termId
+                                    }
+
+                                    if (nameResult.rows.length === 0) {
+                                        const attTerm = capitalizeFirstLetter(t)
+                                        termId = uuidv4()
+                                        const newAttQuery = `INSERT INTO "productAttributeTerms"(id, "attributeId", name, slug, "organizationId", "createdAt", "updatedAt")
+                                        VALUES ('${termId}', '${nameId}', '${attTerm}', '${t}', '${organizationId}', NOW(), NOW())
+                                        RETURNING *`
+
+                                        await pgPool.query(newAttQuery)
+                                        obj[nameId] = termId
+                                    }
+
+                                    variations.push({
+                                        id: uuidv4(),
+                                        name: nameId,
+                                        terms: obj
+                                    })
+                                }
+                            }
+                        }
+
+                        for (const vari of variations) {
+                            const countries = product.countries
+                            const countryArray = countries
+                                .split(",")
+                                .map(s => s.trim());
+
+                            const stocks = product.stock
+                            const stockArray = stocks
+                                .split(",")
+                                .map(s => s.trim());
+
+                            await db.insertInto("productVariations").values({
+                                id: vari.id,
+                                productId,
+                                attributes: vari.terms,
+                                sku: `SKU-${uuidv4().slice(0, 8)}`,
+                                image: null,
+                                regularPrice,
+                                salePrice,
+                                cost: cost ?? {},
+                                createdAt: new Date(),
+                                updatedAt: new Date(),
+                            }).execute()
+
+                            for (let i = 0; i < countryArray.length; i++) {
+                                await db.insertInto("warehouseStock").values({
+                                    id: uuidv4(),
+                                    warehouseId: product.warehouseId,
+                                    productId,                        // ← use the local const `productId`
+                                    variationId: vari.id,
+                                    country: countryArray[i],
+                                    quantity: stockArray[i],
+                                    organizationId,
+                                    tenantId,
+                                    createdAt: new Date(),
+                                    updatedAt: new Date(),
+                                }).execute()
+                            }
+                        }
+
+                        for (const vari of variations) {
+                            await db.insertInto("productAttributeValues")
+                                .values({ productId, attributeId: vari.name, termId: vari.terms[vari.name] })
+                                .execute()
+                        }
+
+                    }
+
+                    if (newWarehouse) {
+                        const countries = product.countries
+                        const countryArray = countries
+                            .split(",")
+                            .map(s => s.trim());
+
+                        const stocks = product.stock
+                        const stockArray = stocks
+                            .split(",")
+                            .map(s => s.trim());
+
+
+                        for (let i = 0; i < countryArray.length; i++) {
+                            await db
+                                .updateTable("warehouseStock")
+                                .set({ quantity: stockArray[i] })
+                                .where("productId", "=", productId)
+                                .where("warehouseId", "=", product.warehouseId)
+                                .where("country", "=", countryArray[i])
+                                .execute();
+                        }
+                    }
+                }
+
+                if (newCategories) {
+                    if (categories?.length) {
+                        for (const cid of categories) {
+                            await db.insertInto("productCategory").values({ productId, categoryId: cid }).execute()
+                        }
                     }
                 }
                 editCount++
             }
 
-            if (productResult.rows.length === 0) {
+            if (res.rows.length === 0) {
                 //creation product code
                 console.log("CREATING")
                 /* SKU handling */

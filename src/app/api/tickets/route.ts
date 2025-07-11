@@ -29,7 +29,7 @@ const ticketSchema = z.object({
   title: z.string().min(1, "Title is required"),
   clientId: z.string().uuid(),
   priority: z.enum(["low", "medium", "high"]).default("medium"),
-  status:   z.enum(["open", "in-progress", "closed"]).default("open"),
+  status: z.enum(["open", "in-progress", "closed"]).default("open"),
 });
 
 export async function GET(req: NextRequest) {
@@ -41,9 +41,9 @@ export async function GET(req: NextRequest) {
 
   try {
     const { searchParams } = new URL(req.url);
-    const page     = Number(searchParams.get("page"))     || 1;
+    const page = Number(searchParams.get("page")) || 1;
     const pageSize = Number(searchParams.get("pageSize")) || 10;
-    const search   = searchParams.get("search")           || "";
+    const search = searchParams.get("search") || "";
 
     // build count + list queries as before...
     let countQuery = `SELECT COUNT(*) FROM tickets WHERE "organizationId" = $1`;
@@ -58,19 +58,19 @@ export async function GET(req: NextRequest) {
 
     if (search) {
       countQuery += ` AND title ILIKE $2`;
-      query      += ` AND title ILIKE $2`;
+      query += ` AND title ILIKE $2`;
       countVals.push(`%${search}%`);
       vals.push(`%${search}%`);
     }
 
     query += ` ORDER BY "createdAt" DESC
-               LIMIT $${vals.length+1}
-               OFFSET $${vals.length+2}`;
+               LIMIT $${vals.length + 1}
+               OFFSET $${vals.length + 2}`;
     vals.push(pageSize, (page - 1) * pageSize);
 
-    const totalRows  = Number((await pool.query(countQuery, countVals)).rows[0].count);
+    const totalRows = Number((await pool.query(countQuery, countVals)).rows[0].count);
     const totalPages = Math.ceil(totalRows / pageSize);
-    const tickets    = (await pool.query(query, vals)).rows;
+    const tickets = (await pool.query(query, vals)).rows;
 
     return NextResponse.json({ tickets, totalPages, currentPage: page });
   } catch (err) {
@@ -108,13 +108,13 @@ export async function POST(req: NextRequest) {
     const channels: NotificationChannel[] = ["email", "in_app"];
     await sendNotification({
       organizationId,
-      type:     "ticket_created",
-      message:  `New ticket created: <strong>${result.title}</strong>`,
-      subject:  `Ticket #${ticketId} created`,
+      type: "ticket_created",
+      message: `New ticket created: <strong>${result.title}</strong>`,
+      subject: `Ticket #${ticketId} created`,
       variables: {
         ticket_number: ticketId,         // ★ NEW placeholder
-        ticket_id:     ticketId,         // keep for bw-compat
-        ticket_title:  result.title,
+        ticket_id: ticketId,         // keep for bw-compat
+        ticket_title: result.title,
       },
       channels,
       clientId: result.clientId,

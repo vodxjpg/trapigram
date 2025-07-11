@@ -1,10 +1,10 @@
 // src/lib/permissions/server.ts (NEW FILE)
 
 import { db } from "@/lib/db";
-import { 
-  ac, 
-  registerDynamicRoles, 
-  DynamicRoleRecord 
+import {
+  ac,
+  registerDynamicRoles,
+  DynamicRoleRecord
 } from "./definitions";
 
 /**
@@ -23,7 +23,7 @@ export async function getDynamicRolesForOrg(organizationId: string): Promise<Rec
       name: row.name,
       permissions: typeof row.permissions === "string" ? JSON.parse(row.permissions) : row.permissions,
     }));
-    
+
     return registerDynamicRoles(parsedRows);
   } catch (error) {
     console.error(`[getDynamicRolesForOrg] Failed to fetch roles for org ${organizationId}:`, error);

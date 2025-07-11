@@ -9,14 +9,14 @@ export async function GET(req: NextRequest) {
   const { organizationId } = ctx;
 
   try {
-  // Extract query parameters
-  const { searchParams } = new URL(req.url);
-  const slug = searchParams.get("slug");
-  const attributeId = searchParams.get("attributeId"); // Optional, for editing existing attributes
+    // Extract query parameters
+    const { searchParams } = new URL(req.url);
+    const slug = searchParams.get("slug");
+    const attributeId = searchParams.get("attributeId"); // Optional, for editing existing attributes
 
-  if (!slug) {
-    return NextResponse.json({ error: "Slug is required" }, { status: 400 });
-  }  
+    if (!slug) {
+      return NextResponse.json({ error: "Slug is required" }, { status: 400 });
+    }
     // Check if the slug exists, excluding the current attribute if attributeId is provided
     const query = `
       SELECT id FROM "productAttributes"

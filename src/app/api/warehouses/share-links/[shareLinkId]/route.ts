@@ -349,17 +349,17 @@ export async function PUT(
           console.log(`[CLEANUP] No tenant found for removed recipientUserId: ${removedUserId}, skipping`);
           continue;
         }
-          /* all target copies that belong to *this* recipient
-             (= the tenant we just looked up)                            */
-          const targetProductIds = (
-            await db
-              .selectFrom("sharedProductMapping as spm")
-              .innerJoin("products", "products.id", "spm.targetProductId")
-              .select("spm.targetProductId")
-              .where("spm.shareLinkId", "=", shareLinkId)
-              .where("products.tenantId", "=", removedTenant.id)
-              .execute()
-          ).map(r => r.targetProductId);
+        /* all target copies that belong to *this* recipient
+           (= the tenant we just looked up)                            */
+        const targetProductIds = (
+          await db
+            .selectFrom("sharedProductMapping as spm")
+            .innerJoin("products", "products.id", "spm.targetProductId")
+            .select("spm.targetProductId")
+            .where("spm.shareLinkId", "=", shareLinkId)
+            .where("products.tenantId", "=", removedTenant.id)
+            .execute()
+        ).map(r => r.targetProductId);
 
         if (targetProductIds.length === 0) {
           console.log(`[CLEANUP] No synced products found for shareLinkId: ${shareLinkId} for recipient: ${removedUserId}`);
@@ -371,26 +371,26 @@ export async function PUT(
         );
 
         /* break the FK from THIS link → those copies (B-level rows)    */
-            await db
-              .deleteFrom("sharedProductMapping")
-              .where("shareLinkId", "=", shareLinkId)
-              .where("targetProductId", "in", targetProductIds)
-              .execute();
-        
+        await db
+          .deleteFrom("sharedProductMapping")
+          .where("shareLinkId", "=", shareLinkId)
+          .where("targetProductId", "in", targetProductIds)
+          .execute();
+
         console.log(`[CLEANUP] Deleted sharedProductMapping entries for shareLinkId: ${shareLinkId}`);
 
         // Delete sharedVariationMapping entries
-             await db
-               .deleteFrom("sharedVariationMapping")
-               .where("shareLinkId", "=", shareLinkId)
-               .where("targetProductId", "in", targetProductIds)
-               .execute();
+        await db
+          .deleteFrom("sharedVariationMapping")
+          .where("shareLinkId", "=", shareLinkId)
+          .where("targetProductId", "in", targetProductIds)
+          .execute();
         console.log(`[CLEANUP] Deleted sharedVariationMapping entries for shareLinkId: ${shareLinkId}`);
 
-       /* one call wipes stock, variations, products and any deeper   */
-       /* copies (B → C → …) in FK-safe order                         */
-       await propagateDeleteDeep(db, targetProductIds);
-       console.log(`[CLEANUP] Deep-deleted subtree for products: ${targetProductIds.join(", ")}`);
+        /* one call wipes stock, variations, products and any deeper   */
+        /* copies (B → C → …) in FK-safe order                         */
+        await propagateDeleteDeep(db, targetProductIds);
+        console.log(`[CLEANUP] Deep-deleted subtree for products: ${targetProductIds.join(", ")}`);
       }
     }
 

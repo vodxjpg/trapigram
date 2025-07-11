@@ -18,9 +18,9 @@ export async function computeAffiliatePointsPrice(
 ) {
   const key = clientLevelId ?? "default";
   const sale = product.salePoints?.[key]?.[country] ??
-               product.salePoints?.default?.[country];
+    product.salePoints?.default?.[country];
   const regular = product.regularPoints?.[key]?.[country] ??
-                  product.regularPoints?.default?.[country];
+    product.regularPoints?.default?.[country];
   const price = sale ?? regular;
   if (price == null)
     throw new Error(`No points price for level ${key} in ${country}`);

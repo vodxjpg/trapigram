@@ -3,20 +3,20 @@ import type { DB } from "@/lib/db";
 import { Kysely } from "kysely";
 
 export type StockUpdate = {
-  productId  : string;
+  productId: string;
   variationId: string | null;
-  country    : string;
-  quantity   : number;
+  country: string;
+  quantity: number;
 };
 
 export async function propagateStockDeep(
-  db        : Kysely<DB>,
-  seeds     : string[],
+  db: Kysely<DB>,
+  seeds: string[],
   generateId: (prefix: string) => string,
-  maxDepth  = 5,
+  maxDepth = 5,
 ): Promise<void> {
-  const visited  = new Set<string>();
-  let   frontier = seeds.slice();
+  const visited = new Set<string>();
+  let frontier = seeds.slice();
 
   for (let depth = 0; frontier.length && depth < maxDepth; depth++) {
     const next: string[] = [];
@@ -30,15 +30,15 @@ export async function propagateStockDeep(
         .selectFrom("warehouseStock")
         .select(["variationId", "country"])
         .where("productId", "=", productKey)
-        .where("quantity",   ">", 0)
+        .where("quantity", ">", 0)
         .execute();
       if (!stockRows.length) continue;
 
       const updates = stockRows.map<StockUpdate>((r) => ({
-        productId  : productKey,
+        productId: productKey,
         variationId: r.variationId,
-        country    : r.country,
-        quantity   : 0,
+        country: r.country,
+        quantity: 0,
       }));
 
       /* find all mappings where this product is the source        */
@@ -155,16 +155,16 @@ export async function propagateStockDeep(
               await db
                 .insertInto("warehouseStock")
                 .values({
-                  id            : generateId("WS"),
-                  warehouseId   : wh.id,
-                  productId     : targetProductId,
-                  variationId   : targetVariationId,
+                  id: generateId("WS"),
+                  warehouseId: wh.id,
+                  productId: targetProductId,
+                  variationId: targetVariationId,
                   country,
-                  quantity      : totalQty,
+                  quantity: totalQty,
                   organizationId: wh.organizationId,   // ← use warehouse org
-                  tenantId      : wh.tenantId,
-                  createdAt     : new Date(),
-                  updatedAt     : new Date(),
+                  tenantId: wh.tenantId,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
                 })
                 .execute();
             }

@@ -26,9 +26,9 @@ async function isOwner(organizationId: string, userId: string) {
 
 /* ---------- validation schema ---------- */
 const messagesSchema = z.object({
-  message:     z.string().min(1, "Message is required."),
+  message: z.string().min(1, "Message is required."),
   attachments: z.string(),
-  isInternal:  z.boolean(),
+  isInternal: z.boolean(),
 });
 
 export async function POST(
@@ -50,10 +50,10 @@ export async function POST(
       typeof raw.message === "string"
         ? raw.message.trim()
         : typeof raw.text === "string"
-        ? raw.text.trim()
-        : typeof raw.content === "string"
-        ? raw.content.trim()
-        : "";
+          ? raw.text.trim()
+          : typeof raw.content === "string"
+            ? raw.content.trim()
+            : "";
 
     if (!messageText)
       return NextResponse.json(

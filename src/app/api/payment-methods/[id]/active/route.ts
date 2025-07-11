@@ -14,13 +14,13 @@ const paymentUpdateSchema = z.object({
 type Params = { params: { id: string } };
 
 export async function PATCH(req: NextRequest, { params }: Params) {
- const ctx = await getContext(req);
+  const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  try { 
+  try {
     const { id } = await params;
     const { active } = await req.json();
-    
+
     const sql = `
       UPDATE "paymentMethods"
       SET active = $1, "updatedAt" = NOW()
@@ -29,9 +29,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     `;
 
     const values = [
-        active,
-        id
-    ]    
+      active,
+      id
+    ]
     const res = await pool.query(sql, values);
     if (!res.rows.length) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });

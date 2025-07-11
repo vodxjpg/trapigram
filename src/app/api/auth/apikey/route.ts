@@ -7,7 +7,7 @@ import { pgPool as pool } from "@/lib/db";;
 interface ApiKeyRequest {
     name: string,
     apikey: string
-  }
+}
 
 export async function POST(req: NextRequest) {
     const session = await auth.api.getSession({ headers: req.headers });
@@ -17,26 +17,26 @@ export async function POST(req: NextRequest) {
 
     const body: ApiKeyRequest = await req.json();
 
-   try {
+    try {
         const apiKey = await auth.api.createApiKey({
             body: {
-              name: body.name,
-              expiresIn: 60 * 60 * 24 * 365, // 1 year
-              prefix: "tp_",
-              remaining: null,
-              refillAmount: 100,
-              refillInterval: 60 * 60 * 24 * 7, // 7 days
-              metadata: {
-                tier: "premium",
-              },
-              rateLimitTimeWindow: 1000 * 60 * 60 * 24, // everyday
-              rateLimitMax: 100, // every day, they can use up to 100 requests
-              rateLimitEnabled: true,
-              userId: session?.user.id, // the user id to create the API key for
+                name: body.name,
+                expiresIn: 60 * 60 * 24 * 365, // 1 year
+                prefix: "tp_",
+                remaining: null,
+                refillAmount: 100,
+                refillInterval: 60 * 60 * 24 * 7, // 7 days
+                metadata: {
+                    tier: "premium",
+                },
+                rateLimitTimeWindow: 1000 * 60 * 60 * 24, // everyday
+                rateLimitMax: 100, // every day, they can use up to 100 requests
+                rateLimitEnabled: true,
+                userId: session?.user.id, // the user id to create the API key for
             },
-          });
+        });
 
-          console.log(apiKey, "acaaaaaaaaaaaa")
+        console.log(apiKey, "acaaaaaaaaaaaa")
 
         return NextResponse.json({ apiKey: apiKey.key }, { status: 201 });
     } catch (err) {

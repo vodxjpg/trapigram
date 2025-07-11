@@ -31,10 +31,10 @@ export async function POST(req: NextRequest) {
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session)
       return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
-    const userId               = session.user.id;
+    const userId = session.user.id;
     const activeOrganizationId = session.session.activeOrganizationId;
 
-    const body   = await req.json();
+    const body = await req.json();
     const parsed = requestSchema.safeParse(body);
     if (!parsed.success)
       return NextResponse.json({ error: parsed.error.errors }, { status: 400 });
@@ -140,10 +140,10 @@ export async function POST(req: NextRequest) {
         shareProfile.set(sp.productId, { wholeProduct: false, variationIds: new Set() });
       const p = shareProfile.get(sp.productId)!;
       if (sp.variationId === null) p.wholeProduct = true;
-      else                         p.variationIds.add(sp.variationId);
+      else p.variationIds.add(sp.variationId);
     }
 
-    const srcCountries    = JSON.parse(shareLink.countries)       as string[];
+    const srcCountries = JSON.parse(shareLink.countries) as string[];
     const targetCountries = JSON.parse(targetWarehouse.countries) as string[];
     for (const sp of sharedProducts) {
       for (const c of Object.keys(sp.cost ?? {})) {
@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
     }
 
     /* maps */
-    const productIdMap   = new Map<string, string>(); // src → tgt
+    const productIdMap = new Map<string, string>(); // src → tgt
     const variationIdMap = new Map<string, string>(); // src → tgt
 
     /* ──────────────────────────────────────────────────────────────────── */
@@ -203,11 +203,11 @@ export async function POST(req: NextRequest) {
             if (!srcProd)
               return NextResponse.json({ error: `Source product ${sp.productId} not found` }, { status: 404 });
 
-                      // generate new SKU by replacing ORG- with SHD- (leave other SKUs intact)
-                      const suffix = srcProd.sku.startsWith("ORG-")
-                        ? srcProd.sku.slice("ORG-".length)
-                        : srcProd.sku;
-                      let newSku = `SHD-${suffix}`;
+            // generate new SKU by replacing ORG- with SHD- (leave other SKUs intact)
+            const suffix = srcProd.sku.startsWith("ORG-")
+              ? srcProd.sku.slice("ORG-".length)
+              : srcProd.sku;
+            let newSku = `SHD-${suffix}`;
             // ensure uniqueness if collision
             while (
               await db.selectFrom("products").select("id").where("sku", "=", newSku).executeTakeFirst()
@@ -216,23 +216,23 @@ export async function POST(req: NextRequest) {
             }
 
             await db.insertInto("products").values({
-              id:              targetProductId,
+              id: targetProductId,
               organizationId,
-              tenantId:        targetWarehouse.tenantId,
-              title:           srcProd.title,
-              sku:             newSku,
-              status:          srcProd.status,
-              productType:     srcProd.productType,
-              regularPrice:    srcProd.regularPrice,
-              salePrice:       srcProd.salePrice,
-              cost:            {},     // costs patched later per-country
+              tenantId: targetWarehouse.tenantId,
+              title: srcProd.title,
+              sku: newSku,
+              status: srcProd.status,
+              productType: srcProd.productType,
+              regularPrice: srcProd.regularPrice,
+              salePrice: srcProd.salePrice,
+              cost: {},     // costs patched later per-country
               allowBackorders: srcProd.allowBackorders,
-              manageStock:     srcProd.manageStock,
-              stockStatus:     srcProd.manageStock ? "managed" : "unmanaged",
-              description:     srcProd.description,
-              image:           srcProd.image,
-              createdAt:       new Date(),
-              updatedAt:       new Date(),
+              manageStock: srcProd.manageStock,
+              stockStatus: srcProd.manageStock ? "managed" : "unmanaged",
+              description: srcProd.description,
+              image: srcProd.image,
+              createdAt: new Date(),
+              updatedAt: new Date(),
             }).execute();
 
             /* ----------- categories copy ----------------------------- */
@@ -252,19 +252,19 @@ export async function POST(req: NextRequest) {
               if (!tgtCat) {
                 tgtCat = { id: generateId("CAT") };
                 await db.insertInto("productCategories").values({
-                  id:          tgtCat.id,
-                  name:        cat.name,
-                  slug:        cat.slug,
-                  image:       null,
-                  order:       0,
+                  id: tgtCat.id,
+                  name: cat.name,
+                  slug: cat.slug,
+                  image: null,
+                  order: 0,
                   organizationId,
-                  parentId:    null,
-                  createdAt:   new Date(),
-                  updatedAt:   new Date(),
+                  parentId: null,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
                 }).execute();
               }
               await db.insertInto("productCategory").values({
-                productId:  targetProductId,
+                productId: targetProductId,
                 categoryId: tgtCat.id,
               }).execute();
             }
@@ -288,7 +288,7 @@ export async function POST(req: NextRequest) {
             const termMap = new Map<string, string>(); // srcTermId ➜ tgtTermId
 
             for (const row of srcAttrRows) {
-              /* attribute */  
+              /* attribute */
               if (!attrMap.has(row.attributeId)) {
                 let tgtAttr = await db
                   .selectFrom("productAttributes")
@@ -299,12 +299,12 @@ export async function POST(req: NextRequest) {
                 if (!tgtAttr) {
                   tgtAttr = { id: generateId("ATTR") };
                   await db.insertInto("productAttributes").values({
-                    id:          tgtAttr.id,
-                    name:        row.attrSlug,
-                    slug:        row.attrSlug,
+                    id: tgtAttr.id,
+                    name: row.attrSlug,
+                    slug: row.attrSlug,
                     organizationId,
-                    createdAt:   new Date(),
-                    updatedAt:   new Date(),
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
                   }).execute();
                 }
                 attrMap.set(row.attributeId, tgtAttr.id);
@@ -323,22 +323,22 @@ export async function POST(req: NextRequest) {
                 if (!tgtTerm) {
                   tgtTerm = { id: generateId("TERM") };
                   await db.insertInto("productAttributeTerms").values({
-                    id:          tgtTerm.id,
+                    id: tgtTerm.id,
                     attributeId: tgtAttrId,
-                    name:        row.termName,
-                    slug:        row.termSlug,
+                    name: row.termName,
+                    slug: row.termSlug,
                     organizationId,
-                    createdAt:   new Date(),
-                    updatedAt:   new Date(),
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
                   }).execute();
                 }
                 termMap.set(row.termId, tgtTerm.id);
 
                 /* link product to term */
                 await db.insertInto("productAttributeValues").values({
-                  productId:   targetProductId,
+                  productId: targetProductId,
                   attributeId: tgtAttrId,
-                  termId:      tgtTerm.id,
+                  termId: tgtTerm.id,
                 }).execute();
               }
             }
@@ -382,10 +382,10 @@ export async function POST(req: NextRequest) {
 
                 if (!sameVar) {
                   // generate new variation SKU by replacing ORG- with SHD-
-                const varSuffix = v.sku.startsWith("ORG-")
-                  ? v.sku.slice("ORG-".length)
-                  : v.sku;
-                let newVarSku = `SHD-${varSuffix}`;
+                  const varSuffix = v.sku.startsWith("ORG-")
+                    ? v.sku.slice("ORG-".length)
+                    : v.sku;
+                  let newVarSku = `SHD-${varSuffix}`;
                   while (
                     await db
                       .selectFrom("productVariations")
@@ -397,16 +397,16 @@ export async function POST(req: NextRequest) {
                   }
 
                   await db.insertInto("productVariations").values({
-                    id:          targetVariationId,
-                    productId:   targetProductId,
-                    attributes:  JSON.stringify(tgtAttrs),
-                    sku:         newVarSku,
-                    image:       v.image,
-                    regularPrice:v.regularPrice,
-                    salePrice:   v.salePrice,
-                    cost:        v.cost,
-                    createdAt:   new Date(),
-                    updatedAt:   new Date(),
+                    id: targetVariationId,
+                    productId: targetProductId,
+                    attributes: JSON.stringify(tgtAttrs),
+                    sku: newVarSku,
+                    image: v.image,
+                    regularPrice: v.regularPrice,
+                    salePrice: v.salePrice,
+                    cost: v.cost,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
                   }).execute();
                 }
 
@@ -419,14 +419,14 @@ export async function POST(req: NextRequest) {
                   .executeTakeFirst();
                 if (!hasGlobalMap) {
                   await db.insertInto("sharedVariationMapping").values({
-                    id:               generateId("SVM"),
+                    id: generateId("SVM"),
                     shareLinkId,
-                    sourceProductId:  sp.productId,
+                    sourceProductId: sp.productId,
                     targetProductId,
                     sourceVariationId: v.id,
                     targetVariationId,
-                    createdAt:        new Date(),
-                    updatedAt:        new Date(),
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
                   }).execute();
                 }
               }
@@ -506,42 +506,42 @@ export async function POST(req: NextRequest) {
 
         /* ---------- STOCK ------------------------------------------- */
         const srcStockRows = await db
-        .selectFrom("warehouseStock")
-        .select(["warehouseId", "country", "quantity", "variationId"])
-        .where("productId", "=", sp.productId)
-        .where("warehouseId", "=", shareLink.warehouseId)
-        .execute();
-
-      // Collect all source warehouse IDs (include the original one to avoid empty IN)
-      const linkWarehouses = await db
-        .selectFrom("warehouseShareRecipient")
-        .innerJoin("warehouseShareLink", "warehouseShareLink.id", "warehouseShareRecipient.shareLinkId")
-        .select("warehouseShareLink.warehouseId")
-        .where("warehouseShareRecipient.recipientUserId", "=", userId)
-        .execute();
-      const srcWarehouseIds = linkWarehouses.map(w => w.warehouseId);
-      if (!srcWarehouseIds.includes(shareLink.warehouseId)) {
-        srcWarehouseIds.push(shareLink.warehouseId);
-      }
-
-      for (const row of srcStockRows) {
-        const srcVarId = row.variationId;
-        if (srcVarId && !variationIdMap.has(srcVarId)) continue; // unmapped variation
-
-        const tgtVarId = srcVarId ? variationIdMap.get(srcVarId)! : null;
-
-        let qtyQuery = db
           .selectFrom("warehouseStock")
-          .select("quantity")
+          .select(["warehouseId", "country", "quantity", "variationId"])
           .where("productId", "=", sp.productId)
-          .where("country", "=", row.country)
-          .where("warehouseId", "in", srcWarehouseIds);
+          .where("warehouseId", "=", shareLink.warehouseId)
+          .execute();
 
-        if (srcVarId) qtyQuery = qtyQuery.where("variationId", "=", srcVarId);
-        else          qtyQuery = qtyQuery.where("variationId", "is", null);
+        // Collect all source warehouse IDs (include the original one to avoid empty IN)
+        const linkWarehouses = await db
+          .selectFrom("warehouseShareRecipient")
+          .innerJoin("warehouseShareLink", "warehouseShareLink.id", "warehouseShareRecipient.shareLinkId")
+          .select("warehouseShareLink.warehouseId")
+          .where("warehouseShareRecipient.recipientUserId", "=", userId)
+          .execute();
+        const srcWarehouseIds = linkWarehouses.map(w => w.warehouseId);
+        if (!srcWarehouseIds.includes(shareLink.warehouseId)) {
+          srcWarehouseIds.push(shareLink.warehouseId);
+        }
 
-        const qtyRows  = await qtyQuery.execute();
-        const totalQty = qtyRows.reduce((sum, q) => sum + q.quantity, 0);
+        for (const row of srcStockRows) {
+          const srcVarId = row.variationId;
+          if (srcVarId && !variationIdMap.has(srcVarId)) continue; // unmapped variation
+
+          const tgtVarId = srcVarId ? variationIdMap.get(srcVarId)! : null;
+
+          let qtyQuery = db
+            .selectFrom("warehouseStock")
+            .select("quantity")
+            .where("productId", "=", sp.productId)
+            .where("country", "=", row.country)
+            .where("warehouseId", "in", srcWarehouseIds);
+
+          if (srcVarId) qtyQuery = qtyQuery.where("variationId", "=", srcVarId);
+          else qtyQuery = qtyQuery.where("variationId", "is", null);
+
+          const qtyRows = await qtyQuery.execute();
+          const totalQty = qtyRows.reduce((sum, q) => sum + q.quantity, 0);
 
           /* upsert into target warehouse */
           let stockQ = db
@@ -551,7 +551,7 @@ export async function POST(req: NextRequest) {
             .where("productId", "=", targetProductId)
             .where("country", "=", row.country);
           if (tgtVarId) stockQ = stockQ.where("variationId", "=", tgtVarId);
-          else          stockQ = stockQ.where("variationId", "is", null);
+          else stockQ = stockQ.where("variationId", "is", null);
 
           const existing = await stockQ.executeTakeFirst();
           if (existing) {
@@ -562,15 +562,15 @@ export async function POST(req: NextRequest) {
               .execute();
           } else {
             await db.insertInto("warehouseStock").values({
-              id:             generateId("WS"),
-              warehouseId:    targetWarehouse.id,
-              productId:      targetProductId,
-              variationId:    tgtVarId,
-              country:        row.country,
-              quantity:       totalQty,
+              id: generateId("WS"),
+              warehouseId: targetWarehouse.id,
+              productId: targetProductId,
+              variationId: tgtVarId,
+              country: row.country,
+              quantity: totalQty,
               organizationId,
-              tenantId:       targetWarehouse.tenantId,
-              createdAt:      new Date(),
+              tenantId: targetWarehouse.tenantId,
+              createdAt: new Date(),
               updatedAt: new Date(),
             }).execute();
           }

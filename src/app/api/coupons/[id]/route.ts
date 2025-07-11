@@ -61,7 +61,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const { id } = await params;
-    const body = await req.json();    
+    const body = await req.json();
     // Parse the request body with the updated schema.
     const parsedCoupon = couponUpdateSchema.parse(body);
 

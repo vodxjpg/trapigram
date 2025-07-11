@@ -92,7 +92,7 @@ export async function PATCH(
         );
         const { regularPoints, salePoints } = apRows[0] as {
           regularPoints: Record<string, Record<string, number>>;
-          salePoints   : Record<string, Record<string, number>> | null;
+          salePoints: Record<string, Record<string, number>> | null;
         };
         basePrice =
           salePoints?.[levelId]?.[country] ??
@@ -112,19 +112,19 @@ export async function PATCH(
         basePrice = p.price;
       }
 
-          /* 3) work out the new quantity */
-          const newQty = data.action === "add" ? oldQty + 1 : oldQty - 1;
-          if (newQty < 0) {
-            await client.query("ROLLBACK");
-            return NextResponse.json(
-              { error: "Quantity cannot be negative" },
-              { status: 400 },
-            );
-          }
+      /* 3) work out the new quantity */
+      const newQty = data.action === "add" ? oldQty + 1 : oldQty - 1;
+      if (newQty < 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json(
+          { error: "Quantity cannot be negative" },
+          { status: 400 },
+        );
+      }
 
       /* 4) affiliate balance flow (unchanged) */
       if (isAffiliate) {
-        const deltaQty  = newQty - oldQty;
+        const deltaQty = newQty - oldQty;
         const absPoints = Math.abs(deltaQty) * basePrice;
 
         if (deltaQty !== 0) {
@@ -211,30 +211,30 @@ export async function PATCH(
         }
       }
 
-         /* 6) persist the change
-               – if the new quantity is zero, *delete* the row             */
-         let upd;
-         if (newQty === 0) {
-           await client.query(
-             `DELETE FROM "cartProducts"
+      /* 6) persist the change
+            – if the new quantity is zero, *delete* the row             */
+      let upd;
+      if (newQty === 0) {
+        await client.query(
+          `DELETE FROM "cartProducts"
                 WHERE "cartId"   = $1
                   AND ("productId" = $2 OR "affiliateProductId" = $2)`,
-             [cartId, data.productId],
-           );
-           upd = [];
-         } else {
-           const { rows } = await client.query(
-             `UPDATE "cartProducts"
+          [cartId, data.productId],
+        );
+        upd = [];
+      } else {
+        const { rows } = await client.query(
+          `UPDATE "cartProducts"
                   SET quantity    = $1,
                       "unitPrice" = $2,
                       "updatedAt" = NOW()
                 WHERE "cartId"   = $3
                   AND ("productId" = $4 OR "affiliateProductId" = $4)
               RETURNING *`,
-             [newQty, pricePerUnit, cartId, data.productId],
-           );
-           upd = rows;
-         }
+          [newQty, pricePerUnit, cartId, data.productId],
+        );
+        upd = rows;
+      }
 
       /* 7) stock adjust */
       await adjustStock(
@@ -257,10 +257,10 @@ export async function PATCH(
           );
           return {
             ...rows[0],
-            price     : upd[0].unitPrice,
-            subtotal  : upd[0].unitPrice * upd[0].quantity,
+            price: upd[0].unitPrice,
+            subtotal: upd[0].unitPrice * upd[0].quantity,
             regularPrice: {},
-            stockData : {},
+            stockData: {},
             isAffiliate: true,
           };
         }
@@ -272,14 +272,14 @@ export async function PATCH(
         );
         return {
           ...rows[0],
-          price     : pricePerUnit,
-          subtotal  : Number(pricePerUnit) * upd[0].quantity,
-          stockData : {},
+          price: pricePerUnit,
+          subtotal: Number(pricePerUnit) * upd[0].quantity,
+          stockData: {},
           isAffiliate: false,
         };
       })();
 
-    /* 9) cart hash (skip when the row was deleted) */
+      /* 9) cart hash (skip when the row was deleted) */
       const encrypted = crypto
         .createHash("sha256")
         .update(JSON.stringify(upd))
@@ -324,7 +324,7 @@ export async function PATCH(
           return [...p.rows, ...a.rows].map((l: any) => ({
             ...l,
             unitPrice: Number(l.unitPrice),
-            subtotal : Number(l.unitPrice) * l.quantity,
+            subtotal: Number(l.unitPrice) * l.quantity,
           }));
         } finally {
           c.release();

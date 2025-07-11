@@ -48,7 +48,7 @@ export async function POST(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
   try {
-        const { id: sourceProductId } = await params
+    const { id: sourceProductId } = await params
 
     /* ---------- source product --------------------------------- */
     const source = await db

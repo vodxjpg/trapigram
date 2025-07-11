@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 // Import from BOTH new files
-import { ac, buildRoles } from "@/lib/permissions/definitions"; 
+import { ac, buildRoles } from "@/lib/permissions/definitions";
 import { getDynamicRolesForOrg } from "@/lib/permissions/server";
 
 export async function POST(req: NextRequest) {
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       console.warn(`Role "${userRole}" not found in defined roles for org ${session.activeOrganizationId}.`);
       return NextResponse.json({ hasPermission: false, reason: `Role "${userRole}" is not defined.` });
     }
-    
+
     // The actual permission check using the access control instance
     const hasPermission = roleDefinition.can(requestedPermission);
 

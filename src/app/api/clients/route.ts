@@ -7,8 +7,8 @@ import { getContext } from "@/lib/context";
 
 /* ---------------------- Schema ---------------------- */
 const clientSchema = z.object({
-  userId:     z.string().min(1).nullable().optional(),
-  username:  z.string().min(1).nullable().optional(),
+  userId: z.string().min(1).nullable().optional(),
+  username: z.string().min(1).nullable().optional(),
   firstName: z.string().min(1).nullable(),
   lastName: z.string().optional().nullable(),
   email: z.string().optional().nullable(),

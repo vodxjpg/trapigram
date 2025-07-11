@@ -122,8 +122,8 @@ export async function POST(req: NextRequest) {
   }
 
   /* 4) Insert new invitation */
-  const id        = uuidv4();
-  const now       = new Date();
+  const id = uuidv4();
+  const now = new Date();
   const expiresAt = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString();
 
   const { rows } = await pool.query(

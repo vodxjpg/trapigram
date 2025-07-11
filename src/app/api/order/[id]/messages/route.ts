@@ -62,7 +62,7 @@ export async function POST(
     const isInternal = req.headers.get("x-is-internal") === "true";
 
     /* validate body */
-    const raw   = await req.json();
+    const raw = await req.json();
     const { message, clientId } = messagesSchema.parse({ ...raw, isInternal });
 
     /* insert message and return saved row */
@@ -84,7 +84,7 @@ export async function POST(
       const {
         rows: [ord],
       } = await pool.query(
-             `SELECT "orderKey","clientId", country
+        `SELECT "orderKey","clientId", country
                 FROM orders
                WHERE id = $1
                LIMIT 1`,
@@ -114,7 +114,7 @@ export async function POST(
         variables: { order_number: orderKey },
         channels,
         clientId: customerSent ? null : orderClientId,
-        country:  orderCountry,      // ★ crucial for template match
+        country: orderCountry,      // ★ crucial for template match
       });
     }
 

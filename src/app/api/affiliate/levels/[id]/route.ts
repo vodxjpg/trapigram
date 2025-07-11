@@ -8,10 +8,10 @@ import { getContext } from "@/lib/context";
 
 /* ─────────────────── zod schema ─────────────────── */
 const levelSchema = z.object({
-  name:            z.string().min(1).optional(),
-  levelUpMessage:  z.string().nullable().optional(),
-  levelUpMessageGroup:    z.string().nullable().optional(),
-  requiredPoints:  z.number().int().nonnegative().optional(),
+  name: z.string().min(1).optional(),
+  levelUpMessage: z.string().nullable().optional(),
+  levelUpMessageGroup: z.string().nullable().optional(),
+  requiredPoints: z.number().int().nonnegative().optional(),
 });
 
 /* ─────────────────── GET (single level) ─────────────────── */

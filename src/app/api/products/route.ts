@@ -97,7 +97,7 @@ export async function GET(req: NextRequest) {
     const status: "published" | "draft" | undefined =
       rawStatus === "published" || rawStatus === "draft"
         ? rawStatus
-        : undefined;                  
+        : undefined;
     const attributeId = searchParams.get("attributeId") || "";
 
     /* -------- STEP 1 – product IDs with proper limit/offset ----- */
@@ -117,17 +117,17 @@ export async function GET(req: NextRequest) {
           .select("productId")
           .where("categoryId", "=", categoryId),
       );
-      if (status)
-        idQuery = idQuery.where("status", "=", status);  // status is now the right type
-if (attributeId)
-  idQuery = idQuery.where(
-    "id",
-    "in",
-    db
-      .selectFrom("productAttributeValues")
-      .select("productId")
-      .where("attributeId", "=", attributeId),
-  );
+    if (status)
+      idQuery = idQuery.where("status", "=", status);  // status is now the right type
+    if (attributeId)
+      idQuery = idQuery.where(
+        "id",
+        "in",
+        db
+          .selectFrom("productAttributeValues")
+          .select("productId")
+          .where("attributeId", "=", attributeId),
+      );
 
     const idRows = await idQuery
       .limit(pageSize)
@@ -282,8 +282,8 @@ if (attributeId)
       .select(db.fn.count("id").as("total"))
       .where("organizationId", "=", organizationId)
       .where("tenantId", "=", tenantId)
-      .$if(Boolean(search),      q => q.where("title", "ilike", `%${search}%`))
-        .$if(Boolean(categoryId),  q =>
+      .$if(Boolean(search), q => q.where("title", "ilike", `%${search}%`))
+      .$if(Boolean(categoryId), q =>
         q.where(
           "id",
           "in",
@@ -295,16 +295,16 @@ if (attributeId)
       )
       .$if(!!status, q => q.where("status", "=", status!))   // `status!` is safe here
 
-        .$if(Boolean(attributeId), q =>
-             q.where(
-               "id",
-               "in",
-               db
-                 .selectFrom("productAttributeValues")
-                 .select("productId")
-                 .where("attributeId", "=", attributeId),
-             ),
-         )
+      .$if(Boolean(attributeId), q =>
+        q.where(
+          "id",
+          "in",
+          db
+            .selectFrom("productAttributeValues")
+            .select("productId")
+            .where("attributeId", "=", attributeId),
+        ),
+      )
       .executeTakeFirst();
     const total = Number(totalRes?.total || 0);
 
@@ -488,45 +488,45 @@ export async function POST(req: NextRequest) {
 /*  DELETE – bulk delete                                              */
 /* ------------------------------------------------------------------ */
 export async function DELETE(req: NextRequest) {
-    const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
-    const { organizationId } = ctx;
-  
-    try {
-      const { ids } = await req.json();
-      if (!Array.isArray(ids) || ids.length === 0) {
-        return NextResponse.json(
-          { error: "No product IDs provided" },
-          { status: 400 }
-        );
-      }
-  
-      // verify ownership
-      const valid = await db
-        .selectFrom("products")
-        .select("id")
-        .where("id", "in", ids)
-        .where("organizationId", "=", organizationId)
-        .execute();
-      const validIds = valid.map((r) => r.id);
-      if (validIds.length !== ids.length) {
-        return NextResponse.json(
-          { error: "Some products not found or unauthorized" },
-          { status: 404 }
-        );
-      }
-  
-      // cascade‐delete all selected products in one go
-      await propagateDeleteDeep(db, validIds);
-  
-      return NextResponse.json({
-        message: `Deleted ${validIds.length} product(s)`,
-      });
-    } catch (err) {
-      console.error("[PRODUCTS_BULK_DELETE]", err);
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
+  try {
+    const { ids } = await req.json();
+    if (!Array.isArray(ids) || ids.length === 0) {
       return NextResponse.json(
-        { error: "Internal server error" },
-        { status: 500 }
+        { error: "No product IDs provided" },
+        { status: 400 }
       );
     }
+
+    // verify ownership
+    const valid = await db
+      .selectFrom("products")
+      .select("id")
+      .where("id", "in", ids)
+      .where("organizationId", "=", organizationId)
+      .execute();
+    const validIds = valid.map((r) => r.id);
+    if (validIds.length !== ids.length) {
+      return NextResponse.json(
+        { error: "Some products not found or unauthorized" },
+        { status: 404 }
+      );
+    }
+
+    // cascade‐delete all selected products in one go
+    await propagateDeleteDeep(db, validIds);
+
+    return NextResponse.json({
+      message: `Deleted ${validIds.length} product(s)`,
+    });
+  } catch (err) {
+    console.error("[PRODUCTS_BULK_DELETE]", err);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
+}

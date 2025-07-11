@@ -11,9 +11,9 @@ import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints"
 /* ──────────────────────────────────────────────────────────────── */
 /*  Shared helpers / Zod                                            */
 /* ──────────────────────────────────────────────────────────────── */
-const ptsObj       = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
-const countryMap   = z.record(z.string(), ptsObj);          // country ➜ points
-const pointsByLvl  = z.record(z.string(), countryMap);      // levelId ➜ country map
+const ptsObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
+const countryMap = z.record(z.string(), ptsObj);          // country ➜ points
+const pointsByLvl = z.record(z.string(), countryMap);      // levelId ➜ country map
 
 const stockMap = z.record(z.string(), z.record(z.string(), z.number().min(0)));
 const costMap = z.record(z.string(), z.number().min(0));
@@ -71,7 +71,7 @@ const patchSchema = z.object({
   allowBackorders: z.boolean().optional(),
   manageStock: z.boolean().optional(),
   pointsPrice: pointsByLvl.optional(),
-  cost: costMap.optional(), 
+  cost: costMap.optional(),
   attributes: z.array(attrInput).optional(),
   minLevelId: z.string().uuid().nullable().optional(),
   warehouseStock: z
@@ -91,16 +91,16 @@ const patchSchema = z.object({
 /* =================================================================
    GET  – fetch single affiliate product (incl. variation stock)
    ================================================================= */
-   export async function GET(
-    req: NextRequest,
-    ctx: { params: Promise<{ id: string }> },
-  ) {
-    const { id } = await ctx.params;
-  
-    const context = await getContext(req);
-    if (context instanceof NextResponse) return context;
-    const { organizationId } = context;
-  
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const { id } = await ctx.params;
+
+  const context = await getContext(req);
+  if (context instanceof NextResponse) return context;
+  const { organizationId } = context;
+
 
   /* core row */
   const product = await db
@@ -180,20 +180,20 @@ const patchSchema = z.object({
     // rebuild the full level→country→{regular,sale} map:
     const pointsPrice = mergePointsByLevel(
       v.regularPoints as Record<string, Record<string, number>>,
-      v.salePoints   as Record<string, Record<string, number>> | null
+      v.salePoints as Record<string, Record<string, number>> | null
     );
-  
+
     return {
       id: v.id,
       attributes: v.attributes,
       sku: v.sku,
       image: v.image,
       // this becomes an object keyed by level IDs
-      prices:     pointsPrice,
-      pointsPrice, 
-      cost:       typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost ?? {},
+      prices: pointsPrice,
+      pointsPrice,
+      cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost ?? {},
       minLevelId: v.minLevelId ?? null,
-      stock:      variationStock[v.id] || {},
+      stock: variationStock[v.id] || {},
     };
   });
 
@@ -212,29 +212,29 @@ const patchSchema = z.object({
 /* =================================================================
    PATCH – update affiliate product (core, attributes, variations, stock)
    ================================================================= */
-   export async function PATCH(
-    req: NextRequest,
-    ctx: { params: Promise<{ id: string }> },
-  ) {
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id: productId } = await ctx.params;
+
+    const context = await getContext(req);
+    if (context instanceof NextResponse) return context;
+    const { organizationId, tenantId } = context;
+
+    let body: z.infer<typeof patchSchema>;
     try {
-      const { id: productId } = await ctx.params;
-  
-      const context = await getContext(req);
-      if (context instanceof NextResponse) return context;
-      const { organizationId, tenantId } = context;
-  
-      let body: z.infer<typeof patchSchema>;
-      try {
-        body = patchSchema.parse(await req.json());
-      } catch (err) {
-        if (err instanceof z.ZodError)
-          return NextResponse.json({ error: err.errors }, { status: 400 });
-        throw err;
-      }
-      if (Object.keys(body).length === 0)
-        return NextResponse.json({ message: "Nothing to update" });
-  
-      await db.transaction().execute(async (trx) => {
+      body = patchSchema.parse(await req.json());
+    } catch (err) {
+      if (err instanceof z.ZodError)
+        return NextResponse.json({ error: err.errors }, { status: 400 });
+      throw err;
+    }
+    if (Object.keys(body).length === 0)
+      return NextResponse.json({ message: "Nothing to update" });
+
+    await db.transaction().execute(async (trx) => {
       /* ---------------- core fields ---------------- */
       const core: Record<string, unknown> = {};
       if (body.title !== undefined) core.title = body.title;
@@ -281,7 +281,7 @@ const patchSchema = z.object({
           .where("productId", "=", productId)
           .execute();
         const existingIds = existingRows.map((r) => r.id);
-    
+
         // delete any removed variations …
         const incomingIds = body.variations.map((v) => v.id);
         const toDelete = existingIds.filter((id) => !incomingIds.includes(id));
@@ -291,12 +291,12 @@ const patchSchema = z.object({
             .where("id", "in", toDelete)
             .execute();
         }
-    
+
         for (const v of body.variations) {
           // 💡 again use splitPointsByLevel on the nested map:
           const srcMap = v.prices ?? v.pointsPrice;
           const { regularPoints, salePoints } = splitPointsByLevel(srcMap);
-    
+
           const payload = {
             productId,
             attributes: JSON.stringify(v.attributes),
@@ -308,7 +308,7 @@ const patchSchema = z.object({
             minLevelId: v.minLevelId ?? null,
             updatedAt: new Date(),
           };
-    
+
           if (existingIds.includes(v.id)) {
             await trx
               .updateTable("affiliateProductVariations")
@@ -403,15 +403,15 @@ const patchSchema = z.object({
 /* ══════════════════════════════════════════════════════════════
    DELETE – remove product  children
    ════════════════════════════════════════════════════════════ */
-   export async function DELETE(
-    req: NextRequest,
-    { params }: { params: { id: string } },
-  ) {
-    const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
-    const { organizationId } = ctx;
-  
-    const { id } = params;
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } },
+) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
+  const { id } = params;
 
   /* child rows cascade thanks to FK ON DELETE CASCADE, but we
      delete variations manually to clear their stocks first      */

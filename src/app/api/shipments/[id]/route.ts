@@ -132,7 +132,7 @@ export async function DELETE(
     const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
     const { organizationId } = ctx;
-    
+
     try {
         const { id } = await params;
 

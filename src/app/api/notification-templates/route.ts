@@ -18,7 +18,7 @@ const NOTIF_TYPES: Readonly<NotificationType[]> = [
   "order_shipped",
   "ticket_created",         // ← NEW
   "ticket_replied",         // ← NEW
-  "order_message", 
+  "order_message",
 ] as const;
 
 const createSchema = z.object({

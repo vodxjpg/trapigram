@@ -7,11 +7,11 @@ import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { splitPointsByLevel, mergePointsByLevel } from "@/hooks/affiliatePoints";
 
-const ptsObj      = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
-const countryMap  = z.record(z.string(), ptsObj);
+const ptsObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
+const countryMap = z.record(z.string(), ptsObj);
 const pointsByLvl = z.record(z.string(), countryMap);
-const costMap     = z.record(z.string(), z.number().min(0));
-const stockMap    = z.record(z.string(), z.record(z.string(), z.number().min(0)));
+const costMap = z.record(z.string(), z.number().min(0));
+const stockMap = z.record(z.string(), z.record(z.string(), z.number().min(0)));
 
 const variationSchema = z
   .object({
@@ -79,87 +79,87 @@ async function uniqueSku(base: string, orgId: string) {
 /*==================================================================
   GET   – fixed “IN ()” syntax error when there are no products
   =================================================================*/
-  export async function GET(req: NextRequest) {
-    /* 1) resolve auth/context ------------------------------------------------ */
-    const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
-    const { organizationId, tenantId } = ctx;
-  
-    /* 2) pagination + search ------------------------------------------------- */
-    const { searchParams } = new URL(req.url);
-    const limit  = Number(searchParams.get("limit")  || "50");
-    const offset = Number(searchParams.get("offset") || "0");
-    const search = searchParams.get("search") || "";
-  
-    /* 3) base product rows --------------------------------------------------- */
-    const rows = await db
-      .selectFrom("affiliateProducts")
+export async function GET(req: NextRequest) {
+  /* 1) resolve auth/context ------------------------------------------------ */
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId, tenantId } = ctx;
+
+  /* 2) pagination + search ------------------------------------------------- */
+  const { searchParams } = new URL(req.url);
+  const limit = Number(searchParams.get("limit") || "50");
+  const offset = Number(searchParams.get("offset") || "0");
+  const search = searchParams.get("search") || "";
+
+  /* 3) base product rows --------------------------------------------------- */
+  const rows = await db
+    .selectFrom("affiliateProducts")
+    .select([
+      "id",
+      "title",
+      "image",
+      "sku",
+      "status",
+      "productType",
+      "regularPoints",
+      "salePoints",
+      "cost",
+      "createdAt",
+    ])
+    .where("organizationId", "=", organizationId)
+    .where("tenantId", "=", tenantId)
+    .$if(search, (qb) => qb.where("title", "ilike", `%${search}%`))
+    .limit(limit)
+    .offset(offset)
+    .execute();
+
+  /* 4) warehouse stock – only query if we actually have product IDs -------- */
+  const ids = rows.map((r) => r.id);
+  let stockRows: {
+    affiliateProductId: string;
+    warehouseId: string;
+    country: string;
+    quantity: number;
+  }[] = [];
+
+  if (ids.length) {
+    stockRows = await db
+      .selectFrom("warehouseStock")
       .select([
-        "id",
-        "title",
-        "image",
-        "sku",
-        "status",
-        "productType",
-        "regularPoints",
-        "salePoints",
-        "cost",
-        "createdAt",
+        "affiliateProductId",
+        "warehouseId",
+        "country",
+        "quantity",
       ])
-      .where("organizationId", "=", organizationId)
-      .where("tenantId", "=", tenantId)
-      .$if(search, (qb) => qb.where("title", "ilike", `%${search}%`))
-      .limit(limit)
-      .offset(offset)
+      .where("affiliateProductId", "in", ids)
       .execute();
-  
-    /* 4) warehouse stock – only query if we actually have product IDs -------- */
-    const ids = rows.map((r) => r.id);
-    let stockRows: {
-      affiliateProductId: string;
-      warehouseId: string;
-      country: string;
-      quantity: number;
-    }[] = [];
-  
-    if (ids.length) {
-      stockRows = await db
-        .selectFrom("warehouseStock")
-        .select([
-          "affiliateProductId",
-          "warehouseId",
-          "country",
-          "quantity",
-        ])
-        .where("affiliateProductId", "in", ids)
-        .execute();
-    }
-  
-    /* 5) build nested stock map --------------------------------------------- */
-    const stockMap: Record<string, Record<string, Record<string, number>>> = {};
-    for (const { affiliateProductId, warehouseId, country, quantity } of stockRows) {
-      stockMap[affiliateProductId] ??= {};
-      stockMap[affiliateProductId][warehouseId] ??= {};
-      stockMap[affiliateProductId][warehouseId][country] = quantity;
-    }
-  
-    /* 6) stitch & respond ---------------------------------------------------- */
-    const products = rows.map((r) => ({
-      id:           r.id,
-      title:        r.title,
-      image:        r.image,
-      sku:          r.sku,
-      status:       r.status,
-      productType:  r.productType,
-      pointsPrice:  mergePointsByLevel(r.regularPoints as any, r.salePoints as any),
-      cost:         r.cost,
-      stock:        stockMap[r.id] ?? {},
-      createdAt:    r.createdAt,
-    }));
-  
-    return NextResponse.json({ products });
   }
-  
+
+  /* 5) build nested stock map --------------------------------------------- */
+  const stockMap: Record<string, Record<string, Record<string, number>>> = {};
+  for (const { affiliateProductId, warehouseId, country, quantity } of stockRows) {
+    stockMap[affiliateProductId] ??= {};
+    stockMap[affiliateProductId][warehouseId] ??= {};
+    stockMap[affiliateProductId][warehouseId][country] = quantity;
+  }
+
+  /* 6) stitch & respond ---------------------------------------------------- */
+  const products = rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    image: r.image,
+    sku: r.sku,
+    status: r.status,
+    productType: r.productType,
+    pointsPrice: mergePointsByLevel(r.regularPoints as any, r.salePoints as any),
+    cost: r.cost,
+    stock: stockMap[r.id] ?? {},
+    createdAt: r.createdAt,
+  }));
+
+  return NextResponse.json({ products });
+}
+
 
 /*==================================================================
   POST

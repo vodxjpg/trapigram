@@ -110,7 +110,7 @@ export async function POST(
       }
 
       /* 2) ▼ upsert cartProducts row */
-     const { rows: existing } = await client.query(
+      const { rows: existing } = await client.query(
         `SELECT id, quantity
            FROM "cartProducts"
           WHERE "cartId" = $1
@@ -216,15 +216,15 @@ export async function POST(
 
       const base = prodRows[0];
       const product = {
-        id:           base.id,
-        title:        base.title,
-        sku:          base.sku,
-        description:  base.description,
-        image:        base.image,
+        id: base.id,
+        title: base.title,
+        sku: base.sku,
+        description: base.description,
+        image: base.image,
         regularPrice: isAffiliate ? {} : base.regularPrice ?? {},
-        price:        unitPrice,
-        stockData:    {},
-        subtotal:     Number(unitPrice) * quantity,
+        price: unitPrice,
+        stockData: {},
+        subtotal: Number(unitPrice) * quantity,
       };
 
       return NextResponse.json({ product, quantity }, { status: 201 });

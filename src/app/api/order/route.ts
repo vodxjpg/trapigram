@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
     searchParams.get("orderKey") ?? searchParams.get("reference");
 
   const filterClientId = searchParams.get("clientId");
-  const filterStatus   = searchParams.get("status");
+  const filterStatus = searchParams.get("status");
   const filterReferral = searchParams.get("referralAwarded");
 
   try {
@@ -132,7 +132,7 @@ export async function GET(req: NextRequest) {
 
     /* 3) Full list ---------------------------------------------------- */
     const clauses: string[] = [`o."organizationId" = $1`];
-    const vals: unknown[]   = [organizationId];
+    const vals: unknown[] = [organizationId];
 
     if (filterStatus) {
       clauses.push(`o.status = $${vals.length + 1}`);

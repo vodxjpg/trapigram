@@ -96,7 +96,7 @@ export async function DELETE(
     await client.query("BEGIN");
 
     // 1) Gather all term IDs for this attribute (and org)
-    const { rows: termRows } = await client.query< { id: string } >(
+    const { rows: termRows } = await client.query<{ id: string }>(
       `SELECT id
        FROM "productAttributeTerms"
        WHERE "attributeId" = $1

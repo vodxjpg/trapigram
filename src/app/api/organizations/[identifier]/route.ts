@@ -6,13 +6,13 @@ import crypto from "crypto";
 
 
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY!;
-const ENC_IV_B64  = process.env.ENCRYPTION_IV!;
+const ENC_IV_B64 = process.env.ENCRYPTION_IV!;
 
 function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
   const key = Buffer.from(ENC_KEY_B64, "base64");
-  const iv  = Buffer.from(ENC_IV_B64,  "base64");
+  const iv = Buffer.from(ENC_IV_B64, "base64");
   if (key.length !== 32) throw new Error("ENCRYPTION_KEY must be 32 bytes");
-  if (iv.length  !== 16) throw new Error("ENCRYPTION_IV must be 16 bytes");
+  if (iv.length !== 16) throw new Error("ENCRYPTION_IV must be 16 bytes");
   return { key, iv };
 }
 
@@ -52,13 +52,13 @@ export async function GET(
   const sql = isService
     ? baseSql.replace("/**MEMBERSHIP**/", "")
     : baseSql.replace(
-        "/**MEMBERSHIP**/",
-        `AND EXISTS (
+      "/**MEMBERSHIP**/",
+      `AND EXISTS (
            SELECT 1 FROM member
            WHERE "organizationId" = o.id
              AND "userId"       = $2
          )`
-      );
+    );
 
   try {
     const { rows } = await pool.query(sql, [identifier, userId]);
@@ -170,7 +170,7 @@ export async function PATCH(
     const { key, iv } = getEncryptionKeyAndIv();
     const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
     const encrypted = cipher.update(secretPhrase, "utf8", "base64")
-                    + cipher.final("base64");
+      + cipher.final("base64");
     sets.push(`"encryptedSecret" = $${idx++}`);
     vals.push(encrypted);
   }

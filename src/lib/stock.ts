@@ -55,7 +55,7 @@ export async function adjustStock(
   );
 
   const current = wsRows[0];
-  let   newQty  = (current?.quantity ?? 0) + delta;   // may go below 0
+  let newQty = (current?.quantity ?? 0) + delta;   // may go below 0
 
   /* ------------------------------------------------------------------ */
   /* 3) over‑sell guard                                                 */
@@ -64,7 +64,7 @@ export async function adjustStock(
     throw new Error("Insufficient stock and back‑orders are disabled");
   }
 
-    /* back-order handling – never store negative numbers  */
+  /* back-order handling – never store negative numbers  */
   if (newQty < 0) {
     // we *could* store the back-ordered amount elsewhere; for now
     // just clamp to zero so the CHECK constraint is satisfied.
@@ -95,7 +95,7 @@ export async function adjustStock(
       [
         meta ? productId : null,            // if metaRows came from products
         country,
-        meta ? null       : productId,      // if metaRows came from affiliateProducts
+        meta ? null : productId,      // if metaRows came from affiliateProducts
         Math.max(0, newQty),
       ],
     );

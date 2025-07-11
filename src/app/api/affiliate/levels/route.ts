@@ -12,14 +12,14 @@ const levelSchema = z.object({
   name: z.string().min(1),
   image: z.string().optional().nullable(),
   levelUpMessage: z.string().optional().nullable(),
-  levelUpMessageGroup: z.string().optional().nullable(), 
+  levelUpMessageGroup: z.string().optional().nullable(),
   requiredPoints: z.number().int().nonnegative(),
 });
 
 /* ── resolve org helper unchanged ── */
 async function orgId(req: NextRequest): Promise<string | NextResponse> {
-  const apiKey  = req.headers.get("x-api-key");
-  const secret  = req.headers.get("x-internal-secret");
+  const apiKey = req.headers.get("x-api-key");
+  const secret = req.headers.get("x-internal-secret");
   const explicit = new URL(req.url).searchParams.get("organizationId");
 
   if (apiKey) {

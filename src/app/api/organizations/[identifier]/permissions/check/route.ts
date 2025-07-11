@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pgPool as pool }            from "@/lib/db";
-import { getContext }                from "@/lib/context";
-import { validatePermissions }       from "@/lib/utils/validatePermissions";
+import { pgPool as pool } from "@/lib/db";
+import { getContext } from "@/lib/context";
+import { validatePermissions } from "@/lib/utils/validatePermissions";
 
 type Permissions = Record<string, string[]>;
 

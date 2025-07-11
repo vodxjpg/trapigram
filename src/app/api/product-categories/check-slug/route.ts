@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const categoryId = searchParams.get("categoryId");
     const slug = searchParams.get("slug");
-    
+
     const query = categoryId
       ? `SELECT id FROM "productCategories" WHERE slug = $1 AND "organizationId" = $2 AND id != $3`
       : `SELECT id FROM "productCategories" WHERE slug = $1 AND "organizationId" = $2`;

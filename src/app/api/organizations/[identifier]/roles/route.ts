@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   );
   await primeOrgRoles(organizationId);
   return NextResponse.json({ roles: rows });
-  
+
 }
 
 const RESERVED = new Set(["owner", "admin"]);
@@ -112,7 +112,7 @@ export async function PATCH(req: NextRequest) {
   }
 
   vals.unshift(roleId);
-  const sql  = `UPDATE "orgRole" SET ${sets.join(", ")} WHERE id=$1 RETURNING id,name,permissions`;
+  const sql = `UPDATE "orgRole" SET ${sets.join(", ")} WHERE id=$1 RETURNING id,name,permissions`;
   const { rows } = await pool.query(sql, vals);
   if (!rows.length) {
     return NextResponse.json({ error: "Role not found" }, { status: 404 });

@@ -6,9 +6,9 @@ import { getContext } from "@/lib/context";
 
 // ────────── validation schema ──────────
 const paymentUpdateSchema = z.object({
-  name:      z.string().min(1, { message: "Name is required." }),
-  active:    z.boolean(),
-  apiKey:    z.string().nullable().optional(),
+  name: z.string().min(1, { message: "Name is required." }),
+  active: z.boolean(),
+  apiKey: z.string().nullable().optional(),
   secretKey: z.string().nullable().optional(),
 });
 
@@ -45,7 +45,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   try {
     const { id } = await params;                     // ← await here too
-    const body   = await req.json();
+    const body = await req.json();
     const parsed = paymentUpdateSchema.parse(body);
 
     const updates: string[] = [];

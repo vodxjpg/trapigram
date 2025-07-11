@@ -5,11 +5,11 @@ import crypto from "crypto";
 import { getContext } from "@/lib/context";
 
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
-const ENC_IV_B64  = process.env.ENCRYPTION_IV  || "";
+const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
 
 function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
   const key = Buffer.from(ENC_KEY_B64, "base64");
-  const iv  = Buffer.from(ENC_IV_B64,  "base64");
+  const iv = Buffer.from(ENC_IV_B64, "base64");
   if (!ENC_KEY_B64 || !ENC_IV_B64)
     throw new Error("ENCRYPTION_KEY or ENCRYPTION_IV not set");
   if (key.length !== 32)
@@ -21,14 +21,14 @@ function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
 
 function encryptSecretNode(plain: string): string {
   const { key, iv } = getEncryptionKeyAndIv();
-  const cipher      = crypto.createCipheriv("aes-256-cbc", key, iv);
-  let encrypted     = cipher.update(plain, "utf8", "base64");
-  encrypted        += cipher.final("base64");
+  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+  let encrypted = cipher.update(plain, "utf8", "base64");
+  encrypted += cipher.final("base64");
   return encrypted;
 }
 
 const cartProductSchema = z.object({
-  code : z.string(),
+  code: z.string(),
   total: z.number(),
 });
 
@@ -63,8 +63,8 @@ export async function PATCH(
   try {
     /* ─── input ─────────────────────────────────────────────────────── */
     const { id } = await params;
-    const body   = await req.json();
-    const data   = cartProductSchema.parse(body);
+    const body = await req.json();
+    const data = cartProductSchema.parse(body);
 
     /* ─── coupon record ─────────────────────────────────────────────── */
     const { rows: cRows } = await pool.query(
@@ -83,7 +83,7 @@ export async function PATCH(
     );
     if (cartRows.length === 0)
       return NextResponse.json({ error: "Cart not found" }, { status: 400 });
-    const cart        = cartRows[0];
+    const cart = cartRows[0];
     const cartCountry = cart.country;
 
     /* ─── country restriction ───────────────────────────────────────── */
@@ -95,9 +95,9 @@ export async function PATCH(
       );
 
     /* ─── date window ───────────────────────────────────────────────── */
-    const now   = new Date();
+    const now = new Date();
     const start = new Date(cup.startDate);
-    const end   = cup.expirationDate ? new Date(cup.expirationDate) : null;
+    const end = cup.expirationDate ? new Date(cup.expirationDate) : null;
     if (now < start)
       return NextResponse.json(
         { error: "Coupon is not valid yet" },
@@ -134,9 +134,9 @@ export async function PATCH(
       );
 
     /* ─── spending window ───────────────────────────────────────────── */
-    const subtotal  = data.total;
-    const minSpend  = Number(cup.expendingMinimum) || 0;
-    const maxCap    = Number(cup.expendingLimit)   || 0;
+    const subtotal = data.total;
+    const minSpend = Number(cup.expendingMinimum) || 0;
+    const maxCap = Number(cup.expendingLimit) || 0;
     if (minSpend > 0 && subtotal < minSpend)
       return NextResponse.json(
         { error: `Order total must be at least ${minSpend.toFixed(2)} €` },
@@ -145,7 +145,7 @@ export async function PATCH(
 
     /* ─── discount calculation ──────────────────────────────────────── */
     const base = maxCap > 0 ? Math.min(subtotal, maxCap) : subtotal;
-    let   discountAmount = 0;
+    let discountAmount = 0;
 
     if (cup.discountType === "percentage") {
       const rate = Number(cup.discountAmount);            // % stored as string
@@ -163,7 +163,7 @@ export async function PATCH(
     );
 
     const discount = {
-      discountType : cup.discountType,            // "percentage" | "fixed"
+      discountType: cup.discountType,            // "percentage" | "fixed"
       discountValue: Number(cup.discountAmount),  // rate (%) or fixed €
       discountAmount,
     };

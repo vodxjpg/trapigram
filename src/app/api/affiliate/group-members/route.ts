@@ -9,18 +9,18 @@ import { v4 as uuidv4 } from "uuid";
 /*──────── POST payload ────────*/
 const joinSchema = z.object({
   groupId: z.string().min(1),      // Telegram @handle or numeric ID
-  userId:   z.string().min(1), 
+  userId: z.string().min(1),
   clientId: z.string().uuid(),
   joinedAt: z.coerce.date().optional(),
 });
 
 /*──────── GET query params ────────*/
 const querySchema = z.object({
-  groupId:          z.string().optional(),         // telegram handle
+  groupId: z.string().optional(),         // telegram handle
   affiliateGroupId: z.string().uuid().optional(),
-  clientId:         z.string().uuid().optional(),
-  page:             z.coerce.number().int().min(1).default(1),
-  pageSize:         z.coerce.number().int().min(1).max(100).default(50),
+  clientId: z.string().uuid().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(50),
 });
 
 /*───────────────────────────────────────────────────────────*/

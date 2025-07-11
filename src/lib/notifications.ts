@@ -118,8 +118,8 @@ export async function sendNotification(params: SendNotificationParams) {
     tplSubject: string | null | undefined,
     fallback: string | undefined,
   ) => (!tplSubject && !fallback
-      ? type.replace(/_/g, " ")
-      : (tplSubject || fallback || "").trim());
+    ? type.replace(/_/g, " ")
+    : (tplSubject || fallback || "").trim());
 
   const rawSubUser = makeRawSub(tplUser?.subject, subject);
   const rawSubAdm = makeRawSub(tplAdmin?.subject, subject);

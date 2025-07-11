@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { propagateDeleteDeep } from "@/lib/propagate-delete"; 
+import { propagateDeleteDeep } from "@/lib/propagate-delete";
 import { getContext } from "@/lib/context";
 
 export async function GET(req: NextRequest) {
@@ -114,11 +114,11 @@ export async function DELETE(req: NextRequest) {
       .where("shareLinkId", "=", shareLinkId)
       .execute();
 
-      const targetProductIds = mappings.map((m) => m.targetProductId);
-    
-      if (targetProductIds.length) {
-        await propagateDeleteDeep(db, targetProductIds);          // <── ADD
-      }
+    const targetProductIds = mappings.map((m) => m.targetProductId);
+
+    if (targetProductIds.length) {
+      await propagateDeleteDeep(db, targetProductIds);          // <── ADD
+    }
 
     await db
       .deleteFrom("sharedProductMapping")

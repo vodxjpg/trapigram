@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
   const session = await auth.api.getSession({
     headers: await headers() // you need to pass the headers object.
-  })  
+  })
   const email = session?.user.email
   try {
     const body: ChangePasswordRequest = await request.json();
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
 
     const ctx = await auth.$context
     //Verify the provided current password against the stored hashed password
-    const isPasswordValid = await ctx.password.verify({password: body.currentPassword, hash: account.password})
+    const isPasswordValid = await ctx.password.verify({ password: body.currentPassword, hash: account.password })
     if (!isPasswordValid) {
       return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 });
     }
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
     // Hash the new password
     const hash = await ctx.password.hash(body.newPassword);
 
-   await ctx.internalAdapter.updatePassword(user.id, hash)
+    await ctx.internalAdapter.updatePassword(user.id, hash)
 
     return NextResponse.json({ success: true, message: 'Password updated successfully' });
   } catch (error) {

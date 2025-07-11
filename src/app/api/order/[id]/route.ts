@@ -101,57 +101,57 @@ export async function GET(
   ];
 
   const products = all.map((r: any) => ({
-    id:          r.id,
-    title:       r.title,
+    id: r.id,
+    title: r.title,
     description: r.description,
-    image:       r.image,
-    sku:         r.sku,
-    quantity:    r.quantity,
-    unitPrice:   Number(r.unitPrice),
+    image: r.image,
+    sku: r.sku,
+    quantity: r.quantity,
+    unitPrice: Number(r.unitPrice),
     isAffiliate: r.isAffiliate,
-    subtotal:    Number(r.unitPrice) * r.quantity,
+    subtotal: Number(r.unitPrice) * r.quantity,
   }));
 
-// 6. Compute subtotal *only* across non-affiliate (monetary) items
-const subtotal = products
-  .filter(p => !p.isAffiliate)
-  .reduce((sum, p) => sum + p.subtotal, 0);
+  // 6. Compute subtotal *only* across non-affiliate (monetary) items
+  const subtotal = products
+    .filter(p => !p.isAffiliate)
+    .reduce((sum, p) => sum + p.subtotal, 0);
 
   // 7. Build full response
   const full = {
-    id:        order.id,
-    orderKey:  order.orderKey,
-    clientId:  order.clientId,
-    cartId:    order.cartId,
-    status:    order.status,
-    country:   order.country,
+    id: order.id,
+    orderKey: order.orderKey,
+    clientId: order.clientId,
+    cartId: order.cartId,
+    status: order.status,
+    country: order.country,
     orderMeta: order.orderMeta ?                        // jsonb → JS object
-    (typeof order.orderMeta === "string"
-       ? JSON.parse(order.orderMeta)        // pg hasn’t parsed
-       : order.orderMeta)                   // pg already parsed
-  : [],
+      (typeof order.orderMeta === "string"
+        ? JSON.parse(order.orderMeta)        // pg hasn’t parsed
+        : order.orderMeta)                   // pg already parsed
+      : [],
     products,
-    coupon:    order.couponCode,
-    couponType:    order.couponType,
-    discount:      Number(order.discountTotal),
+    coupon: order.couponCode,
+    couponType: order.couponType,
+    discount: Number(order.discountTotal),
     discountValue: Number(order.discountValue),
-    shipping:      Number(order.shippingTotal),
+    shipping: Number(order.shippingTotal),
     subtotal,
-    total:         Number(order.totalAmount),
-    pointsRedeemed:        order.pointsRedeemed,
-    pointsRedeemedAmount:  Number(order.pointsRedeemedAmount),
-    referralAwarded:      order.referralAwarded === true,
-    trackingNumber:       order.trackingNumber,
+    total: Number(order.totalAmount),
+    pointsRedeemed: order.pointsRedeemed,
+    pointsRedeemedAmount: Number(order.pointsRedeemedAmount),
+    referralAwarded: order.referralAwarded === true,
+    trackingNumber: order.trackingNumber,
     shippingInfo: {
       address: decryptSecretNode(order.address),
       company: order.shippingService,
-      method:  order.shippingMethod,
+      method: order.shippingMethod,
       payment: order.paymentMethod,
     },
     client: {
       firstName: client.firstName,
-      lastName:  client.lastName,
-      username:  client.username,
+      lastName: client.lastName,
+      username: client.username,
       email: client.email ?? "",
     },
   };
@@ -168,28 +168,28 @@ export async function PATCH(
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-    // enforce order:update
+  // enforce order:update
   const { id } = await params;
   const body = await req.json();
 
   const fields: string[] = [];
   const values: any[] = [];
 
-    // ── allow updating our new flag ─────────────────────────────
+  // ── allow updating our new flag ─────────────────────────────
   if ("referralAwarded" in body) {
     fields.push(`"referralAwarded" = $${fields.length + 1}`);
     values.push(body.referralAwarded);
   }
 
   // ── 1. orderMeta  (expects array) ────────────────────────────
-if ("orderMeta" in body) {
-  const metaArr = z.array(z.any()).parse(body.orderMeta);          // basic guard
-  /*  jsonb concatenation: existing || new_chunk  */
-  fields.push(
-    `"orderMeta" = COALESCE("orderMeta",'[]'::jsonb) || $${fields.length + 1}::jsonb`
-  );
-  values.push(JSON.stringify(metaArr));
-}
+  if ("orderMeta" in body) {
+    const metaArr = z.array(z.any()).parse(body.orderMeta);          // basic guard
+    /*  jsonb concatenation: existing || new_chunk  */
+    fields.push(
+      `"orderMeta" = COALESCE("orderMeta",'[]'::jsonb) || $${fields.length + 1}::jsonb`
+    );
+    values.push(JSON.stringify(metaArr));
+  }
 
   if ("discount" in body) {
     fields.push(`"discountTotal" = $${fields.length + 1}`);

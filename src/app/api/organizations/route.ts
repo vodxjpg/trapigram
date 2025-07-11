@@ -4,12 +4,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verify as jwtVerify, JwtPayload } from 'jsonwebtoken';
 import { pgPool as pool } from '@/lib/db';
-import { auth }   from '@/lib/auth';
+import { auth } from '@/lib/auth';
 import { loadKey } from '@/lib/readKey';
 
 /*──────────────────── Config ────────────────────*/
-const SERVICE_API_KEY  = process.env.SERVICE_API_KEY ?? '';
-const JWT_PUBLIC_KEY   = loadKey(
+const SERVICE_API_KEY = process.env.SERVICE_API_KEY ?? '';
+const JWT_PUBLIC_KEY = loadKey(
   process.env.SERVICE_JWT_PUBLIC_KEY ??
   process.env.SERVICE_JWT_PUBLIC_KEY_PATH,
 );
@@ -53,15 +53,15 @@ export async function GET(req: NextRequest) {
 
       return NextResponse.json({
         organizations: rows.map(r => ({
-          id:              r.id,
-          name:            r.name,
-          slug:            r.slug,
-          logo:            r.logo,
-          countries:       r.countries,
-          metadata:        r.metadata,
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          logo: r.logo,
+          countries: r.countries,
+          metadata: r.metadata,
           encryptedSecret: r.encryptedSecret,
-          memberCount:     Number(r.memberCount),
-          userRole:        null,
+          memberCount: Number(r.memberCount),
+          userRole: null,
         })),
       });
     } catch (err) {
@@ -102,15 +102,15 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       organizations: rows.map(r => ({
-        id:              r.id,
-        name:            r.name,
-        slug:            r.slug,
-        logo:            r.logo,
-        countries:       r.countries,
-        metadata:        r.metadata,
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        logo: r.logo,
+        countries: r.countries,
+        metadata: r.metadata,
         encryptedSecret: r.encryptedSecret,
-        memberCount:     Number(r.memberCount),
-        userRole:        r.userRole,
+        memberCount: Number(r.memberCount),
+        userRole: r.userRole,
       })),
     });
   } catch (err) {

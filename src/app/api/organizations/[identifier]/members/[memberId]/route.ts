@@ -16,7 +16,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { identifier
   if (!newRole) return NextResponse.json({ error: "Missing role" }, { status: 400 });
 
   // 1) Fetch the target member's current role
-  const currentQ = await pool.query< { role: string } >(
+  const currentQ = await pool.query<{ role: string }>(
     `SELECT role FROM member WHERE id = $1 AND "organizationId" = $2`,
     [memberId, organizationId]
   );
@@ -26,7 +26,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { identifier
   const oldRole = currentQ.rows[0].role;
 
   // 2) Fetch the caller's role
-  const callerQ = await pool.query< { role: string } >(
+  const callerQ = await pool.query<{ role: string }>(
     `SELECT role FROM member WHERE "organizationId" = $1 AND "userId" = $2`,
     [organizationId, callerId]
   );

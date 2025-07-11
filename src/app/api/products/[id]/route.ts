@@ -158,10 +158,10 @@ export async function GET(
     const variationsRaw =
       raw.productType === "variable"
         ? await db
-            .selectFrom("productVariations")
-            .selectAll()
-            .where("productId", "=", id)
-            .execute()
+          .selectFrom("productVariations")
+          .selectAll()
+          .where("productId", "=", id)
+          .execute()
         : [];
 
     const variations = variationsRaw.map((v) => ({

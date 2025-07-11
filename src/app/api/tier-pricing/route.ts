@@ -8,17 +8,17 @@ import { v4 as uuidv4 } from "uuid"
 /* ─── schemas ─────────────────────────── */
 const stepSchema = z.object({
   fromUnits: z.number().min(1),
-  toUnits  : z.number().min(1),
-  price    : z.number().positive(),
+  toUnits: z.number().min(1),
+  price: z.number().positive(),
 })
 const productItemSchema = z
   .object({ productId: z.string().uuid().nullable(), variationId: z.string().uuid().nullable() })
   .refine(d => d.productId || d.variationId, { message: "Must specify productId or variationId" })
 const bodySchema = z.object({
-  name     : z.string().min(1),
+  name: z.string().min(1),
   countries: z.array(z.string().length(2)).min(1),
-  products : z.array(productItemSchema).min(1),
-  steps    : z.array(stepSchema).min(1),
+  products: z.array(productItemSchema).min(1),
+  steps: z.array(stepSchema).min(1),
 })
 
 /* ─── GET list ────────────────────────── */
@@ -85,8 +85,8 @@ export async function POST(req: NextRequest) {
         id: uuidv4(),
         tierPricingId: pricingId,
         fromUnits: s.fromUnits,
-        toUnits  : s.toUnits,
-        price    : s.price,
+        toUnits: s.toUnits,
+        price: s.price,
         createdAt: now,
         updatedAt: now,
       })
@@ -98,9 +98,9 @@ export async function POST(req: NextRequest) {
       .values({
         id: uuidv4(),
         tierPricingId: pricingId,
-        productId  : p.productId,
+        productId: p.productId,
         variationId: p.variationId,
-        createdAt : now,
+        createdAt: now,
       })
       .execute()
 

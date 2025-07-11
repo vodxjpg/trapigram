@@ -41,12 +41,12 @@ export async function GET(req: NextRequest) {
   /* ------------------------------------- */
 
   const { searchParams } = new URL(req.url);
-  const page     = Number(searchParams.get("page"))     || 1;
+  const page = Number(searchParams.get("page")) || 1;
   const pageSize = Number(searchParams.get("pageSize")) || 10;
-  const search   = searchParams.get("search") || "";
+  const search = searchParams.get("search") || "";
 
   /* count first --------------------------------------------------- */
-  let countQuery   = `SELECT COUNT(*) FROM "paymentMethods" WHERE "tenantId" = $1`;
+  let countQuery = `SELECT COUNT(*) FROM "paymentMethods" WHERE "tenantId" = $1`;
   const countVals: any[] = [tenantId];
   if (search) {
     countQuery += ` AND (name ILIKE $2 OR CAST(active AS TEXT) ILIKE $2)`;
@@ -69,8 +69,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const [{ count }] = (await pool.query(countQuery, countVals)).rows as { count: string }[];
-    const totalRows   = Number(count);
-    const totalPages  = Math.ceil(totalRows / pageSize);
+    const totalRows = Number(count);
+    const totalPages = Math.ceil(totalRows / pageSize);
 
     const { rows: methods } = await pool.query(query, vals);
 
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
   /* ------------------------------------- */
 
   try {
-    const body          = await req.json();
+    const body = await req.json();
     const { name, active, apiKey, secretKey } = paymentCreateSchema.parse(body);
 
     const id = uuidv4();

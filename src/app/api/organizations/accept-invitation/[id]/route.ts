@@ -3,9 +3,9 @@ export const runtime = "nodejs";              // If Node is available, use it
 export const dynamic = "force-dynamic";       // Disable edge-cache for safety
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth }  from "@/lib/auth";
-import { db }    from "@/lib/db";
-import crypto    from "crypto";
+import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
+import crypto from "crypto";
 
 /* helper – works with Edge (Promise params) or Node (plain object) */
 async function extractId(
@@ -87,11 +87,11 @@ export async function GET(
 
       if (!exists) {
         await trx.insertInto("member").values({
-          id:             crypto.randomUUID(),
-          userId:         session.user.id,
+          id: crypto.randomUUID(),
+          userId: session.user.id,
           organizationId: invite.organizationId!,
-          role:           invite.role,
-          createdAt:      new Date(),
+          role: invite.role,
+          createdAt: new Date(),
         }).execute();
       }
     });
@@ -124,24 +124,24 @@ export async function GET(
   const userId = existingUser
     ? existingUser.id
     : (
-        await (await auth.$context).internalAdapter.createUser({
-          name: invite.email.split("@")[0] ?? "User",
-          email: invite.email,
-          emailVerified: false,
-          phone: null,
-          country: null,
-          is_guest: true,
-        })
-      ).id;
+      await (await auth.$context).internalAdapter.createUser({
+        name: invite.email.split("@")[0] ?? "User",
+        email: invite.email,
+        emailVerified: false,
+        phone: null,
+        country: null,
+        is_guest: true,
+      })
+    ).id;
 
   /* membership – ignore duplicate-key errors gracefully */
   try {
     await db.insertInto("member").values({
-      id:             crypto.randomUUID(),
+      id: crypto.randomUUID(),
       userId,
       organizationId: invite.organizationId!,
-      role:           invite.role,
-      createdAt:      new Date(),
+      role: invite.role,
+      createdAt: new Date(),
     }).execute();
   } catch (e: any) {
     if (e?.code !== "23505") throw e; // silence only “duplicate key”

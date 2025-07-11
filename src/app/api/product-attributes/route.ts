@@ -17,9 +17,9 @@ export async function GET(req: NextRequest) {
 
   try {
     const { searchParams } = new URL(req.url);
-    const page     = Number(searchParams.get("page"))     || 1;
+    const page = Number(searchParams.get("page")) || 1;
     const pageSize = Number(searchParams.get("pageSize")) || 10;
-    const search   = searchParams.get("search") || "";
+    const search = searchParams.get("search") || "";
 
     const countQuery = `
       SELECT COUNT(*) FROM "productAttributes"

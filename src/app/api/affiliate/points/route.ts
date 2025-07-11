@@ -13,16 +13,16 @@ import type { PoolClient } from "pg";               /* type only */
 
 /*───────── validation ─────────*/
 const createSchema = z.object({
-  id:          z.string().min(1),          // clientId
-  points:      z.number().int(),
-  action:      z.string().min(1),
+  id: z.string().min(1),          // clientId
+  points: z.number().int(),
+  action: z.string().min(1),
   description: z.string().nullable().optional(),
-  sourceId:    z.string().nullable().optional(),
+  sourceId: z.string().nullable().optional(),
 });
 
 const querySchema = z.object({
-  id:       z.string().optional(),
-  page:     z.coerce.number().min(1).default(1),
+  id: z.string().optional(),
+  page: z.coerce.number().min(1).default(1),
   pageSize: z.coerce.number().min(1).max(100).default(10),
 });
 
@@ -56,13 +56,13 @@ export async function GET(req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  const qp              = querySchema.parse(
+  const qp = querySchema.parse(
     Object.fromEntries(new URL(req.url).searchParams.entries()),
   );
   const { id, page, pageSize } = qp;
 
   const where: string[] = [`"organizationId" = $1`];
-  const vals: any[]     = [organizationId];
+  const vals: any[] = [organizationId];
   if (id) { where.push(`"clientId" = $2`); vals.push(id); }
 
   const [{ count }] = (
@@ -96,27 +96,27 @@ export async function POST(req: NextRequest) {
 
   /* ── legacy field normalisation BEFORE schema parsing ───────────*/
   const raw = await req.json();
-  if (raw.clientId && !raw.id)  raw.id = raw.clientId;
-  if (raw.reason   && !raw.action) {
+  if (raw.clientId && !raw.id) raw.id = raw.clientId;
+  if (raw.reason && !raw.action) {
     raw.action = ({
-      referral:  "referral_bonus",
-      review:    "review_bonus",
-      spending:  "spending_bonus",
-      group:     "group_join",
-    } as Record<string,string>)[raw.reason] ?? raw.reason;
+      referral: "referral_bonus",
+      review: "review_bonus",
+      spending: "spending_bonus",
+      group: "group_join",
+    } as Record<string, string>)[raw.reason] ?? raw.reason;
   }
   if (!raw.description) {
     raw.description = ({
-      review_bonus:   "Review bonus",
+      review_bonus: "Review bonus",
       referral_bonus: "Referral bonus",
       spending_bonus: "Spending bonus",
-      group_join:     "Group-join bonus",
-    } as Record<string,string>)[raw.action] ?? null;
+      group_join: "Group-join bonus",
+    } as Record<string, string>)[raw.action] ?? null;
   }
 
   try {
     const payload = createSchema.parse(raw);
-    const logId   = uuidv4();
+    const logId = uuidv4();
 
     const client = await pool.connect();
     try {

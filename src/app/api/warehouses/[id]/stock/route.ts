@@ -14,10 +14,10 @@ const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 /* ────────────────────────────────────────────────────────────── */
 const stockUpdateSchema = z.array(
   z.object({
-    productId  : z.string(),
+    productId: z.string(),
     variationId: z.string().nullable(),
-    country    : z.string(),
-    quantity   : z.number().min(0),
+    country: z.string(),
+    quantity: z.number().min(0),
   }),
 );
 type StockUpdate = z.infer<typeof stockUpdateSchema>[number];
@@ -39,8 +39,8 @@ function safeParseJSON<T = any>(value: unknown): T {
 }
 
 function attrLabel(
-  attrs   : Record<string, string>,
-  termMap : Map<string, string>,
+  attrs: Record<string, string>,
+  termMap: Map<string, string>,
 ): string {
   return Object.values(attrs)
     .map((tid) => termMap.get(tid) ?? tid)
@@ -56,13 +56,13 @@ export async function GET(
 ) {
   try {
     /* ── authentication ───────────────────────────────────────── */
-    const session        = await auth.api.getSession({ headers: req.headers });
+    const session = await auth.api.getSession({ headers: req.headers });
     const internalSecret = req.headers.get("x-internal-secret");
     if (!session && internalSecret !== INTERNAL_API_SECRET) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-     const { id: warehouseId } = await ctx.params;
+    const { id: warehouseId } = await ctx.params;
 
     /* ── verify warehouse ownership ───────────────────────────── */
     const warehouse = await db
@@ -92,10 +92,10 @@ export async function GET(
     /* ── 1. money-products query (unchanged) ──────────────────── */
     const moneyRows = await db
       .selectFrom("warehouseStock")
-      .innerJoin("products",           "products.id",           "warehouseStock.productId")
-      .leftJoin ("productVariations",  "productVariations.id",  "warehouseStock.variationId")
-      .leftJoin ("productCategory",    "productCategory.productId", "products.id")
-      .leftJoin ("productCategories",  "productCategories.id",  "productCategory.categoryId")
+      .innerJoin("products", "products.id", "warehouseStock.productId")
+      .leftJoin("productVariations", "productVariations.id", "warehouseStock.variationId")
+      .leftJoin("productCategory", "productCategory.productId", "products.id")
+      .leftJoin("productCategories", "productCategories.id", "productCategory.categoryId")
       .select([
         "warehouseStock.productId         as pid",
         "warehouseStock.variationId",
@@ -111,14 +111,14 @@ export async function GET(
         "productCategories.name           as catName",
       ])
       .where("warehouseStock.warehouseId", "=", warehouseId)
-      .where("warehouseStock.quantity",    ">", 0)
+      .where("warehouseStock.quantity", ">", 0)
       .execute();
 
     /* ── 2. affiliate-products query (uses sql for NULL) ─────── */
     const affRows = await db
       .selectFrom("warehouseStock")
-      .innerJoin("affiliateProducts",          "affiliateProducts.id",          "warehouseStock.productId")
-      .leftJoin ("affiliateProductVariations", "affiliateProductVariations.id", "warehouseStock.variationId")
+      .innerJoin("affiliateProducts", "affiliateProducts.id", "warehouseStock.productId")
+      .leftJoin("affiliateProductVariations", "affiliateProductVariations.id", "warehouseStock.variationId")
       .select([
         "warehouseStock.productId         as pid",
         "warehouseStock.variationId",
@@ -134,7 +134,7 @@ export async function GET(
         sql`NULL`.as("catName"),
       ])
       .where("warehouseStock.warehouseId", "=", warehouseId)
-      .where("warehouseStock.quantity",    ">", 0)
+      .where("warehouseStock.quantity", ">", 0)
       .execute();
 
     const rows = [...moneyRows, ...affRows];
@@ -143,42 +143,42 @@ export async function GET(
     const termIds = new Set<string>();
     rows.forEach(r => {
       if (r.vAttrs) {
-        const attrs = safeParseJSON<Record<string,string>>(r.vAttrs);
+        const attrs = safeParseJSON<Record<string, string>>(r.vAttrs);
         Object.values(attrs).forEach(tid => termIds.add(tid));
       }
     });
 
     const termMap = termIds.size
       ? new Map(
-          (
-            await db
-              .selectFrom("productAttributeTerms")
-              .select(["id","name"])
-              .where("id","in",[...termIds])
-              .execute()
-          ).map(t => [t.id, t.name]),
-        )
-      : new Map<string,string>();
+        (
+          await db
+            .selectFrom("productAttributeTerms")
+            .select(["id", "name"])
+            .where("id", "in", [...termIds])
+            .execute()
+        ).map(t => [t.id, t.name]),
+      )
+      : new Map<string, string>();
 
     /* ── 4. transform rows into final payload ─────────────────── */
     const stock = rows.map(r => {
       const vLabel = r.vAttrs
-        ? attrLabel(safeParseJSON<Record<string,string>>(r.vAttrs), termMap)
+        ? attrLabel(safeParseJSON<Record<string, string>>(r.vAttrs), termMap)
         : "";
 
       const mergedCost = r.variationId
-        ? safeParseJSON<Record<string,number>>(r.vCost)
-        : safeParseJSON<Record<string,number>>(r.pCost);
+        ? safeParseJSON<Record<string, number>>(r.vCost)
+        : safeParseJSON<Record<string, number>>(r.pCost);
 
       return {
-        productId   : r.pid,
-        variationId : r.variationId,
-        title       : r.variationId ? `${r.pTitle} - ${vLabel || r.vSku}` : r.pTitle,
-        cost        : mergedCost,
-        country     : r.country,
-        quantity    : r.quantity,
-        productType : r.pType,
-        categoryId  : r.catId,
+        productId: r.pid,
+        variationId: r.variationId,
+        title: r.variationId ? `${r.pTitle} - ${vLabel || r.vSku}` : r.pTitle,
+        cost: mergedCost,
+        country: r.country,
+        quantity: r.quantity,
+        productType: r.pType,
+        categoryId: r.catId,
         categoryName: r.catName || "Uncategorized",
       };
     });
@@ -276,10 +276,10 @@ export async function PATCH(
 
       const affiliateProduct = isAffiliate
         ? await db
-            .selectFrom("affiliateProducts")
-            .select(["id", "productType", "tenantId"])
-            .where("id", "=", productId)
-            .executeTakeFirst()
+          .selectFrom("affiliateProducts")
+          .select(["id", "productType", "tenantId"])
+          .where("id", "=", productId)
+          .executeTakeFirst()
         : null;
 
       if (!moneyProduct && !affiliateProduct) {
@@ -313,17 +313,17 @@ export async function PATCH(
 
         const variationExists = isAffiliate
           ? await db
-              .selectFrom("affiliateProductVariations")
-              .select("id")
-              .where("id", "=", variationId)
-              .where("productId", "=", productId)
-              .executeTakeFirst()
+            .selectFrom("affiliateProductVariations")
+            .select("id")
+            .where("id", "=", variationId)
+            .where("productId", "=", productId)
+            .executeTakeFirst()
           : await db
-              .selectFrom("productVariations")
-              .select("id")
-              .where("id", "=", variationId)
-              .where("productId", "=", productId)
-              .executeTakeFirst();
+            .selectFrom("productVariations")
+            .select("id")
+            .where("id", "=", variationId)
+            .where("productId", "=", productId)
+            .executeTakeFirst();
 
         if (!variationExists) {
           return NextResponse.json(
@@ -357,16 +357,16 @@ export async function PATCH(
         await db
           .insertInto("warehouseStock")
           .values({
-            id            : generateId("WS"),
+            id: generateId("WS"),
             warehouseId,
             productId,
             variationId,
             country,
             quantity,
             organizationId: warehouse.organizationId,
-            tenantId      : warehouse.tenantId,
-            createdAt     : new Date(),
-            updatedAt     : new Date(),
+            tenantId: warehouse.tenantId,
+            createdAt: new Date(),
+            updatedAt: new Date(),
           })
           .execute();
       }
@@ -591,20 +591,20 @@ export async function PATCH(
               await db
                 .insertInto("warehouseStock")
                 .values({
-                  id            : generateId("WS"),
-                  warehouseId   : targetWarehouse.id,
-                  productId     : targetProductId,
-                  variationId   : targetVariationId,
+                  id: generateId("WS"),
+                  warehouseId: targetWarehouse.id,
+                  productId: targetProductId,
+                  variationId: targetVariationId,
                   country,
-                  quantity      : totalQuantity,
+                  quantity: totalQuantity,
                   organizationId: recipientOrganizationId,
-                  tenantId      : targetWarehouse.tenantId,
-                  createdAt     : new Date(),
-                  updatedAt     : new Date(),
+                  tenantId: targetWarehouse.tenantId,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
                 })
                 .execute();
             }
-            
+
             console.log(`[PROPAGATE] Successfully updated stock for targetProductId: ${targetProductId}`);
           } /* end inner‑for */
         }
