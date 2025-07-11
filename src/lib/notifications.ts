@@ -441,7 +441,7 @@ async function dispatchTelegram(opts: {
             inline_keyboard: [
               [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
             ],
-          })a
+          })
           : undefined,
       })),
     );
