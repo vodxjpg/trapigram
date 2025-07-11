@@ -140,35 +140,30 @@ export default function TicketDetail() {
     
   }, [id, canView]);
 
-  /* ────────────────────────── LIVE UPDATES (SSE) ───────────────────────── */
-useEffect(() => {
-  // no ticket id → nothing to listen to
-  if (!id) return;
-
-  // open a single EventSource per page-view
-  const es = new EventSource(`/api/tickets/${id}/events`);
-
-  // push every incoming message to React state
-  es.onmessage = (evt) => {
-    try {
-      const msg: TicketMessage = JSON.parse(evt.data);
-      console.log('Received SSE message:', msg);
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === msg.id)) {
-          console.log('Message already exists, skipping:', msg.id);
-          return prev;
-        }
-        console.log('Adding new message to state:', msg.id);
-        return [...prev, msg];
-      });
-    } catch (err) {
-      console.error('Error parsing SSE message:', err);
-    }
-  };
-
-  // cleanup when component unmounts or id changes
-  return () => es.close();
-}, [id]);
+   /* ────────────────────────── LIVE UPDATES (POLLING) ─────────────────────── */
+   useEffect(() => {
+     if (!id || !canView) return;
+  
+     const interval = setInterval(async () => {
+       try {
+         const res = await fetch(`/api/tickets/${id}/messages`);
+         if (!res.ok) throw new Error();
+         const fetchedMessages: TicketMessage[] = await res.json();
+         setMessages(prev => {
+           const existingIds = new Set(prev.map(m => m.id));
+           const newMessages = fetchedMessages.filter(m => !existingIds.has(m.id));
+           if (newMessages.length > 0) {
+             return [...prev, ...newMessages].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+           }
+           return prev;
+         });
+       } catch (err) {
+         console.error('Error fetching messages:', err);
+       }
+     }, 5000); // Poll every 5 seconds
+  
+     return () => clearInterval(interval);
+   }, [id, canView]);
 
   /* ---------------- guards AFTER all hooks ------------------------------ */
   if (viewLoading || !canView) return null;

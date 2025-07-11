@@ -1,7 +1,8 @@
 // src/app/api/tickets/[id]/messages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
+import { ClientBase } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
@@ -10,6 +11,36 @@ import {
   NotificationChannel // enum helper
 } from "@/lib/notifications";
 import { emit } from "@/lib/ticket-events";
+
+export async function GET(
+    req: NextRequest,
+    { params }: { params: { id: string } },
+  ) {
+    const { id } = params;
+  
+    try {
+      const result = await pool.query(
+        `
+        SELECT *
+        FROM "ticketMessages"
+        WHERE "ticketId" = $1
+        ORDER BY "createdAt" ASC
+        `,
+        [id],
+      );
+  
+      const messages = result.rows.map((row) => ({
+        ...row,
+        attachments: JSON.parse(row.attachments || "[]"),
+      }));
+  
+      return NextResponse.json(messages);
+    } catch (err) {
+      console.error("[GET /api/tickets/[id]/messages] error:", err);
+      return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    }
+  }
+
 /** Helper to check if the caller is the org owner */
 async function isOwner(organizationId: string, userId: string) {
   const { rowCount } = await pool.query(
