@@ -4,6 +4,7 @@ export const revalidate = 0;
 
 import { NextRequest } from "next/server";
 import { pgPool as pool } from "@/lib/db";
+import type { ClientBase } from "pg";
 
 type DbRow = {
   id: string;
@@ -34,40 +35,37 @@ export async function GET(
 
   const encoder = new TextEncoder();
 
-  const stream = new ReadableStream({
+  let pingId: NodeJS.Timeout;   // ← hoisted so cancel() can see them
+  let ttlId:  NodeJS.Timeout;
+  
+  const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (data: object) =>
-        controller.enqueue(encoder.encode(`data:${JSON.stringify(data)}\n\n`));
-
-      /* heartbeat so the connection stays open on some proxies */
-      const ping = setInterval(() => {
-        controller.enqueue(encoder.encode(": ping\n\n"));
-      }, 10_000);
-
+      const send = (obj: unknown) =>
+        controller.enqueue(encoder.encode(`data:${JSON.stringify(obj)}\n\n`));
+  
+      /* ── heartbeat ───────────────────────────────────────────── */
+      pingId = setInterval(() => controller.enqueue(encoder.encode(": ping\n\n")), 10_000);
+  
+      /* ── pg NOTIFY handler ───────────────────────────────────── */
       client.on("notification", (msg) => {
         if (msg.channel !== chan) return;
-        try {
-          send(normaliseRow(JSON.parse(msg.payload ?? "{}")));
-        } catch {
-          console.warn("Malformed NOTIFY payload");
-        }
+        try   { send(JSON.parse(msg.payload ?? "{}")); }
+        catch { /* ignore malformed */ }
       });
-
-      /* close after 25 s – browser will auto-reconnect */
-      const ttl = setTimeout(() => {
-        clearInterval(ping);
+  
+      /* ── auto-close after 25 s (client will reconnect) ───────── */
+      ttlId = setTimeout(() => {
+        clearInterval(pingId);
         controller.close();
         client.release();
       }, 25_000);
-
-      /* clean-up if consumer cancels earlier */
-      return {
-        cancel() {
-          clearTimeout(ttl);
-          clearInterval(ping);
-          client.release();
-        },
-      };
+    },
+  
+    /* **This** is what the stream implementation calls on Abort / GC */
+    cancel() {
+      clearInterval(pingId);
+      clearTimeout(ttlId);
+      client.release();
     },
   });
 
