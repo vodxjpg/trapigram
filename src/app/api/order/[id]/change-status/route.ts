@@ -370,6 +370,7 @@ export async function PATCH(
         trigger: "order_status_change",
         channels: ["email", "in_app", "telegram"],
         clientId: ord.clientId,
+        url: `/orders/${id}`, 
         variables: {
           product_list: productList,
           order_number: ord.orderKey,
