@@ -1,3 +1,4 @@
+// src/app/api/cart/[id]/update-product/route.ts  ← FULL, runnable file
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
@@ -12,14 +13,17 @@ import {
 import { resolveUnitPrice } from "@/lib/pricing";
 
 /* ─────────────────────────────── */
-
 const cartProductSchema = z.object({
   productId: z.string(),
   quantity: z.number().optional(),
   action: z.enum(["add", "subtract"]),
 });
 
-function findTier(tiers: Tier[], country: string, productId: string): Tier | null {
+function findTier(
+  tiers: Tier[],
+  country: string,
+  productId: string,
+): Tier | null {
   return (
     tiers.find(
       (t) =>
@@ -30,7 +34,6 @@ function findTier(tiers: Tier[], country: string, productId: string): Tier | nul
     ) ?? null
   );
 }
-
 
 export async function PATCH(
   req: NextRequest,
@@ -48,7 +51,7 @@ export async function PATCH(
     try {
       await client.query("BEGIN");
 
-      /* 1) cart line + client ctx */
+      /* 1️⃣ cart line + client context */
       const { rows: cRows } = await client.query(
         `SELECT cl.country,
                 cl."levelId",
@@ -64,7 +67,10 @@ export async function PATCH(
       );
       if (!cRows.length) {
         await client.query("ROLLBACK");
-        return NextResponse.json({ error: "Cart item not found" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Cart item not found" },
+          { status: 404 },
+        );
       }
       const {
         country,
@@ -81,7 +87,7 @@ export async function PATCH(
       };
       const isAffiliate = Boolean(affiliateProductId);
 
-      /* 2) base price / points per unit */
+      /* 2️⃣ base price / points per unit */
       let basePrice: number;
       if (isAffiliate) {
         const { rows: apRows } = await client.query(
@@ -112,7 +118,7 @@ export async function PATCH(
         basePrice = p.price;
       }
 
-      /* 3) work out the new quantity */
+      /* 3️⃣ compute new quantity */
       const newQty = data.action === "add" ? oldQty + 1 : oldQty - 1;
       if (newQty < 0) {
         await client.query("ROLLBACK");
@@ -122,12 +128,11 @@ export async function PATCH(
         );
       }
 
-      /* 4) affiliate balance flow (unchanged) */
+      /* 4️⃣ affiliate balance flow (unchanged) */
       if (isAffiliate) {
         const deltaQty = newQty - oldQty;
-        const absPoints = Math.abs(deltaQty) * basePrice;
-
         if (deltaQty !== 0) {
+          const absPoints = Math.abs(deltaQty) * basePrice;
           const { rows: balRows } = await client.query(
             `SELECT "pointsCurrent"
                FROM "affiliatePointBalances"
@@ -140,7 +145,11 @@ export async function PATCH(
             if (absPoints > pointsCurrent) {
               await client.query("ROLLBACK");
               return NextResponse.json(
-                { error: "Insufficient affiliate points", required: absPoints, available: pointsCurrent },
+                {
+                  error: "Insufficient affiliate points",
+                  required: absPoints,
+                  available: pointsCurrent,
+                },
                 { status: 400 },
               );
             }
@@ -177,12 +186,11 @@ export async function PATCH(
         }
       }
 
-      /* 5) tier-pricing (mix-and-match) */
+      /* 5️⃣ tier-pricing for normal products */
       let pricePerUnit = basePrice;
       if (!isAffiliate) {
         const tiers = (await tierPricing(organizationId)) as Tier[];
         const tier = findTier(tiers, country, data.productId);
-
         if (tier) {
           const tierIds = tier.products
             .map((p) => p.productId)
@@ -199,21 +207,18 @@ export async function PATCH(
           const qtyAfter = qtyBefore - oldQty + newQty;
 
           pricePerUnit = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
-
           await client.query(
             `UPDATE "cartProducts"
                 SET "unitPrice" = $1,
                     "updatedAt" = NOW()
-              WHERE "cartId" = $2
+              WHERE "cartId"   = $2
                 AND "productId" = ANY($3::text[])`,
             [pricePerUnit, cartId, tierIds],
           );
         }
       }
 
-      /* 6) persist the change
-            – if the new quantity is zero, *delete* the row             */
-      let upd;
+      /* 6️⃣ persist: delete row if newQty = 0, else update */
       if (newQty === 0) {
         await client.query(
           `DELETE FROM "cartProducts"
@@ -221,22 +226,19 @@ export async function PATCH(
                   AND ("productId" = $2 OR "affiliateProductId" = $2)`,
           [cartId, data.productId],
         );
-        upd = [];
       } else {
-        const { rows } = await client.query(
+        await client.query(
           `UPDATE "cartProducts"
                   SET quantity    = $1,
                       "unitPrice" = $2,
                       "updatedAt" = NOW()
                 WHERE "cartId"   = $3
-                  AND ("productId" = $4 OR "affiliateProductId" = $4)
-              RETURNING *`,
+                  AND ("productId" = $4 OR "affiliateProductId" = $4)`,
           [newQty, pricePerUnit, cartId, data.productId],
         );
-        upd = rows;
       }
 
-      /* 7) stock adjust */
+      /* 7️⃣ stock adjust (negative on add, positive on subtract) */
       await adjustStock(
         client,
         data.productId,
@@ -244,47 +246,19 @@ export async function PATCH(
         data.action === "add" ? -1 : 1,
       );
 
-      await client.query("COMMIT");
-
-      /* 8) payload (unchanged) */
-      const product = await (async () => {
-        if (isAffiliate) {
-          const { rows } = await pool.query(
-            `SELECT id,title,sku,description,image
-               FROM "affiliateProducts"
-              WHERE id = $1`,
-            [data.productId],
-          );
-          return {
-            ...rows[0],
-            price: upd[0].unitPrice,
-            subtotal: upd[0].unitPrice * upd[0].quantity,
-            regularPrice: {},
-            stockData: {},
-            isAffiliate: true,
-          };
-        }
-        const { rows } = await pool.query(
-          `SELECT id,title,sku,description,image,"regularPrice"
-             FROM products
-            WHERE id = $1`,
-          [data.productId],
-        );
-        return {
-          ...rows[0],
-          price: pricePerUnit,
-          subtotal: Number(pricePerUnit) * upd[0].quantity,
-          stockData: {},
-          isAffiliate: false,
-        };
-      })();
-
-      /* 9) cart hash (skip when the row was deleted) */
+      /* 8️⃣ update cart hash after all changes */
+      const { rows: linesForHash } = await client.query(
+        `SELECT COALESCE("productId","affiliateProductId") AS pid,
+                quantity,"unitPrice"
+           FROM "cartProducts"
+          WHERE "cartId" = $1`,
+        [cartId],
+      );
       const encrypted = crypto
         .createHash("sha256")
-        .update(JSON.stringify(upd))
+        .update(JSON.stringify(linesForHash))
         .digest("base64");
-      await pool.query(
+      await client.query(
         `UPDATE carts
             SET "cartUpdatedHash" = $1,
                 "updatedAt"      = NOW()
@@ -292,7 +266,9 @@ export async function PATCH(
         [encrypted, cartId],
       );
 
-      /* 10) full snapshot */
+      await client.query("COMMIT");
+
+      /* 9️⃣ full snapshot for the client */
       const lines = await fetchLines(cartId);
       return NextResponse.json({ lines });
 
