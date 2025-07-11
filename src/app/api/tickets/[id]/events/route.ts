@@ -1,6 +1,9 @@
 /* eslint-disable no-console */
 // Edge-runtime, streaming response
-export const runtime = "edge";
+/* eslint-disable no-console */
+// Needs full Node.js runtime because we rely on the native `pg` driver,
+// which pulls in `fs`, `path`, `stream`, … – all unavailable on Edge.
+export const runtime = "nodejs";
 export const revalidate = 0;           // never cache
 
 import { NextRequest } from "next/server";
