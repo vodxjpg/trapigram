@@ -1,8 +1,12 @@
-// /home/zodx/Desktop/Trapyfy/src/app/(dashboard)/organizations/organization-table.tsx
+// src/app/(dashboard)/organizations/organization-table.tsx
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import {
+  useState,
+  useEffect,
+  startTransition,
+} from "react"
 import { useRouter } from "next/navigation"
 import {
   ChevronLeft,
@@ -21,13 +25,34 @@ import { authClient } from "@/lib/auth-client"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { OrganizationDrawer } from "./organization-drawer"
 import { Badge } from "@/components/ui/badge"
+import { useDebounce } from "@/hooks/use-debounce"      // ← NEW
 
-// Define the shape of an organization
+/* -------------------------------------------------------------------- */
+/*  Types                                                               */
+/* -------------------------------------------------------------------- */
 
 type Organization = {
   id: string
@@ -38,47 +63,56 @@ type Organization = {
   userRole: string
 }
 
+/* -------------------------------------------------------------------- */
+/*  Component                                                           */
+/* -------------------------------------------------------------------- */
+
 export function OrganizationTable() {
+  /* --------------- state ------------------------------------------- */
   const router = useRouter()
+
   const [organizations, setOrganizations] = useState<Organization[]>([])
-  const [loading, setLoading] = useState(true)
-  const [totalPages, setTotalPages] = useState(1)
-  const [currentPage, setCurrentPage] = useState(1)
-  const [searchQuery, setSearchQuery] = useState("")
-  const [pageSize, setPageSize] = useState(10)
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [editingOrganization, setEditingOrganization] = useState<Organization | null>(null)
-  const [sortColumn, setSortColumn] = useState<string>("name")
+  const [loading,        setLoading]      = useState(true)
+
+  const [totalPages,  setTotalPages]   = useState(1)
+  const [currentPage, setCurrentPage]  = useState(1)
+  const [pageSize,    setPageSize]     = useState(10)
+
+  // search & debounce
+  const [searchQuery, setSearchQuery]  = useState("")
+  const debounced                      = useDebounce(searchQuery, 300) // ← NEW
+
+  // in-memory sort
+  const [sortColumn,    setSortColumn]    = useState<string>("name")
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 
-  // Fetch organizations from our API
+  // drawer
+  const [drawerOpen,           setDrawerOpen]           = useState(false)
+  const [editingOrganization,  setEditingOrganization]  = useState<Organization | null>(null)
+
+  /* --------------- data fetch -------------------------------------- */
   const fetchOrganizations = async () => {
     setLoading(true)
     try {
       const response = await fetch("/api/organizations", {
         credentials: "include",
       })
-      if (!response.ok) {
-        throw new Error(`Failed to fetch organizations: ${response.statusText}`)
-      }
-    
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch organizations: ${response.statusText}`)
-      }
+      if (!response.ok) throw new Error(`Failed to fetch organizations: ${response.statusText}`)
+
       const { organizations: fetchedOrgs } = await response.json()
 
-      // Apply our search filter
-      const filtered = searchQuery
+      // search (client-side) against debounced value
+      const filtered = debounced
         ? fetchedOrgs.filter(
             (org: Organization) =>
-              org.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              org.slug.toLowerCase().includes(searchQuery.toLowerCase())
+              org.name.toLowerCase().includes(debounced.toLowerCase()) ||
+              org.slug.toLowerCase().includes(debounced.toLowerCase()),
           )
         : fetchedOrgs
 
       setOrganizations(filtered)
-      setTotalPages(Math.ceil(filtered.length / pageSize))
+      /* note: totalPages depends on *filtered* length */
+      setTotalPages(Math.max(1, Math.ceil(filtered.length / pageSize)))
     } catch (error) {
       console.error("Error fetching organizations:", error)
       toast.error("Failed to load organizations")
@@ -89,15 +123,17 @@ export function OrganizationTable() {
 
   useEffect(() => {
     fetchOrganizations()
-  }, [currentPage, pageSize, searchQuery])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, pageSize, debounced])
 
-  const handleSearch = (e: React.FormEvent) => {
+  /* --------------- utils ------------------------------------------- */
+  const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    setCurrentPage(1)
-    fetchOrganizations()
+    setCurrentPage(1)          // reset pagination
+    /* fetchOrganizations will be invoked automatically by effect */
   }
 
-  const handleSort = (column: string) => {
+  const handleSort = (column: "name" | "members") => {
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc")
     } else {
@@ -106,13 +142,14 @@ export function OrganizationTable() {
     }
   }
 
-  // Sort in-memory
+  // sort (client-side, stable)
   const sortedOrganizations = [...organizations].sort((a, b) => {
     if (sortColumn === "name") {
       return sortDirection === "asc"
         ? a.name.localeCompare(b.name)
         : b.name.localeCompare(a.name)
-    } else if (sortColumn === "members") {
+    }
+    if (sortColumn === "members") {
       return sortDirection === "asc"
         ? a.memberCount - b.memberCount
         : b.memberCount - a.memberCount
@@ -120,12 +157,13 @@ export function OrganizationTable() {
     return 0
   })
 
-  // Paginate in-memory
+  // paginate (client-side)
   const paginatedOrganizations = sortedOrganizations.slice(
     (currentPage - 1) * pageSize,
-    currentPage * pageSize
+    currentPage * pageSize,
   )
 
+  /* --------------- CRUD ------------------------------------------- */
   const handleDelete = async (id: string) => {
     if (organizations.length <= 1) {
       toast.error("You must belong to at least one organization.")
@@ -142,8 +180,8 @@ export function OrganizationTable() {
     }
   }
 
-  const handleEdit = (organization: Organization) => {
-    setEditingOrganization(organization)
+  const handleEdit = (org: Organization) => {
+    setEditingOrganization(org)
     setDrawerOpen(true)
   }
 
@@ -162,28 +200,40 @@ export function OrganizationTable() {
     router.push(`/organizations/${slug}`)
   }
 
+  /* -------------------------------------------------------------------- */
+  /*  Render                                                              */
+  /* -------------------------------------------------------------------- */
+
   return (
     <div className="space-y-4">
+      {/* Toolbar */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
-        <form onSubmit={handleSearch} className="flex w-full sm:w-auto gap-2">
-          <div className="relative flex-1">
+        <form onSubmit={handleSearchSubmit} className="flex w-full sm:w-auto gap-2">
+          <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Search organizations..."
+              placeholder="Search organizations…"
               className="pl-8 w-full"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                const txt = e.target.value
+                startTransition(() => {
+                  setSearchQuery(txt)
+                  setCurrentPage(1)   // reset page instantly without blocking paint
+                })
+              }}
             />
           </div>
           <Button type="submit">Search</Button>
         </form>
+
         <Button onClick={handleAdd}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Organization
+          <Plus className="mr-2 h-4 w-4" /> Add Organization
         </Button>
       </div>
 
+      {/* Table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -208,7 +258,7 @@ export function OrganizationTable() {
             {loading ? (
               <TableRow>
                 <TableCell colSpan={4} className="h-24 text-center">
-                  Loading...
+                  Loading…
                 </TableCell>
               </TableRow>
             ) : paginatedOrganizations.length === 0 ? (
@@ -219,7 +269,6 @@ export function OrganizationTable() {
               </TableRow>
             ) : (
               paginatedOrganizations.map((org) => {
-                // Derive roles array from comma-separated userRole
                 const roles = (org.userRole ?? "")
                   .toLowerCase()
                   .split(",")
@@ -274,17 +323,20 @@ export function OrganizationTable() {
         </Table>
       </div>
 
+      {/* Pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
           Showing page {currentPage} of {totalPages}
         </div>
+
         <div className="flex items-center space-x-2">
+          {/* Page-size */}
           <div className="flex items-center space-x-2">
             <p className="text-sm font-medium">Rows per page</p>
             <Select
               value={pageSize.toString()}
-              onValueChange={(value) => {
-                setPageSize(Number(value))
+              onValueChange={(v) => {
+                setPageSize(Number(v))
                 setCurrentPage(1)
               }}
             >
@@ -292,51 +344,61 @@ export function OrganizationTable() {
                 <SelectValue placeholder={pageSize} />
               </SelectTrigger>
               <SelectContent side="top">
-                {[5, 10, 20, 50, 100].map((size) => (
-                  <SelectItem key={size} value={size.toString()}>
-                    {size}
+                {[5, 10, 20, 50, 100].map((n) => (
+                  <SelectItem key={n} value={n.toString()}>
+                    {n}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-center space-x-2">
-            <Button variant="outline" size="icon" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}>
-              <ChevronsLeft className="h-4 w-4" />
-              <span className="sr-only">First page</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setCurrentPage(currentPage - 1)}
-              disabled={currentPage === 1}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              <span className="sr-only">Previous page</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setCurrentPage(currentPage + 1)}
-              disabled={currentPage === totalPages}
-            >
-              <ChevronRight className="h-4 w-4" />
-              <span className="sr-only">Next page</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setCurrentPage(totalPages)}
-              disabled={currentPage === totalPages}
-            >
-              <ChevronsRight className="h-4 w-4" />
-              <span className="sr-only">Last page</span>
-            </Button>
-          </div>
+
+          {/* Nav buttons */}
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setCurrentPage(1)}
+            disabled={currentPage === 1}
+          >
+            <ChevronsLeft className="h-4 w-4" />
+            <span className="sr-only">First page</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            <span className="sr-only">Previous page</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+          >
+            <ChevronRight className="h-4 w-4" />
+            <span className="sr-only">Next page</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setCurrentPage(totalPages)}
+            disabled={currentPage === totalPages}
+          >
+            <ChevronsRight className="h-4 w-4" />
+            <span className="sr-only">Last page</span>
+          </Button>
         </div>
       </div>
 
-      <OrganizationDrawer open={drawerOpen} onClose={handleDrawerClose} organization={editingOrganization} />
+      {/* Drawer */}
+      <OrganizationDrawer
+        open={drawerOpen}
+        onClose={handleDrawerClose}
+        organization={editingOrganization}
+      />
     </div>
   )
 }

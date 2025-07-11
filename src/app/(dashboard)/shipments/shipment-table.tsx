@@ -1,10 +1,18 @@
 // src/app/(dashboard)/shipments/shipment-table.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import {
+  useEffect,
+  useState,
+  startTransition,
+  type FormEvent,
+} from "react";
 import { useRouter } from "next/navigation";
-import { authClient } from "@/lib/auth-client";
+
+import { useDebounce } from "@/hooks/use-debounce";          // ← NEW
+import { authClient }  from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
+
 import {
   ChevronLeft,
   ChevronRight,
@@ -16,48 +24,35 @@ import {
   Trash2,
   Edit,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+
+import { Badge }  from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input }  from "@/components/ui/input";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
 import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
+  AlertDialog, AlertDialogContent, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 
+import { toast } from "sonner";
+
+/* ------------------------------------------------------------------ */
+/*  Types                                                             */
+/* ------------------------------------------------------------------ */
 type CostGroup = {
   minOrderCost: number;
   maxOrderCost: number;
   shipmentCost: number;
 };
-
 type Shipment = {
   id: string;
   title: string;
@@ -68,60 +63,62 @@ type Shipment = {
   updatedAt: string;
 };
 
+/* ------------------------------------------------------------------ */
+/*  Component                                                         */
+/* ------------------------------------------------------------------ */
 export function ShipmentsTable() {
   const router = useRouter();
 
+  /* ── active org & permissions ─────────────────────────────────── */
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId      = activeOrg?.id ?? null;
 
-/* ── active organization ───────────────────────────────────────── */
-const { data: activeOrg } = authClient.useActiveOrganization();
-const organizationId = activeOrg?.id ?? null;
+  const { hasPermission: canView,   isLoading: permLoading } =
+    useHasPermission(organizationId, { shipping: ["view"] });
+  const { hasPermission: canCreate } = useHasPermission(organizationId, { shipping: ["create"] });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, { shipping: ["update"] });
+  const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping: ["delete"] });
 
-/* ── permissions ───────────────────────────────────────────────── */
-const {
-  hasPermission: canView,
-  isLoading:     permLoading,
-} = useHasPermission(organizationId, { shipping: ["view"] });
-const { hasPermission: canCreate } = useHasPermission(organizationId, { shipping: ["create"] });
-const { hasPermission: canUpdate } = useHasPermission(organizationId, { shipping: ["update"] });
-const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping: ["delete"] });
+  /* ── state ─────────────────────────────────────────────────────── */
+  const [shipments, setShipments]   = useState<Shipment[]>([]);
+  const [loading,   setLoading]     = useState(true);
+  const [totalPages,     setTotalPages]   = useState(1);
+  const [currentPage,    setCurrentPage]  = useState(1);
+  const [pageSize,       setPageSize]     = useState(10);
 
-  const [shipments, setShipments] = useState<Shipment[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [totalPages, setTotalPages]   = useState(1);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [pageSize, setPageSize]       = useState(10);
+  /* search with debounce */
+  const [query, setQuery] = useState("");
+  const debounced         = useDebounce(query, 300);          // ← NEW
 
-  // sorting
-  const [sortDirection, setSortDirection] = useState<"asc"|"desc">("asc");
-  const [sortColumn] = useState<"title">("title");
+  /* sorting */
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const sortColumn: "title" = "title";
 
-  // deletion dialog state
-  const [shipmentToDelete, setShipmentToDelete] = useState<Shipment|null>(null);
+  /* delete dialog */
+  const [shipmentToDelete, setShipmentToDelete] = useState<Shipment | null>(null);
 
-  // redirect if no view
+  /* ── redirect if no view ───────────────────────────────────────── */
   useEffect(() => {
-    if (!permLoading && !canView) {
-      router.replace("/");
-    }
+    if (!permLoading && !canView) router.replace("/");
   }, [permLoading, canView, router]);
 
-  // fetch only when view is allowed
+  /* ── fetch data ────────────────────────────────────────────────── */
   const fetchShipments = async () => {
+    if (!canView) return;
     setLoading(true);
     try {
-      const res = await fetch(
-        `/api/shipments?page=${currentPage}&pageSize=${pageSize}&search=${encodeURIComponent(
-          searchQuery
-        )}`
-      );
-      if (!res.ok) throw new Error("Failed to fetch shipments");
+      const qs = new URLSearchParams({
+        page:      String(currentPage),
+        pageSize:  String(pageSize),
+        search:    debounced,
+      });
+      const res = await fetch(`/api/shipments?${qs.toString()}`);
+      if (!res.ok) throw new Error();
       const json = await res.json();
       setShipments(json.shipments);
       setTotalPages(json.totalPages);
       setCurrentPage(json.currentPage);
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("Failed to load shipments");
     } finally {
       setLoading(false);
@@ -129,32 +126,20 @@ const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping
   };
 
   useEffect(() => {
-    if (canView) fetchShipments();
-  }, [canView, currentPage, pageSize, searchQuery]);
+    if (!permLoading) fetchShipments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permLoading, canView, currentPage, pageSize, debounced]);
 
-  if (permLoading) return null;
-  if (!canView) return null;
-
-  // sort by title
-  const sorted = [...shipments].sort((a, b) =>
-    sortDirection === "asc"
-      ? a.title.localeCompare(b.title)
-      : b.title.localeCompare(a.title)
-  );
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCurrentPage(1);
-  };
+  /* ── handlers ──────────────────────────────────────────────────── */
+  const handleSearchSubmit = (e: FormEvent) => e.preventDefault();
 
   const handleDeleteConfirmed = async () => {
     if (!shipmentToDelete) return;
     try {
-      const res = await fetch(
-        `/api/shipments/${shipmentToDelete.id}`,
-        { method: "DELETE" }
-      );
-      if (!res.ok) throw new Error("Delete failed");
+      const res = await fetch(`/api/shipments/${shipmentToDelete.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error();
       toast.success("Shipment deleted");
       setShipmentToDelete(null);
       fetchShipments();
@@ -163,23 +148,39 @@ const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping
     }
   };
 
+  /* ── guards ────────────────────────────────────────────────────── */
+  if (permLoading || !canView) return null;
+
+  /* ── derived ----------------------------------------------------- */
+  const sorted = [...shipments].sort((a, b) =>
+    sortDirection === "asc"
+      ? a.title.localeCompare(b.title)
+      : b.title.localeCompare(a.title),
+  );
+
+  /* ── JSX ───────────────────────────────────────────────────────── */
   return (
     <div className="space-y-4">
-      {/* Header */}
+      {/* Toolbar */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
-        <form onSubmit={handleSearch} className="flex w-full sm:w-auto gap-2">
+        <form onSubmit={handleSearchSubmit} className="flex w-full sm:w-auto gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2 top-2 h-4 w-4 text-muted-foreground" />
             <Input
-              type="search"
-              placeholder="Search shipments..."
+              placeholder="Search shipments…"
               className="pl-8 w-full"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              value={query}
+              onChange={(e) =>
+                startTransition(() => {
+                  setQuery(e.target.value);
+                  setCurrentPage(1);
+                })
+              }
             />
           </div>
           <Button type="submit">Search</Button>
         </form>
+
         {canCreate && (
           <Button onClick={() => router.push("/shipments/new")}>
             <Plus className="mr-2 h-4 w-4" />
@@ -193,17 +194,13 @@ const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead
-                className="cursor-pointer"
-              >
-                Title{" "}
-                {sortColumn === "title" &&
-                  (sortDirection === "asc" ? "↑" : "↓")}
+              <TableHead className="cursor-pointer">
+                Title {sortDirection === "asc" ? "↑" : "↓"}
               </TableHead>
               <TableHead>Description</TableHead>
               <TableHead>Countries</TableHead>
               <TableHead>Costs</TableHead>
-              <TableHead>Created At</TableHead>
+              <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -211,7 +208,7 @@ const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping
             {loading ? (
               <TableRow>
                 <TableCell colSpan={6} className="h-24 text-center">
-                  Loading...
+                  Loading…
                 </TableCell>
               </TableRow>
             ) : sorted.length === 0 ? (
@@ -229,11 +226,7 @@ const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping
                   </TableCell>
                   <TableCell>
                     {s.countries.map((c) => (
-                      <Badge
-                        key={c}
-                        variant="outline"
-                        className="mr-1 mb-1 inline-block"
-                      >
+                      <Badge key={c} variant="outline" className="mr-1 mb-1">
                         {c}
                       </Badge>
                     ))}
@@ -255,21 +248,18 @@ const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon">
                             <MoreVertical className="h-4 w-4" />
-                            <span className="sr-only">Open menu</span>
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           {canUpdate && (
-                            <DropdownMenuItem
-                              onClick={() => router.push(`/shipments/${s.id}`)}
-                            >
+                            <DropdownMenuItem onClick={() => router.push(`/shipments/${s.id}`)}>
                               <Edit className="mr-2 h-4 w-4" />
                               Edit
                             </DropdownMenuItem>
                           )}
                           {canDelete && (
                             <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
+                              className="text-destructive"
                               onClick={() => setShipmentToDelete(s)}
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
@@ -293,55 +283,58 @@ const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping
           Page {currentPage} of {totalPages}
         </div>
         <div className="flex items-center space-x-2">
-        <div className="flex-row sm:flex-col">
-          <p className="text-sm font-medium">Rows per page</p>
-          <Select
-            value={pageSize.toString()}
-            onValueChange={(v) => {
-              setPageSize(Number(v));
-              setCurrentPage(1);
-            }}
-          >
-            <SelectTrigger className="h-8 w-[70px]">
-              <SelectValue placeholder={pageSize.toString()} />
-            </SelectTrigger>
-            <SelectContent side="top">
-              {[5, 10, 20, 50].map((n) => (
-                <SelectItem key={n} value={n.toString()}>
-                  {n}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex-row sm:flex-col">
+            <p className="text-sm font-medium">Rows / page</p>
+            <Select
+              value={pageSize.toString()}
+              onValueChange={(v) =>
+                startTransition(() => {
+                  setPageSize(Number(v));
+                  setCurrentPage(1);
+                })
+              }
+            >
+              <SelectTrigger className="h-8 w-[70px]">
+                <SelectValue placeholder={pageSize.toString()} />
+              </SelectTrigger>
+              <SelectContent side="top">
+                {[5, 10, 20, 50].map((n) => (
+                  <SelectItem key={n} value={n.toString()}>
+                    {n}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
+
           <div className="flex items-center space-x-2">
             <Button
-              variant="outline"
               size="icon"
+              variant="outline"
               onClick={() => setCurrentPage(1)}
               disabled={currentPage === 1}
             >
               <ChevronsLeft className="h-4 w-4" />
             </Button>
             <Button
-              variant="outline"
               size="icon"
+              variant="outline"
               onClick={() => setCurrentPage((p) => p - 1)}
               disabled={currentPage === 1}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <Button
-              variant="outline"
               size="icon"
+              variant="outline"
               onClick={() => setCurrentPage((p) => p + 1)}
               disabled={currentPage === totalPages}
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
             <Button
-              variant="outline"
               size="icon"
+              variant="outline"
               onClick={() => setCurrentPage(totalPages)}
               disabled={currentPage === totalPages}
             >
@@ -351,7 +344,7 @@ const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping
         </div>
       </div>
 
-      {/* Delete Confirmation */}
+      {/* Delete dialog */}
       <AlertDialog
         open={!!shipmentToDelete}
         onOpenChange={(open) => !open && setShipmentToDelete(null)}
@@ -360,8 +353,7 @@ const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Shipment?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete “{shipmentToDelete?.title}”? This
-              action cannot be undone.
+              Permanently delete “{shipmentToDelete?.title}”?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

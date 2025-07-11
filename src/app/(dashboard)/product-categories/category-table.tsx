@@ -1,14 +1,13 @@
 // src/app/(dashboard)/products/categories/category-tabl.tsx
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, startTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import {
-  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  MoreVertical, Plus, Search, Trash2, Edit,
-} from "lucide-react";
-
+    ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+    MoreVertical, Plus, Search, Trash2, Edit,
+  } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { Button } from "@/components/ui/button";
@@ -26,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { useDebounce } from "@/hooks/use-debounce";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
@@ -68,7 +68,9 @@ export function CategoryTable() {
   const [loading, setLoading]       = useState(true);
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState("");
+  /* ───────────────────────────── search text ─────────────────────────── */
+  const [searchQuery, setSearchQuery] = useState("");          // instant UI
+  const debounced = useDebounce(searchQuery, 300);             // ← NEW
   const [pageSize, setPageSize]     = useState(10);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category|null>(null);
@@ -81,7 +83,7 @@ export function CategoryTable() {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/product-categories?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
+       `/api/product-categories?page=${currentPage}&pageSize=${pageSize}&search=${debounced}`,
         { credentials: "include" }
       );
       if (!res.ok) throw new Error("Failed to fetch categories");
@@ -111,7 +113,7 @@ export function CategoryTable() {
     }
   };
 
-  useEffect(() => { fetchCategories(); }, [currentPage, pageSize, searchQuery]);
+  useEffect(() => { fetchCategories(); }, [currentPage, pageSize, debounced]);
 
   /* single-delete dialog */
   const [deleteTarget, setDeleteTarget] = useState<Category|null>(null);
@@ -162,17 +164,24 @@ export function CategoryTable() {
     <div className="space-y-4">
       {/* filters & add */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
-        <form onSubmit={e => { e.preventDefault(); setCurrentPage(1); fetchCategories(); }}
-              className="flex w-full sm:w-auto gap-2">
+      <div className="flex w-full sm:w-auto gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              type="search" placeholder="Search categories…" className="pl-8 w-full"
-              value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-            />
+          type="search"
+          placeholder="Search categories…"
+          className="pl-8 w-full"
+          value={searchQuery}
+          onChange={(e) => {
+            const txt = e.target.value;
+            startTransition(() => {
+              setSearchQuery(txt);     // async — keeps typing smooth
+              setCurrentPage(1);       // reset pagination
+            });
+          }}
+        />
           </div>
-          <Button type="submit">Search</Button>
-        </form>
+       </div>
         {canMutate && (
           <Button onClick={() => { setEditingCategory(null); setDrawerOpen(true); }}>
             <Plus className="mr-2 h-4 w-4" /> Add Category

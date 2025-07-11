@@ -1,7 +1,11 @@
 // src/app/(dashboard)/product-attributes/[attributeId]/terms/term-table.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import React, {
+  useState,
+  useEffect,
+  startTransition,
+} from "react";
 import {
   MoreVertical,
   Plus,
@@ -37,26 +41,35 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { useDebounce } from "@/hooks/use-debounce";     // ← NEW
 import { TermDrawer } from "./term-drawer";
 
 type Term = { id: string; name: string; slug: string };
 
 export function TermTable({ attributeId }: { attributeId: string }) {
-  const [terms, setTerms] = useState<Term[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editingTerm, setEditingTerm] = useState<Term | null>(null);
+  /* ───────────────────── state ───────────────────── */
+  const [terms,        setTerms]        = useState<Term[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [drawerOpen,   setDrawerOpen]   = useState(false);
+  const [editingTerm,  setEditingTerm]  = useState<Term | null>(null);
 
-  // bulk delete state
-  const [rowSelection, setRowSelection] = useState<Record<string,boolean>>({});
+  // search
+  const [searchQuery,  setSearchQuery]  = useState("");
+  const debounced                        = useDebounce(searchQuery, 300); // ← NEW
+
+  // bulk-delete
+  const [rowSelection,   setRowSelection]   = useState<Record<string, boolean>>(
+    {},
+  );
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
+  /* ───────────────────── data fetch ───────────────── */
   const fetchTerms = async () => {
     setLoading(true);
     try {
       const res = await fetch(
         `/api/product-attributes/${attributeId}/terms?pageSize=100`,
-        { credentials: "include" }
+        { credentials: "include" },
       );
       if (!res.ok) throw new Error("Failed to fetch terms");
       const data = await res.json();
@@ -73,12 +86,13 @@ export function TermTable({ attributeId }: { attributeId: string }) {
     fetchTerms();
   }, [attributeId]);
 
+  /* ───────────────────── CRUD helpers ─────────────── */
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this term?")) return;
     try {
       const res = await fetch(
         `/api/product-attributes/${attributeId}/terms/${id}`,
-        { method: "DELETE", credentials: "include" }
+        { method: "DELETE", credentials: "include" },
       );
       if (!res.ok) throw new Error();
       toast.success("Term deleted");
@@ -90,7 +104,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
 
   const handleBulkDelete = async () => {
     const ids = Object.entries(rowSelection)
-      .filter(([_,v]) => v)
+      .filter(([_, v]) => v)
       .map(([k]) => k);
     if (!ids.length) return;
     try {
@@ -101,7 +115,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ids }),
-        }
+        },
       );
       if (!res.ok) throw new Error();
       const data = await res.json();
@@ -115,6 +129,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
     }
   };
 
+  /* ───────────────────── drawer helpers ───────────── */
   const handleEdit = (t: Term) => {
     setEditingTerm(t);
     setDrawerOpen(true);
@@ -129,21 +144,38 @@ export function TermTable({ attributeId }: { attributeId: string }) {
     if (refresh) fetchTerms();
   };
 
-  const selectedCount = Object.values(rowSelection).filter(Boolean).length;
-  const allSelected    = terms.length > 0 && selectedCount === terms.length;
-  const someSelected   = selectedCount > 0 && selectedCount < terms.length;
+  /* ───────────────────── filtering & selection ────── */
+  const filtered = terms.filter(
+    (t) =>
+      t.name.toLowerCase().includes(debounced.toLowerCase()) ||
+      t.slug.toLowerCase().includes(debounced.toLowerCase()),
+  );
 
+  const selectedCount = Object.values(rowSelection).filter(Boolean).length;
+  const allSelected   =
+    filtered.length > 0 && selectedCount === filtered.length;
+  const someSelected  =
+    selectedCount > 0 && selectedCount < filtered.length;
+
+  /* ───────────────────── render ───────────────────── */
   return (
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex justify-between gap-4">
-        <form className="flex w-full sm:w-auto gap-2" onSubmit={e=>e.preventDefault()}>
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input type="search" placeholder="Search terms..." className="pl-8 w-full" />
-          </div>
-          <Button type="submit">Search</Button>
-        </form>
+        {/* live search (debounced) */}
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search terms…"
+            className="pl-8 w-full"
+            value={searchQuery}
+            onChange={(e) => {
+              const txt = e.target.value;
+              startTransition(() => setSearchQuery(txt));
+            }}
+          />
+        </div>
         <Button onClick={handleAdd}>
           <Plus className="mr-2 h-4 w-4" /> Add Term
         </Button>
@@ -169,10 +201,10 @@ export function TermTable({ attributeId }: { attributeId: string }) {
                 <Checkbox
                   checked={allSelected}
                   aria-checked={someSelected ? "mixed" : allSelected}
-                  onCheckedChange={v => {
+                  onCheckedChange={(v) => {
                     if (v) {
-                      const sel: Record<string,boolean> = {};
-                      terms.forEach(t => sel[t.id] = true);
+                      const sel: Record<string, boolean> = {};
+                      filtered.forEach((t) => (sel[t.id] = true));
                       setRowSelection(sel);
                     } else {
                       setRowSelection({});
@@ -192,26 +224,31 @@ export function TermTable({ attributeId }: { attributeId: string }) {
                   Loading...
                 </TableCell>
               </TableRow>
-            ) : terms.length === 0 ? (
+            ) : filtered.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="h-24 text-center">
                   No terms found.
                 </TableCell>
               </TableRow>
             ) : (
-              terms.map(term => {
+              filtered.map((term) => {
                 const isChecked = !!rowSelection[term.id];
                 return (
                   <TableRow key={term.id}>
                     <TableCell className="text-center">
                       <Checkbox
                         checked={isChecked}
-                        onCheckedChange={v =>
-                          setRowSelection(s => ({ ...s, [term.id]: !!v }))
+                        onCheckedChange={(v) =>
+                          setRowSelection((s) => ({
+                            ...s,
+                            [term.id]: !!v,
+                          }))
                         }
                       />
                     </TableCell>
-                    <TableCell className="font-medium">{term.name}</TableCell>
+                    <TableCell className="font-medium">
+                      {term.name}
+                    </TableCell>
                     <TableCell>{term.slug}</TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
@@ -242,12 +279,16 @@ export function TermTable({ attributeId }: { attributeId: string }) {
       </div>
 
       {/* Bulk-delete dialog */}
-      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+      <AlertDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete selected terms?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete {selectedCount} term(s). This action cannot be undone.
+              This will permanently delete {selectedCount} term
+              {selectedCount === 1 ? "" : "s"}. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

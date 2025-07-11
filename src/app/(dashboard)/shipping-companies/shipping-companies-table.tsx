@@ -1,7 +1,12 @@
 // src/app/(dashboard)/shipping-companies/shipping-companies-table.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+  startTransition,
+  type FormEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
@@ -14,9 +19,14 @@ import {
   Trash2,
   Edit,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+
+import { useDebounce } from "@/hooks/use-debounce";          // ← NEW
+import { authClient }  from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
+
+import { Badge }       from "@/components/ui/badge";
+import { Button }      from "@/components/ui/button";
+import { Input }       from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -38,7 +48,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -49,9 +58,11 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
-import { useHasPermission } from "@/hooks/use-has-permission";
-import { authClient } from "@/lib/auth-client";
+import { toast } from "sonner";
 
+/* ------------------------------------------------------------------ */
+/*  Types                                                             */
+/* ------------------------------------------------------------------ */
 type ShippingMethod = {
   id: string;
   name: string;
@@ -60,125 +71,120 @@ type ShippingMethod = {
   updatedAt: string;
 };
 
+/* ------------------------------------------------------------------ */
+/*  Component                                                         */
+/* ------------------------------------------------------------------ */
 export function ShippingMethodsTable() {
   const router = useRouter();
 
-  /* ―― active organisation ―― */
+  /* ── active organisation & permissions ─────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId      = activeOrg?.id ?? null;
 
-  /* ―― permissions ―― */
-  const {
-    hasPermission: canView,
-    isLoading:     permLoading,
-  } = useHasPermission(organizationId, { shippingMethods: ["view"] });
+  const { hasPermission: canView,   isLoading: permLoading } =
+    useHasPermission(organizationId, { shippingMethods: ["view"] });
+  const { hasPermission: canCreate } = useHasPermission(organizationId, { shippingMethods: ["create"] });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, { shippingMethods: ["update"] });
+  const { hasPermission: canDelete } = useHasPermission(organizationId, { shippingMethods: ["delete"] });
 
-  const { hasPermission: canCreate } = useHasPermission(
-    organizationId,
-    { shippingMethods: ["create"] }
-  );
-  const { hasPermission: canUpdate } = useHasPermission(
-    organizationId,
-    { shippingMethods: ["update"] }
-  );
-  const { hasPermission: canDelete } = useHasPermission(
-    organizationId,
-    { shippingMethods: ["delete"] }
-  );
-
-  const [methods, setMethods]   = useState<ShippingMethod[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [totalPages, setTotalPages]   = useState(1);
+  /* ── state ─────────────────────────────────────────────────────── */
+  const [methods,     setMethods    ] = useState<ShippingMethod[]>([]);
+  const [loading,     setLoading    ] = useState(true);
+  const [totalPages,  setTotalPages ] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize]       = useState(10);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [toDelete, setToDelete]       = useState<ShippingMethod | null>(null);
+  const [pageSize,    setPageSize   ] = useState(10);
 
-  // 1) Redirect away if no view permission
+  /* search + debounce */
+  const [query, setQuery] = useState("");
+  const debounced         = useDebounce(query, 300);           // ← NEW
+
+  const [toDelete, setToDelete] = useState<ShippingMethod | null>(null);
+
+  /* ── redirect if no view ───────────────────────────────────────── */
   useEffect(() => {
-    if (!permLoading && !canView) {
-      router.replace("/shipping-companies");
-    }
+    if (!permLoading && !canView) router.replace("/shipping-companies");
   }, [permLoading, canView, router]);
 
-  // 2) Fetch when permitted
-  useEffect(() => {
-    if (permLoading || !canView) return;
-    fetchMethods();
-  }, [currentPage, pageSize, searchQuery, permLoading, canView]);
-
+  /* ── fetch ─────────────────────────────────────────────────────── */
   const fetchMethods = async () => {
+    if (!canView) return;
     setLoading(true);
     try {
-      const res = await fetch(
-        `/api/shipping-companies?page=${currentPage}&pageSize=${pageSize}&search=${encodeURIComponent(
-          searchQuery
-        )}`
-      );
-      if (!res.ok) throw new Error("Failed to fetch shipping companies");
+      const qs = new URLSearchParams({
+        page:      String(currentPage),
+        pageSize:  String(pageSize),
+        search:    debounced,
+      });
+      const res  = await fetch(`/api/shipping-companies?${qs.toString()}`);
+      if (!res.ok) throw new Error();
       const json = await res.json();
       setMethods(json.shippingMethods);
       setTotalPages(json.totalPages);
       setCurrentPage(json.currentPage);
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("Failed to load shipping companies");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCurrentPage(1);
+  /* initial + whenever deps change */
+  useEffect(() => {
+    if (permLoading) return;
     fetchMethods();
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, pageSize, debounced, permLoading, canView]);
+
+  /* ── handlers ──────────────────────────────────────────────────── */
+  const handleSearchSubmit = (e: FormEvent) => e.preventDefault();
 
   const handleDeleteConfirm = async () => {
     if (!toDelete) return;
     try {
-      const res = await fetch(
-        `/api/shipping-companies/${toDelete.id}`,
-        { method: "DELETE" }
-      );
-      if (!res.ok) throw new Error("Delete failed");
+      const res = await fetch(`/api/shipping-companies/${toDelete.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error();
       toast.success("Shipping method deleted");
       fetchMethods();
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("Failed to delete");
     } finally {
       setToDelete(null);
     }
   };
 
-  const handleEdit = (m: ShippingMethod) => {
-    router.push(`/shipping-companies/${m.id}`);
-  };
+  const handleEdit = (m: ShippingMethod) => router.push(`/shipping-companies/${m.id}`);
+  const handleAdd  = () => router.push("/shipping-companies/new");
 
-  const handleAdd = () => {
-    router.push(`/shipping-companies/new`);
-  };
-
-  // 3) While loading permissions or lacking view, render nothing
+  /* ── guards ────────────────────────────────────────────────────── */
   if (permLoading || !canView) return null;
 
+  /* ── JSX ───────────────────────────────────────────────────────── */
   return (
     <div className="space-y-4">
-      {/* header */}
+      {/* Toolbar */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
-        <form onSubmit={handleSearch} className="flex gap-2 w-full sm:w-auto">
+        {/* Search */}
+        <form onSubmit={handleSearchSubmit} className="flex gap-2 w-full sm:w-auto">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
+              placeholder="Search companies…"
               className="pl-8 w-full"
-              placeholder="Search companies..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              value={query}
+              onChange={(e) =>
+                startTransition(() => {
+                  setQuery(e.target.value);
+                  setCurrentPage(1);
+                })
+              }
             />
           </div>
           <Button type="submit">Search</Button>
         </form>
+
+        {/* Create */}
         {canCreate && (
           <Button onClick={handleAdd}>
             <Plus className="mr-2 h-4 w-4" /> Add Company
@@ -186,7 +192,7 @@ export function ShippingMethodsTable() {
         )}
       </div>
 
-      {/* table */}
+      {/* Table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -196,7 +202,6 @@ export function ShippingMethodsTable() {
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
-
           <TableBody>
             {loading ? (
               <TableRow>
@@ -215,9 +220,9 @@ export function ShippingMethodsTable() {
                 <TableRow key={m.id}>
                   <TableCell>{m.name}</TableCell>
                   <TableCell>
-                    {m.countries.map((code) => (
-                      <Badge key={code} variant="outline" className="mr-1">
-                        {code}
+                    {m.countries.map((c) => (
+                      <Badge key={c} variant="outline" className="mr-1">
+                        {c}
                       </Badge>
                     ))}
                   </TableCell>
@@ -226,7 +231,6 @@ export function ShippingMethodsTable() {
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon">
                           <MoreVertical className="h-4 w-4" />
-                          <span className="sr-only">Open menu</span>
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
@@ -253,7 +257,7 @@ export function ShippingMethodsTable() {
         </Table>
       </div>
 
-      {/* pagination */}
+      {/* Pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
           Page {currentPage} of {totalPages}
@@ -262,8 +266,10 @@ export function ShippingMethodsTable() {
           <Select
             value={pageSize.toString()}
             onValueChange={(v) => {
-              setPageSize(Number(v));
-              setCurrentPage(1);
+              startTransition(() => {
+                setPageSize(Number(v));
+                setCurrentPage(1);
+              });
             }}
           >
             <SelectTrigger className="h-8 w-[70px]">
@@ -315,13 +321,8 @@ export function ShippingMethodsTable() {
         </div>
       </div>
 
-      {/* delete confirmation */}
-      <AlertDialog
-        open={!!toDelete}
-        onOpenChange={(open) => {
-          if (!open) setToDelete(null);
-        }}
-      >
+      {/* Delete dialog */}
+      <AlertDialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Shipping Method?</AlertDialogTitle>

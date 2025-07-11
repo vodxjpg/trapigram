@@ -1,32 +1,63 @@
 // src/components/CouponsTable.tsx
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, {
+  useState,
+  useEffect,
+  startTransition,
+  type FormEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
-  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  MoreVertical, Plus, Search, Trash2, Edit, Copy,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  MoreVertical,
+  Plus,
+  Search,
+  Trash2,
+  Edit,
+  Copy,
 } from "lucide-react";
 
-import { authClient }          from "@/lib/auth-client";
-import { useHasPermission }    from "@/hooks/use-has-permission";
+import { authClient }       from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { useDebounce }      from "@/hooks/use-debounce";     // ← NEW
 
 import { Badge }               from "@/components/ui/badge";
 import { Button }              from "@/components/ui/button";
 import { Input }               from "@/components/ui/input";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader,
-  AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
-  AlertDialogCancel, AlertDialogAction,
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 
 import { toast } from "sonner";
@@ -72,20 +103,13 @@ export function CouponsTable() {
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId      = activeOrg?.id ?? null;
 
-  /* ── permissions (new hook) ───────────────────────────────────── */
-  const {
-    hasPermission: canCreate,
-    isLoading:     permLoading,
-  } = useHasPermission(organizationId, { coupon: ["create"] });
-
-  const { hasPermission: canUpdate } = useHasPermission(
-    organizationId,
-    { coupon: ["update"] },
-  );
-  const { hasPermission: canDelete } = useHasPermission(
-    organizationId,
-    { coupon: ["delete"] },
-  );
+  /* ── permissions ──────────────────────────────────────────────── */
+  const { hasPermission: canCreate,  isLoading: permLoading } =
+    useHasPermission(organizationId, { coupon: ["create"] });
+  const { hasPermission: canUpdate } =
+    useHasPermission(organizationId, { coupon: ["update"] });
+  const { hasPermission: canDelete } =
+    useHasPermission(organizationId, { coupon: ["delete"] });
 
   /* ── coupon state ─────────────────────────────────────────────── */
   const [coupons,        setCoupons       ] = useState<Coupon[]>([]);
@@ -93,6 +117,7 @@ export function CouponsTable() {
   const [totalPages,     setTotalPages    ] = useState(1);
   const [currentPage,    setCurrentPage   ] = useState(1);
   const [searchQuery,    setSearchQuery   ] = useState("");
+  const debounced                          = useDebounce(searchQuery, 300); // ← NEW
   const [pageSize,       setPageSize      ] = useState(10);
   const [sortColumn,     setSortColumn    ] = useState("name");
   const [sortDirection,  setSortDirection ] = useState<"asc" | "desc">("asc");
@@ -105,17 +130,20 @@ export function CouponsTable() {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/coupons?page=${currentPage}&pageSize=${pageSize}&search=${searchQuery}`,
+        `/api/coupons?page=${currentPage}&pageSize=${pageSize}&search=${encodeURIComponent(
+          debounced,
+        )}`,
       );
       if (!res.ok) throw new Error("Failed to fetch coupons");
       const data = await res.json();
+
       setCoupons(
         data.coupons.map((c: Coupon) => ({
           ...c,
           countries: c.countries ?? [],
         })),
       );
-      setTotalPages(data.totalPages);
+      setTotalPages(data.totalPages || 1);
     } catch (err) {
       console.error(err);
       toast.error("Failed to load coupons");
@@ -126,7 +154,8 @@ export function CouponsTable() {
 
   useEffect(() => {
     fetchCoupons();
-  }, [currentPage, pageSize, searchQuery]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, pageSize, debounced]);
 
   /* ---------------------------------------------------------------- */
   /*  Sorting                                                         */
@@ -139,6 +168,7 @@ export function CouponsTable() {
       setSortDirection("asc");
     }
   };
+
   const sortedCoupons = [...coupons].sort((a, b) => {
     if (sortColumn === "name") {
       return sortDirection === "asc"
@@ -197,21 +227,26 @@ export function CouponsTable() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
         <form
-          onSubmit={(e) => {
+          onSubmit={(e: FormEvent) => {
             e.preventDefault();
-            setCurrentPage(1);
-            fetchCoupons();
+            setCurrentPage(1);   // page reset, fetch triggered by effect
           }}
           className="flex w-full sm:w-auto gap-2"
         >
-          <div className="relative flex-1">
+          <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="search"
               placeholder="Search coupons…"
               className="pl-8 w-full"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                const txt = e.target.value;
+                startTransition(() => {
+                  setSearchQuery(txt);
+                  setCurrentPage(1);
+                });
+              }}
             />
           </div>
           <Button type="submit">Search</Button>
@@ -255,13 +290,13 @@ export function CouponsTable() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={12} className="h-24 text-center">
+                <TableCell colSpan={13} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : sortedCoupons.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} className="h-24 text-center">
+                <TableCell colSpan={13} className="h-24 text-center">
                   No coupons found.
                 </TableCell>
               </TableRow>
@@ -354,6 +389,7 @@ export function CouponsTable() {
               ))}
             </SelectContent>
           </Select>
+          {/* nav */}
           <div className="flex items-center space-x-2">
             <Button
               variant="outline"
@@ -366,7 +402,7 @@ export function CouponsTable() {
             <Button
               variant="outline"
               size="icon"
-              onClick={() => setCurrentPage((p) => p - 1)}
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
               disabled={currentPage === 1}
             >
               <ChevronLeft className="h-4 w-4" />
@@ -374,7 +410,7 @@ export function CouponsTable() {
             <Button
               variant="outline"
               size="icon"
-              onClick={() => setCurrentPage((p) => p + 1)}
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
               disabled={currentPage === totalPages}
             >
               <ChevronRight className="h-4 w-4" />
@@ -400,7 +436,7 @@ export function CouponsTable() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Coupon?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete “{couponToDelete?.name}”?  
+              Are you sure you want to delete “{couponToDelete?.name}”?
               This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

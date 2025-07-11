@@ -1,8 +1,14 @@
 // src/app/(dashboard)/warehouses/warehouse-table.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import {
+  useState,
+  useEffect,
+  startTransition,
+  type FormEvent,
+} from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Plus,
   Search,
@@ -12,9 +18,13 @@ import {
   Share2,
   RefreshCw,
 } from "lucide-react";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+
+import { useDebounce } from "@/hooks/use-debounce";            // ← NEW
+import { authClient }  from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
+
+import { Button }      from "@/components/ui/button";
+import { Input }       from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -30,8 +40,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Badge } from "@/components/ui/badge";
-import { toast } from "sonner";
+import { Badge }       from "@/components/ui/badge";
+import { toast }       from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -40,9 +50,10 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { WarehouseDrawer } from "./warehouse-drawer";
-import { useHasPermission } from "@/hooks/use-has-permission";
-import { authClient } from "@/lib/auth-client";
 
+/* ------------------------------------------------------------------ */
+/*  Types                                                             */
+/* ------------------------------------------------------------------ */
 type Warehouse = {
   id: string;
   tenantId: string | null;
@@ -53,53 +64,56 @@ type Warehouse = {
   updatedAt: Date;
 };
 
+/* ------------------------------------------------------------------ */
+/*  Component                                                         */
+/* ------------------------------------------------------------------ */
 export function WarehouseTable() {
   const router = useRouter();
 
-  // active org for permission checks
+  /* ── permissions ──────────────────────────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId = activeOrg?.id ?? null;
+  const organizationId      = activeOrg?.id ?? null;
 
-  // view permission
-  const {
-    hasPermission: canView,
-    isLoading:     viewLoading,
-  } = useHasPermission(organizationId, { warehouses: ["view"] });
+  const { hasPermission: canView,   isLoading: viewLoading } =
+    useHasPermission(organizationId, { warehouses: ["view"] });
 
-  // other permissions
-  const { hasPermission: canCreate } = useHasPermission(organizationId, { warehouses: ["create"] });
-  const { hasPermission: canUpdate } = useHasPermission(organizationId, { warehouses: ["update"] });
-  const { hasPermission: canDelete } = useHasPermission(organizationId, { warehouses: ["delete"] });
-  const { hasPermission: canShare  } = useHasPermission(organizationId, { warehouses: ["sharing"] });
-  const { hasPermission: canSync   } = useHasPermission(organizationId, { warehouses: ["synchronize"] });
+  const { hasPermission: canCreate }  = useHasPermission(organizationId, { warehouses: ["create"] });
+  const { hasPermission: canUpdate }  = useHasPermission(organizationId, { warehouses: ["update"] });
+  const { hasPermission: canDelete }  = useHasPermission(organizationId, { warehouses: ["delete"] });
+  const { hasPermission: canShare  }  = useHasPermission(organizationId, { warehouses: ["sharing"] });
+  const { hasPermission: canSync   }  = useHasPermission(organizationId, { warehouses: ["synchronize"] });
 
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  /* ── data state ───────────────────────────────────────────────── */
+  const [warehouses, setWarehouses]         = useState<Warehouse[]>([]);
+  const [loading,    setLoading]            = useState(true);
+
+  /* ── UI state ─────────────────────────────────────────────────── */
+  const [drawerOpen,       setDrawerOpen]       = useState(false);
   const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [syncToken, setSyncToken] = useState("");
+  const [dialogOpen,       setDialogOpen]       = useState(false);
+  const [syncToken,        setSyncToken]        = useState("");
 
-  // redirect if no view
+  /* ── search text (debounced) ──────────────────────────────────── */
+  const [searchQuery, setSearchQuery] = useState("");
+  const debounced = useDebounce(searchQuery, 300);                 // ← NEW
+
+  /* ---------------------------------------------------------------- */
+  /*  Guards                                                          */
+  /* ---------------------------------------------------------------- */
   useEffect(() => {
-    if (!viewLoading && !canView) {
-      router.replace("/dashboard");
-    }
+    if (!viewLoading && !canView) router.replace("/dashboard");
   }, [viewLoading, canView, router]);
 
-  // initial fetch once permissions resolved
-  useEffect(() => {
-    if (!viewLoading && canView) {
-      fetchWarehouses();
-    }
-  }, [viewLoading, canView]);
-
+  /* ---------------------------------------------------------------- */
+  /*  Fetch                                                           */
+  /* ---------------------------------------------------------------- */
   const fetchWarehouses = async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/warehouses");
-      if (!response.ok) throw new Error("Failed to fetch warehouses");
-      const data = await response.json();
+      const qs = new URLSearchParams({ search: debounced });
+      const res = await fetch(`/api/warehouses?${qs.toString()}`);
+      if (!res.ok) throw new Error("Failed to fetch warehouses");
+      const data = await res.json();
       setWarehouses(data.warehouses);
     } catch {
       toast.error("Failed to load warehouses");
@@ -108,11 +122,20 @@ export function WarehouseTable() {
     }
   };
 
+  /* initial & on-search fetch */
+  useEffect(() => {
+    if (!viewLoading && canView) fetchWarehouses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewLoading, canView, debounced]);
+
+  /* ---------------------------------------------------------------- */
+  /*  Handlers                                                        */
+  /* ---------------------------------------------------------------- */
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this warehouse?")) return;
     try {
-      const response = await fetch(`/api/warehouses/${id}`, { method: "DELETE" });
-      if (!response.ok) throw new Error();
+      const res = await fetch(`/api/warehouses/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
       toast.success("Warehouse deleted successfully");
       fetchWarehouses();
     } catch {
@@ -120,30 +143,28 @@ export function WarehouseTable() {
     }
   };
 
-  const handleEdit = (warehouse: Warehouse) => {
-    setEditingWarehouse(warehouse);
+  const handleEdit = (w: Warehouse) => {
+    setEditingWarehouse(w);
     setDrawerOpen(true);
   };
-
   const handleAdd = () => {
     setEditingWarehouse(null);
     setDrawerOpen(true);
   };
-
-  const handleDrawerClose = (refreshData = false) => {
+  const handleDrawerClose = (refresh = false) => {
     setDrawerOpen(false);
     setEditingWarehouse(null);
-    if (refreshData) fetchWarehouses();
+    if (refresh) fetchWarehouses();
   };
 
   const handleSyncWarehouse = () => {
     let token = syncToken.trim();
     try {
       const parsed = new URL(token);
-      const segments = parsed.pathname.split("/").filter(Boolean);
-      if (segments.length) token = segments[segments.length - 1];
+      const parts  = parsed.pathname.split("/").filter(Boolean);
+      if (parts.length) token = parts[parts.length - 1];
     } catch {
-      // raw token
+      /* raw token, ignore */
     }
     if (!token) {
       toast.error("Please enter a valid invitation code or link");
@@ -153,17 +174,35 @@ export function WarehouseTable() {
     router.push(`/share/${token}`);
   };
 
-  if (viewLoading) return null;
-  if (!canView) return null;
+  if (viewLoading || !canView) return null;
 
+  /* ---------------------------------------------------------------- */
+  /*  JSX                                                             */
+  /* ---------------------------------------------------------------- */
   return (
     <div className="space-y-4">
-      <div className="flex justify-between gap-4 flex-wrap">
-        <div className="relative">
+      {/* Toolbar */}
+      <div className="flex flex-wrap justify-between gap-4">
+        {/* Search */}
+        <form
+          onSubmit={(e: FormEvent) => e.preventDefault()}
+          className="relative max-w-sm flex-1"
+        >
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search warehouses..." className="pl-8" />
-        </div>
-        <div className="flex gap-2 flex-wrap">
+          <Input
+            placeholder="Search warehouses…"
+            className="pl-8 w-full"
+            value={searchQuery}
+            onChange={(e) =>
+              startTransition(() => {
+                setSearchQuery(e.target.value);
+              })
+            }
+          />
+        </form>
+
+        {/* Actions */}
+        <div className="flex flex-wrap gap-2">
           {canSync && (
             <Button variant="outline" onClick={() => setDialogOpen(true)}>
               <RefreshCw className="mr-2 h-4 w-4" />
@@ -187,6 +226,7 @@ export function WarehouseTable() {
         </div>
       </div>
 
+      {/* Table */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -202,7 +242,7 @@ export function WarehouseTable() {
             {loading ? (
               <TableRow>
                 <TableCell colSpan={5} className="h-24 text-center">
-                  Loading...
+                  Loading…
                 </TableCell>
               </TableRow>
             ) : warehouses.length === 0 ? (
@@ -212,21 +252,21 @@ export function WarehouseTable() {
                 </TableCell>
               </TableRow>
             ) : (
-              warehouses.map((warehouse) => (
-                <TableRow key={warehouse.id}>
-                  <TableCell>{warehouse.id}</TableCell>
-                  <TableCell className="font-medium">{warehouse.name}</TableCell>
+              warehouses.map((w) => (
+                <TableRow key={w.id}>
+                  <TableCell>{w.id}</TableCell>
+                  <TableCell className="font-medium">{w.name}</TableCell>
                   <TableCell>
-                    {warehouse.organizationId.map((id) => (
+                    {w.organizationId.map((id) => (
                       <Badge key={id} variant="outline" className="mr-1">
                         {id}
                       </Badge>
                     ))}
                   </TableCell>
                   <TableCell>
-                    {warehouse.countries.map((ct) => (
-                      <Badge key={ct} variant="outline" className="mr-1">
-                        {ct}
+                    {w.countries.map((c) => (
+                      <Badge key={c} variant="outline" className="mr-1">
+                        {c}
                       </Badge>
                     ))}
                   </TableCell>
@@ -239,7 +279,7 @@ export function WarehouseTable() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {canUpdate && (
-                          <DropdownMenuItem onClick={() => handleEdit(warehouse)}>
+                          <DropdownMenuItem onClick={() => handleEdit(w)}>
                             <Edit className="mr-2 h-4 w-4" />
                             Edit
                           </DropdownMenuItem>
@@ -249,7 +289,7 @@ export function WarehouseTable() {
                             <DropdownMenuSeparator />
                             <DropdownMenuItem asChild>
                               <Link
-                                href={`/warehouses/${warehouse.id}/share`}
+                                href={`/warehouses/${w.id}/share`}
                                 className="flex items-center"
                               >
                                 <Share2 className="mr-2 h-4 w-4" />
@@ -262,7 +302,7 @@ export function WarehouseTable() {
                           <>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
-                              onClick={() => handleDelete(warehouse.id)}
+                              onClick={() => handleDelete(w.id)}
                               className="text-destructive"
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
@@ -280,12 +320,14 @@ export function WarehouseTable() {
         </Table>
       </div>
 
+      {/* Drawer */}
       <WarehouseDrawer
         open={drawerOpen}
         onClose={handleDrawerClose}
         warehouse={editingWarehouse}
       />
 
+      {/* Sync dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -297,9 +339,7 @@ export function WarehouseTable() {
             onChange={(e) => setSyncToken(e.target.value)}
           />
           <DialogFooter>
-            <Button onClick={handleSyncWarehouse}>
-              Sync Warehouse
-            </Button>
+            <Button onClick={handleSyncWarehouse}>Sync Warehouse</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

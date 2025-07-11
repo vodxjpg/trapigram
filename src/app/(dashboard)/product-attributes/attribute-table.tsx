@@ -1,25 +1,40 @@
 // src/app/(dashboard)/product-attributes/attribute-table.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import React, {
+  useState,
+  useEffect,
+  startTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import {
-  Plus, MoreVertical, Search, Edit, Trash2,
+  Plus,
+  MoreVertical,
+  Search,
+  Edit,
+  Trash2,
 } from "lucide-react";
 
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
+import { useDebounce } from "@/hooks/use-debounce";          // ← NEW
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Table, TableBody, TableCell, TableHead,
-  TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import {
-  DropdownMenu, DropdownMenuContent,
-  DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
@@ -46,33 +61,38 @@ type Attribute = {
 };
 
 export function AttributeTable() {
+  /* ───────────────────── permissions / routing ─────────────────────── */
   const router = useRouter();
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId = activeOrg?.id ?? null;
+  const organizationId      = activeOrg?.id ?? null;
 
-  const { hasPermission: canView, isLoading: permLoading } =
+  const { hasPermission: canView,    isLoading: permLoading } =
     useHasPermission(organizationId, { productAttributes: ["view"] });
-  const { hasPermission: canCreate } = useHasPermission(
-    organizationId, { productAttributes: ["create"] }
-  );
-  const { hasPermission: canUpdate } = useHasPermission(
-    organizationId, { productAttributes: ["update"] }
-  );
-  const { hasPermission: canDelete } = useHasPermission(
-    organizationId, { productAttributes: ["delete"] }
-  );
+  const { hasPermission: canCreate } =
+    useHasPermission(organizationId, { productAttributes: ["create"] });
+  const { hasPermission: canUpdate } =
+    useHasPermission(organizationId, { productAttributes: ["update"] });
+  const { hasPermission: canDelete } =
+    useHasPermission(organizationId, { productAttributes: ["delete"] });
 
-  const [attributes, setAttributes]  = useState<Attribute[]>([]);
-  const [loading, setLoading]        = useState(true);
-  const [drawerOpen, setDrawerOpen]  = useState(false);
-  const [editingAttr, setEditingAttr]= useState<Attribute | null>(null);
-  const [searchQuery, setSearchQuery]= useState("");
+  /* ───────────────────── component state ────────────────────────────── */
+  const [attributes,   setAttributes]    = useState<Attribute[]>([]);
+  const [loading,      setLoading]       = useState(true);
+  const [drawerOpen,   setDrawerOpen]    = useState(false);
+  const [editingAttr,  setEditingAttr]   = useState<Attribute|null>(null);
 
-  // bulk-delete state
-  const [rowSelection, setRowSelection]   = useState<Record<string,boolean>>({});
-  const [bulkDeleteOpen, setBulkDeleteOpen]= useState(false);
+  const [searchQuery,  setSearchQuery]   = useState("");    // raw text
+  const debounced                    = useDebounce(searchQuery, 300); // ← NEW
 
+  // bulk-delete
+  const [rowSelection,   setRowSelection]   = useState<Record<string, boolean>>(
+    {},
+  );
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  /* ───────────────────── data fetch ──────────────────────────────────── */
   const fetchAttributes = async () => {
+    setLoading(true);
     try {
       const res = await fetch(`/api/product-attributes?pageSize=100`, {
         credentials: "include",
@@ -94,9 +114,10 @@ export function AttributeTable() {
       return;
     }
     fetchAttributes();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [permLoading, canView]);
 
+  /* ───────────────────── CRUD helpers ───────────────────────────────── */
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this attribute (and all its terms)?")) return;
     try {
@@ -114,7 +135,7 @@ export function AttributeTable() {
 
   const handleBulkDelete = async () => {
     const ids = Object.entries(rowSelection)
-      .filter(([_,v]) => v)
+      .filter(([_, v]) => v)
       .map(([k]) => k);
     if (!ids.length) return;
     try {
@@ -136,41 +157,55 @@ export function AttributeTable() {
     }
   };
 
-  const openEdit    = (attr: Attribute) => { setEditingAttr(attr); setDrawerOpen(true); };
-  const openCreate  = () => { setEditingAttr(null); setDrawerOpen(true); };
+  /* ───────────────────── drawer handlers ────────────────────────────── */
+  const openEdit    = (attr: Attribute) => {
+    setEditingAttr(attr);
+    setDrawerOpen(true);
+  };
+  const openCreate  = () => {
+    setEditingAttr(null);
+    setDrawerOpen(true);
+  };
   const closeDrawer = (refresh = false) => {
-    setDrawerOpen(false); setEditingAttr(null);
+    setDrawerOpen(false);
+    setEditingAttr(null);
     if (refresh) fetchAttributes();
   };
 
-  if (permLoading || !canView) return null;
-
-  const filtered = attributes.filter(a =>
-    a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    a.slug.toLowerCase().includes(searchQuery.toLowerCase())
+  /* ───────────────────── derived data ───────────────────────────────── */
+  const filtered = attributes.filter((a) =>
+    a.name.toLowerCase().includes(debounced.toLowerCase()) ||
+    a.slug.toLowerCase().includes(debounced.toLowerCase()),
   );
 
   const selectedCount = Object.values(rowSelection).filter(Boolean).length;
-  const allSelected = filtered.length > 0 && selectedCount === filtered.length;
-  const someSelected = selectedCount > 0 && selectedCount < filtered.length;
+  const allSelected   = filtered.length > 0 && selectedCount === filtered.length;
+  const someSelected  = selectedCount > 0 && selectedCount < filtered.length;
 
+  /* ───────────────────── early exits ────────────────────────────────── */
+  if (permLoading || !canView) return null;
+
+  /* ───────────────────── render ─────────────────────────────────────── */
   return (
     <div className="space-y-4">
-      {/* Search + Add + Bulk Delete */}
+      {/* Search / Add / Bulk delete */}
       <div className="flex justify-between gap-4">
-        <form onSubmit={e => e.preventDefault()} className="flex gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Search attributes..."
-              className="pl-8 w-full"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
-          </div>
-          <Button type="submit">Search</Button>
-        </form>
+        {/* debounced live search – no submit needed */}
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search attributes…"
+            className="pl-8 w-full"
+            value={searchQuery}
+            onChange={(e) => {
+              const txt = e.target.value;
+              startTransition(() => {
+                setSearchQuery(txt);
+              });
+            }}
+          />
+        </div>
 
         <div className="flex items-center gap-2">
           {canCreate && (
@@ -179,7 +214,10 @@ export function AttributeTable() {
             </Button>
           )}
           {canDelete && selectedCount > 0 && (
-            <Button variant="destructive" onClick={() => setBulkDeleteOpen(true)}>
+            <Button
+              variant="destructive"
+              onClick={() => setBulkDeleteOpen(true)}
+            >
               <Trash2 className="mr-2 h-4 w-4" />
               Delete Selected ({selectedCount})
             </Button>
@@ -196,10 +234,10 @@ export function AttributeTable() {
                 <Checkbox
                   checked={allSelected}
                   aria-checked={someSelected ? "mixed" : allSelected}
-                  onCheckedChange={v => {
+                  onCheckedChange={(v) => {
                     if (v) {
-                      const sel: Record<string,boolean> = {};
-                      filtered.forEach(a => sel[a.id] = true);
+                      const sel: Record<string, boolean> = {};
+                      filtered.forEach((a) => (sel[a.id] = true));
                       setRowSelection(sel);
                     } else {
                       setRowSelection({});
@@ -226,68 +264,83 @@ export function AttributeTable() {
                   No attributes found.
                 </TableCell>
               </TableRow>
-            ) : filtered.map(attr => {
-              const isChecked = !!rowSelection[attr.id];
-              return (
-                <TableRow key={attr.id}>
-                  <TableCell className="text-center">
-                    <Checkbox
-                      checked={isChecked}
-                      onCheckedChange={v =>
-                        setRowSelection(sel => ({ ...sel, [attr.id]: !!v }))
+            ) : (
+              filtered.map((attr) => {
+                const isChecked = !!rowSelection[attr.id];
+                return (
+                  <TableRow key={attr.id}>
+                    <TableCell className="text-center">
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={(v) =>
+                          setRowSelection((sel) => ({
+                            ...sel,
+                            [attr.id]: !!v,
+                          }))
+                        }
+                      />
+                    </TableCell>
+                    <TableCell
+                      className="font-medium cursor-pointer"
+                      onClick={() =>
+                        router.push(`/product-attributes/${attr.id}/terms`)
                       }
-                    />
-                  </TableCell>
-                  <TableCell
-                    className="font-medium cursor-pointer"
-                    onClick={() => router.push(`/product-attributes/${attr.id}/terms`)}
-                  >
-                    {attr.name}
-                  </TableCell>
-                  <TableCell>{attr.slug}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{attr._count?.terms ?? 0}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canUpdate && (
-                          <DropdownMenuItem onClick={() => openEdit(attr)}>
-                            <Edit className="mr-2 h-4 w-4" /> Edit
-                          </DropdownMenuItem>
-                        )}
-                        {canDelete && canUpdate && <DropdownMenuSeparator />}
-                        {canDelete && (
-                          <DropdownMenuItem
-                            onClick={() => handleDelete(attr.id)}
-                            className="text-destructive"
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+                    >
+                      {attr.name}
+                    </TableCell>
+                    <TableCell>{attr.slug}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">
+                        {attr._count?.terms ?? 0}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {canUpdate && (
+                            <DropdownMenuItem onClick={() => openEdit(attr)}>
+                              <Edit className="mr-2 h-4 w-4" /> Edit
+                            </DropdownMenuItem>
+                          )}
+                          {canDelete && canUpdate && <DropdownMenuSeparator />}
+                          {canDelete && (
+                            <DropdownMenuItem
+                              onClick={() => handleDelete(attr.id)}
+                              className="text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" /> Delete
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
           </TableBody>
         </Table>
       </div>
 
       {/* Bulk-delete confirmation */}
       {canDelete && (
-        <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialog
+          open={bulkDeleteOpen}
+          onOpenChange={setBulkDeleteOpen}
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Delete selected attributes?</AlertDialogTitle>
+              <AlertDialogTitle>
+                Delete selected attributes?
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                This will permanently delete {selectedCount} attribute(s). This action cannot be undone.
+                This will permanently delete {selectedCount} attribute
+                {selectedCount === 1 ? "" : "s"}. This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
