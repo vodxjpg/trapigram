@@ -137,7 +137,30 @@ export default function TicketDetail() {
         setLoading(false);
       }
     })();
+    
   }, [id, canView]);
+
+  /* ────────────────────────── LIVE UPDATES (SSE) ───────────────────────── */
+useEffect(() => {
+  // no ticket id → nothing to listen to
+  if (!id) return;
+
+  // open a single EventSource per page-view
+  const es = new EventSource(`/api/tickets/${id}/events`);
+
+  // push every incoming message to React state
+  es.onmessage = (evt) => {
+    try {
+      const msg: TicketMessage = JSON.parse(evt.data);
+      setMessages((prev) => [...prev, msg]);
+    } catch {
+      /* silently ignore malformed events */
+    }
+  };
+
+  // cleanup when component unmounts or id changes
+  return () => es.close();
+}, [id]);
 
   /* ---------------- guards AFTER all hooks ------------------------------ */
   if (viewLoading || !canView) return null;

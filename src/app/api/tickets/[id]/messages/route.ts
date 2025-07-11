@@ -9,7 +9,7 @@ import {
   sendNotification,   // notification dispatcher
   NotificationChannel // enum helper
 } from "@/lib/notifications";
-
+import { emit } from "@/lib/ticket-events";
 /** Helper to check if the caller is the org owner */
 async function isOwner(organizationId: string, userId: string) {
   const { rowCount } = await pool.query(
@@ -95,7 +95,10 @@ export async function POST(
     );
 
     const saved = result.rows[0];
-    saved.attachments = JSON.parse(saved.attachments); // back to array for the client
+    saved.attachments = JSON.parse(saved.attachments);
+
+    /* 🔔 NEW – broadcast to live listeners */
+    emit(id, saved);
 
     /* 4️⃣-bis notify client on public reply */
     if (!parsed.isInternal) {
