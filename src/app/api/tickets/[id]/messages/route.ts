@@ -97,7 +97,11 @@ export async function POST(
         ? raw.attachments
         : JSON.stringify(raw.attachments ?? []);
 
-    const isInternal = req.headers.get("x-is-internal") === "true";
+          /* honour JSON flag first, else fallback to header */
+          const isInternal =
+            typeof raw.isInternal === "boolean"
+              ? raw.isInternal
+              : req.headers.get("x-is-internal") === "true";
 
     /* 3️⃣ validate */
     const parsed = messagesSchema.parse({
@@ -160,22 +164,27 @@ console.log(`Sent notification to channel ${chan} with message ID ${saved.id}`);
         variables: { ticket_number: id },
         channels,
         clientId: orderClientId,
+        ticketId: id,
         country: clientCountry,
         url: `/tickets/${id}`,
+        
       });
     }
 
     /* 5️⃣ bump ticket status */
-    const countRes = await pool.query(
-      `SELECT COUNT(*) FROM "ticketMessages" WHERE "ticketId" = $1`,
-      [id],
-    );
-    if (Number(countRes.rows[0].count) > 1) {
-      await pool.query(
-        `UPDATE tickets SET status = 'in-progress' WHERE id = $1`,
-        [id],
-      );
-    }
+     /* 5️⃣ bump ticket status only on public replies */
+     if (!parsed.isInternal) {
+       const countRes = await pool.query(
+         `SELECT COUNT(*) FROM "ticketMessages" WHERE "ticketId" = $1`,
+         [id],
+       );
+       if (Number(countRes.rows[0].count) > 1) {
+         await pool.query(
+           `UPDATE tickets SET status = 'in-progress' WHERE id = $1`,
+           [id],
+         );
+       }
+     }
 
     return NextResponse.json(saved, { status: 201 });
   } catch (err: any) {

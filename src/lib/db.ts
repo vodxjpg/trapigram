@@ -714,6 +714,16 @@ interface DB {
     updatedAt: Date;
   };
 
+  ticketSupportGroups : {
+    id: string;
+    groupId: string;
+    organizationId: string;
+    name: string;
+    countries: string;          // JSON-stringified array ["ES","IT",…]
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
   /* ─────────────── Placeholders (internal) ─────────────── */
   placeholders: {
     key: string;           // '{review_count}' → 'review_count'

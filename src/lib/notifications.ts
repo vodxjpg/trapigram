@@ -33,7 +33,8 @@ export interface SendNotificationParams {
   channels: NotificationChannel[];
   userId?: string | null;
   clientId?: string | null;
-  url?: string | null; 
+  url?: string | null;
+  ticketId?: string | null;
 }
 
 /* ───────────────── helpers ───────────────── */
@@ -94,6 +95,7 @@ export async function sendNotification(params: SendNotificationParams) {
     userId = null,
     clientId = null,
     url = null,
+    ticketId = null,
   } = params;
 
   /* enrich variables (tracking link) */
@@ -277,7 +279,7 @@ export async function sendNotification(params: SendNotificationParams) {
         clientId,
         message: bodyUserGeneric,
         country,
-        url,  
+        url,
       });
     }
   }
@@ -297,6 +299,7 @@ export async function sendNotification(params: SendNotificationParams) {
       bodyUser: hasUserTpl ? bodyUserGeneric : "",
       adminUserIds: [],
       clientUserId: clientRow?.userId || null,
+      ticketId,
     });
   }
 }
@@ -363,6 +366,7 @@ async function dispatchTelegram(opts: {
   bodyUser: string;
   adminUserIds: string[];
   clientUserId: string | null;
+  ticketId?: string | null;
 }) {
   const {
     organizationId,
@@ -371,7 +375,10 @@ async function dispatchTelegram(opts: {
     bodyUser,
     adminUserIds,
     clientUserId,
+    ticketId,
+    type,
   } = opts;
+
 
   const row = await db
     .selectFrom("organizationPlatformKey")
@@ -389,7 +396,7 @@ async function dispatchTelegram(opts: {
     .where("organizationId", "=", organizationId)
     .execute();
 
-  const groupIds = groupRows
+  const orderGroupIds = groupRows
     .filter((g) => {
       const arr: string[] = Array.isArray(g.countries)
         ? (g.countries as unknown as string[])
@@ -398,13 +405,45 @@ async function dispatchTelegram(opts: {
     })
     .map((g) => g.groupId);
 
-  const targets: { chatId: string; text: string }[] = [];
+
+  /* 2️⃣ NEW – ticket-support groups (same filter) */
+  let ticketGroupIds: string[] = [];
+  if (type === "ticket_created" || type === "ticket_replied") {
+    const supRows = await db
+      .selectFrom("ticketSupportGroups")
+      .select(["groupId", "countries"])
+      .where("organizationId", "=", organizationId)
+      .execute();
+
+    ticketGroupIds = supRows
+      .filter((g) => {
+        const arr: string[] = Array.isArray(g.countries)
+          ? (g.countries as unknown as string[])
+          : JSON.parse(g.countries || "[]");
+        return country ? arr.includes(country) : true;
+      })
+      .map((g) => g.groupId);
+  }
+
+  const targets: { chatId: string; text: string; markup?: string }[] = [];
 
   if (bodyAdmin.trim()) {
     const safeAdmin = toTelegramHtml(bodyAdmin);
     targets.push(
       ...adminUserIds.map((id) => ({ chatId: id, text: safeAdmin })),
-      ...groupIds.map((id) => ({ chatId: id, text: safeAdmin })),
+      ...orderGroupIds.map((id) => ({ chatId: id, text: safeAdmin })),
+      ...ticketGroupIds.map((id) => ({
+        chatId: id,
+        text: safeAdmin,
+        /** attach the 💬 Reply button *only* on ticket groups */
+        markup: ticketId
+          ? JSON.stringify({
+            inline_keyboard: [
+              [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
+            ],
+          })a
+          : undefined,
+      })),
     );
   }
 
@@ -422,6 +461,7 @@ async function dispatchTelegram(opts: {
           text: t.text,
           parse_mode: "HTML",
           disable_web_page_preview: true,
+          ...(t.markup ? { reply_markup: t.markup } : {}),
         }),
       }).catch(() => null),
     ),
