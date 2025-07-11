@@ -26,8 +26,12 @@ export async function GET(
 
   const onNotify = (msg: any) => {
     if (msg.channel !== chan) return;
-    try { send(JSON.parse(msg.payload ?? "{}")); }
-    catch { /* silently ignore malformed payloads */ }
+    console.log(`Received notification on channel ${chan}:`, msg.payload);
+    try {
+      send(JSON.parse(msg.payload ?? "{}"));
+    } catch {
+      /* silently ignore malformed payloads */
+    }
   };
   client.on("notification", onNotify);                   // attach first
   await client.query(`LISTEN ${chan}`);                  // no quotes → same name

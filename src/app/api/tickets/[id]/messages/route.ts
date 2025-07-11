@@ -104,9 +104,10 @@ emit(id, saved);
 /*   2. cross-process via Postgres LISTEN/NOTIFY                           */
 const chan = `ticket_${id.replace(/-/g, "")}`;      // same channel name as /events
 await pool.query(
-  'SELECT pg_notify($1, $2)',                       // placeholders ARE allowed here
-  [chan, JSON.stringify(saved)],                    // payload → JSON string
+  'SELECT pg_notify($1, $2)',
+  [chan, JSON.stringify(saved)],
 );
+console.log(`Sent notification to channel ${chan} with message ID ${saved.id}`);
     /* 4️⃣-bis notify client on public reply */
     if (!parsed.isInternal) {
       const {

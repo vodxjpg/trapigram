@@ -152,9 +152,17 @@ useEffect(() => {
   es.onmessage = (evt) => {
     try {
       const msg: TicketMessage = JSON.parse(evt.data);
-      setMessages((prev) => [...prev, msg]);
-    } catch {
-      /* silently ignore malformed events */
+      console.log('Received SSE message:', msg);
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) {
+          console.log('Message already exists, skipping:', msg.id);
+          return prev;
+        }
+        console.log('Adding new message to state:', msg.id);
+        return [...prev, msg];
+      });
+    } catch (err) {
+      console.error('Error parsing SSE message:', err);
     }
   };
 
