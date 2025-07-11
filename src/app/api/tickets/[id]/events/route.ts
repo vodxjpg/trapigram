@@ -1,79 +1,73 @@
 /* eslint-disable no-console */
-export const runtime = "nodejs";
+export const runtime    = "nodejs";
 export const revalidate = 0;
 
-import { NextRequest } from "next/server";
+import { NextRequest }    from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import type { ClientBase } from "pg";
 
-type DbRow = {
-  id: string;
-  ticketId: string;
-  message: string;
-  attachments: string;
-  isInternal: boolean;
-  createdAt: string;
-};
-
-const normaliseRow = (r: DbRow) => ({
-  id: r.id,
-  message: r.message,
-  attachments: r.attachments ? JSON.parse(r.attachments) : [],
-  isInternal: r.isinternal ?? r.isInternal,
-  createdAt: r.createdat ?? r.createdAt,
-});
-
+/* ------------------------------------------------------------------------- */
+/*  GET /api/tickets/[id]/events – server-sent events (SSE) stream           */
+/* ------------------------------------------------------------------------- */
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const { id } = params;
+  const { id }  = params;
+  const chan    = `ticket_${id.replace(/-/g, "")}`;      // ticket_abcd…
 
-  const client = await pool.connect();
-  const chan   = `ticket_${id.replace(/-/g, "")}`;
-  await client.query(`LISTEN "${chan}"`);
+  /* 1️⃣  open dedicated connection & attach listener *before* LISTEN ------ */
+  const client: ClientBase = await pool.connect();
 
   const encoder = new TextEncoder();
+  let heartbeat: NodeJS.Timeout;
+  let ttl:       NodeJS.Timeout;
+  let send:      (obj: unknown) => void;                 // defined in start()
 
-  let pingId: NodeJS.Timeout;   // ← hoisted so cancel() can see them
-  let ttlId:  NodeJS.Timeout;
-  
+  const onNotify = (msg: any) => {
+    if (msg.channel !== chan) return;
+    try { send(JSON.parse(msg.payload ?? "{}")); }
+    catch { /* silently ignore malformed payloads */ }
+  };
+  client.on("notification", onNotify);                   // attach first
+  await client.query(`LISTEN ${chan}`);                  // no quotes → same name
+
+  /* 2️⃣  Build the ReadableStream ---------------------------------------- */
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (obj: unknown) =>
+      send = (obj) =>
         controller.enqueue(encoder.encode(`data:${JSON.stringify(obj)}\n\n`));
-  
-      /* ── heartbeat ───────────────────────────────────────────── */
-      pingId = setInterval(() => controller.enqueue(encoder.encode(": ping\n\n")), 10_000);
-  
-      /* ── pg NOTIFY handler ───────────────────────────────────── */
-      client.on("notification", (msg) => {
-        if (msg.channel !== chan) return;
-        try   { send(JSON.parse(msg.payload ?? "{}")); }
-        catch { /* ignore malformed */ }
-      });
-  
-      /* ── auto-close after 25 s (client will reconnect) ───────── */
-      ttlId = setTimeout(() => {
-        clearInterval(pingId);
-        controller.close();
+
+      /* handshake – flush headers immediately so the browser opens the stream */
+      controller.enqueue(encoder.encode(": connected\n\n"));
+
+      /* heartbeat every 10 s keeps edge / proxies from idling the connection */
+      heartbeat = setInterval(() =>
+        controller.enqueue(encoder.encode(": ping\n\n")), 10_000);
+
+      /* auto-close after 25 s; browser will reconnect */
+      ttl = setTimeout(close, 25_000);
+
+      /* tidy-up helper (used by ttl *and* cancel) */
+      function close() {
+        clearInterval(heartbeat);
+        clearTimeout(ttl);
+        client.off("notification", onNotify);
         client.release();
-      }, 25_000);
-    },
-  
-    /* **This** is what the stream implementation calls on Abort / GC */
-    cancel() {
-      clearInterval(pingId);
-      clearTimeout(ttlId);
-      client.release();
+        controller.close();
+      }
+
+      /* if client aborts early (tab closed, route change, …) */
+      controller.signal.addEventListener("abort", close);
     },
   });
 
+  /* 3️⃣  Return the SSE response ----------------------------------------- */
   return new Response(stream, {
     headers: {
-      "Content-Type": "text/event-stream",
+      "Content-Type":  "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache",
-      Connection: "keep-alive",
+      Connection:      "keep-alive",
     },
   });
 }
