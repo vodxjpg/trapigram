@@ -22,15 +22,22 @@ export function NotificationBell() {
   const [closing, setClosing] = useState(false);
   const router = useRouter();
 
+  /* mark a single row */
   const markRead = async (id: string) => {
     await fetch(`/api/in-app-notifications/${id}`, { method: "PATCH" });
     mutate();
   };
 
-   const handleClick = async (id: string, url?: string | null) => {
-       await markRead(id);
-       if (url) router.push(url);
-     };
+  /* mark every row */
+  const markAllRead = async () => {
+    await fetch("/api/in-app-notifications/mark-all", { method: "PATCH" });
+    mutate();
+  };
+
+  const handleClick = async (id: string, url?: string | null) => {
+    await markRead(id);
+    if (url) router.push(url);
+  };
 
   return (
     <DropdownMenu onOpenChange={(o) => setClosing(!o && closing)}>
@@ -48,7 +55,22 @@ export function NotificationBell() {
           </Badge>
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80">
+
+      {/* scrollable dropdown */}
+      <DropdownMenuContent align="end" className="w-80 max-h-96 overflow-y-auto">
+        {/* top action */}
+        {unreadCount > 0 && (
+          <DropdownMenuItem
+            onClick={markAllRead}
+            className="cursor-pointer font-semibold text-primary"
+          >
+            Mark all as read
+          </DropdownMenuItem>
+        )}
+
+        {/* spacer when top action present */}
+        {unreadCount > 0 && <hr className="my-1 border-muted" />}
+
         {isLoading ? (
           <DropdownMenuItem disabled>Loading…</DropdownMenuItem>
         ) : notifications.length === 0 ? (
