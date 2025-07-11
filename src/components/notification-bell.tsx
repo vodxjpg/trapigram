@@ -3,6 +3,7 @@
 
 import { Bell } from "lucide-react";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,11 +20,17 @@ const stripTags = (html: string) => html.replace(/<[^>]+>/g, "");
 export function NotificationBell() {
   const { notifications, unreadCount, isLoading, mutate } = useNotifications();
   const [closing, setClosing] = useState(false);
+  const router = useRouter();
 
   const markRead = async (id: string) => {
     await fetch(`/api/in-app-notifications/${id}`, { method: "PATCH" });
     mutate();
   };
+
+   const handleClick = async (id: string, url?: string | null) => {
+       await markRead(id);
+       if (url) router.push(url);
+     };
 
   return (
     <DropdownMenu onOpenChange={(o) => setClosing(!o && closing)}>
@@ -54,7 +61,7 @@ export function NotificationBell() {
               <DropdownMenuItem
                 key={n.id}
                 className={cn("cursor-pointer", !n.read && "font-semibold")}
-                onClick={() => markRead(n.id)}
+                onClick={() => handleClick(n.id, (n as any).url)}
               >
                 {txt}
               </DropdownMenuItem>

@@ -698,6 +698,7 @@ interface DB {
     title: string;
     message: string;
     country: string | null;
+    url: string | null;
     read: boolean;
     createdAt: Date;
     updatedAt: Date;

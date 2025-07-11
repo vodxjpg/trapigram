@@ -160,7 +160,8 @@ console.log(`Sent notification to channel ${chan} with message ID ${saved.id}`);
         variables: { ticket_number: id },
         channels,
         clientId: orderClientId,
-        country: clientCountry,      // ★ ensure match
+        country: clientCountry,
+        url: `/tickets/${id}`,
       });
     }
 

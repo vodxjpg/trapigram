@@ -114,7 +114,8 @@ export async function POST(
         variables: { order_number: orderKey },
         channels,
         clientId: customerSent ? null : orderClientId,
-        country: orderCountry,      // ★ crucial for template match
+        country: orderCountry,
+        url: `/orders/${id}`,
       });
     }
 

@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
       },
       channels,
       clientId: result.clientId,
+      url: `/tickets/${ticketId}`,
     });
     return NextResponse.json(result, { status: 201 });
   } catch (err: any) {

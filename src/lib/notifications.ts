@@ -33,6 +33,7 @@ export interface SendNotificationParams {
   channels: NotificationChannel[];
   userId?: string | null;
   clientId?: string | null;
+  url?: string | null; 
 }
 
 /* ───────────────── helpers ───────────────── */
@@ -92,6 +93,7 @@ export async function sendNotification(params: SendNotificationParams) {
     channels,
     userId = null,
     clientId = null,
+    url = null,
   } = params;
 
   /* enrich variables (tracking link) */
@@ -275,6 +277,7 @@ export async function sendNotification(params: SendNotificationParams) {
         clientId,
         message: bodyUserGeneric,
         country,
+        url,  
       });
     }
   }
@@ -305,9 +308,9 @@ async function dispatchInApp(opts: {
   clientId: string | null;
   message: string;
   country: string | null;
+  url?: string | null;
 }) {
-  const { organizationId, userId, clientId, message, country } = opts;
-
+  const { organizationId, userId, clientId, message, country, url } = opts;
   const plain = stripTags(message).replace(/\s+/g, " ").trim();
   await db
     .insertInto("inAppNotifications")
@@ -319,6 +322,7 @@ async function dispatchInApp(opts: {
       title: plain.slice(0, 64),
       message,
       country,
+      url: url ?? null,
       read: false,
       createdAt: new Date(),
       updatedAt: new Date(),

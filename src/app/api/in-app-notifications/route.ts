@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   /* Rows for dropdown */
   const rows = await db
     .selectFrom("inAppNotifications")
-    .select(["id", "title", "read", "createdAt"])
+    .select(["id", "title", "read", "createdAt", "url"]) 
     .where("organizationId", "=", ctx.organizationId)
     .where("userId", "=", ctx.userId)
     .orderBy("createdAt desc")
