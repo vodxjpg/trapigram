@@ -228,6 +228,16 @@ export default function TicketDetail() {
   const handleAttachmentChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     e.target.files && setAttachments(Array.from(e.target.files));
 
+  /** upload one file and return {name, url, size} */
+  const uploadFile = async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const up = await fetch("/api/upload", { method: "POST", body: fd });
+    if (!up.ok) throw new Error("upload failed");
+    const { filePath } = await up.json();
+    return { name: file.name, url: filePath, size: file.size };
+  };
+  
   const handleSendMessage = async () => {
     if (!canUpdate) return;
     if (!newMessage.trim()) {
@@ -235,30 +245,36 @@ export default function TicketDetail() {
       return;
     }
     try {
-      const attachJson =
-        attachments.length
-          ? JSON.stringify(
-              attachments.map((f) => ({ name: f.name, url: "", size: f.size }))
-            )
-          : null;
-
+      /* 1️⃣ upload every attachment (in parallel) */
+      let uploaded: { name: string; url: string; size: number }[] = [];
+      if (attachments.length) {
+        uploaded = await Promise.all(attachments.map(uploadFile));
+      }
+  
+      /* 2️⃣ post the message with the real URLs */
       const res = await fetch(`/api/tickets/${id}/messages`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-is-internal": "true",
         },
-        body: JSON.stringify({ content: newMessage, attachments: attachJson }),
+        body: JSON.stringify({
+          content: newMessage,
+          attachments: uploaded,     // <-- NOT stringified
+        }),
       });
       if (!res.ok) throw new Error();
+  
       const created: TicketMessage = await res.json();
       setMessages((m) => [...m, created]);
       setNewMessage("");
       setAttachments([]);
-    } catch {
+    } catch (err) {
+      console.error(err);
       toast.error("Failed to send message");
     }
   };
+  
 
   /* ---------------- render guards --------------------------------------- */
   if (loading)          return <p className="p-6">Loading…</p>;
