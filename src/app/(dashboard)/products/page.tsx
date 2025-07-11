@@ -211,6 +211,7 @@ export default function ProductsPage() {
                 Import
               </Button>
             )}
+            {canCreateProducts && (
             <Button
               variant="outline"
               onClick={handleExport}
@@ -219,6 +220,7 @@ export default function ProductsPage() {
               <Download className="mr-2 h-4 w-4" />
               {isExporting ? "Exporting..." : "Export"}
             </Button>
+            )}
             {canCreateProducts && (
               <Button onClick={handleCreateProduct} disabled={isLoading}>
                 <Plus className="mr-2 h-4 w-4" />
