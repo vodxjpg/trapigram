@@ -163,6 +163,22 @@ function groupByProduct(lines: OrderItemLine[]) {
   );
 }
 
+async function fetchJsonVerbose(
+  url: string,
+  opts: RequestInit = {},
+  tag = url,
+) {
+  const res = await fetch(url, opts);
+  let body: any = null;
+  try {
+    body = await res.clone().json();   // clone → still readable later
+  } catch { /* not JSON */ }
+
+  console.log(`[${tag}]`, res.status, body ?? "(non-json)");
+  return res;
+}
+
+
 export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
 
@@ -766,12 +782,13 @@ useEffect(() => {
           url: `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
         });
   
-        const del = await fetch(
+        const del = await fetchJsonVerbose(
           `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
           {
             method: "DELETE",
             headers: { "x-api-key": key },
-          }
+          },
+          "DELETE Niftipay",
         );
   
         if (!del.ok) {
@@ -798,7 +815,7 @@ useEffect(() => {
       /* --- 1. Patch the order itself --- */
       const selectedAddressText = addresses.find(a => a.id === selectedAddressId)?.address ?? null;
   
-      const res = await fetch(`/api/order/${orderData.id}`, {
+      const res = await fetchJsonVerbose(`/api/order/${orderData.id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
