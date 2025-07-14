@@ -88,16 +88,16 @@ interface PaymentMethod {
 
 /* ─── currency map helpers ─────────────────────────────────────── */
 const EU_COUNTRIES = new Set([
-    "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
-    "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE",
-  ]);
-  
-  function countryToFiat(c: string): string {
-    const code = c.toUpperCase();
-    if (code === "GB")            return "GBP";
-    if (EU_COUNTRIES.has(code))   return "EUR";
-    return "USD";
-  }
+  "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU",
+  "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+]);
+
+function countryToFiat(c: string): string {
+  const code = c.toUpperCase();
+  if (code === "GB") return "GBP";
+  if (EU_COUNTRIES.has(code)) return "EUR";
+  return "USD";
+}
 
 function fmt(n: number | string): string {
   return Number(n).toLocaleString(undefined, {
@@ -380,7 +380,7 @@ export default function OrderForm() {
       try {
         setNiftipayLoading(true);
         const res = await fetch(
-        `/api/niftipay/payment-methods`,
+          `/api/niftipay/payment-methods`,
           { headers: { "x-api-key": pm.apiKey } },
         );
         if (!res.ok) throw new Error("Failed to load Niftipay networks");
@@ -700,7 +700,7 @@ export default function OrderForm() {
           return;
         }
         const [chain, asset] = selectedNiftipay.split(":");
-        
+
         const client = clients.find((c) => c.id === selectedClient)!;
         const safeEmail = client.email?.trim() || "user@trapyfy.com";   // ✅ fallback
 
@@ -708,7 +708,7 @@ export default function OrderForm() {
         const totalF = total + shippingCost;
 
         const nRes = await fetch(
-       `/api/niftipay/orders`,
+          `/api/niftipay/orders`,
           {
             method: "POST",
             headers: {
@@ -1070,17 +1070,21 @@ export default function OrderForm() {
                       {shippingMethods.map((m) => {
                         const tier = m.costs.find(
                           ({ minOrderCost, maxOrderCost }) =>
-                            total >= minOrderCost &&
-                            (maxOrderCost === 0 || total <= maxOrderCost)
+                            total >= minOrderCost && (maxOrderCost === 0 || total <= maxOrderCost),
                         );
                         const cost = tier ? tier.shipmentCost : 0;
+
                         return (
                           <SelectItem key={m.id} value={m.id}>
-                            {m.title} — {m.description} — ${cost.toFixed(2)}
+                            {/* max-w keeps the item from being absurdly wide in very big menus */}
+                            <span className="block max-w-[280px] truncate">
+                              {m.title} — {m.description} — ${cost.toFixed(2)}
+                            </span>
                           </SelectItem>
                         );
                       })}
                     </SelectContent>
+
                   </Select>
                 </div>
                 {/* Company */}

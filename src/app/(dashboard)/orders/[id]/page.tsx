@@ -358,6 +358,9 @@ if (!permLoading && !canViewOrder) {
                 <div>
                   <p className="text-sm text-muted-foreground">Order ID</p>
                   <p className="font-medium">{order.id}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Order number</p>
                   <p className="font-medium">{order.orderKey}</p>
                 </div>
                 <div>
@@ -548,12 +551,10 @@ if (!permLoading && !canViewOrder) {
         <div className="flex flex-col items-center">
           {/* QR */}
           <div className="w-40 h-40 relative">
-            <Image
+          <img
               src={crypto.qrUrl}
-              alt="QR code"
-              fill
-              sizes="160px"
-              className="object-contain rounded-md border"
+              alt={`QR for ${crypto.asset}`}
+              className="w-40 h-40 object-contain rounded-md border"
             />
           </div>
 
