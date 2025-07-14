@@ -750,10 +750,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           return;
         }
   
-        // Log the DELETE attempt for debugging
-        console.log("[Trapigram] Deleting Niftipay order", {
+        // Log DELETE request details
+        console.log("[Trapigram] Attempting to delete Niftipay order", {
           reference: orderData.orderKey,
-          apiKey: key.slice(0, 8) + "...", // Mask key for security
+          apiKey: key ? key.slice(0, 8) + "..." : "undefined",
+          merchantId: orderData.organizationId ?? "undefined",
         });
   
         const del = await fetch(
@@ -766,7 +767,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   
         if (!del.ok) {
           const errorBody = await del.json().catch(() => ({ error: "Unknown error" }));
-          console.error("[Trapigram] DELETE failed", {
+          console.error("[Trapigram] DELETE request failed", {
             status: del.status,
             error: errorBody.error,
             reference: orderData.orderKey,
@@ -778,7 +779,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           }
           return;
         }
-  
         console.log("[Trapigram] Niftipay order deleted successfully");
       }
   
@@ -820,11 +820,12 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         }
   
         const [chain, asset] = selectedNiftipay.split(":");
+        // Log creation of new Niftipay order
         console.log("[Trapigram] Creating new Niftipay order", {
           reference: orderData.orderKey,
           chain,
           asset,
-          merchantId: orderData.organizationId,
+          merchantId: orderData.organizationId ?? "undefined",
         });
   
         const niftipayRes = await fetch("/api/niftipay/orders", {
@@ -841,19 +842,23 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             firstName: orderData.client.firstName,
             lastName: orderData.client.lastName,
             email: orderData.client.email ?? "user@trapyfy.com",
-            merchantId: orderData.organizationId ?? "", // Consistent merchantId
+            merchantId: orderData.organizationId ?? "",
             reference: orderData.orderKey,
           }),
         });
   
         if (!niftipayRes.ok) {
           const errorBody = await niftipayRes.json().catch(() => ({ error: "Unknown error" }));
+          console.error("[Trapigram] Failed to create new Niftipay order", {
+            status: niftipayRes.status,
+            error: errorBody.error,
+          });
           toast.error(errorBody.error || "Failed to create new Niftipay order");
           return;
         }
   
         const niftipayMeta = await niftipayRes.json();
-        console.log("[Trapigram] Niftipay order created", niftipayMeta);
+        console.log("[Trapigram] Niftipay order created successfully", niftipayMeta);
   
         // Update Trapigram order with Niftipay metadata
         await fetch(`/api/order/${orderData.id}`, {
