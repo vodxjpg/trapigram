@@ -170,7 +170,6 @@ export async function PATCH(
   if (ctx instanceof NextResponse) return ctx;
   // enforce order:update
   const { id } = await params;
-  const body = await req.json();
    /* -----------------------------------------------------------------
     0. Parse body and normalise `paymentMethod`
        (the front-end may send either `paymentMethod` or `paymentMethodId`)
