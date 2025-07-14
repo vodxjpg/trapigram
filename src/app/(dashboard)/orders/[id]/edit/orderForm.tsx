@@ -828,15 +828,12 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
       const headers: HeadersInit = { "Content-Type": "application/json" };
 
-      const res = await fetchJsonVerbose(
-          `/api/order/${orderData.id}`,
-          {
-            method: "PATCH",
-            headers: {
-              "Content-Type": "application/json",
-              "x-organization-id": activeOrg!.id,   //  ←  **add this**
-            },
-       
+          const res = await fetchJsonVerbose(
+              `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
+            {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           discount: discount ? Number(discount) : orderData.discount,
           couponCode: newCoupon || orderData.coupon,
@@ -846,7 +843,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           shippingCompany: selectedShippingCompany,
           paymentMethodId: selectedPaymentMethod,
         }),
-        credentials: "include",
       });
 
       if (!res.ok) {
