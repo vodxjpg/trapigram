@@ -212,6 +212,18 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
   const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
   const [rawLines, setRawLines] = useState<OrderItemLine[]>([]);
+   interface PaymentMethod {
+       id: string;
+       name: string;
+       apiKey?: string | null;
+     }
+     const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
+     const [niftipayNetworks, setNiftipayNetworks] = useState<
+       { chain: string; asset: string; label: string }[]
+     >([]);
+     const [niftipayLoading, setNiftipayLoading] = useState(false);
+     const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
   /* ——————————————————— HELPERS ——————————————————— */
   const calcRowSubtotal = (p: Product, qty: number) =>
     (p.regularPrice[clientCountry] ?? p.price) * qty;
@@ -397,6 +409,61 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       setProductsLoading(false);
     }
   }
+
+  /* ────────────────────────────────────────────────────────────
+   Fetch payment methods + (if Niftipay) chains/assets
+──────────────────────────────────────────────────────────── */
+useEffect(() => {
+  (async () => {
+    try {
+      const pmRes = await fetch("/api/payment-methods", {
+        headers: {
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+        },
+      });
+      const { methods } = await pmRes.json();
+      setPaymentMethods(methods);
+      // pre-select the one originally stored in the order
+      const init = methods.find(
+        (m: any) =>
+          m.name.toLowerCase() === orderData?.shippingInfo.payment?.toLowerCase()
+      )?.id;
+      if (init) setSelectedPaymentMethod(init);
+    } catch (e) {
+      toast.error("Failed loading payment methods");
+    }
+  })();
+}, [orderData]);
+
+useEffect(() => {
+  const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+  if (!pm || pm.name.toLowerCase() !== "niftipay" || !pm.apiKey) {
+    setNiftipayNetworks([]);
+    setSelectedNiftipay("");
+    return;
+  }
+  (async () => {
+    try {
+      setNiftipayLoading(true);
+      const res = await fetch("/api/niftipay/payment-methods", {
+        headers: { "x-api-key": pm.apiKey },
+      });
+      const { methods } = await res.json();
+      setNiftipayNetworks(
+        methods.map((m: any) => ({
+          chain: m.chain,
+          asset: m.asset,
+          label: m.label ?? `${m.asset} on ${m.chain}`,
+        }))
+      );
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setNiftipayLoading(false);
+    }
+  })();
+}, [selectedPaymentMethod, paymentMethods]);
+
 
   const countryProducts = products.filter((p) => {
     // if no stockData at all (affiliate), show it
@@ -671,7 +738,23 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   // New: update order
   const handleUpdateOrder = async () => {
     if (!orderData?.id) return;
-    try {
+      try {
+          /* ── 0. Handle Niftipay “switch-away” case ────────────── */
+          const oldPM = orderData?.shippingInfo.payment?.toLowerCase();
+          const newPM = paymentMethods.find((p) => p.id === selectedPaymentMethod)
+            ?.name.toLowerCase();
+      
+          if (oldPM === "niftipay" && newPM !== "niftipay") {
+            const del = await fetch(
+              `/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+              { method: "DELETE" }
+            );
+            if (!del.ok) {
+              const { error } = await del.json();
+              toast.error(error);
+              return; // abort update
+            }
+          }
       const selectedAddressText = addresses.find(
         (a) => a.id === selectedAddressId
       )?.address;
@@ -685,9 +768,40 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           total,
           selectedShippingMethod,
           selectedShippingCompany,
+          paymentMethodId: selectedPaymentMethod,
         }),
       });
       if (!res.ok) throw new Error("Failed to update order");
+           /* ── 1. If NEW method is Niftipay, create fresh invoice ─ */
+     if (newPM === "niftipay") {
+       const pmObj = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+       const key = pmObj?.apiKey;
+       if (!key) {
+         toast.error("Niftipay API-key missing");
+       } else if (!selectedNiftipay) {
+         toast.error("Select crypto network / asset first");
+       } else {
+         const [chain, asset] = selectedNiftipay.split(":");
+         await fetch("/api/niftipay/orders", {
+           method: "POST",
+           headers: {
+             "x-api-key": key,
+             "Content-Type": "application/json",
+           },
+           body: JSON.stringify({
+             network: chain,
+             asset,
+             amount: total,
+             currency: orderData.currency ?? "EUR",
+             firstName: orderData.client.firstName,
+             lastName: orderData.client.lastName,
+             email: orderData.client.email ?? "user@trapyfy.com",
+             merchantId: orderData.organizationId ?? "",
+             reference: orderData.orderKey,
+           }),
+         });
+       }
+     }
       toast.success("Order updated!");
       router.push("/orders");
     } catch (err: any) {
@@ -1055,19 +1169,67 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           </Card>
 
           {/* Payment Method */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CreditCard className="h-5 w-5" /> Payment Method
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Label htmlFor="payment">Select Payment Method</Label>
-              <p className="text-lg font-medium">
-                {orderData?.shippingInfo.payment}
-              </p>
-            </CardContent>
-          </Card>
+                 {/* Payment Method (now editable) */}
+       <Card>
+         <CardHeader>
+           <CardTitle className="flex items-center gap-2">
+             <CreditCard className="h-5 w-5" /> Payment Method
+           </CardTitle>
+         </CardHeader>
+         <CardContent>
+           <Label>Select Payment Method</Label>
+           <Select
+             value={selectedPaymentMethod}
+             onValueChange={setSelectedPaymentMethod}
+           >
+             <SelectTrigger>
+               <SelectValue placeholder="Select payment method" />
+             </SelectTrigger>
+             <SelectContent>
+               {paymentMethods.map((m) => (
+                 <SelectItem key={m.id} value={m.id}>
+                   {m.name}
+                 </SelectItem>
+               ))}
+             </SelectContent>
+           </Select>
+
+           {/* Niftipay chain / asset selector */}
+           {paymentMethods.find(
+             (p) =>
+               p.id === selectedPaymentMethod &&
+               p.name.toLowerCase() === "niftipay"
+           ) && (
+             <div className="mt-4">
+               <Label>Select Crypto Network</Label>
+               <Select
+                 value={selectedNiftipay}
+                 onValueChange={setSelectedNiftipay}
+                 disabled={niftipayLoading}
+               >
+                 <SelectTrigger>
+                   <SelectValue
+                     placeholder={
+                       niftipayLoading ? "Loading…" : "Select network"
+                     }
+                   />
+                 </SelectTrigger>
+                 <SelectContent>
+                   {niftipayNetworks.map((n) => (
+                     <SelectItem
+                       key={`${n.chain}:${n.asset}`}
+                       value={`${n.chain}:${n.asset}`}
+                     >
+                       {n.label}
+                     </SelectItem>
+                   ))}
+                 </SelectContent>
+               </Select>
+             </div>
+           )}
+         </CardContent>
+       </Card>
+
         </div>
 
         {/* RIGHT COLUMN: Order Summary */}
