@@ -843,7 +843,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          "x-internal-secret": INTERNAL,     // ← add this
+          "x-internal-secret":process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,    // ← add this
         },
         credentials: "include",
         body: JSON.stringify({
