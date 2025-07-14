@@ -453,54 +453,65 @@ export default function OrderForm() {
   }, [selectedPaymentMethod, paymentMethods]);
 
   // — Add product
-  const addProduct = async () => {
-    if (!selectedProduct || !cartId)
-      return toast.error("Cart hasn’t been created yet!");
+// — Add product  (CREATE form)
+const addProduct = async () => {
+  if (!selectedProduct || !cartId)
+    return toast.error("Cart hasn’t been created yet!");
 
-    const product = products.find((p) => p.id === selectedProduct);
-    if (!product) return;
-    const unitPrice = product.regularPrice[clientCountry] ?? product.price;
+  const product = products.find((p) => p.id === selectedProduct);
+  if (!product) return;
+  const unitPrice = product.regularPrice[clientCountry] ?? product.price;
 
-    try {
-      const res = await fetch(`/api/cart/${cartId}/add-product`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          productId: selectedProduct,
-          quantity,
-          unitPrice,
-          country: clientCountry,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        throw new Error(err?.message || "Failed to add product");
-      }
-      const { product: added, quantity: qty } = await res.json();
-      const subtotalRow = calcRowSubtotal(added, qty);
+  try {
+    const res = await fetch(`/api/cart/${cartId}/add-product`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        productId: selectedProduct,
+        quantity,
+        unitPrice,
+        country: clientCountry,
+      }),
+    });
 
-      setOrderItems((prev) => {
-        if (prev.some((it) => it.product.id === added.id)) {
-          return prev.map((it) =>
-            it.product.id === added.id
-              ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
-              : it
-          );
-        }
-        return [
-          ...prev,
-          { product: { ...added, subtotal: subtotalRow }, quantity: qty },
-        ];
-      });
-
-      setSelectedProduct("");
-      setQuantity(1);
-      toast.success("Product added to cart!");
-    } catch (error: any) {
-      console.error("addProduct error:", error);
-      toast.error(error.message || "Could not add product");
+    /* ▼▼ ——— patch starts here ——— ▼▼ */
+    if (!res.ok) {
+      // consume JSON safely; fall back to empty object on parse error
+      const body = await res.json().catch(() => ({}));
+      const msg =
+        (body.error as string) ??
+        (body.message as string) ??
+        "Failed to add product";
+      throw new Error(msg);        // the toast handler below will show it
     }
-  };
+    /* ▲▲ ——— patch ends here ——— ▲▲ */
+
+    const { product: added, quantity: qty } = await res.json();
+    const subtotalRow = calcRowSubtotal(added, qty);
+
+    setOrderItems((prev) => {
+      if (prev.some((it) => it.product.id === added.id)) {
+        return prev.map((it) =>
+          it.product.id === added.id
+            ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
+            : it
+        );
+      }
+      return [
+        ...prev,
+        { product: { ...added, subtotal: subtotalRow }, quantity: qty },
+      ];
+    });
+
+    setSelectedProduct("");
+    setQuantity(1);
+    toast.success("Product added to cart!");
+  } catch (err: any) {
+    console.error("addProduct error:", err);
+    // will now show the exact “required level” text or any other backend error
+    toast.error(err.message || "Could not add product");
+  }
+};
 
   // — Remove Product
   const removeProduct = async (productId: string, idx: number) => {
