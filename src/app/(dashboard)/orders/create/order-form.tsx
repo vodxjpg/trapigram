@@ -727,7 +727,10 @@ export default function OrderForm() {
           },
         );
         if (!nRes.ok) {
-          toast.error("Niftipay invoice failed");
+          const msg = await nRes.text();          // or  nRes.json() if you prefer
+          console.error("[Niftipay] ", msg);
+          toast.error(`Niftipay: ${msg}`);
+          return;                                 // abort the happy-path
         } else {
           const meta = await nRes.json();
           await fetch(`/api/order/${data.id}`, {
