@@ -318,6 +318,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       try {
         const res = await fetch(
             `/api/order/${orderId}?organizationId=${activeOrg?.id}`,
+            { credentials: 'include' }
           );
         const data = await res.json();
         setOrderData(data);
