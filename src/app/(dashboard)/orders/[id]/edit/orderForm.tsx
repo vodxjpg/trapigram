@@ -700,6 +700,7 @@ useEffect(() => {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        console.error("PATCH /order failed", body);
         throw new Error(body.error || "Failed to update quantity");
       }
 
@@ -808,8 +809,8 @@ useEffect(() => {
           couponCode: newCoupon ? newCoupon : orderData.coupon,
           address: selectedAddressText,
           total,
-          selectedShippingMethod,
-          selectedShippingCompany,
+          shippingMethod : selectedShippingMethod,
+          shippingCompany: selectedShippingCompany,
           paymentMethodId: selectedPaymentMethod,
         }),
       });
