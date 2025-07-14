@@ -3,96 +3,59 @@ import { NextRequest, NextResponse } from "next/server";
 
 const BASE = "https://www.niftipay.com/api";
 
-/* ───────────────────────── helpers ───────────────────────── */
-function logReq(req: NextRequest, url: string) {
-  const key = req.headers.get("x-api-key") ?? "∅";
-  const cookie = req.headers.get("cookie") ?? "∅";
+/* ────────────────────────────────────────────────────────────
+   helper: build CoinX URL + copy headers we care about
+──────────────────────────────────────────────────────────── */
+function buildUpstream(req: NextRequest, path: string) {
+  const { search } = new URL(req.url);                // keeps ?reference=…
+  const url = `${BASE}/${path}${search}`;
+
+  // pass only the two headers CoinX understands
+  const headers: Record<string, string> = {};
+  const apiKey = req.headers.get("x-api-key");
+  if (apiKey) headers["x-api-key"] = apiKey;
+  const cookie = req.headers.get("cookie");
+  if (cookie) headers.cookie = cookie;
+
+  return { url, headers };
+}
+
+/* ────────────────────────────────────────────────────────────
+   generic handler – covers GET / POST / DELETE / PATCH …
+──────────────────────────────────────────────────────────── */
+export async function handler(
+  req: NextRequest,
+  {
+    params,
+  }: {
+    params: { path: string[] };
+  },
+) {
+  // 1) build URL + headers
+  const { url, headers } = buildUpstream(req, params.path.join("/"));
   console.log(`[TPY] → ${req.method} ${url}`);
-  console.log("       x-api-key:", key.slice(0, 8) + "…" );
-  console.log("       cookie   :", cookie ? "present" : "none");
-}
 
-/* ───────────────────────── GET ───────────────────────────── */
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { path: string[] } },
-) {
-  const url = `${BASE}/${params.path.join("/")}`;
-  logReq(req, url);
-
-  const resp = await fetch(url, {
-    headers: {
-      "x-api-key": req.headers.get("x-api-key") ?? "",
-      // 🆕 forward the session cookie so the user is authenticated
-      cookie      : req.headers.get("cookie") ?? "",
-    },
+  // 2) stream body only for methods that may have one
+  const hasBody = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+  const upstream = await fetch(url, {
+    method : req.method,
+    headers,
+    body   : hasBody ? req.body : undefined,
+    redirect: "manual",
   });
 
-  return new NextResponse(resp.body, {
-    status : resp.status,
-    headers: {
-      "Content-Type": resp.headers.get("content-type") ?? "application/json",
-    },
+  // 3) mirror status, headers and body back to the browser
+  const resHeaders = new Headers(upstream.headers);      // clone
+  return new NextResponse(upstream.body, {
+    status : upstream.status,
+    headers: resHeaders,
   });
 }
 
-/* ───────────────────────── POST ──────────────────────────── */
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { path: string[] } },
-) {
-  const url = `${BASE}/${params.path.join("/")}`;
-  logReq(req, url);
-
-  const resp = await fetch(url, {
-    method : "POST",
-    headers: {
-      "x-api-key": req.headers.get("x-api-key") ?? "",
-      "Content-Type": "application/json",
-      cookie: req.headers.get("cookie") ?? "",
-    },
-    body: await req.text(),
-  });
-
-  return new NextResponse(resp.body, {
-    status : resp.status,
-    headers: { "Content-Type": resp.headers.get("content-type") ?? "application/json" },
-  });
-}
-
-//* ───────────────────────── DELETE ────────────────────────── */
-export async function DELETE(
-    req: NextRequest,
-    { params }: { params: { path: string[] } },
-  ) {
-    const url = `${BASE}/${params.path.join("/")}${req.url.includes("?") ? "?" + req.url.split("?")[1] : ""}`;
-    logReq(req, url);
-  
-    const resp = await fetch(url, {
-      method : "DELETE",
-      headers: {
-        "x-api-key": req.headers.get("x-api-key") ?? "",
-        cookie     : req.headers.get("cookie") ?? "",
-        "Content-Type": "application/json",
-      },
-    });
-  
-    /* 🆑  clone FIRST → use the clone only for debugging  */
-    const clone      = resp.clone();
-    const debugBody  = await clone.text().catch(() => "(non-text body)");
-  
-    console.log("[TPY] DELETE response from CoinX", {
-      status : resp.status,
-      headers: Object.fromEntries(resp.headers.entries()),
-      body   : debugBody,
-    });
-  
-    /* Return the ORIGINAL (unread) stream */
-    return new NextResponse(resp.body, {
-      status : resp.status,
-      headers: {
-        "Content-Type": resp.headers.get("content-type") ?? "application/json",
-      },
-    });
-  }
-  
+/*  Make Next 13/14 happy – map every verb to the same handler  */
+export const GET     = handler;
+export const POST    = handler;
+export const PUT     = handler;
+export const PATCH   = handler;
+export const DELETE  = handler;
+export const OPTIONS = handler;     // CORS pre-flight
