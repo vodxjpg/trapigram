@@ -276,27 +276,79 @@ export default function OrderForm() {
   async function loadProducts() {
     setProductsLoading(true);
     try {
-      const res = await fetch("/api/products", {
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-        },
-      });
-      const { products } = await res.json();
-      setProducts(products);
-    } catch {
-      toast.error("Failed loading products");
+      // fetch BOTH normal and affiliate catalogues in parallel
+      const [normRes, affRes] = await Promise.all([
+        fetch("/api/products"),
+        fetch("/api/affiliate/products"),
+      ]);
+      if (!normRes.ok || !affRes.ok) {
+        throw new Error("Failed to fetch product lists");
+      }
+  
+      const { products: norm } = await normRes.json();   // regular shop products
+      const { products: aff } = await affRes.json();     // affiliate catalogue
+  
+      /* ---------- map everything into one uniform <Product> shape ---------- */
+  
+      const all: Product[] = [
+        // 1) normal products
+        ...norm.map((p: any) => ({
+          id: p.id,
+          title: p.title,
+          sku: p.sku,
+          description: p.description,
+          image: p.image,
+          regularPrice: p.regularPrice,
+          price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
+          stockData: p.stockData,
+          subtotal: 0,
+        })),
+  
+        // 2) affiliate products
+        ...aff.map((a: any) => {
+          /* flat “€ price” → same trick as in edit form */
+          const costFirstCountry = Object.values(a.cost)[0] ?? 0;
+  
+          const regularPrice: Record<string, number> = Object.fromEntries(
+            Object.entries(a.cost).map(([country, c]) => [country, c]),
+          );
+  
+          return {
+            id: a.id,
+            title: a.title,
+            sku: a.sku,
+            description: a.description,
+            image: a.image,
+            regularPrice,
+            price: costFirstCountry,
+            stockData: a.stock ?? {},           // often empty → unlimited
+            subtotal: 0,
+          };
+        }),
+      ];
+  
+      setProducts(all);
+    } catch (e: any) {
+      console.error(e);
+      toast.error(e.message || "Failed loading products");
     } finally {
       setProductsLoading(false);
     }
   }
+  
 
   const countryProducts = products.filter((p) => {
+    // if it’s an affiliate product, show it un-conditionally
+    if (!Object.keys(p.stockData).length) return true;
+  
+    // otherwise require stock in the client’s country
     const totalStock = Object.values(p.stockData).reduce(
       (sum, e) => sum + (e[clientCountry] || 0),
-      0
+      0,
     );
     return totalStock > 0;
   });
+  
 
   useEffect(() => {
     if (!selectedClient) return;

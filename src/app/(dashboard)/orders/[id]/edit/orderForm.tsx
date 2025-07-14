@@ -709,7 +709,14 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     <CardTitle>Order Information</CardTitle>
   </CardHeader>
   <CardContent>
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div>
+      <p className="text-sm text-muted-foreground">Customer</p>
+      <p className="text-lg font-medium">
+                {orderData?.client?.firstName} {orderData?.client?.lastName} —{" "}
+                {orderData?.client?.username} ({orderData?.client?.email})
+              </p>
+      </div>
       <div>
         <p className="text-sm text-muted-foreground">Order ID</p>
         <p className="font-mono break-all">{orderData?.id ?? "—"}</p>
