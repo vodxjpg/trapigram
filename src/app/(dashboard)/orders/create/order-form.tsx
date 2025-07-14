@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
+
 import {
   CreditCard,
   Package,
@@ -83,6 +85,7 @@ interface PaymentMethod {
 }
 
 /* ─── helpers (new) ───────────────────────────────────────────── */
+
 /* ─── currency map helpers ─────────────────────────────────────── */
 const EU_COUNTRIES = new Set([
     "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
@@ -105,7 +108,7 @@ function fmt(n: number | string): string {
 
 export default function OrderForm() {
   const router = useRouter();
-
+  const { data: activeOrg } = authClient.useActiveOrganization();
   // States
 
   const [clients, setClients] = useState<any[]>([]);
