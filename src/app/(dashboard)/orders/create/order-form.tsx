@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { authClient }           from "@/lib/auth-client";
 import {
   CreditCard,
   Package,
@@ -100,6 +101,7 @@ function fmt(n: number | string): string {
 
 export default function OrderForm() {
   const router = useRouter();
+  const { data: activeOrg } = authClient.useActiveOrganization();
 
   // States
 
@@ -174,11 +176,15 @@ export default function OrderForm() {
   async function loadClients() {
     setClientsLoading(true);
     try {
-      const res = await fetch("/api/clients", {
+         if (!activeOrg?.id) return;                  /* wait for org id */
+         const res = await fetch(
+           `/api/clients?organizationId=${activeOrg.id}`,
+           {
         headers: {
           "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
         },
-      });
+              },
+            );
       const { clients } = await res.json();
       setClients(clients);
     } catch {
@@ -311,7 +317,10 @@ export default function OrderForm() {
     const loadPayments = async () => {
       setPaymentLoading(true);
       try {
-        const res = await fetch("/api/payment-methods", {
+                if (!activeOrg?.id) return;
+        const res = await fetch(
+          `/api/payment-methods?organizationId=${activeOrg.id}`,
+          {
           headers: {
             "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
           },
@@ -328,13 +337,14 @@ export default function OrderForm() {
     const loadShipping = async () => {
       setShippingLoading(true);
       try {
-        const [shipRes, compRes] = await Promise.all([
-          fetch("/api/shipments", {
+              if (!activeOrg?.id) return;
+              const [shipRes, compRes] = await Promise.all([
+                fetch(`/api/shipments?organizationId=${activeOrg.id}`, {
             headers: {
               "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
             },
           }),
-          fetch("/api/shipping-companies", {
+          fetch(`/api/shipping-companies?organizationId=${activeOrg.id}`, {
             headers: {
               "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
             },
@@ -373,7 +383,7 @@ export default function OrderForm() {
         setNiftipayLoading(true);
         const res = await fetch(
           `${process.env.NEXT_PUBLIC_NIFTIPAY_API_URL}/api/payment-methods`,
-          { headers: { "x-api-key": pm.apiKey } },
+          { headers: { "x-api-key": pm.apiKey! } },
         );
         if (!res.ok) throw new Error("Failed to load Niftipay networks");
         const { methods } = await res.json();
