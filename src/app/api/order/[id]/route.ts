@@ -275,7 +275,7 @@ const del = await fetch(
         )}`,
         {
           method: "DELETE",
-          headers: { "x-api-key": nifiSecret },
+          headers: { "x-api-key": nifiApiKey },
         }
       );
       if (!del.ok) {
