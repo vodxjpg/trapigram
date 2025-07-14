@@ -703,17 +703,28 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         {/* LEFT COLUMN */}
         <div className="lg:col-span-2 space-y-6">
           {/* Show Username */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Client</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-lg font-medium">
-                {orderData?.client?.firstName} {orderData?.client?.lastName} —{" "}
-                {orderData?.client?.username} ({orderData?.client?.email})
-              </p>
-            </CardContent>
-          </Card>
+          {/* Order information -------------------------------------------------- */}
+<Card>
+  <CardHeader>
+    <CardTitle>Order Information</CardTitle>
+  </CardHeader>
+  <CardContent>
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <p className="text-sm text-muted-foreground">Order ID</p>
+        <p className="font-mono break-all">{orderData?.id ?? "—"}</p>
+      </div>
+      <div>
+        <p className="text-sm text-muted-foreground">Order&nbsp;number</p>
+        <p className="font-medium">{orderData?.orderKey ?? "—"}</p>
+      </div>
+      <div>
+        <p className="text-sm text-muted-foreground">Cart ID</p>
+        <p className="font-medium">{orderData?.cartId ?? "—"}</p>
+      </div>
+    </div>
+  </CardContent>
+</Card>
 
           {/* Product Selection */}
 
@@ -989,20 +1000,24 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                       />
                     </SelectTrigger>
                     <SelectContent>
-                      {shippingMethods.map((m) => {
-                        const tier = m.costs.find(
-                          ({ minOrderCost, maxOrderCost }) =>
-                            total >= minOrderCost &&
-                            (maxOrderCost === 0 || total <= maxOrderCost)
-                        );
-                        const cost = tier ? tier.shipmentCost : 0;
-                        return (
-                          <SelectItem key={m.id} value={m.id}>
-                            {m.title} — {m.description} — ${cost.toFixed(2)}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
+  {shippingMethods.map((m) => {
+    const tier = m.costs.find(
+      ({ minOrderCost, maxOrderCost }) =>
+        total >= minOrderCost &&
+        (maxOrderCost === 0 || total <= maxOrderCost)
+    );
+    const cost = tier ? tier.shipmentCost : 0;
+
+    return (
+      <SelectItem key={m.id} value={m.id}>
+        <span className="block max-w-[280px] truncate">
+          {m.title} — {m.description} — ${cost.toFixed(2)}
+        </span>
+      </SelectItem>
+    );
+  })}
+</SelectContent>
+
                   </Select>
                 </div>
                 {/* Company */}
