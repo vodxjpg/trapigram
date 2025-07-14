@@ -819,7 +819,7 @@ useEffect(() => {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          "x-api-key"  : pmObj?.apiKey ?? ""
         },
         body: JSON.stringify({
           discount: discount ? Number(discount) : orderData.discount,
