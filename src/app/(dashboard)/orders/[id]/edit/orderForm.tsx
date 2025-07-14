@@ -815,12 +815,12 @@ useEffect(() => {
       /* --- 1. Patch the order itself --- */
       const selectedAddressText = addresses.find(a => a.id === selectedAddressId)?.address ?? null;
   
-      const res = await fetchJsonVerbose(`/api/order/${orderData.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key"  : pmObj?.apiKey ?? ""
-        },
+            const hdrs: Record<string,string> = { "Content-Type": "application/json" };
+            if (pmObj?.apiKey) hdrs["x-api-key"] = pmObj.apiKey;   // ← add only if present
+      
+            const res = await fetchJsonVerbose(`/api/order/${orderData.id}`, {
+              method: "PATCH",
+          headers: hdrs,
         credentials:"include", 
         body: JSON.stringify({
           discount: discount ? Number(discount) : orderData.discount,
