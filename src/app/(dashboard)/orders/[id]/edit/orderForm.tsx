@@ -740,14 +740,20 @@ useEffect(() => {
     if (!orderData?.id) return;
       try {
           /* ── 0. Handle Niftipay “switch-away” case ────────────── */
+          const pmObj = paymentMethods.find(
+                  (p) => p.id === selectedPaymentMethod,
+                );
           const oldPM = orderData?.shippingInfo.payment?.toLowerCase();
-          const newPM = paymentMethods.find((p) => p.id === selectedPaymentMethod)
-            ?.name.toLowerCase();
-      
+
+            const newPM = pmObj?.name.toLowerCase();
           if (oldPM === "niftipay" && newPM !== "niftipay") {
+            const key = pmObj?.apiKey;                  // <- same object you use for POST
             const del = await fetch(
-              `/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-              { method: "DELETE" }
+              `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+              {
+                method: "DELETE",
+                headers: { "x-api-key": key! },            // pass the merchant’s key
+              },
             );
             if (!del.ok) {
               const { error } = await del.json();

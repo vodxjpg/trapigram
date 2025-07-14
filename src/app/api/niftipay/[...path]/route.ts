@@ -38,3 +38,20 @@ export async function POST(
     headers: { "Content-Type": resp.headers.get("content-type") ?? "application/json" },
   });
 }
+
+export async function DELETE(
+    req: NextRequest,
+    { params }: { params: { path: string[] } },
+  ) {
+    const url  = `${BASE}/${params.path.join("/")}${req.url.split("?")[1] ? "?" + req.url.split("?")[1] : ""}`;
+    const resp = await fetch(url, {
+      method : "DELETE",
+      headers: { "x-api-key": req.headers.get("x-api-key") ?? "" },
+    });
+  
+    return new NextResponse(resp.body, {
+      status : resp.status,
+      headers: { "Content-Type": resp.headers.get("content-type") ?? "application/json" },
+    });
+  }
+  
