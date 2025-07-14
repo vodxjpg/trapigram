@@ -752,7 +752,8 @@ useEffect(() => {
               `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
               {
                 method: "DELETE",
-                headers: { "x-api-key": key! },            // pass the merchant’s key
+                headers: { "x-api-key": key! },
+                credentials: "include"            // pass the merchant’s key
               },
             );
             if (!del.ok) {
