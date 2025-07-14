@@ -757,9 +757,14 @@ useEffect(() => {
         }
       
         const del = await fetch(
-          `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-          { method: "DELETE", headers: { "x-api-key": key } }
-        );
+            `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(
+              orderData.orderKey,
+            )}`,
+            {
+              method : "DELETE",
+              headers: { "x-api-key": key },
+            },
+          );
         if (!del.ok) {
           const { error } = await del.json().catch(() => ({ error: "Unknown error" }));
           toast.error(error);
