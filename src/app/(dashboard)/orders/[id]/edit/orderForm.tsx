@@ -761,11 +761,31 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
     try {
       /* --- 0. Handle Niftipay "switch-away" case --- */
+           /* ----------------------------------------------------------
+      * 0. Handle DELETE of the previous Niftipay invoice
+      *    • case A – user switches to another payment method
+      *    • case B – still Niftipay but picks a *different* chain/asset
+      * ---------------------------------------------------------- */
       const pmObj = paymentMethods.find(p => p.id === selectedPaymentMethod);
       const oldPM = orderData.shippingInfo.payment?.toLowerCase();
       const newPM = pmObj?.name.toLowerCase();
 
-      if (oldPM === "niftipay" && newPM !== "niftipay") {
+          /* extract previous network:asset if we have orderMeta */
+          const prevNA =
+            orderData.orderMeta?.[0]?.order
+              ? `${orderData.orderMeta[0].order.network}:${orderData.orderMeta[0].order.asset}`
+              : null;
+      
+          const needDelete =
+            oldPM === "niftipay" && (
+              /* A */ newPM !== "niftipay" ||
+              /* B */ (newPM === "niftipay" &&
+                       prevNA &&                     // we know the previous invoice
+                       selectedNiftipay &&           // user picked a coin
+                       selectedNiftipay !== prevNA)  // … and it changed
+            );
+      
+          if (needDelete) {
         const niftipayMethod = paymentMethods.find(p => p.name.toLowerCase() === "niftipay");
         const key = niftipayMethod?.apiKey;
         if (!key) {
@@ -840,8 +860,8 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         throw new Error(err.error ?? `Request failed (${res.status})`);
       }
 
-      /* --- 2. If NEW method is Niftipay, create fresh invoice --- */
-      if (newPM === "niftipay") {
+          /* --- 2. (Re-)create Niftipay invoice if it’s the chosen method --- */
+          if (newPM === "niftipay") {
         const key = pmObj?.apiKey;
 
         if (!key) {
