@@ -183,6 +183,7 @@ async function fetchJsonVerbose(
 export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
    const { data: activeOrg } = authClient.useActiveOrganization();
+   const merchantId = activeOrg?.id ?? "";
   /* ——————————————————— STATE ——————————————————— */
   const [orderData, setOrderData] = useState<any | null>(null);
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
@@ -796,10 +797,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         }
 
         // Log DELETE request details
+       
         console.log("[Trapigram] Attempting to delete Niftipay order", {
           reference: orderData.orderKey,
           apiKey: key ? key.slice(0, 8) + "..." : "undefined",
-          merchantId: activeOrg,
+          merchantId,
           url: `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
         });
 
@@ -880,7 +882,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           reference: orderData.orderKey,
           chain,
           asset,
-          merchantId: orderData.organizationId ?? "undefined",
+          merchantId,
         });
 
         console.log("pmObj", pmObj);
@@ -901,7 +903,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             firstName: orderData.client.firstName,
             lastName: orderData.client.lastName,
             email: orderData.client.email ?? "user@trapyfy.com",
-            merchantId: orderData.organizationId ?? "",
+            merchantId,
             reference: orderData.orderKey,
           }),
         });
