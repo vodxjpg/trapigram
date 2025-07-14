@@ -1,10 +1,10 @@
 // src/app/api/order/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { z } from "zod";
-
+import { db } from "@/lib/db"; 
 /* ─── encryption helpers ─────────────────────────────────────── */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
@@ -240,27 +240,43 @@ if ("paymentMethod" in body) {
     current.paymentMethod?.toLowerCase() === "niftipay" &&
     newPM.toLowerCase() !== "niftipay"
   ) {
+    // ① lookup the secretKey for *this tenant*
+    const pmRow = await db
+      .selectFrom("paymentMethods")
+      .select("apiKey")
+      .where("tenantId", "=", ctx.tenantId)
+      .where("name", "=", "Niftipay")
+      .executeTakeFirst();
+    const nifiSecret = pmRow?.secretKey;
+    if (!nifiSecret) {
+      return NextResponse.json(
+        { error: "No Niftipay credentials configured" },
+        { status: 500 }
+      );
+    }
+  
+    // ② call Niftipay DELETE with that secret
     try {
       const del = await fetch(
         `${process.env.NIFTIPAY_API_URL ?? "https://www.niftipay.com"}/api/orders?reference=${encodeURIComponent(
-          current.orderKey,
+          current.orderKey
         )}`,
         {
           method: "DELETE",
-          headers: { "x-api-key": process.env.NIFTIPAY_API_KEY ?? "" },
-        },
+          headers: { "x-api-key": nifiSecret },
+        }
       );
       if (!del.ok) {
         const { error } = await del.json();
         return NextResponse.json(
-          { error: error ?? "Unable to delete Niftipay order (maybe wallet has funds?)" },
-          { status: 400 },
+          { error: error ?? "Unable to delete Niftipay order" },
+          { status: 400 }
         );
       }
     } catch (err: any) {
       return NextResponse.json(
         { error: err.message ?? "Niftipay deletion failed" },
-        { status: 400 },
+        { status: 400 }
       );
     }
   }
