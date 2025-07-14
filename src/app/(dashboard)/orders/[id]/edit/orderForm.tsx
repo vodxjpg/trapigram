@@ -316,7 +316,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     if (!orderId) return;
     (async () => {
       try {
-        const res = await fetch(`/api/order/${orderId}`);
+        const res = await fetch(
+            `/api/order/${orderId}?organizationId=${activeOrg?.id}`,
+          );
         const data = await res.json();
         setOrderData(data);
         setClientCountry(data.country);
@@ -826,7 +828,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
       const headers: HeadersInit = { "Content-Type": "application/json" };
 
-      const res = await fetchJsonVerbose(`/api/order/${orderData.id}`, {
+          const res = await fetchJsonVerbose(
+              `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
+            {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -904,7 +908,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         console.log("[Trapigram] Niftipay order created successfully", niftipayMeta);
 
         // Update Trapigram order with Niftipay metadata
-               await fetch(`/api/order/${orderData.id}`, {
+              await fetch(
+                  `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
+                {
                    method: "PATCH",
                    headers: { "Content-Type": "application/json" },
                    body: JSON.stringify({ orderMeta: [niftipayMeta] }),
