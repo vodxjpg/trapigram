@@ -795,6 +795,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         const del = await fetchJsonVerbose(
           `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
           {
+            credentials: "include",
             method: "DELETE",
             headers: { "x-api-key": key },
           },
