@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
 import {
   CreditCard,
   Package,
@@ -181,7 +182,7 @@ async function fetchJsonVerbose(
 
 export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
-
+   const { data: activeOrg } = authClient.useActiveOrganization();
   /* ——————————————————— STATE ——————————————————— */
   const [orderData, setOrderData] = useState<any | null>(null);
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
@@ -761,31 +762,31 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
     try {
       /* --- 0. Handle Niftipay "switch-away" case --- */
-           /* ----------------------------------------------------------
-      * 0. Handle DELETE of the previous Niftipay invoice
-      *    • case A – user switches to another payment method
-      *    • case B – still Niftipay but picks a *different* chain/asset
-      * ---------------------------------------------------------- */
+      /* ----------------------------------------------------------
+ * 0. Handle DELETE of the previous Niftipay invoice
+ *    • case A – user switches to another payment method
+ *    • case B – still Niftipay but picks a *different* chain/asset
+ * ---------------------------------------------------------- */
       const pmObj = paymentMethods.find(p => p.id === selectedPaymentMethod);
       const oldPM = orderData.shippingInfo.payment?.toLowerCase();
       const newPM = pmObj?.name.toLowerCase();
 
-          /* extract previous network:asset if we have orderMeta */
-          const prevNA =
-            orderData.orderMeta?.[0]?.order
-              ? `${orderData.orderMeta[0].order.network}:${orderData.orderMeta[0].order.asset}`
-              : null;
-      
-          const needDelete =
-            oldPM === "niftipay" && (
+      /* extract previous network:asset if we have orderMeta */
+      const prevNA =
+        orderData.orderMeta?.[0]?.order
+          ? `${orderData.orderMeta[0].order.network}:${orderData.orderMeta[0].order.asset}`
+          : null;
+
+      const needDelete =
+        oldPM === "niftipay" && (
               /* A */ newPM !== "niftipay" ||
               /* B */ (newPM === "niftipay" &&
-                       prevNA &&                     // we know the previous invoice
-                       selectedNiftipay &&           // user picked a coin
-                       selectedNiftipay !== prevNA)  // … and it changed
-            );
-      
-          if (needDelete) {
+            prevNA &&                     // we know the previous invoice
+            selectedNiftipay &&           // user picked a coin
+            selectedNiftipay !== prevNA)  // … and it changed
+        );
+
+      if (needDelete) {
         const niftipayMethod = paymentMethods.find(p => p.name.toLowerCase() === "niftipay");
         const key = niftipayMethod?.apiKey;
         if (!key) {
@@ -798,12 +799,12 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         console.log("[Trapigram] Attempting to delete Niftipay order", {
           reference: orderData.orderKey,
           apiKey: key ? key.slice(0, 8) + "..." : "undefined",
-          merchantId: orderData.organizationId ?? "undefined",
+          merchantId: activeOrg,
           url: `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
         });
 
-         const del = await fetchJsonVerbose(
-             `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+        const del = await fetchJsonVerbose(
+          `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
           {
             method: "DELETE",
             headers: { "x-api-key": key },
@@ -811,21 +812,19 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           "DELETE Niftipay",
         );
 
-        if (!del.ok) {
+
+        if (!(del.ok || del.status === 404)) {
           const errorBody = await del.json().catch(() => ({ error: "Unknown error" }));
           console.error("[Trapigram] DELETE request failed", {
             status: del.status,
             error: errorBody.error,
             reference: orderData.orderKey,
-            responseHeaders: Object.fromEntries(del.headers.entries()),
           });
-          if (del.status === 401) {
-            toast.error("Unauthorized: Check Niftipay API key or merchant ID mismatch");
-          } else {
-            toast.error(errorBody.error || `Failed to delete Niftipay order (${del.status})`);
-          }
+          toast.error(errorBody.error || `Failed to delete Niftipay order (${del.status})`);
           return;
         }
+
+        console.log("[Trapigram] Previous Niftipay invoice gone (status", del.status, ")");
         console.log("[Trapigram] Niftipay order deleted successfully", {
           status: del.status,
           reference: orderData.orderKey,
@@ -838,33 +837,33 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
 
 
-        const headers: HeadersInit = { "Content-Type": "application/json" };
-      
-        const res = await fetchJsonVerbose(`/api/order/${orderData.id}`, {
-          method : "PATCH",
-          headers: {
-            "Content-Type"   : "application/json",
-            "x-internal-secret": INTERNAL,     // ← add this
-          },
-          credentials: "include",
-          body: JSON.stringify({
-            discount       : discount ? Number(discount) : orderData.discount,
-            couponCode     : newCoupon || orderData.coupon,
-            address        : selectedAddressText,
-            total,
-            shippingMethod : selectedShippingMethod,
-            shippingCompany: selectedShippingCompany,
-            paymentMethodId: selectedPaymentMethod,
-          }),
-        });
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+
+      const res = await fetchJsonVerbose(`/api/order/${orderData.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": INTERNAL,     // ← add this
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          discount: discount ? Number(discount) : orderData.discount,
+          couponCode: newCoupon || orderData.coupon,
+          address: selectedAddressText,
+          total,
+          shippingMethod: selectedShippingMethod,
+          shippingCompany: selectedShippingCompany,
+          paymentMethodId: selectedPaymentMethod,
+        }),
+      });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error ?? `Request failed (${res.status})`);
       }
 
-          /* --- 2. (Re-)create Niftipay invoice if it’s the chosen method --- */
-          if (newPM === "niftipay") {
+      /* --- 2. (Re-)create Niftipay invoice if it’s the chosen method --- */
+      if (newPM === "niftipay") {
         const key = pmObj?.apiKey;
 
         if (!key) {
@@ -922,10 +921,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
         // Update Trapigram order with Niftipay metadata
         await fetch(`/api/order/${orderData.id}`, {
-          method : "PATCH",
+          method: "PATCH",
           headers: {
-            "Content-Type"     : "application/json",
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!, 
+            "Content-Type": "application/json",
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
           },
           body: JSON.stringify({ orderMeta: [niftipayMeta] }),
         });

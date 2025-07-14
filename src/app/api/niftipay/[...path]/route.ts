@@ -60,8 +60,7 @@ export async function POST(
   });
 }
 
-/* ───────────────────────── DELETE ────────────────────────── */
-// app/api/niftipay/[...path]/route.ts
+//* ───────────────────────── DELETE ────────────────────────── */
 export async function DELETE(
     req: NextRequest,
     { params }: { params: { path: string[] } },
@@ -69,34 +68,31 @@ export async function DELETE(
     const url = `${BASE}/${params.path.join("/")}${req.url.includes("?") ? "?" + req.url.split("?")[1] : ""}`;
     logReq(req, url);
   
-    const apiKey = req.headers.get("x-api-key") ?? "";
-    const cookie = req.headers.get("cookie") ?? "";
-    console.log("[TPY] DELETE request headers sent to CoinX", {
-      "x-api-key": apiKey ? apiKey.slice(0, 8) + "…" : "none",
-      cookie: cookie ? "present" : "none",
-    });
-  
     const resp = await fetch(url, {
-      method: "DELETE",
+      method : "DELETE",
       headers: {
-        "x-api-key": apiKey,
-        cookie: cookie,
-        "Content-Type": "application/json", // Add this to match POST
+        "x-api-key": req.headers.get("x-api-key") ?? "",
+        cookie     : req.headers.get("cookie") ?? "",
+        "Content-Type": "application/json",
       },
     });
   
-    const responseBody = await resp.text().catch(() => "Failed to read response body");
+    /* 🆑  clone FIRST → use the clone only for debugging  */
+    const clone      = resp.clone();
+    const debugBody  = await clone.text().catch(() => "(non-text body)");
+  
     console.log("[TPY] DELETE response from CoinX", {
-      status: resp.status,
+      status : resp.status,
       headers: Object.fromEntries(resp.headers.entries()),
-      body: responseBody,
+      body   : debugBody,
     });
-    console.log(responseBody);
-     return new NextResponse(resp.body, {
-           status     : resp.status,
-           statusText : resp.statusText,   // lets the UI bubble up “401 Invalid API key” etc.
-           headers    : {
-             "Content-Type": resp.headers.get("content-type") ?? "application/json",
-           },
-         });
+  
+    /* Return the ORIGINAL (unread) stream */
+    return new NextResponse(resp.body, {
+      status : resp.status,
+      headers: {
+        "Content-Type": resp.headers.get("content-type") ?? "application/json",
+      },
+    });
   }
+  
