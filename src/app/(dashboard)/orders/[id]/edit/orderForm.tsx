@@ -82,12 +82,9 @@ interface OrderItemLine {
   isAffiliate: boolean;
 }
 
-//
-// mergeLinesByProduct:
-// when API returns one entry per history‐row, collapse them into a single
-// line per product, summing quantity & subtotal.
-//
-// src/app/(dashboard)/orders/[id]/edit/orderForm.tsx
+const NIFTIPAY_BASE =
+  (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com")
+    .replace(/\/+$/, "");          // strip trailing “/” just in case
 
 function mergeLinesByProduct(
   lines: Array<{
@@ -212,18 +209,18 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
   const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
   const [rawLines, setRawLines] = useState<OrderItemLine[]>([]);
-   interface PaymentMethod {
-       id: string;
-       name: string;
-       apiKey?: string | null;
-     }
-     const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
-     const [niftipayNetworks, setNiftipayNetworks] = useState<
-       { chain: string; asset: string; label: string }[]
-     >([]);
-     const [niftipayLoading, setNiftipayLoading] = useState(false);
-     const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
+  interface PaymentMethod {
+    id: string;
+    name: string;
+    apiKey?: string | null;
+  }
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
+  const [niftipayNetworks, setNiftipayNetworks] = useState<
+    { chain: string; asset: string; label: string }[]
+  >([]);
+  const [niftipayLoading, setNiftipayLoading] = useState(false);
+  const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
   /* ——————————————————— HELPERS ——————————————————— */
   const calcRowSubtotal = (p: Product, qty: number) =>
     (p.regularPrice[clientCountry] ?? p.price) * qty;
@@ -413,56 +410,56 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   /* ────────────────────────────────────────────────────────────
    Fetch payment methods + (if Niftipay) chains/assets
 ──────────────────────────────────────────────────────────── */
-useEffect(() => {
-  (async () => {
-    try {
-      const pmRes = await fetch("/api/payment-methods", {
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-        },
-      });
-      const { methods } = await pmRes.json();
-      setPaymentMethods(methods);
-      // pre-select the one originally stored in the order
-      const init = methods.find(
-        (m: any) =>
-          m.name.toLowerCase() === orderData?.shippingInfo.payment?.toLowerCase()
-      )?.id;
-      if (init) setSelectedPaymentMethod(init);
-    } catch (e) {
-      toast.error("Failed loading payment methods");
-    }
-  })();
-}, [orderData]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const pmRes = await fetch("/api/payment-methods", {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
+        });
+        const { methods } = await pmRes.json();
+        setPaymentMethods(methods);
+        // pre-select the one originally stored in the order
+        const init = methods.find(
+          (m: any) =>
+            m.name.toLowerCase() === orderData?.shippingInfo.payment?.toLowerCase()
+        )?.id;
+        if (init) setSelectedPaymentMethod(init);
+      } catch (e) {
+        toast.error("Failed loading payment methods");
+      }
+    })();
+  }, [orderData]);
 
-useEffect(() => {
-  const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
-  if (!pm || pm.name.toLowerCase() !== "niftipay" || !pm.apiKey) {
-    setNiftipayNetworks([]);
-    setSelectedNiftipay("");
-    return;
-  }
-  (async () => {
-    try {
-      setNiftipayLoading(true);
-      const res = await fetch("/api/niftipay/payment-methods", {
-        headers: { "x-api-key": pm.apiKey },
-      });
-      const { methods } = await res.json();
-      setNiftipayNetworks(
-        methods.map((m: any) => ({
-          chain: m.chain,
-          asset: m.asset,
-          label: m.label ?? `${m.asset} on ${m.chain}`,
-        }))
-      );
-    } catch (err: any) {
-      toast.error(err.message);
-    } finally {
-      setNiftipayLoading(false);
+  useEffect(() => {
+    const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+    if (!pm || pm.name.toLowerCase() !== "niftipay" || !pm.apiKey) {
+      setNiftipayNetworks([]);
+      setSelectedNiftipay("");
+      return;
     }
-  })();
-}, [selectedPaymentMethod, paymentMethods]);
+    (async () => {
+      try {
+        setNiftipayLoading(true);
+        const res = await fetch("/api/niftipay/payment-methods", {
+          headers: { "x-api-key": pm.apiKey },
+        });
+        const { methods } = await res.json();
+        setNiftipayNetworks(
+          methods.map((m: any) => ({
+            chain: m.chain,
+            asset: m.asset,
+            label: m.label ?? `${m.asset} on ${m.chain}`,
+          }))
+        );
+      } catch (err: any) {
+        toast.error(err.message);
+      } finally {
+        setNiftipayLoading(false);
+      }
+    })();
+  }, [selectedPaymentMethod, paymentMethods]);
 
 
   const countryProducts = products.filter((p) => {
@@ -740,100 +737,133 @@ useEffect(() => {
     if (!orderData?.id) return;
   
     try {
-      /* ── 0. Handle Niftipay “switch-away” case ─────────────────── */
+      /* --- 0. Handle Niftipay "switch-away" case --- */
       const pmObj = paymentMethods.find(p => p.id === selectedPaymentMethod);
       const oldPM = orderData.shippingInfo.payment?.toLowerCase();
-      const newPM = paymentMethods.find(p => p.id === selectedPaymentMethod)
-                     ?.name.toLowerCase();
-      
+      const newPM = pmObj?.name.toLowerCase();
+  
       if (oldPM === "niftipay" && newPM !== "niftipay") {
-        // 🔑 pull the key from *the* Niftipay payment-method the user has stored
-        const key = paymentMethods.find(
-          p => p.name.toLowerCase() === "niftipay"
-        )?.apiKey;
+        const niftipayMethod = paymentMethods.find(p => p.name.toLowerCase() === "niftipay");
+        const key = niftipayMethod?.apiKey;
         if (!key) {
-          toast.error("Niftipay API-key missing");
+          toast.error("Niftipay API key missing");
           return;
         }
-      
+  
+        // Log the DELETE attempt for debugging
+        console.log("[Trapigram] Deleting Niftipay order", {
+          reference: orderData.orderKey,
+          apiKey: key.slice(0, 8) + "...", // Mask key for security
+        });
+  
         const del = await fetch(
-            `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(
-              orderData.orderKey,
-            )}`,
-            {
-              method : "DELETE",
-              headers: { "x-api-key": key },
-            },
-          );
+          `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+          {
+            method: "DELETE",
+            headers: { "x-api-key": key },
+          }
+        );
+  
         if (!del.ok) {
-          const { error } = await del.json().catch(() => ({ error: "Unknown error" }));
-          toast.error(error);
+          const errorBody = await del.json().catch(() => ({ error: "Unknown error" }));
+          console.error("[Trapigram] DELETE failed", {
+            status: del.status,
+            error: errorBody.error,
+            reference: orderData.orderKey,
+          });
+          if (del.status === 401) {
+            toast.error("Unauthorized: Check Niftipay API key or merchant ID mismatch");
+          } else {
+            toast.error(errorBody.error || `Failed to delete Niftipay order (${del.status})`);
+          }
           return;
         }
+  
+        console.log("[Trapigram] Niftipay order deleted successfully");
       }
   
-      /* ── 1. Patch the order itself ─────────────────────────────── */
-      const selectedAddressText =
-        addresses.find(a => a.id === selectedAddressId)?.address ?? null;
+      /* --- 1. Patch the order itself --- */
+      const selectedAddressText = addresses.find(a => a.id === selectedAddressId)?.address ?? null;
   
       const res = await fetch(`/api/order/${orderData.id}`, {
-        method : "PATCH",
+        method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          // 🟢 tells the API this request is from the back-office
           "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
         },
         body: JSON.stringify({
-          discount              : discount ? Number(discount) : orderData.discount,
-          couponCode            : newCoupon ? newCoupon : orderData.coupon,
-          address               : selectedAddressText,
+          discount: discount ? Number(discount) : orderData.discount,
+          couponCode: newCoupon ? newCoupon : orderData.coupon,
+          address: selectedAddressText,
           total,
           selectedShippingMethod,
           selectedShippingCompany,
-          paymentMethodId       : selectedPaymentMethod,
+          paymentMethodId: selectedPaymentMethod,
         }),
       });
   
-      /* show the real reason instead of a bare 401/403/500 */
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error ?? `Request failed (${res.status})`);
       }
   
-      /* ── 2. If NEW method is Niftipay, create fresh invoice ────── */
-    /* 2. If the NEW method is Niftipay → create a fresh invoice */
-if (newPM === "niftipay") {
-  // 🔑 use the API-key that belongs to the payment-method the user just selected
-  const key = paymentMethods.find(p => p.id === selectedPaymentMethod)?.apiKey;
-
-  if (!key) {
-    toast.error("Niftipay API-key missing");
-  } else if (!selectedNiftipay) {
-    toast.error("Select crypto network / asset first");
-  } else {
-    const [chain, asset] = selectedNiftipay.split(":");
-
-    await fetch("/api/niftipay/orders", {
-      method : "POST",
-      headers: {
-        "x-api-key"     : key,
-        "Content-Type"  : "application/json",
-      },
-      body: JSON.stringify({
-        network   : chain,
-        asset,
-        amount    : total,
-        currency  : orderData.currency ?? "EUR",
-        firstName : orderData.client.firstName,
-        lastName  : orderData.client.lastName,
-        email     : orderData.client.email ?? "user@trapyfy.com",
-        merchantId: orderData.organizationId ?? "",
-        reference : orderData.orderKey,
-      }),
-    });
-  }
-}
-
+      /* --- 2. If NEW method is Niftipay, create fresh invoice --- */
+      if (newPM === "niftipay") {
+        const key = pmObj?.apiKey;
+  
+        if (!key) {
+          toast.error("Niftipay API key missing");
+          return;
+        } else if (!selectedNiftipay) {
+          toast.error("Select crypto network/asset first");
+          return;
+        }
+  
+        const [chain, asset] = selectedNiftipay.split(":");
+        console.log("[Trapigram] Creating new Niftipay order", {
+          reference: orderData.orderKey,
+          chain,
+          asset,
+          merchantId: orderData.organizationId,
+        });
+  
+        const niftipayRes = await fetch("/api/niftipay/orders", {
+          method: "POST",
+          headers: {
+            "x-api-key": key,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            network: chain,
+            asset,
+            amount: total,
+            currency: orderData.currency ?? "EUR",
+            firstName: orderData.client.firstName,
+            lastName: orderData.client.lastName,
+            email: orderData.client.email ?? "user@trapyfy.com",
+            merchantId: orderData.organizationId ?? "", // Consistent merchantId
+            reference: orderData.orderKey,
+          }),
+        });
+  
+        if (!niftipayRes.ok) {
+          const errorBody = await niftipayRes.json().catch(() => ({ error: "Unknown error" }));
+          toast.error(errorBody.error || "Failed to create new Niftipay order");
+          return;
+        }
+  
+        const niftipayMeta = await niftipayRes.json();
+        console.log("[Trapigram] Niftipay order created", niftipayMeta);
+  
+        // Update Trapigram order with Niftipay metadata
+        await fetch(`/api/order/${orderData.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderMeta: [niftipayMeta] }),
+        });
+  
+        toast.success(`Niftipay invoice created: send ${niftipayMeta.order.amount} ${asset}`);
+      }
   
       toast.success("Order updated!");
       router.push("/orders");
@@ -841,7 +871,7 @@ if (newPM === "niftipay") {
       toast.error(err.message || "Update failed");
     }
   };
-  
+
 
   return (
     <div className="container mx-auto py-6">
@@ -852,34 +882,34 @@ if (newPM === "niftipay") {
         <div className="lg:col-span-2 space-y-6">
           {/* Show Username */}
           {/* Order information -------------------------------------------------- */}
-<Card>
-  <CardHeader>
-    <CardTitle>Order Information</CardTitle>
-  </CardHeader>
-  <CardContent>
-    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-      <div>
-      <p className="text-sm text-muted-foreground">Customer</p>
-      <p className="text-lg font-medium">
-                {orderData?.client?.firstName} {orderData?.client?.lastName} —{" "}
-                {orderData?.client?.username} ({orderData?.client?.email})
-              </p>
-      </div>
-      <div>
-        <p className="text-sm text-muted-foreground">Order ID</p>
-        <p className="font-mono break-all">{orderData?.id ?? "—"}</p>
-      </div>
-      <div>
-        <p className="text-sm text-muted-foreground">Order&nbsp;number</p>
-        <p className="font-medium">{orderData?.orderKey ?? "—"}</p>
-      </div>
-      <div>
-        <p className="text-sm text-muted-foreground">Cart ID</p>
-        <p className="font-medium">{orderData?.cartId ?? "—"}</p>
-      </div>
-    </div>
-  </CardContent>
-</Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Order Information</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Customer</p>
+                  <p className="text-lg font-medium">
+                    {orderData?.client?.firstName} {orderData?.client?.lastName} —{" "}
+                    {orderData?.client?.username} ({orderData?.client?.email})
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Order ID</p>
+                  <p className="font-mono break-all">{orderData?.id ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Order&nbsp;number</p>
+                  <p className="font-medium">{orderData?.orderKey ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Cart ID</p>
+                  <p className="font-medium">{orderData?.cartId ?? "—"}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Product Selection */}
 
@@ -962,7 +992,7 @@ if (newPM === "niftipay") {
                           </div>
                           {/* cheapest bucket price for header */}
                           <span className="font-medium">
-                          {formatCurrency(firstBucket.unitPrice, clientCountry)} each
+                            {formatCurrency(firstBucket.unitPrice, clientCountry)} each
                           </span>
                         </div>
 
@@ -971,7 +1001,7 @@ if (newPM === "niftipay") {
                           <ul className="mt-2 text-sm text-gray-600 space-y-1">
                             {item.priceBuckets.map((pb) => (
                               <li key={pb.unitPrice}>
-                               {pb.quantity} × {formatCurrency(pb.unitPrice, clientCountry)}
+                                {pb.quantity} × {formatCurrency(pb.unitPrice, clientCountry)}
                               </li>
                             ))}
                           </ul>
@@ -979,14 +1009,14 @@ if (newPM === "niftipay") {
 
                         {/* line subtotal */}
                         <div className="mt-4 text-right font-medium">
-              {formatCurrency(
-                item.priceBuckets.reduce(
-                  (sum, pb) => sum + pb.quantity * pb.unitPrice,
-                  0
-                ),
-                clientCountry
-              )}
-            </div>
+                          {formatCurrency(
+                            item.priceBuckets.reduce(
+                              (sum, pb) => sum + pb.quantity * pb.unitPrice,
+                              0
+                            ),
+                            clientCountry
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -1155,23 +1185,23 @@ if (newPM === "niftipay") {
                       />
                     </SelectTrigger>
                     <SelectContent>
-  {shippingMethods.map((m) => {
-    const tier = m.costs.find(
-      ({ minOrderCost, maxOrderCost }) =>
-        total >= minOrderCost &&
-        (maxOrderCost === 0 || total <= maxOrderCost)
-    );
-    const cost = tier ? tier.shipmentCost : 0;
+                      {shippingMethods.map((m) => {
+                        const tier = m.costs.find(
+                          ({ minOrderCost, maxOrderCost }) =>
+                            total >= minOrderCost &&
+                            (maxOrderCost === 0 || total <= maxOrderCost)
+                        );
+                        const cost = tier ? tier.shipmentCost : 0;
 
-    return (
-      <SelectItem key={m.id} value={m.id}>
-        <span className="block max-w-[280px] truncate">
-          {m.title} — {m.description} — ${cost.toFixed(2)}
-        </span>
-      </SelectItem>
-    );
-  })}
-</SelectContent>
+                        return (
+                          <SelectItem key={m.id} value={m.id}>
+                            <span className="block max-w-[280px] truncate">
+                              {m.title} — {m.description} — ${cost.toFixed(2)}
+                            </span>
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
 
                   </Select>
                 </div>
@@ -1203,66 +1233,66 @@ if (newPM === "niftipay") {
           </Card>
 
           {/* Payment Method */}
-                 {/* Payment Method (now editable) */}
-       <Card>
-         <CardHeader>
-           <CardTitle className="flex items-center gap-2">
-             <CreditCard className="h-5 w-5" /> Payment Method
-           </CardTitle>
-         </CardHeader>
-         <CardContent>
-           <Label>Select Payment Method</Label>
-           <Select
-             value={selectedPaymentMethod}
-             onValueChange={setSelectedPaymentMethod}
-           >
-             <SelectTrigger>
-               <SelectValue placeholder="Select payment method" />
-             </SelectTrigger>
-             <SelectContent>
-               {paymentMethods.map((m) => (
-                 <SelectItem key={m.id} value={m.id}>
-                   {m.name}
-                 </SelectItem>
-               ))}
-             </SelectContent>
-           </Select>
+          {/* Payment Method (now editable) */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="h-5 w-5" /> Payment Method
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Label>Select Payment Method</Label>
+              <Select
+                value={selectedPaymentMethod}
+                onValueChange={setSelectedPaymentMethod}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select payment method" />
+                </SelectTrigger>
+                <SelectContent>
+                  {paymentMethods.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-           {/* Niftipay chain / asset selector */}
-           {paymentMethods.find(
-             (p) =>
-               p.id === selectedPaymentMethod &&
-               p.name.toLowerCase() === "niftipay"
-           ) && (
-             <div className="mt-4">
-               <Label>Select Crypto Network</Label>
-               <Select
-                 value={selectedNiftipay}
-                 onValueChange={setSelectedNiftipay}
-                 disabled={niftipayLoading}
-               >
-                 <SelectTrigger>
-                   <SelectValue
-                     placeholder={
-                       niftipayLoading ? "Loading…" : "Select network"
-                     }
-                   />
-                 </SelectTrigger>
-                 <SelectContent>
-                   {niftipayNetworks.map((n) => (
-                     <SelectItem
-                       key={`${n.chain}:${n.asset}`}
-                       value={`${n.chain}:${n.asset}`}
-                     >
-                       {n.label}
-                     </SelectItem>
-                   ))}
-                 </SelectContent>
-               </Select>
-             </div>
-           )}
-         </CardContent>
-       </Card>
+              {/* Niftipay chain / asset selector */}
+              {paymentMethods.find(
+                (p) =>
+                  p.id === selectedPaymentMethod &&
+                  p.name.toLowerCase() === "niftipay"
+              ) && (
+                  <div className="mt-4">
+                    <Label>Select Crypto Network</Label>
+                    <Select
+                      value={selectedNiftipay}
+                      onValueChange={setSelectedNiftipay}
+                      disabled={niftipayLoading}
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={
+                            niftipayLoading ? "Loading…" : "Select network"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {niftipayNetworks.map((n) => (
+                          <SelectItem
+                            key={`${n.chain}:${n.asset}`}
+                            value={`${n.chain}:${n.asset}`}
+                          >
+                            {n.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+            </CardContent>
+          </Card>
 
         </div>
 
@@ -1321,9 +1351,9 @@ if (newPM === "niftipay") {
                 <div className="flex justify-between">
                   <span>Shipping:</span>
                   <span className="font-medium">
-                  {orderData?.shipping != null
-            ? formatCurrency(orderData.shipping, clientCountry)
-            : "—"}
+                    {orderData?.shipping != null
+                      ? formatCurrency(orderData.shipping, clientCountry)
+                      : "—"}
                   </span>
                 </div>
                 <Separator />
