@@ -843,10 +843,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
       const res = await fetchJsonVerbose(`/api/order/${orderData.id}`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "x-internal-secret":process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,    // ← add this
-        },
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
           discount: discount ? Number(discount) : orderData.discount,
