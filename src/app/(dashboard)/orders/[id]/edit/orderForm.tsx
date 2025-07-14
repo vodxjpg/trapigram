@@ -742,23 +742,28 @@ useEffect(() => {
     try {
       /* ── 0. Handle Niftipay “switch-away” case ─────────────────── */
       const pmObj = paymentMethods.find(p => p.id === selectedPaymentMethod);
-      const oldPM = orderData?.shippingInfo.payment?.toLowerCase();
-      const newPM = pmObj?.name.toLowerCase();
-  
+      const oldPM = orderData.shippingInfo.payment?.toLowerCase();
+      const newPM = paymentMethods.find(p => p.id === selectedPaymentMethod)
+                     ?.name.toLowerCase();
+      
       if (oldPM === "niftipay" && newPM !== "niftipay") {
-        const key = pmObj?.apiKey;          // <- same key you use for POST
+        // 🔑 pull the key from *the* Niftipay payment-method the user has stored
+        const key = paymentMethods.find(
+          p => p.name.toLowerCase() === "niftipay"
+        )?.apiKey;
+        if (!key) {
+          toast.error("Niftipay API-key missing");
+          return;
+        }
+      
         const del = await fetch(
           `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-          {
-            method: "DELETE",
-            headers: { "x-api-key": key! },
-            credentials: "include",         // pass the merchant’s cookie
-          },
+          { method: "DELETE", headers: { "x-api-key": key } }
         );
         if (!del.ok) {
-          const { error } = await del.json();
+          const { error } = await del.json().catch(() => ({ error: "Unknown error" }));
           toast.error(error);
-          return;                           // abort update
+          return;
         }
       }
   
@@ -791,31 +796,39 @@ useEffect(() => {
       }
   
       /* ── 2. If NEW method is Niftipay, create fresh invoice ────── */
-      if (newPM === "niftipay") {
-        const key = pmObj?.apiKey;
-        if (!key) {
-          toast.error("Niftipay API-key missing");
-        } else if (!selectedNiftipay) {
-          toast.error("Select crypto network / asset first");
-        } else {
-          const [chain, asset] = selectedNiftipay.split(":");
-          await fetch("/api/niftipay/orders", {
-            method: "POST",
-            headers: { "x-api-key": key, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              network : chain,
-              asset,
-              amount  : total,
-              currency: orderData.currency ?? "EUR",
-              firstName: orderData.client.firstName,
-              lastName : orderData.client.lastName,
-              email    : orderData.client.email ?? "user@trapyfy.com",
-              merchantId: orderData.organizationId ?? "",
-              reference : orderData.orderKey,
-            }),
-          });
-        }
-      }
+    /* 2. If the NEW method is Niftipay → create a fresh invoice */
+if (newPM === "niftipay") {
+  // 🔑 use the API-key that belongs to the payment-method the user just selected
+  const key = paymentMethods.find(p => p.id === selectedPaymentMethod)?.apiKey;
+
+  if (!key) {
+    toast.error("Niftipay API-key missing");
+  } else if (!selectedNiftipay) {
+    toast.error("Select crypto network / asset first");
+  } else {
+    const [chain, asset] = selectedNiftipay.split(":");
+
+    await fetch("/api/niftipay/orders", {
+      method : "POST",
+      headers: {
+        "x-api-key"     : key,
+        "Content-Type"  : "application/json",
+      },
+      body: JSON.stringify({
+        network   : chain,
+        asset,
+        amount    : total,
+        currency  : orderData.currency ?? "EUR",
+        firstName : orderData.client.firstName,
+        lastName  : orderData.client.lastName,
+        email     : orderData.client.email ?? "user@trapyfy.com",
+        merchantId: orderData.organizationId ?? "",
+        reference : orderData.orderKey,
+      }),
+    });
+  }
+}
+
   
       toast.success("Order updated!");
       router.push("/orders");
