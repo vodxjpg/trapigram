@@ -92,8 +92,11 @@ export async function DELETE(
       body: responseBody,
     });
     console.log(responseBody);
-    return new NextResponse(resp.body, {
-      status: resp.status,
-      headers: { "Content-Type": resp.headers.get("content-type") ?? "application/json" },
-    });
+     return new NextResponse(resp.body, {
+           status     : resp.status,
+           statusText : resp.statusText,   // lets the UI bubble up “401 Invalid API key” etc.
+           headers    : {
+             "Content-Type": resp.headers.get("content-type") ?? "application/json",
+           },
+         });
   }

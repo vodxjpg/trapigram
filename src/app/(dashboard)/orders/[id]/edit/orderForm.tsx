@@ -426,33 +426,33 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   /* ────────────────────────────────────────────────────────────
    Fetch payment methods + (if Niftipay) chains/assets
 ──────────────────────────────────────────────────────────── */
-useEffect(() => {
-  (async () => {
-    try {
-      const pmRes = await fetch("/api/payment-methods", {
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-        },
-      });
-      const { methods } = await pmRes.json();
-      setPaymentMethods(methods);
-      console.log("[Trapigram] Loaded payment methods", {
-        methods: methods.map((m: any) => ({
-          id: m.id,
-          name: m.name,
-          apiKey: m.apiKey ? m.apiKey.slice(0, 8) + "..." : "null",
-        })),
-      });
-      const init = methods.find(
-        (m: any) =>
-          m.name.toLowerCase() === orderData?.shippingInfo.payment?.toLowerCase()
-      )?.id;
-      if (init) setSelectedPaymentMethod(init);
-    } catch (e) {
-      toast.error("Failed loading payment methods");
-    }
-  })();
-}, [orderData]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const pmRes = await fetch("/api/payment-methods", {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
+        });
+        const { methods } = await pmRes.json();
+        setPaymentMethods(methods);
+        console.log("[Trapigram] Loaded payment methods", {
+          methods: methods.map((m: any) => ({
+            id: m.id,
+            name: m.name,
+            apiKey: m.apiKey ? m.apiKey.slice(0, 8) + "..." : "null",
+          })),
+        });
+        const init = methods.find(
+          (m: any) =>
+            m.name.toLowerCase() === orderData?.shippingInfo.payment?.toLowerCase()
+        )?.id;
+        if (init) setSelectedPaymentMethod(init);
+      } catch (e) {
+        toast.error("Failed loading payment methods");
+      }
+    })();
+  }, [orderData]);
 
   useEffect(() => {
     const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
@@ -758,13 +758,13 @@ useEffect(() => {
   // New: update order
   const handleUpdateOrder = async () => {
     if (!orderData?.id) return;
-  
+
     try {
       /* --- 0. Handle Niftipay "switch-away" case --- */
       const pmObj = paymentMethods.find(p => p.id === selectedPaymentMethod);
       const oldPM = orderData.shippingInfo.payment?.toLowerCase();
       const newPM = pmObj?.name.toLowerCase();
-  
+
       if (oldPM === "niftipay" && newPM !== "niftipay") {
         const niftipayMethod = paymentMethods.find(p => p.name.toLowerCase() === "niftipay");
         const key = niftipayMethod?.apiKey;
@@ -773,7 +773,7 @@ useEffect(() => {
           toast.error("Niftipay API key missing");
           return;
         }
-  
+
         // Log DELETE request details
         console.log("[Trapigram] Attempting to delete Niftipay order", {
           reference: orderData.orderKey,
@@ -781,7 +781,7 @@ useEffect(() => {
           merchantId: orderData.organizationId ?? "undefined",
           url: `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
         });
-  
+
         const del = await fetchJsonVerbose(
           `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
           {
@@ -790,7 +790,7 @@ useEffect(() => {
           },
           "DELETE Niftipay",
         );
-  
+
         if (!del.ok) {
           const errorBody = await del.json().catch(() => ({ error: "Unknown error" }));
           console.error("[Trapigram] DELETE request failed", {
@@ -811,37 +811,37 @@ useEffect(() => {
           reference: orderData.orderKey,
         });
       }
-  
+
       /* --- 1. Patch the order itself --- */
       const selectedAddressText = addresses.find(a => a.id === selectedAddressId)?.address ?? null;
-  
-            const hdrs: Record<string,string> = { "Content-Type": "application/json" };
-            if (pmObj?.apiKey) hdrs["x-api-key"] = pmObj.apiKey;   // ← add only if present
-      
-            const res = await fetchJsonVerbose(`/api/order/${orderData.id}`, {
-              method: "PATCH",
-          headers: hdrs,
-        credentials:"include", 
+
+
+
+
+      const res = await fetchJsonVerbose(`/api/order/${orderData.id}`, {
+        method: "PATCH",
+        headers: hdrs,
+        credentials: "include",
         body: JSON.stringify({
           discount: discount ? Number(discount) : orderData.discount,
           couponCode: newCoupon ? newCoupon : orderData.coupon,
           address: selectedAddressText,
           total,
-          shippingMethod : selectedShippingMethod,
+          shippingMethod: selectedShippingMethod,
           shippingCompany: selectedShippingCompany,
           paymentMethodId: selectedPaymentMethod,
         }),
       });
-  
+
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error ?? `Request failed (${res.status})`);
       }
-  
+
       /* --- 2. If NEW method is Niftipay, create fresh invoice --- */
       if (newPM === "niftipay") {
         const key = pmObj?.apiKey;
-  
+
         if (!key) {
           toast.error("Niftipay API key missing");
           return;
@@ -849,7 +849,7 @@ useEffect(() => {
           toast.error("Select crypto network/asset first");
           return;
         }
-  
+
         const [chain, asset] = selectedNiftipay.split(":");
         // Log creation of new Niftipay order
         console.log("[Trapigram] Creating new Niftipay order", {
@@ -862,12 +862,12 @@ useEffect(() => {
         console.log("pmObj", pmObj);
         console.log("header being sent", pmObj?.apiKey ?? "<empty>");
 
-  
+
         const niftipayRes = await fetch("/api/niftipay/orders", {
           method: "POST",
           headers: {
-            "x-api-key": key,
             "Content-Type": "application/json",
+            "x-api-key": pmObj!.apiKey!,   // ✅  always include when talking to Niftipay
           },
           body: JSON.stringify({
             network: chain,
@@ -881,7 +881,7 @@ useEffect(() => {
             reference: orderData.orderKey,
           }),
         });
-  
+
         if (!niftipayRes.ok) {
           const errorBody = await niftipayRes.json().catch(() => ({ error: "Unknown error" }));
           console.error("[Trapigram] Failed to create new Niftipay order", {
@@ -891,20 +891,20 @@ useEffect(() => {
           toast.error(errorBody.error || "Failed to create new Niftipay order");
           return;
         }
-  
+
         const niftipayMeta = await niftipayRes.json();
         console.log("[Trapigram] Niftipay order created successfully", niftipayMeta);
-  
+
         // Update Trapigram order with Niftipay metadata
         await fetch(`/api/order/${orderData.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ orderMeta: [niftipayMeta] }),
         });
-  
+
         toast.success(`Niftipay invoice created: send ${niftipayMeta.order.amount} ${asset}`);
       }
-  
+
       toast.success("Order updated!");
       router.push("/orders");
     } catch (err: any) {
