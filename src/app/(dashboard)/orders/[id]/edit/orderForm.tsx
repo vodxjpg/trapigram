@@ -738,83 +738,92 @@ useEffect(() => {
   // New: update order
   const handleUpdateOrder = async () => {
     if (!orderData?.id) return;
-      try {
-          /* ── 0. Handle Niftipay “switch-away” case ────────────── */
-          const pmObj = paymentMethods.find(
-                  (p) => p.id === selectedPaymentMethod,
-                );
-          const oldPM = orderData?.shippingInfo.payment?.toLowerCase();
-
-            const newPM = pmObj?.name.toLowerCase();
-          if (oldPM === "niftipay" && newPM !== "niftipay") {
-            const key = pmObj?.apiKey;                  // <- same object you use for POST
-            const del = await fetch(
-              `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-              {
-                method: "DELETE",
-                headers: { "x-api-key": key! },
-                credentials: "include"            // pass the merchant’s key
-              },
-            );
-            if (!del.ok) {
-              const { error } = await del.json();
-              toast.error(error);
-              return; // abort update
-            }
-          }
-      const selectedAddressText = addresses.find(
-        (a) => a.id === selectedAddressId
-      )?.address;
+  
+    try {
+      /* ── 0. Handle Niftipay “switch-away” case ─────────────────── */
+      const pmObj = paymentMethods.find(p => p.id === selectedPaymentMethod);
+      const oldPM = orderData?.shippingInfo.payment?.toLowerCase();
+      const newPM = pmObj?.name.toLowerCase();
+  
+      if (oldPM === "niftipay" && newPM !== "niftipay") {
+        const key = pmObj?.apiKey;          // <- same key you use for POST
+        const del = await fetch(
+          `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+          {
+            method: "DELETE",
+            headers: { "x-api-key": key! },
+            credentials: "include",         // pass the merchant’s cookie
+          },
+        );
+        if (!del.ok) {
+          const { error } = await del.json();
+          toast.error(error);
+          return;                           // abort update
+        }
+      }
+  
+      /* ── 1. Patch the order itself ─────────────────────────────── */
+      const selectedAddressText =
+        addresses.find(a => a.id === selectedAddressId)?.address ?? null;
+  
       const res = await fetch(`/api/order/${orderData.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        method : "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          // 🟢 tells the API this request is from the back-office
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+        },
         body: JSON.stringify({
-          discount: discount ? Number(discount) : orderData.discount,
-          couponCode: newCoupon ? newCoupon : orderData.coupon,
-          address: selectedAddressText,
+          discount              : discount ? Number(discount) : orderData.discount,
+          couponCode            : newCoupon ? newCoupon : orderData.coupon,
+          address               : selectedAddressText,
           total,
           selectedShippingMethod,
           selectedShippingCompany,
-          paymentMethodId: selectedPaymentMethod,
+          paymentMethodId       : selectedPaymentMethod,
         }),
       });
-      if (!res.ok) throw new Error("Failed to update order");
-           /* ── 1. If NEW method is Niftipay, create fresh invoice ─ */
-     if (newPM === "niftipay") {
-       const pmObj = paymentMethods.find((p) => p.id === selectedPaymentMethod);
-       const key = pmObj?.apiKey;
-       if (!key) {
-         toast.error("Niftipay API-key missing");
-       } else if (!selectedNiftipay) {
-         toast.error("Select crypto network / asset first");
-       } else {
-         const [chain, asset] = selectedNiftipay.split(":");
-         await fetch("/api/niftipay/orders", {
-           method: "POST",
-           headers: {
-             "x-api-key": key,
-             "Content-Type": "application/json",
-           },
-           body: JSON.stringify({
-             network: chain,
-             asset,
-             amount: total,
-             currency: orderData.currency ?? "EUR",
-             firstName: orderData.client.firstName,
-             lastName: orderData.client.lastName,
-             email: orderData.client.email ?? "user@trapyfy.com",
-             merchantId: orderData.organizationId ?? "",
-             reference: orderData.orderKey,
-           }),
-         });
-       }
-     }
+  
+      /* show the real reason instead of a bare 401/403/500 */
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `Request failed (${res.status})`);
+      }
+  
+      /* ── 2. If NEW method is Niftipay, create fresh invoice ────── */
+      if (newPM === "niftipay") {
+        const key = pmObj?.apiKey;
+        if (!key) {
+          toast.error("Niftipay API-key missing");
+        } else if (!selectedNiftipay) {
+          toast.error("Select crypto network / asset first");
+        } else {
+          const [chain, asset] = selectedNiftipay.split(":");
+          await fetch("/api/niftipay/orders", {
+            method: "POST",
+            headers: { "x-api-key": key, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              network : chain,
+              asset,
+              amount  : total,
+              currency: orderData.currency ?? "EUR",
+              firstName: orderData.client.firstName,
+              lastName : orderData.client.lastName,
+              email    : orderData.client.email ?? "user@trapyfy.com",
+              merchantId: orderData.organizationId ?? "",
+              reference : orderData.orderKey,
+            }),
+          });
+        }
+      }
+  
       toast.success("Order updated!");
       router.push("/orders");
     } catch (err: any) {
       toast.error(err.message || "Update failed");
     }
   };
+  
 
   return (
     <div className="container mx-auto py-6">
