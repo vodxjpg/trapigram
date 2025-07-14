@@ -842,18 +842,21 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       
         const res = await fetchJsonVerbose(`/api/order/${orderData.id}`, {
           method : "PATCH",
-          headers,
-        credentials: "include",
-        body: JSON.stringify({
-          discount: discount ? Number(discount) : orderData.discount,
-          couponCode: newCoupon ? newCoupon : orderData.coupon,
-          address: selectedAddressText,
-          total,
-          shippingMethod: selectedShippingMethod,
-          shippingCompany: selectedShippingCompany,
-          paymentMethodId: selectedPaymentMethod,
-        }),
-      });
+          headers: {
+            "Content-Type"   : "application/json",
+            "x-internal-secret": INTERNAL,     // ← add this
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            discount       : discount ? Number(discount) : orderData.discount,
+            couponCode     : newCoupon || orderData.coupon,
+            address        : selectedAddressText,
+            total,
+            shippingMethod : selectedShippingMethod,
+            shippingCompany: selectedShippingCompany,
+            paymentMethodId: selectedPaymentMethod,
+          }),
+        });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -919,8 +922,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
         // Update Trapigram order with Niftipay metadata
         await fetch(`/api/order/${orderData.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          method : "PATCH",
+          headers: {
+            "Content-Type"     : "application/json",
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!, 
+          },
           body: JSON.stringify({ orderMeta: [niftipayMeta] }),
         });
 
