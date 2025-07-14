@@ -169,7 +169,7 @@ async function fetchJsonVerbose(
   opts: RequestInit = {},
   tag = url,
 ) {
-  const res = await fetch(url, opts);
+  const res = await fetch(url, { credentials: "include", ...opts });
   let body: any = null;
   try {
     body = await res.clone().json();   // clone → still readable later
