@@ -431,11 +431,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   useEffect(() => {
     (async () => {
       try {
-        const pmRes = await fetch("/api/payment-methods", {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
-        });
+        const pmRes = await fetch("/api/payment-methods");
         const { methods } = await pmRes.json();
         setPaymentMethods(methods);
         console.log("[Trapigram] Loaded payment methods", {
@@ -501,18 +497,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const loadShipping = async () => {
     setShippingLoading(true);
     try {
-      const [shipRes, compRes] = await Promise.all([
-        fetch("/api/shipments", {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
-        }),
-        fetch("/api/shipping-companies", {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
-        }),
-      ]);
+          const [shipRes, compRes] = await Promise.all([
+              fetch("/api/shipments"),
+              fetch("/api/shipping-companies"),
+            ]);
       const shipData = await shipRes.json();
       const compData = await compRes.json();
       setShippingMethods(shipData.shipments);
@@ -675,13 +663,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     }
     try {
       const res = await fetch(`/api/cart/${cartId}/remove-product`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-        },
-        body: JSON.stringify({ productId }),
-      });
+             method: "DELETE",
+             headers: { "Content-Type": "application/json" },
+             body: JSON.stringify({ productId }),
+           });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         const msg =
@@ -919,15 +904,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         console.log("[Trapigram] Niftipay order created successfully", niftipayMeta);
 
         // Update Trapigram order with Niftipay metadata
-        await fetch(`/api/order/${orderData.id}`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
-          body: JSON.stringify({ orderMeta: [niftipayMeta] }),
-        });
-
+               await fetch(`/api/order/${orderData.id}`, {
+                   method: "PATCH",
+                   headers: { "Content-Type": "application/json" },
+                   body: JSON.stringify({ orderMeta: [niftipayMeta] }),
+                 });
         toast.success(`Niftipay invoice created: send ${niftipayMeta.order.amount} ${asset}`);
       }
 
