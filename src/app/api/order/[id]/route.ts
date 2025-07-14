@@ -241,19 +241,31 @@ if ("paymentMethod" in body) {
     newPM.toLowerCase() !== "niftipay"
   ) {
     // ① lookup the secretKey for *this tenant*
-    const pmRow = await db
-      .selectFrom("paymentMethods")
-      .select("apiKey")
-      .where("tenantId", "=", ctx.tenantId)
-      .where("name", "=", "Niftipay")
-      .executeTakeFirst();
-    const nifiSecret = pmRow?.secretKey;
-    if (!nifiSecret) {
-      return NextResponse.json(
-        { error: "No Niftipay credentials configured" },
-        { status: 500 }
-      );
-    }
+    // instead of trying to read secretKey, just grab apiKey
+const pmRow = await db
+.selectFrom("paymentMethods")
+.select("apiKey")
+.where("tenantId", "=", ctx.tenantId)
+.where("name", "=", "Niftipay")
+.executeTakeFirst();
+
+const nifiApiKey = pmRow?.apiKey;
+if (!nifiApiKey) {
+return NextResponse.json(
+  { error: "No Niftipay credentials configured" },
+  { status: 500 }
+);
+}
+
+// then use that same key in your DELETE
+const del = await fetch(
+`${process.env.NIFTIPAY_API_URL ?? "https://www.niftipay.com"}/api/orders?reference=${encodeURIComponent(current.orderKey)}`,
+{
+  method: "DELETE",
+  headers: { "x-api-key": nifiApiKey },
+}
+);
+
   
     // ② call Niftipay DELETE with that secret
     try {
