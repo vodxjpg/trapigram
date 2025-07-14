@@ -74,6 +74,28 @@ interface PaymentMethod {
   id: string;
   name: string;
   details: string;
+  apiKey?: string | null;
+}
+
+/* ─── helpers (new) ───────────────────────────────────────────── */
+/* ─── currency map helpers ─────────────────────────────────────── */
+const EU_COUNTRIES = new Set([
+    "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
+    "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE",
+  ]);
+  
+  function countryToFiat(c: string): string {
+    const code = c.toUpperCase();
+    if (code === "GB")            return "GBP";
+    if (EU_COUNTRIES.has(code))   return "EUR";
+    return "USD";
+  }
+
+function fmt(n: number | string): string {
+  return Number(n).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 8,
+  });
 }
 
 export default function OrderForm() {
@@ -116,6 +138,12 @@ export default function OrderForm() {
 
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  /* ▼ Niftipay UI state */
+  const [niftipayNetworks, setNiftipayNetworks] = useState<
+    { chain: string; asset: string; label: string }[]
+  >([]);
+  const [niftipayLoading, setNiftipayLoading] = useState(false);
+  const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
 
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
   const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
@@ -331,6 +359,38 @@ export default function OrderForm() {
     const client = clients.find((c) => c.id === selectedClient);
     if (client) setClientCountry(client.country);
   }, [selectedClient]);
+
+  /* ─── Niftipay network fetch whenever the PM select changes ───── */
+  useEffect(() => {
+    const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+    if (!pm || pm.name.toLowerCase() !== "niftipay" || !pm.apiKey) {
+      setNiftipayNetworks([]);
+      setSelectedNiftipay("");
+      return;
+    }
+    (async () => {
+      try {
+        setNiftipayLoading(true);
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_NIFTIPAY_API_URL}/api/payment-methods`,
+          { headers: { "x-api-key": pm.apiKey } },
+        );
+        if (!res.ok) throw new Error("Failed to load Niftipay networks");
+        const { methods } = await res.json();
+        setNiftipayNetworks(
+          methods.map((m: any) => ({
+            chain: m.chain,
+            asset: m.asset,
+            label: m.label ?? `${m.asset} on ${m.chain}`,
+          })),
+        );
+      } catch (err: any) {
+        toast.error(err.message);
+      } finally {
+        setNiftipayLoading(false);
+      }
+    })();
+  }, [selectedPaymentMethod, paymentMethods]);
 
   // — Add product
   const addProduct = async () => {
@@ -551,11 +611,18 @@ export default function OrderForm() {
       toast.error("Generate your cart first!");
       return;
     }
-    const payment = paymentMethods.find(
+    const pmObj = paymentMethods.find(
       (m) => m.id === selectedPaymentMethod
-    )?.name;
+    );
+    const payment = pmObj?.name;
     if (!payment) {
       toast.error("Select a payment method");
+      return;
+    }
+    /* ensure crypto network chosen */
+    const isNiftipay = payment.toLowerCase() === "niftipay";
+    if (isNiftipay && !selectedNiftipay) {
+      toast.error("Select the crypto network/asset");
       return;
     }
     const shippingCompanyName = shippingCompanies.find(
@@ -617,6 +684,56 @@ export default function OrderForm() {
         throw new Error(data.error || "Failed to create order");
       }
       toast.success("Order created successfully!");
+      /* ── extra: create Niftipay invoice & store meta ───────── */
+      if (isNiftipay) {
+        const key = pmObj?.apiKey;
+        if (!key) {
+          toast.error("Niftipay API-key missing");
+          return;
+        }
+        const [chain, asset] = selectedNiftipay.split(":");
+
+        const client = clients.find((c) => c.id === selectedClient)!;
+        const fiat = countryToFiat(client.country);
+        const totalF = total + shippingCost;
+
+        const nRes = await fetch(
+          `${process.env.NEXT_PUBLIC_NIFTIPAY_API_URL}/api/orders`,
+          {
+            method: "POST",
+            headers: {
+              "x-api-key": key,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              network: chain,
+              asset,
+              amount: totalF,
+              currency: fiat,
+              firstName: client.firstName,
+              lastName: client.lastName,
+              email: client.email,
+              merchantId: activeOrg?.id ?? "",
+              reference: data.orderKey,
+            }),
+          },
+        );
+        if (!nRes.ok) {
+          toast.error("Niftipay invoice failed");
+        } else {
+          const meta = await nRes.json();
+          await fetch(`/api/order/${data.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ orderMeta: [meta] }),
+          });
+          toast.success(
+            `Niftipay invoice created: send ${fmt(
+              meta.order.amount,
+            )} ${asset}`,
+          );
+        }
+      }
       cancelOrder();
       router.push(`/orders/${data.id}`);
     } catch (err: any) {
@@ -1009,6 +1126,39 @@ export default function OrderForm() {
                   ))}
                 </SelectContent>
               </Select>
+              {/* ▼ Niftipay network selector */}
+              {paymentMethods.find(
+                (p) =>
+                  p.id === selectedPaymentMethod &&
+                  p.name.toLowerCase() === "niftipay",
+              ) && (
+                  <div className="mt-4">
+                    <Label>Select Crypto Network</Label>
+                    <Select
+                      value={selectedNiftipay}
+                      onValueChange={setSelectedNiftipay}
+                      disabled={niftipayLoading}
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={
+                            niftipayLoading ? "Loading…" : "Select network"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {niftipayNetworks.map((n) => (
+                          <SelectItem
+                            key={`${n.chain}:${n.asset}`}
+                            value={`${n.chain}:${n.asset}`}
+                          >
+                            {n.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
             </CardContent>
           </Card>
         </div>
@@ -1080,6 +1230,13 @@ export default function OrderForm() {
                   !orderGenerated ||
                   orderItems.length === 0 ||
                   !selectedPaymentMethod ||
+                  (paymentMethods.find(
+                    (p) =>
+                      p.id === selectedPaymentMethod &&
+                      p.name.toLowerCase() === "niftipay",
+                  )
+                    ? !selectedNiftipay
+                    : false) ||
                   !selectedShippingMethod ||
                   !selectedShippingCompany
                 }
