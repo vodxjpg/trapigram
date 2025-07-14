@@ -45,6 +45,8 @@ interface ShippingInfo {
 }
 interface Order {
   id: string;
+  orderKey: string;                //  ← NEW
+  orderMeta: any[];            
   cartId: string;
   clientId: string;
   clientFirstName: string;
@@ -114,6 +116,34 @@ function groupByProduct(lines: Product[]) {
     }));
 }
 
+function parseCrypto(metaArr: any[]) {
+  if (!metaArr?.length) return null;
+
+  // last element is usually the most up-to-date
+  const last = metaArr[metaArr.length - 1];
+
+  // Some entries wrap data under last.order, some have .order + .event
+  const o = last.order ?? last;
+  const ev = last.event ?? last.status ?? "pending";
+
+  const expected = Number(o.expected ?? o.amount) || 0;
+const received = Number(o.received ?? 0)          || 0;
+
+  const pending   = Math.max(0, expected - received);
+
+  return {
+    asset:     o.asset,
+    network:   o.network,
+    address:   o.address,
+    qrUrl:     o.qrUrl,
+    expected,
+    received,
+    pending,
+    status:    ev,             // "pending", "underpaid", "paid", …
+  };
+}
+
+
 export default function OrderView() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -160,10 +190,13 @@ export default function OrderView() {
 
       setOrder({
         ...o,
+        orderKey:   o.orderKey,          // ← keep it
+        orderMeta:  o.orderMeta ?? [],   // ← keep it (array; may be empty)
         clientFirstName: c.firstName ?? "",
         clientLastName: c.lastName ?? "",
         clientEmail: c.email ?? "",
         clientUsername: c.username,
+        discountValue: o.discountValue,
       });
       setError(null);
     } catch (err: any) {
@@ -284,6 +317,8 @@ if (!permLoading && !canViewOrder) {
     (
       { open: "bg-blue-500", paid: "bg-green-500", cancelled: "bg-red-500", completed: "bg-purple-500" } as const
     )[s as keyof typeof statusClr] ?? "bg-gray-500";
+    const crypto = parseCrypto(order.orderMeta);
+
 
   const fmtMsgTime = (d: Date) => format(d, "MMM d, h:mm a");
   return (
@@ -312,7 +347,7 @@ if (!permLoading && !canViewOrder) {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Client</p>
                   <p className="font-medium">
@@ -323,6 +358,7 @@ if (!permLoading && !canViewOrder) {
                 <div>
                   <p className="text-sm text-muted-foreground">Order ID</p>
                   <p className="font-medium">{order.id}</p>
+                  <p className="font-medium">{order.orderKey}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Cart ID</p>
@@ -489,6 +525,58 @@ if (!permLoading && !canViewOrder) {
               </div>
             </CardContent>
           </Card>
+          {crypto && (
+  <Card>
+    <CardHeader>
+      <CardTitle className="flex items-center gap-2">
+        <CreditCard className="h-5 w-5" /> Crypto Payment
+      </CardTitle>
+    </CardHeader>
+
+    <CardContent className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <p className="text-sm text-muted-foreground">Network / Asset</p>
+          <p className="font-medium">
+            {crypto.network} / {crypto.asset}
+          </p>
+
+          <p className="text-sm text-muted-foreground mt-4">Wallet&nbsp;Address</p>
+          <p className="font-mono break-all">{crypto.address}</p>
+        </div>
+
+        <div className="flex flex-col items-center">
+          {/* QR */}
+          <div className="w-40 h-40 relative">
+            <Image
+              src={crypto.qrUrl}
+              alt="QR code"
+              fill
+              sizes="160px"
+              className="object-contain rounded-md border"
+            />
+          </div>
+
+          {/* Amounts */}
+          <div className="mt-4 space-y-1 text-center">
+            <p className="text-sm">Expected: <span className="font-medium">{crypto.expected}</span></p>
+            {crypto.status === "underpaid" && (
+              <>
+                <p className="text-sm text-red-600">
+                  Received: {crypto.received}
+                </p>
+                <p className="text-sm text-red-600 font-semibold">
+                  Pending:  {crypto.pending}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </CardContent>
+  </Card>
+)}
+
         </div>
 
         <div className="xl:col-span-1">
