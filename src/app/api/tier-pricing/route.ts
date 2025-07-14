@@ -71,6 +71,7 @@ export async function POST(req: NextRequest) {
     .values({
       id: pricingId,
       organizationId,
+      active: true,
       name: body.name,
       countries: JSON.stringify(body.countries),
       createdAt: now,

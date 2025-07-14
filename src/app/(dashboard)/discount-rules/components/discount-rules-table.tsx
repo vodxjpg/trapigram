@@ -51,6 +51,7 @@ type TierPricing = {
   id: string;
   name: string;
   countries: string[];
+  active: boolean;
   steps: Step[];
   products: ProdItem[];
 };
@@ -131,6 +132,22 @@ export function DiscountRulesTable() {
     }
   };
 
+   const toggleActive = async (rule: TierPricing) => {
+       if (!canUpdate) return;
+       try {
+         await fetch(`/api/tier-pricing/${rule.id}/active`, {
+           method: "PATCH",
+           headers: { "Content-Type": "application/json" },
+           body: JSON.stringify({ active: !rule.active }),
+         });
+         setRules(prev =>
+           prev.map(r => (r.id === rule.id ? { ...r, active: !r.active } : r)),
+         );
+       } catch {
+         toast.error("Failed to update status");
+       }
+     };
+
   /* ── guards ────────────────────────────────────────────────────── */
   if (viewLoading || !canView) return null;
 
@@ -161,6 +178,7 @@ export function DiscountRulesTable() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
+              <TableHead>Active</TableHead>
               <TableHead>Countries</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -182,6 +200,13 @@ export function DiscountRulesTable() {
               rules.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell>{r.name}</TableCell>
+                  <TableCell>
+                <Switch
+                  checked={r.active}
+                  onCheckedChange={() => toggleActive(r)}
+                  disabled={!canUpdate}
+                />
+              </TableCell>
                   <TableCell>
                     {r.countries.map((c) => (
                       <Badge key={c} variant="outline" className="mr-1">

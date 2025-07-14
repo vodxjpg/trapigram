@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 export type Tier = {
   id?: string;
   name?: string;
+  active?: boolean;  
   countries: string[];
   products: { productId: string; variationId: string | null }[];
   steps: { fromUnits: number; toUnits: number; price: number }[];
@@ -15,6 +16,8 @@ export async function tierPricing(organizationId: string): Promise<Tier[]> {
     .selectFrom("tierPricings")
     .selectAll()
     .where("organizationId", "=", organizationId)
+    .where("active", "=", true)             // only active rules
+    .orderBy("createdAt", "desc")
     .execute();
 
   const tierPricings: Tier[] = await Promise.all(
