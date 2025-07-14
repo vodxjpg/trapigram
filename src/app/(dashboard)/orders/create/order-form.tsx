@@ -700,8 +700,10 @@ export default function OrderForm() {
           return;
         }
         const [chain, asset] = selectedNiftipay.split(":");
-
+        
         const client = clients.find((c) => c.id === selectedClient)!;
+        const safeEmail = client.email?.trim() || "user@trapyfy.com";   // ✅ fallback
+
         const fiat = countryToFiat(client.country);
         const totalF = total + shippingCost;
 
@@ -720,7 +722,7 @@ export default function OrderForm() {
               currency: fiat,
               firstName: client.firstName,
               lastName: client.lastName,
-              email: client.email,
+              email: safeEmail,
               merchantId: activeOrg?.id ?? "",
               reference: data.orderKey,
             }),
