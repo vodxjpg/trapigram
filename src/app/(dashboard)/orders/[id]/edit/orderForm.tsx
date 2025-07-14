@@ -410,27 +410,33 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   /* ────────────────────────────────────────────────────────────
    Fetch payment methods + (if Niftipay) chains/assets
 ──────────────────────────────────────────────────────────── */
-  useEffect(() => {
-    (async () => {
-      try {
-        const pmRes = await fetch("/api/payment-methods", {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
-        });
-        const { methods } = await pmRes.json();
-        setPaymentMethods(methods);
-        // pre-select the one originally stored in the order
-        const init = methods.find(
-          (m: any) =>
-            m.name.toLowerCase() === orderData?.shippingInfo.payment?.toLowerCase()
-        )?.id;
-        if (init) setSelectedPaymentMethod(init);
-      } catch (e) {
-        toast.error("Failed loading payment methods");
-      }
-    })();
-  }, [orderData]);
+useEffect(() => {
+  (async () => {
+    try {
+      const pmRes = await fetch("/api/payment-methods", {
+        headers: {
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+        },
+      });
+      const { methods } = await pmRes.json();
+      setPaymentMethods(methods);
+      console.log("[Trapigram] Loaded payment methods", {
+        methods: methods.map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          apiKey: m.apiKey ? m.apiKey.slice(0, 8) + "..." : "null",
+        })),
+      });
+      const init = methods.find(
+        (m: any) =>
+          m.name.toLowerCase() === orderData?.shippingInfo.payment?.toLowerCase()
+      )?.id;
+      if (init) setSelectedPaymentMethod(init);
+    } catch (e) {
+      toast.error("Failed loading payment methods");
+    }
+  })();
+}, [orderData]);
 
   useEffect(() => {
     const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
