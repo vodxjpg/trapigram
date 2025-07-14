@@ -746,6 +746,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         const niftipayMethod = paymentMethods.find(p => p.name.toLowerCase() === "niftipay");
         const key = niftipayMethod?.apiKey;
         if (!key) {
+          console.error("[Trapigram] Niftipay API key missing for DELETE");
           toast.error("Niftipay API key missing");
           return;
         }
@@ -755,6 +756,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           reference: orderData.orderKey,
           apiKey: key ? key.slice(0, 8) + "..." : "undefined",
           merchantId: orderData.organizationId ?? "undefined",
+          url: `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
         });
   
         const del = await fetch(
@@ -771,6 +773,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             status: del.status,
             error: errorBody.error,
             reference: orderData.orderKey,
+            responseHeaders: Object.fromEntries(del.headers.entries()),
           });
           if (del.status === 401) {
             toast.error("Unauthorized: Check Niftipay API key or merchant ID mismatch");
@@ -779,7 +782,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           }
           return;
         }
-        console.log("[Trapigram] Niftipay order deleted successfully");
+        console.log("[Trapigram] Niftipay order deleted successfully", {
+          status: del.status,
+          reference: orderData.orderKey,
+        });
       }
   
       /* --- 1. Patch the order itself --- */
