@@ -197,12 +197,17 @@ export default function OrderForm() {
   }
 
   const generateOrder = async () => {
-    if (!selectedClient) return;
-    try {
-      const resC = await fetch("/api/cart", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientId: selectedClient }),
+      if (!selectedClient) return;
+      // we already know the client – grab its country once
+      const clientInfo = clients.find((c) => c.id === selectedClient);
+      try {
+        const resC = await fetch("/api/cart", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientId: selectedClient,
+            country  : clientInfo?.country || "", // ← rename
+          }),
       });
       if (!resC.ok) throw new Error("Failed to create cart");
       const dataC = await resC.json();
@@ -238,9 +243,7 @@ export default function OrderForm() {
 
       setSubtotal(subtotal);
 
-      const client = clients.find((c) => c.id === selectedClient);
-      if (client) setClientCountry(client.country);
-
+      if (clientInfo) setClientCountry(clientInfo.country);  // reuse
       setShippingLoading(true);
       try {
         const shipRes = await fetch("/api/shipments", {
