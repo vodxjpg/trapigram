@@ -821,6 +821,7 @@ useEffect(() => {
           "Content-Type": "application/json",
           "x-api-key"  : pmObj?.apiKey ?? ""
         },
+        credentials:"include", 
         body: JSON.stringify({
           discount: discount ? Number(discount) : orderData.discount,
           couponCode: newCoupon ? newCoupon : orderData.coupon,
@@ -857,6 +858,10 @@ useEffect(() => {
           asset,
           merchantId: orderData.organizationId ?? "undefined",
         });
+
+        console.log("pmObj", pmObj);
+        console.log("header being sent", pmObj?.apiKey ?? "<empty>");
+
   
         const niftipayRes = await fetch("/api/niftipay/orders", {
           method: "POST",
