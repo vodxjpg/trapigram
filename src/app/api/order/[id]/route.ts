@@ -4,8 +4,6 @@ import { pgPool as pool } from "@/lib/db";;
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { z } from "zod";
-import { requireOrgPermission } from "@/lib/perm-server";
-
 
 /* ─── encryption helpers ─────────────────────────────────────── */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
@@ -170,12 +168,14 @@ export async function PATCH(
   if (ctx instanceof NextResponse) return ctx;
   // enforce order:update
   const { id } = await params;
+  
    /* -----------------------------------------------------------------
     0. Parse body and normalise `paymentMethod`
        (the front-end may send either `paymentMethod` or `paymentMethodId`)
  ------------------------------------------------------------------ */
  const raw = await req.json();
  const body: Record<string, any> = { ...raw };
+ console.log("[PATCH /order/:id] ctx =", ctx);
  if ("paymentMethodId" in raw && !("paymentMethod" in raw)) {
    body.paymentMethod = raw.paymentMethodId;           // keep both names working
  }
