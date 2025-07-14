@@ -377,7 +377,7 @@ export default function OrderForm() {
       try {
         setNiftipayLoading(true);
         const res = await fetch(
-         `${NIFTIPAY_BASE}/api/payment-methods`,
+        `/api/niftipay/payment-methods`,
           { headers: { "x-api-key": pm.apiKey } },
         );
         if (!res.ok) throw new Error("Failed to load Niftipay networks");
@@ -703,7 +703,7 @@ export default function OrderForm() {
         const totalF = total + shippingCost;
 
         const nRes = await fetch(
-        `${NIFTIPAY_BASE}/api/orders`,
+       `/api/niftipay/orders`,
           {
             method: "POST",
             headers: {
