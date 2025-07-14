@@ -91,7 +91,7 @@ export async function DELETE(
       headers: Object.fromEntries(resp.headers.entries()),
       body: responseBody,
     });
-  
+    console.log(responseBody);
     return new NextResponse(resp.body, {
       status: resp.status,
       headers: { "Content-Type": resp.headers.get("content-type") ?? "application/json" },
