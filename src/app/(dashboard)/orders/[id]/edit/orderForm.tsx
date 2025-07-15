@@ -342,25 +342,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         toast.error("Failed to load order or addresses");
       }
     })();
-  }, [orderId, activeOrg?.id]);
-  useEffect(() => {
-    if (!orderData) return;
-  
-    // if your API returns exactly the id you need, great:
-    setSelectedShippingMethod(orderData.shippingInfo.method);
-    setSelectedShippingCompany(orderData.shippingInfo.company);
-  
-    // for payment methods we usually pick the matching id by name:
-    const pm = paymentMethods.find(
-      (m) =>
-        m.name.toLowerCase() ===
-        orderData.shippingInfo.payment?.toLowerCase()
-    );
-    if (pm) {
-      setSelectedPaymentMethod(pm.id);
-    }
-  }, [orderData, paymentMethods]);
-  
+  }, [orderId]);
 
   /* ——————————————————— FETCH CART ITEMS ——————————————————— */
   useEffect(() => {
