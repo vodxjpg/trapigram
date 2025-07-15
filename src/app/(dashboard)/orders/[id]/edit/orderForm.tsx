@@ -853,25 +853,36 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       }
 
       /* --- 2. (Re-)create Niftipay invoice if it’s the chosen method --- */
-      if (newPM === "niftipay") {
-        const key = pmObj?.apiKey;
-
-        if (!key) {
-          toast.error("Niftipay API key missing");
-          return;
-        } else if (!selectedNiftipay) {
-          toast.error("Select crypto network/asset first");
-          return;
-        }
-
-        const [chain, asset] = selectedNiftipay.split(":");
-        // Log creation of new Niftipay order
-        console.log("[Trapigram] Creating new Niftipay order", {
-          reference: orderData.orderKey,
-          chain,
-          asset,
-          merchantId,
-                 // debug: log full payload
+        if (newPM === "niftipay") {
+            const key = pmObj?.apiKey;
+        
+            if (!key) {
+              toast.error("Niftipay API key missing");
+              return;
+            } else if (!selectedNiftipay) {
+              toast.error("Select crypto network/asset first");
+              return;
+            }
+        
+            const [chain, asset] = selectedNiftipay.split(":");
+            // 2a) Always delete any existing invoice first to avoid duplicates
+            await fetchJsonVerbose(
+              `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+              {
+                credentials: "include",
+                method: "DELETE",
+                headers: { "x-api-key": key },
+              },
+              "DELETE OLD Niftipay",
+            );
+            console.log("[Trapigram] Old Niftipay invoice deleted (if existed)");
+        
+            // 2b) Now create the new one
+            console.log("[Trapigram] Creating new Niftipay order", {
+              reference: orderData.orderKey,
+              chain,
+              asset,
+              merchantId,
        payload: {
          network: chain,
          asset,
@@ -886,7 +897,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         });
 
         console.log("pmObj", pmObj);
-        console.log("header being sent", pmObj?.apiKey ?? "<empty>");
 
 
         const niftipayRes = await fetch("/api/niftipay/orders", {
