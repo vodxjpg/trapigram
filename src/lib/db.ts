@@ -628,6 +628,7 @@ interface DB {
     id: string
     organizationId: string
     name: string
+    active: boolean
     countries: string          // JSON array
     createdAt: Date
     updatedAt: Date

@@ -7,6 +7,7 @@ import { enforceRateLimit }          from "@/lib/rateLimiter";
 const ALLOWED_ORIGINS = new Set([
   "https://trapyfy.com",
   "https://www.trapyfy.com",
+  "https://www.niftipay.com",
 ]);
 
 const CORS_ALLOW_HEADERS =

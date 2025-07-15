@@ -15,6 +15,7 @@ const patchSchema = z.object({
   countries: z.array(z.string().length(2)).min(1).optional(),
   products: z.array(productItemSchema).min(1).optional(),
   steps: z.array(stepSchema).min(1).optional(),
+  active: z.boolean().optional(),
 })
 
 /* ─── GET single ──────────────────────── */
@@ -61,6 +62,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const updateCols: any = { updatedAt: now }
   if (body.name) updateCols.name = body.name
   if (body.countries) updateCols.countries = JSON.stringify(body.countries)
+  if (typeof body.active === "boolean") updateCols.active = body.active;
 
   await db.updateTable("tierPricings").set(updateCols).where("id", "=", id).execute()
 

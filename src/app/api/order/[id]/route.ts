@@ -1,12 +1,10 @@
 // src/app/api/order/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { z } from "zod";
-import { requireOrgPermission } from "@/lib/perm-server";
-
-
+import { db } from "@/lib/db"; 
 /* ─── encryption helpers ─────────────────────────────────────── */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
@@ -170,7 +168,17 @@ export async function PATCH(
   if (ctx instanceof NextResponse) return ctx;
   // enforce order:update
   const { id } = await params;
-  const body = await req.json();
+  
+   /* -----------------------------------------------------------------
+    0. Parse body and normalise `paymentMethod`
+       (the front-end may send either `paymentMethod` or `paymentMethodId`)
+ ------------------------------------------------------------------ */
+ const raw = await req.json();
+ const body: Record<string, any> = { ...raw };
+ console.log("[PATCH /order/:id] ctx =", ctx);
+ if ("paymentMethodId" in raw && !("paymentMethod" in raw)) {
+   body.paymentMethod = raw.paymentMethodId;           // keep both names working
+ }
 
   const fields: string[] = [];
   const values: any[] = [];
@@ -211,6 +219,84 @@ export async function PATCH(
     fields.push(`"trackingNumber" = $${fields.length + 1}`);
     values.push(body.trackingNumber || null);
   }
+
+  /* ──────────────────────────────────────────────────────────────
+   NEW ① – payment-method updates (+ Niftipay “delete-old” flow)
+────────────────────────────────────────────────────────────── */
+if ("paymentMethod" in body) {
+  const newPM: string = body.paymentMethod;
+
+  /* ①-a  fetch current paymentMethod + orderKey for comparison */
+  const { rows } = await pool.query(
+    `SELECT "paymentMethod","orderKey" FROM orders WHERE id = $1`,
+    [id],
+  );
+  if (!rows.length)
+    return NextResponse.json({ error: "Order not found" }, { status: 404 });
+  const current = rows[0] as { paymentMethod: string | null; orderKey: string };
+
+  /* ①-b  if we’re *leaving* Niftipay → delete the old invoice    */
+  if (
+    current.paymentMethod?.toLowerCase() === "niftipay" &&
+    newPM.toLowerCase() !== "niftipay"
+  ) {
+    // ① lookup the secretKey for *this tenant*
+    // instead of trying to read secretKey, just grab apiKey
+const pmRow = await db
+.selectFrom("paymentMethods")
+.select("apiKey")
+.where("tenantId", "=", ctx.tenantId)
+.where("name", "=", "Niftipay")
+.executeTakeFirst();
+
+const nifiApiKey = pmRow?.apiKey;
+if (!nifiApiKey) {
+return NextResponse.json(
+  { error: "No Niftipay credentials configured" },
+  { status: 500 }
+);
+}
+
+// then use that same key in your DELETE
+const del = await fetch(
+`${process.env.NIFTIPAY_API_URL ?? "https://www.niftipay.com"}/api/orders?reference=${encodeURIComponent(current.orderKey)}`,
+{
+  method: "DELETE",
+  headers: { "x-api-key": nifiApiKey },
+}
+);
+
+  
+    // ② call Niftipay DELETE with that secret
+    try {
+      const del = await fetch(
+        `${process.env.NIFTIPAY_API_URL ?? "https://www.niftipay.com"}/api/orders?reference=${encodeURIComponent(
+          current.orderKey
+        )}`,
+        {
+          method: "DELETE",
+          headers: { "x-api-key": nifiApiKey },
+        }
+      );
+      if (!del.ok) {
+        const { error } = await del.json();
+        return NextResponse.json(
+          { error: error ?? "Unable to delete Niftipay order" },
+          { status: 400 }
+        );
+      }
+    } catch (err: any) {
+      return NextResponse.json(
+        { error: err.message ?? "Niftipay deletion failed" },
+        { status: 400 }
+      );
+    }
+  }
+
+   /* ①-c  persist the new payment method                       */
+   fields.push(`"paymentMethod" = $${fields.length + 1}`);
+   values.push(newPM);
+ }
 
   if (!fields.length)
     return NextResponse.json({ error: "No updatable fields" }, { status: 400 });

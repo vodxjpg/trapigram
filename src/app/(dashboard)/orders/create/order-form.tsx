@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
+
 import {
   CreditCard,
   Package,
@@ -35,6 +37,11 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/currency";
+/* ─── constants ──────────────────────────────────────────────── */
+// If the env-var is set use it, otherwise fall back to the public endpoint.
+const NIFTIPAY_BASE =
+  (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com")
+    .replace(/\/+$/, "");          // strip trailing “/” just in case
 // Interfaces
 interface Product {
   id: string;
@@ -74,11 +81,34 @@ interface PaymentMethod {
   id: string;
   name: string;
   details: string;
+  apiKey?: string | null;
+}
+
+/* ─── helpers (new) ───────────────────────────────────────────── */
+
+/* ─── currency map helpers ─────────────────────────────────────── */
+const EU_COUNTRIES = new Set([
+  "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU",
+  "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+]);
+
+function countryToFiat(c: string): string {
+  const code = c.toUpperCase();
+  if (code === "GB") return "GBP";
+  if (EU_COUNTRIES.has(code)) return "EUR";
+  return "USD";
+}
+
+function fmt(n: number | string): string {
+  return Number(n).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 8,
+  });
 }
 
 export default function OrderForm() {
   const router = useRouter();
-
+  const { data: activeOrg } = authClient.useActiveOrganization();
   // States
 
   const [clients, setClients] = useState<any[]>([]);
@@ -116,6 +146,12 @@ export default function OrderForm() {
 
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  /* ▼ Niftipay UI state */
+  const [niftipayNetworks, setNiftipayNetworks] = useState<
+    { chain: string; asset: string; label: string }[]
+  >([]);
+  const [niftipayLoading, setNiftipayLoading] = useState(false);
+  const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
 
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
   const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
@@ -161,12 +197,17 @@ export default function OrderForm() {
   }
 
   const generateOrder = async () => {
-    if (!selectedClient) return;
-    try {
-      const resC = await fetch("/api/cart", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientId: selectedClient }),
+      if (!selectedClient) return;
+      // we already know the client – grab its country once
+      const clientInfo = clients.find((c) => c.id === selectedClient);
+      try {
+        const resC = await fetch("/api/cart", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientId: selectedClient,
+            country  : clientInfo?.country || "", // ← rename
+          }),
       });
       if (!resC.ok) throw new Error("Failed to create cart");
       const dataC = await resC.json();
@@ -202,9 +243,7 @@ export default function OrderForm() {
 
       setSubtotal(subtotal);
 
-      const client = clients.find((c) => c.id === selectedClient);
-      if (client) setClientCountry(client.country);
-
+      if (clientInfo) setClientCountry(clientInfo.country);  // reuse
       setShippingLoading(true);
       try {
         const shipRes = await fetch("/api/shipments", {
@@ -240,27 +279,79 @@ export default function OrderForm() {
   async function loadProducts() {
     setProductsLoading(true);
     try {
-      const res = await fetch("/api/products", {
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-        },
-      });
-      const { products } = await res.json();
-      setProducts(products);
-    } catch {
-      toast.error("Failed loading products");
+      // fetch BOTH normal and affiliate catalogues in parallel
+      const [normRes, affRes] = await Promise.all([
+        fetch("/api/products"),
+        fetch("/api/affiliate/products"),
+      ]);
+      if (!normRes.ok || !affRes.ok) {
+        throw new Error("Failed to fetch product lists");
+      }
+  
+      const { products: norm } = await normRes.json();   // regular shop products
+      const { products: aff } = await affRes.json();     // affiliate catalogue
+  
+      /* ---------- map everything into one uniform <Product> shape ---------- */
+  
+      const all: Product[] = [
+        // 1) normal products
+        ...norm.map((p: any) => ({
+          id: p.id,
+          title: p.title,
+          sku: p.sku,
+          description: p.description,
+          image: p.image,
+          regularPrice: p.regularPrice,
+          price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
+          stockData: p.stockData,
+          subtotal: 0,
+        })),
+  
+        // 2) affiliate products
+        ...aff.map((a: any) => {
+          /* flat “€ price” → same trick as in edit form */
+          const costFirstCountry = Object.values(a.cost)[0] ?? 0;
+  
+          const regularPrice: Record<string, number> = Object.fromEntries(
+            Object.entries(a.cost).map(([country, c]) => [country, c]),
+          );
+  
+          return {
+            id: a.id,
+            title: a.title,
+            sku: a.sku,
+            description: a.description,
+            image: a.image,
+            regularPrice,
+            price: costFirstCountry,
+            stockData: a.stock ?? {},           // often empty → unlimited
+            subtotal: 0,
+          };
+        }),
+      ];
+  
+      setProducts(all);
+    } catch (e: any) {
+      console.error(e);
+      toast.error(e.message || "Failed loading products");
     } finally {
       setProductsLoading(false);
     }
   }
+  
 
   const countryProducts = products.filter((p) => {
+    // if it’s an affiliate product, show it un-conditionally
+    if (!Object.keys(p.stockData).length) return true;
+  
+    // otherwise require stock in the client’s country
     const totalStock = Object.values(p.stockData).reduce(
       (sum, e) => sum + (e[clientCountry] || 0),
-      0
+      0,
     );
     return totalStock > 0;
   });
+  
 
   useEffect(() => {
     if (!selectedClient) return;
@@ -332,55 +423,98 @@ export default function OrderForm() {
     if (client) setClientCountry(client.country);
   }, [selectedClient]);
 
-  // — Add product
-  const addProduct = async () => {
-    if (!selectedProduct || !cartId)
-      return toast.error("Cart hasn’t been created yet!");
-
-    const product = products.find((p) => p.id === selectedProduct);
-    if (!product) return;
-    const unitPrice = product.regularPrice[clientCountry] ?? product.price;
-
-    try {
-      const res = await fetch(`/api/cart/${cartId}/add-product`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          productId: selectedProduct,
-          quantity,
-          unitPrice,
-          country: clientCountry,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        throw new Error(err?.message || "Failed to add product");
-      }
-      const { product: added, quantity: qty } = await res.json();
-      const subtotalRow = calcRowSubtotal(added, qty);
-
-      setOrderItems((prev) => {
-        if (prev.some((it) => it.product.id === added.id)) {
-          return prev.map((it) =>
-            it.product.id === added.id
-              ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
-              : it
-          );
-        }
-        return [
-          ...prev,
-          { product: { ...added, subtotal: subtotalRow }, quantity: qty },
-        ];
-      });
-
-      setSelectedProduct("");
-      setQuantity(1);
-      toast.success("Product added to cart!");
-    } catch (error: any) {
-      console.error("addProduct error:", error);
-      toast.error(error.message || "Could not add product");
+  /* ─── Niftipay network fetch whenever the PM select changes ───── */
+  useEffect(() => {
+    const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+    if (!pm || pm.name.toLowerCase() !== "niftipay" || !pm.apiKey) {
+      setNiftipayNetworks([]);
+      setSelectedNiftipay("");
+      return;
     }
-  };
+    (async () => {
+      try {
+        setNiftipayLoading(true);
+        const res = await fetch(
+          `/api/niftipay/payment-methods`,
+          { headers: { "x-api-key": pm.apiKey } },
+        );
+        if (!res.ok) throw new Error("Failed to load Niftipay networks");
+        const { methods } = await res.json();
+        setNiftipayNetworks(
+          methods.map((m: any) => ({
+            chain: m.chain,
+            asset: m.asset,
+            label: m.label ?? `${m.asset} on ${m.chain}`,
+          })),
+        );
+      } catch (err: any) {
+        toast.error(err.message);
+      } finally {
+        setNiftipayLoading(false);
+      }
+    })();
+  }, [selectedPaymentMethod, paymentMethods]);
+
+  // — Add product
+// — Add product  (CREATE form)
+const addProduct = async () => {
+  if (!selectedProduct || !cartId)
+    return toast.error("Cart hasn’t been created yet!");
+
+  const product = products.find((p) => p.id === selectedProduct);
+  if (!product) return;
+  const unitPrice = product.regularPrice[clientCountry] ?? product.price;
+
+  try {
+    const res = await fetch(`/api/cart/${cartId}/add-product`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        productId: selectedProduct,
+        quantity,
+        unitPrice,
+        country: clientCountry,
+      }),
+    });
+
+    /* ▼▼ ——— patch starts here ——— ▼▼ */
+    if (!res.ok) {
+      // consume JSON safely; fall back to empty object on parse error
+      const body = await res.json().catch(() => ({}));
+      const msg =
+        (body.error as string) ??
+        (body.message as string) ??
+        "Failed to add product";
+      throw new Error(msg);        // the toast handler below will show it
+    }
+    /* ▲▲ ——— patch ends here ——— ▲▲ */
+
+    const { product: added, quantity: qty } = await res.json();
+    const subtotalRow = calcRowSubtotal(added, qty);
+
+    setOrderItems((prev) => {
+      if (prev.some((it) => it.product.id === added.id)) {
+        return prev.map((it) =>
+          it.product.id === added.id
+            ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
+            : it
+        );
+      }
+      return [
+        ...prev,
+        { product: { ...added, subtotal: subtotalRow }, quantity: qty },
+      ];
+    });
+
+    setSelectedProduct("");
+    setQuantity(1);
+    toast.success("Product added to cart!");
+  } catch (err: any) {
+    console.error("addProduct error:", err);
+    // will now show the exact “required level” text or any other backend error
+    toast.error(err.message || "Could not add product");
+  }
+};
 
   // — Remove Product
   const removeProduct = async (productId: string, idx: number) => {
@@ -551,11 +685,18 @@ export default function OrderForm() {
       toast.error("Generate your cart first!");
       return;
     }
-    const payment = paymentMethods.find(
+    const pmObj = paymentMethods.find(
       (m) => m.id === selectedPaymentMethod
-    )?.name;
+    );
+    const payment = pmObj?.name;
     if (!payment) {
       toast.error("Select a payment method");
+      return;
+    }
+    /* ensure crypto network chosen */
+    const isNiftipay = payment.toLowerCase() === "niftipay";
+    if (isNiftipay && !selectedNiftipay) {
+      toast.error("Select the crypto network/asset");
       return;
     }
     const shippingCompanyName = shippingCompanies.find(
@@ -617,6 +758,61 @@ export default function OrderForm() {
         throw new Error(data.error || "Failed to create order");
       }
       toast.success("Order created successfully!");
+      /* ── extra: create Niftipay invoice & store meta ───────── */
+      if (isNiftipay) {
+        const key = pmObj?.apiKey;
+        if (!key) {
+          toast.error("Niftipay API-key missing");
+          return;
+        }
+        const [chain, asset] = selectedNiftipay.split(":");
+
+        const client = clients.find((c) => c.id === selectedClient)!;
+        const safeEmail = client.email?.trim() || "user@trapyfy.com";   // ✅ fallback
+
+        const fiat = countryToFiat(client.country);
+        const totalF = total + shippingCost;
+
+        const nRes = await fetch(
+          `/api/niftipay/orders`,
+          {
+            method: "POST",
+            headers: {
+              "x-api-key": key,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              network: chain,
+              asset,
+              amount: totalF,
+              currency: fiat,
+              firstName: client.firstName,
+              lastName: client.lastName,
+              email: safeEmail,
+              merchantId: activeOrg?.id ?? "",
+              reference: data.orderKey,
+            }),
+          },
+        );
+        if (!nRes.ok) {
+          const msg = await nRes.text();          // or  nRes.json() if you prefer
+          console.error("[Niftipay] ", msg);
+          toast.error(`Niftipay: ${msg}`);
+          return;                                 // abort the happy-path
+        } else {
+          const meta = await nRes.json();
+          await fetch(`/api/order/${data.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ orderMeta: [meta] }),
+          });
+          toast.success(
+            `Niftipay invoice created: send ${fmt(
+              meta.order.amount,
+            )} ${asset}`,
+          );
+        }
+      }
       cancelOrder();
       router.push(`/orders/${data.id}`);
     } catch (err: any) {
@@ -940,17 +1136,21 @@ export default function OrderForm() {
                       {shippingMethods.map((m) => {
                         const tier = m.costs.find(
                           ({ minOrderCost, maxOrderCost }) =>
-                            total >= minOrderCost &&
-                            (maxOrderCost === 0 || total <= maxOrderCost)
+                            total >= minOrderCost && (maxOrderCost === 0 || total <= maxOrderCost),
                         );
                         const cost = tier ? tier.shipmentCost : 0;
+
                         return (
                           <SelectItem key={m.id} value={m.id}>
-                            {m.title} — {m.description} — ${cost.toFixed(2)}
+                            {/* max-w keeps the item from being absurdly wide in very big menus */}
+                            <span className="block max-w-[280px] truncate">
+                              {m.title} — {m.description} — ${cost.toFixed(2)}
+                            </span>
                           </SelectItem>
                         );
                       })}
                     </SelectContent>
+
                   </Select>
                 </div>
                 {/* Company */}
@@ -1009,6 +1209,39 @@ export default function OrderForm() {
                   ))}
                 </SelectContent>
               </Select>
+              {/* ▼ Niftipay network selector */}
+              {paymentMethods.find(
+                (p) =>
+                  p.id === selectedPaymentMethod &&
+                  p.name.toLowerCase() === "niftipay",
+              ) && (
+                  <div className="mt-4">
+                    <Label>Select Crypto Network</Label>
+                    <Select
+                      value={selectedNiftipay}
+                      onValueChange={setSelectedNiftipay}
+                      disabled={niftipayLoading}
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={
+                            niftipayLoading ? "Loading…" : "Select network"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {niftipayNetworks.map((n) => (
+                          <SelectItem
+                            key={`${n.chain}:${n.asset}`}
+                            value={`${n.chain}:${n.asset}`}
+                          >
+                            {n.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
             </CardContent>
           </Card>
         </div>
@@ -1080,6 +1313,13 @@ export default function OrderForm() {
                   !orderGenerated ||
                   orderItems.length === 0 ||
                   !selectedPaymentMethod ||
+                  (paymentMethods.find(
+                    (p) =>
+                      p.id === selectedPaymentMethod &&
+                      p.name.toLowerCase() === "niftipay",
+                  )
+                    ? !selectedNiftipay
+                    : false) ||
                   !selectedShippingMethod ||
                   !selectedShippingCompany
                 }
