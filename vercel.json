@@ -6,5 +6,9 @@
     "app/api/**/route.[jt]s": {
       "includeFiles": "certs/**"
     }
-  }
+  },
+  "crons": [{
+    "path": "/api/report/revenue/hourly",
+    "schedule": "*/5 * * * *"
+  }]
 }
