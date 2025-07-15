@@ -34,7 +34,7 @@ export async function handler(
   if (bodyMethods.has(req.method)) {
     init.body   = req.body;
     // required in Edge for streamed bodies
-    // (you can omit for non-streaming, but safe to include)
+    // (you can omit for non-streaming, but safe to includ)
     (init as any).duplex = "half";
   }
 
