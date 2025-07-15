@@ -182,8 +182,8 @@ async function fetchJsonVerbose(
 
 export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
-   const { data: activeOrg } = authClient.useActiveOrganization();
-   const merchantId = activeOrg?.id ?? "";
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const merchantId = activeOrg?.id ?? "";
   /* ——————————————————— STATE ——————————————————— */
   const [orderData, setOrderData] = useState<any | null>(null);
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
@@ -317,9 +317,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     (async () => {
       try {
         const res = await fetch(
-            `/api/order/${orderId}?organizationId=${activeOrg?.id}`,
-            { credentials: 'include' }
-          );
+          `/api/order/${orderId}?organizationId=${activeOrg?.id}`,
+          { credentials: 'include' }
+        );
         const data = await res.json();
         setOrderData(data);
         setClientCountry(data.country);
@@ -342,7 +342,13 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         toast.error("Failed to load order or addresses");
       }
     })();
-  }, [orderId]);
+     // immediately seed the selects with whatever the API gave us
+     if (orderData) {
+       setSelectedShippingMethod(orderData.shippingInfo.method);
+       setSelectedShippingCompany(orderData.shippingInfo.company);
+       setSelectedPaymentMethod(orderData.shippingInfo.payment);
+         }
+      }, [orderId, orderData, activeOrg?.id]);
 
   /* ——————————————————— FETCH CART ITEMS ——————————————————— */
   useEffect(() => {
@@ -500,10 +506,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const loadShipping = async () => {
     setShippingLoading(true);
     try {
-          const [shipRes, compRes] = await Promise.all([
-              fetch("/api/shipments"),
-              fetch("/api/shipping-companies"),
-            ]);
+      const [shipRes, compRes] = await Promise.all([
+        fetch("/api/shipments"),
+        fetch("/api/shipping-companies"),
+      ]);
       const shipData = await shipRes.json();
       const compData = await compRes.json();
       setShippingMethods(shipData.shipments);
@@ -666,10 +672,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     }
     try {
       const res = await fetch(`/api/cart/${cartId}/remove-product`, {
-             method: "DELETE",
-             headers: { "Content-Type": "application/json" },
-             body: JSON.stringify({ productId }),
-           });
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId }),
+      });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         const msg =
@@ -785,7 +791,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         }
 
         // Log DELETE request details
-       
+
         console.log("[Trapigram] Attempting to delete Niftipay order", {
           reference: orderData.orderKey,
           apiKey: key ? key.slice(0, 8) + "..." : "undefined",
@@ -830,22 +836,22 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
       const headers: HeadersInit = { "Content-Type": "application/json" };
 
-          const res = await fetchJsonVerbose(
-              `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
-            {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          discount: discount ? Number(discount) : orderData.discount,
-          couponCode: newCoupon || orderData.coupon,
-          address: selectedAddressText,
-          total,
-          shippingMethod: selectedShippingMethod,
-          shippingCompany: selectedShippingCompany,
-          paymentMethodId: selectedPaymentMethod,
-        }),
-      });
+      const res = await fetchJsonVerbose(
+        `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            discount: discount ? Number(discount) : orderData.discount,
+            couponCode: newCoupon || orderData.coupon,
+            address: selectedAddressText,
+            total,
+            shippingMethod: selectedShippingMethod,
+            shippingCompany: selectedShippingCompany,
+            paymentMethodId: selectedPaymentMethod,
+          }),
+        });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -853,47 +859,47 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       }
 
       /* --- 2. (Re-)create Niftipay invoice if it’s the chosen method --- */
-        if (newPM === "niftipay") {
-            const key = pmObj?.apiKey;
-        
-            if (!key) {
-              toast.error("Niftipay API key missing");
-              return;
-            } else if (!selectedNiftipay) {
-              toast.error("Select crypto network/asset first");
-              return;
-            }
-        
-            const [chain, asset] = selectedNiftipay.split(":");
-            // 2a) Always delete any existing invoice first to avoid duplicates
-            await fetchJsonVerbose(
-              `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-              {
-                credentials: "include",
-                method: "DELETE",
-                headers: { "x-api-key": key },
-              },
-              "DELETE OLD Niftipay",
-            );
-            console.log("[Trapigram] Old Niftipay invoice deleted (if existed)");
-        
-            // 2b) Now create the new one
-            console.log("[Trapigram] Creating new Niftipay order", {
-              reference: orderData.orderKey,
-              chain,
-              asset,
-              merchantId,
-       payload: {
-         network: chain,
-         asset,
-         amount: total,
-         currency: orderData.currency ?? "EUR",
-         firstName: orderData.client.firstName,
-         lastName: orderData.client.lastName,
-         email: orderData.client.email || "user@trapyfy.com",
-         merchantId,
-         reference: orderData.orderKey,
-       }
+      if (newPM === "niftipay") {
+        const key = pmObj?.apiKey;
+
+        if (!key) {
+          toast.error("Niftipay API key missing");
+          return;
+        } else if (!selectedNiftipay) {
+          toast.error("Select crypto network/asset first");
+          return;
+        }
+
+        const [chain, asset] = selectedNiftipay.split(":");
+        // 2a) Always delete any existing invoice first to avoid duplicates
+        await fetchJsonVerbose(
+          `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+          {
+            credentials: "include",
+            method: "DELETE",
+            headers: { "x-api-key": key },
+          },
+          "DELETE OLD Niftipay",
+        );
+        console.log("[Trapigram] Old Niftipay invoice deleted (if existed)");
+
+        // 2b) Now create the new one
+        console.log("[Trapigram] Creating new Niftipay order", {
+          reference: orderData.orderKey,
+          chain,
+          asset,
+          merchantId,
+          payload: {
+            network: chain,
+            asset,
+            amount: total,
+            currency: orderData.currency ?? "EUR",
+            firstName: orderData.client.firstName,
+            lastName: orderData.client.lastName,
+            email: orderData.client.email || "user@trapyfy.com",
+            merchantId,
+            reference: orderData.orderKey,
+          }
         });
 
         console.log("pmObj", pmObj);
@@ -932,13 +938,13 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         console.log("[Trapigram] Niftipay order created successfully", niftipayMeta);
 
         // Update Trapigram order with Niftipay metadata
-              await fetch(
-                  `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
-                {
-                   method: "PATCH",
-                   headers: { "Content-Type": "application/json" },
-                   body: JSON.stringify({ orderMeta: [niftipayMeta] }),
-                 });
+        await fetch(
+          `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ orderMeta: [niftipayMeta] }),
+          });
         toast.success(`Niftipay invoice created: send ${niftipayMeta.order.amount} ${asset}`);
       }
 
