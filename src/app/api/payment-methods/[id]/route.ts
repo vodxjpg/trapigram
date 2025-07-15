@@ -39,7 +39,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   }
 }
 
-// ────────── PATCH /api/payment-methods/[id] ────────
+// ────────── PATCH /api/payment-mehods/[id] ────────
 export async function PATCH(req: NextRequest, { params }: Params) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
