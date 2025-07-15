@@ -20,7 +20,8 @@ export async function handler(
   const path     = params.path.join("/");
   const { url, headers } = buildUpstream(req, path);
 
-  console.log(`[TPY] → ${req.method} ${url}`);
+  console.log("[NIFTI‑PROXY] →", req.method, url,
+    "key:", headers["x-api-key"] ?? "NONE");
 
   // only these methods actually get a body
   const bodyMethods = new Set(["POST","PUT","PATCH"]);
@@ -38,6 +39,7 @@ export async function handler(
   }
 
   const upstream = await fetch(url, init);
+  console.log("[NIFTI‑PROXY] ←", upstream.status, url);
 
   // fully read / decompress gzipped responses
   const text = await upstream.text();

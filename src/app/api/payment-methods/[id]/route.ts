@@ -28,6 +28,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       WHERE id = $1
     `;
     const result = await pool.query(sql, [id]);
+    console.log("[PM/:id] row:", JSON.stringify(result.rows[0], null, 2));
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
     }
