@@ -871,6 +871,18 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           chain,
           asset,
           merchantId,
+                 // debug: log full payload
+       payload: {
+         network: chain,
+         asset,
+         amount: total,
+         currency: orderData.currency ?? "EUR",
+         firstName: orderData.client.firstName,
+         lastName: orderData.client.lastName,
+         email: orderData.client.email || "user@trapyfy.com",
+         merchantId,
+         reference: orderData.orderKey,
+       }
         });
 
         console.log("pmObj", pmObj);
@@ -890,7 +902,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             currency: orderData.currency ?? "EUR",
             firstName: orderData.client.firstName,
             lastName: orderData.client.lastName,
-            email: orderData.client.email ?? "user@trapyfy.com",
+            email: orderData.client.email || "user@trapyfy.com",
             merchantId,
             reference: orderData.orderKey,
           }),
