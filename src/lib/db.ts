@@ -781,7 +781,7 @@ const pool = new Pool({
     ca: supabaseCA,
     rejectUnauthorized: true,
     /** Enforce modern cipher suites; Node ≥20 negotiates TLS 1.3 by default,
-     * but we pin it defensively. */
+     * but we pin it defensivey. */
     minVersion: "TLSv1.3",
   },
   max: Number.parseInt(process.env.PG_POOL_MAX ?? "10", 10),
