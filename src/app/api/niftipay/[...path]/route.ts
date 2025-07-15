@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const BASE = "https://www.niftipay.com/api";
 
 function buildUpstream(req: NextRequest, path: string) {
+  path = path.replace(/^api\/?/, "");        // ← ADD THIS LINE
   const { search } = new URL(req.url);
   const url = `${BASE}/${path}${search}`;
 
