@@ -67,9 +67,10 @@ export async function GET(req: NextRequest) {
         const orderAmount = orders.length
 
         const revenueQuery = `SELECT "${currency}total" AS total, "${currency}discount" AS discount, "${currency}shipping" AS shipping, "${currency}cost" AS cost FROM "orderRevenue"
-        WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz`;
+        WHERE "organizationId" = '${organizationId}' AND "createdAt"::date BETWEEN '${from}' AND '${to}'`;
+        console.log(revenueQuery)
 
-        const revenueResult = await pool.query(revenueQuery, values);
+        const revenueResult = await pool.query(revenueQuery);
         const revenues = revenueResult.rows
 
         const revenue = revenues.reduce((acc, o) => {
@@ -82,6 +83,7 @@ export async function GET(req: NextRequest) {
 
             return acc + profit;
         }, 0);
+        console.log(revenue)
 
         const clientQuery = `SELECT * FROM "clients"
         WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz`;

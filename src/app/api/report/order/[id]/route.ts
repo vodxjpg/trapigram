@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool, pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 
@@ -61,14 +61,12 @@ type TransformedCategoryRevenue = {
 };
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    /* const ctx = await getContext(req);
+    const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
-    const { organizationId } = ctx; */
-    const organizationId = "W0duzyHA23ezm9Mcvso1y32KPko4XjRn"
+    const { organizationId } = ctx;
 
     try {
         const { id } = await params;
-        const apiKey = '144659c7b175794ed4eae9bacf853944'
 
         const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`
         const resultCheck = await pool.query(checkQuery);
@@ -84,8 +82,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             const country = order.country
 
             const date = order.datePaid
-            const dateString = date.toISOString().substring(0, 10);
-            const from = Math.floor(order.datePaid / 1000)
+            const from = Math.floor(date / 1000)
             const to = from + 3600
 
             const productQuery = `SELECT p.*, cp.quantity
@@ -136,7 +133,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
             if (paymentType === 'niftipay') {
 
-                const coin = order.orderMeta[0].order.asset
+                let coin = ""
+                let amount = 0
+                const paidEntry = order.orderMeta.find(item => item.event === "paid");
+                if (paidEntry) {
+                    coin = paidEntry.order.asset
+                    amount = paidEntry.order.amount
+                }
+
                 const url = `https://api.coingecko.com/api/v3/coins/${coins[coin]}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
                 const options = { method: 'GET', headers: { accept: 'application/json' } };
 
@@ -147,9 +151,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
                 const result = await res.json()
                 const price = result.prices[0][1]
-                const amount = order.orderMeta[0].order.amount
                 total = amount * price
+                console.log(total, amount, price)
             }
+
+            const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from})::timestamptz AND to_timestamp(${to})::timestamptz`
+            const exchangeResult = await pgPool.query(exchangeQuery)
+            const result = exchangeResult.rows[0]
+            const USDEUR = result.EUR
+            const USDGBP = result.GBP
 
             const revenueId = uuidv4();
 
@@ -159,39 +169,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 const costGBP = totalCost
                 let totalGBP = Number(order.totalAmount)
 
-                const urlUSD = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=GBP&currencies=USD`;
-                const options = { method: 'GET', headers: { accept: 'application/json' } };
+                const discountUSD = discountGBP / USDGBP
+                const shippingUSD = shippingGBP / USDGBP
+                const costUSD = costGBP / USDGBP
+                let totalUSD = totalGBP / USDGBP
 
-                const resUSD = await fetch(urlUSD, options)
-                if (!resUSD.ok) {
-                    throw new Error(`HTTP ${resUSD.status} – ${resUSD.statusText}`);
-                }
-                const resultUSD = await resUSD.json();
-                const valueUSD = resultUSD.quotes.GBPUSD
-
-                const discountUSD = discountGBP * valueUSD
-                const shippingUSD = shippingGBP * valueUSD
-                const costUSD = costGBP * valueUSD
-                let totalUSD = totalGBP * valueUSD
-
-                const urlEUR = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=GBP&currencies=EUR`;
-
-                const resEUR = await fetch(urlEUR, options)
-                if (!resEUR.ok) {
-                    throw new Error(`HTTP ${resEUR.status} – ${resEUR.statusText}`);
-                }
-                const resultEUR = await resEUR.json();
-                const valueEUR = resultEUR.quotes.GBPEUR
-
-                const discountEUR = discountGBP * valueEUR
-                const shippingEUR = shippingGBP * valueEUR
-                const costEUR = costGBP * valueEUR
-                let totalEUR = totalGBP * valueEUR
+                const discountEUR = discountGBP * (USDEUR / USDGBP)
+                const shippingEUR = shippingGBP * (USDEUR / USDGBP)
+                const costEUR = costGBP * (USDEUR / USDGBP)
+                let totalEUR = totalGBP * (USDEUR / USDGBP)
 
                 if (paymentType === 'niftipay') {
                     totalUSD = total
-                    totalEUR = total * valueEUR
-                    totalGBP = total * valueUSD
+                    totalEUR = total * USDEUR
+                    totalGBP = total * USDEUR
                 }
 
                 const query = `INSERT INTO "orderRevenue" (id, "orderId", 
@@ -219,9 +210,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                     "EURtotal", "EURcost",
                     "createdAt", "updatedAt", "organizationId")
                     VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                    ${(ct.total * valueUSD).toFixed(2)}, ${(ct.cost * valueUSD).toFixed(2)},
+                    ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
                     ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                    ${(ct.total * valueEUR).toFixed(2)}, ${(ct.cost * valueEUR).toFixed(2)},
+                    ${(ct.total * (USDEUR / USDGBP)).toFixed(2)}, ${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
                     NOW(), NOW(), '${organizationId}')
                     RETURNING *`
 
@@ -237,39 +228,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 const costEUR = totalCost
                 let totalEUR = Number(order.totalAmount)
 
-                const urlUSD = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=EUR&currencies=USD`;
-                const options = { method: 'GET', headers: { accept: 'application/json' } };
+                const discountUSD = discountEUR / USDEUR
+                const shippingUSD = shippingEUR / USDEUR
+                const costUSD = costEUR / USDEUR
+                let totalUSD = totalEUR / USDEUR
 
-                const resUSD = await fetch(urlUSD, options)
-                if (!resUSD.ok) {
-                    throw new Error(`HTTP ${resUSD.status} – ${resUSD.statusText}`);
-                }
-                const resultUSD = await resUSD.json();
-                const valueUSD = resultUSD.quotes.EURUSD
-
-                const discountUSD = discountEUR * valueUSD
-                const shippingUSD = shippingEUR * valueUSD
-                const costUSD = costEUR * valueUSD
-                let totalUSD = totalEUR * valueUSD
-
-                const urlGBP = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=EUR&currencies=GBP`;
-
-                const resGBP = await fetch(urlGBP, options)
-                if (!resGBP.ok) {
-                    throw new Error(`HTTP ${resGBP.status} – ${resGBP.statusText}`);
-                }
-                const resultGBP = await resGBP.json();
-                const valueGBP = resultGBP.quotes.EURGBP
-
-                const discountGBP = discountEUR * valueGBP
-                const shippingGBP = shippingEUR * valueGBP
-                const costGBP = costEUR * valueGBP
-                let totalGBP = totalEUR * valueGBP
+                const discountGBP = discountEUR * (USDGBP / USDEUR)
+                const shippingGBP = shippingEUR * (USDGBP / USDEUR)
+                const costGBP = costEUR * (USDGBP / USDEUR)
+                let totalGBP = totalEUR * (USDGBP / USDEUR)
 
                 if (paymentType === 'niftipay') {
                     totalUSD = total
-                    totalEUR = total * valueUSD
-                    totalGBP = total * valueGBP
+                    totalEUR = total * USDEUR
+                    totalGBP = total * USDGBP
                 }
 
                 const query = `INSERT INTO "orderRevenue" (id, "orderId", 
@@ -297,8 +269,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                     "EURtotal", "EURcost",
                     "createdAt", "updatedAt", "organizationId")
                     VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                    ${(ct.total * valueUSD).toFixed(2)}, ${(ct.cost * valueUSD).toFixed(2)},
-                    ${(ct.total * valueGBP).toFixed(2)}, ${(ct.cost * valueGBP).toFixed(2)},
+                    ${(ct.total / USDEUR).toFixed(2)}, ${(ct.cost / USDEUR).toFixed(2)},
+                    ${(ct.total * (USDGBP / USDEUR)).toFixed(2)}, ${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
                     ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
                     NOW(), NOW(), '${organizationId}')
                     RETURNING *`
@@ -314,39 +286,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 const costUSD = totalCost
                 let totalUSD = Number(order.totalAmount)
 
-                const urlEUR = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=USD&currencies=EUR`;
-                const options = { method: 'GET', headers: { accept: 'application/json' } };
+                const discountEUR = discountUSD * USDEUR
+                const shippingEUR = shippingUSD * USDEUR
+                const costEUR = costUSD * USDEUR
+                let totalEUR = totalUSD * USDEUR
 
-                const resEUR = await fetch(urlEUR, options)
-                if (!resEUR.ok) {
-                    throw new Error(`HTTP ${resEUR.status} – ${resEUR.statusText}`);
-                }
-                const resultEUR = await resEUR.json();
-                const valueEUR = resultEUR.quotes.USDEUR
-
-                const discountEUR = discountUSD * valueEUR
-                const shippingEUR = shippingUSD * valueEUR
-                const costEUR = costUSD * valueEUR
-                let totalEUR = totalUSD * valueEUR
-
-                const urlGBP = `https://api.currencylayer.com/historical?access_key=${apiKey}&date=${dateString}&source=USD&currencies=GBP`;
-
-                const resGBP = await fetch(urlGBP, options)
-                if (!resGBP.ok) {
-                    throw new Error(`HTTP ${resGBP.status} – ${resGBP.statusText}`);
-                }
-                const resultGBP = await resGBP.json();
-                const valueGBP = resultGBP.quotes.USDGBP
-
-                const discountGBP = discountUSD * valueGBP
-                const shippingGBP = shippingUSD * valueGBP
-                const costGBP = costUSD * valueGBP
-                let totalGBP = totalUSD * valueGBP
+                const discountGBP = discountUSD * USDGBP
+                const shippingGBP = shippingUSD * USDGBP
+                const costGBP = costUSD * USDGBP
+                let totalGBP = totalUSD * USDGBP
 
                 if (paymentType === 'niftipay') {
                     totalUSD = total
-                    totalEUR = total * valueEUR
-                    totalGBP = total * valueGBP
+                    totalEUR = total * USDEUR
+                    totalGBP = total * USDGBP
                 }
 
                 const query = `INSERT INTO "orderRevenue" (id, "orderId", 
@@ -375,14 +328,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                     "createdAt", "updatedAt", "organizationId")
                     VALUES ('${catRevenueId}', '${ct.categoryId}', 
                     ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                    ${(ct.total * valueGBP).toFixed(2)}, ${(ct.cost * valueGBP).toFixed(2)},
-                    ${(ct.total * valueEUR).toFixed(2)}, ${(ct.cost * valueEUR).toFixed(2)},
+                    ${(ct.total * USDGBP).toFixed(2)}, ${(ct.cost * USDGBP).toFixed(2)},
+                    ${(ct.total * USDEUR).toFixed(2)}, ${(ct.cost * USDEUR).toFixed(2)},
                     NOW(), NOW(), '${organizationId}')
                     RETURNING *`
 
                     await pool.query(query)
                 }
-
                 return NextResponse.json(revenue, { status: 200 });
             }
         }

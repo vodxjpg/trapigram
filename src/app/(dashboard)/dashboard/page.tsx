@@ -162,7 +162,7 @@ export default function DashboardPage() {
           growthRate,
         } = await resp.json();
         setTotalOrders(orderAmount);
-        setTotalRevenue(revenue);
+        setTotalRevenue(revenue.toFixed(2));
         setTotalClient(clientAmount);
         setTotalActive(activeAmount);
         setOrderList(orderList);

@@ -90,7 +90,11 @@ export default function ProductsPage() {
         );
       } else if (!res.ok) {
         // General error
-        setImportMessage(`❌ ${data.error || "Import failed"}`);
+        let error = "";
+        for (const err of data.rowErrors) {
+          error = error + `❌ ${err.error}in row ${err.row}.\n`;
+        }
+        setImportMessage(`${error}`);
       } else {
         // Success
         setImportMessage(
@@ -146,7 +150,16 @@ export default function ProductsPage() {
               <X size={20} />
             </button>
             <h2 className="text-xl font-semibold mb-4">Import Products</h2>
-            <p className="text-left"><a className="text-blue-600" href="https://bjol9ok8s3a6bkjs.public.blob.vercel-storage.com/product-import-update-example-QF5kH2bLyT7dReogJAIYEuvvED6Ppl.xlsx" target="_blank">Download a template</a> to see the import format</p>
+            <p className="text-left">
+              <a
+                className="text-blue-600"
+                href="https://bjol9ok8s3a6bkjs.public.blob.vercel-storage.com/product-import-update-example-QF5kH2bLyT7dReogJAIYEuvvED6Ppl.xlsx"
+                target="_blank"
+              >
+                Download a template
+              </a>{" "}
+              to see the import format
+            </p>
             <div
               onDrop={handleDrop}
               onDragOver={handleDragOver}
@@ -166,7 +179,13 @@ export default function ProductsPage() {
                 Browse files
               </Button>
             </div>
-            <div className="flex flex-col justify-center text-left mt-2"><small className="text-blue-600"><a href="/import-products" target="_blank">Learn how to import products</a></small></div>
+            <div className="flex flex-col justify-center text-left mt-2">
+              <small className="text-blue-600">
+                <a href="/import-products" target="_blank">
+                  Learn how to import products
+                </a>
+              </small>
+            </div>
             {importMessage && (
               <p
                 className={`mt-4 text-center whitespace-pre-line font-medium ${
@@ -212,14 +231,14 @@ export default function ProductsPage() {
               </Button>
             )}
             {canCreateProducts && (
-            <Button
-              variant="outline"
-              onClick={handleExport}
-              disabled={isExporting}
-            >
-              <Download className="mr-2 h-4 w-4" />
-              {isExporting ? "Exporting..." : "Export"}
-            </Button>
+              <Button
+                variant="outline"
+                onClick={handleExport}
+                disabled={isExporting}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                {isExporting ? "Exporting..." : "Export"}
+              </Button>
             )}
             {canCreateProducts && (
               <Button onClick={handleCreateProduct} disabled={isLoading}>

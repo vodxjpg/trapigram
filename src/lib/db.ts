@@ -714,7 +714,7 @@ interface DB {
     updatedAt: Date;
   };
 
-  ticketSupportGroups : {
+  ticketSupportGroups: {
     id: string;
     groupId: string;
     organizationId: string;
@@ -723,6 +723,12 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+
+  exchangeRate: {
+    EUR: string,
+    GBP: string,
+    date: Date
+  }
 
   /* ─────────────── Placeholders (internal) ─────────────── */
   placeholders: {

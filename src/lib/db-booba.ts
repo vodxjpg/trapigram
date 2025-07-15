@@ -712,6 +712,12 @@ interface DB {
     updatedAt: Date;
   };
 
+  exchangeRate: {
+    EUR: string,
+    GBP: string,
+    date: Date
+  }
+
   /* ─────────────── Placeholders (internal) ─────────────── */
   placeholders: {
     key: string;           // '{review_count}' → 'review_count'
