@@ -788,7 +788,7 @@ const pool = new Pool({
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 2_000,
   keepAlive: true,
-  statement_timeout: 5_000,   // abort long-running queries server-side
+  statement_timeout: 5_000,   // abort rlong-running queries server-side
 });
 
 /* Optional structured diagnostics; disable in production logs */
