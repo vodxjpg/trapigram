@@ -346,7 +346,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
      if (orderData) {
        setSelectedShippingMethod(orderData.shippingInfo.method);
        setSelectedShippingCompany(orderData.shippingInfo.company);
-       setSelectedPaymentMethod(orderData.shippingInfo.payment);
          }
       }, [orderId, orderData, activeOrg?.id]);
 
