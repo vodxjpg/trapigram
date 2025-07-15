@@ -9,7 +9,6 @@ export const config = {
 export async function GET(request: NextRequest) {
     // Invoke the Node‐runtime handler
     const origin = request.nextUrl.origin;
-    console.log(origin)
     const res = await fetch(`${origin}/api/report/revenue/hourly-db`);
     console.log(`[Cron][Edge] Triggered DB task — status ${res.status}`);
     return new Response('✅ Cron triggered', { status: 200 });
