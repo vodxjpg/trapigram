@@ -1,348 +1,251 @@
+// src/app/api/order/[id]/report/route.ts    ← replace entire file
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool, pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 
-// nothing
-
+/* ————————— constants ————————— */
 const euroCountries = [
-    "AT", // Austria
-    "BE", // Belgium
-    "HR", // Croatia (used HRK, now uses EUR since Jan 2023, remove if current)
-    "CY", // Cyprus
-    "EE", // Estonia
-    "FI", // Finland
-    "FR", // France
-    "DE", // Germany
-    "GR", // Greece
-    "IE", // Ireland
-    "IT", // Italy
-    "LV", // Latvia
-    "LT", // Lithuania
-    "LU", // Luxembourg
-    "MT", // Malta
-    "NL", // Netherlands
-    "PT", // Portugal
-    "SK", // Slovakia
-    "SI", // Slovenia
-    "ES"  // Spain
+  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE","IT","LV","LT","LU","MT","NL","PT","SK","SI","ES",
 ];
 
-const coins = {
-    'BTC': 'bitcoin',
-    'ETH': 'ethereum',
-    'USDT': 'tether',
-    'USDT.ERC20': 'tether',
-    'USDT.TRC20': 'tether',
-    'XRP': 'ripple',
-    'SOL': 'solana',
-    'ADA': 'cardano',
-    'LTC': 'litecoin',
-    'DOT': 'polkadot',
-    'BCH': 'bitcoin-cash',
-    'LINK': 'chainlink',
-    'BNB': 'binancecoin',
-    'DOGE': 'dogecoin',
-    'MATIC': 'matic-network',
-    'XMR': 'monero'
-}
-
-type CategoryRevenue = {
-    categoryId: string,
-    price: number,
-    cost: number,
-    quantity: number
-}
-
-type TransformedCategoryRevenue = {
-    categoryId: string;
-    total: number;
-    cost: number;
+const coins: Record<string,string> = {
+  BTC:"bitcoin", ETH:"ethereum", USDT:"tether", "USDT.ERC20":"tether", "USDT.TRC20":"tether",
+  XRP:"ripple", SOL:"solana", ADA:"cardano", LTC:"litecoin", DOT:"polkadot", BCH:"bitcoin-cash",
+  LINK:"chainlink", BNB:"binancecoin", DOGE:"dogecoin", MATIC:"matic-network", XMR:"monero",
 };
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const ctx = await getContext(req);
-    if (ctx instanceof NextResponse) return ctx;
-    const { organizationId } = ctx;
+type CategoryRevenue = {
+  categoryId: string; price: number; cost: number; quantity: number;
+};
+type TransformedCategoryRevenue = {
+  categoryId: string; total: number; cost: number;
+};
 
-    try {
-        const { id } = await params;
+/* ————————— handler ————————— */
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
 
-        const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`
-        const resultCheck = await pool.query(checkQuery);
-        const check = resultCheck.rows
+  try {
+    const { id } = await params;
 
-        if (check.length === 0) {
-            const orderQuery = `SELECT * FROM orders WHERE id = '${id}' AND "organizationId" = '${organizationId}'`
-            const resultOrders = await pool.query(orderQuery);
-            const order = resultOrders.rows[0]
-
-            const cartId = order.cartId
-            const paymentType = order.paymentMethod
-            const country = order.country
-
-            const date = order.datePaid
-            const from = Math.floor(date / 1000)
-            const to = from + 3600
-
-            const productQuery = `SELECT p.*, cp.quantity
-                    FROM "cartProducts" cp
-                    JOIN products p ON cp."productId" = p.id
-                    WHERE cp."cartId" = '${cartId}'`
-
-            const productResult = await pool.query(productQuery)
-            const products = productResult.rows
-
-            const categoryQuery = `SELECT
-                cp.*,
-                p.*,
-                pc."categoryId"
-                FROM
-                "cartProducts" AS cp
-                JOIN "products" AS p
-                    ON cp."productId" = p."id"
-                LEFT JOIN "productCategory" AS pc
-                    ON pc."productId" = p."id"
-                WHERE cp."cartId" = '${cartId}'`
-
-            const categoryResult = await pool.query(categoryQuery)
-            const categoryData = categoryResult.rows
-
-            const categories: CategoryRevenue[] = [];
-
-            for (const ct of categoryData) {
-                categories.push({
-                    categoryId: ct.categoryId,
-                    price: ct.regularPrice[country],
-                    cost: ct.cost[country],
-                    quantity: ct.quantity
-                })
-            }
-
-            const newCategories: TransformedCategoryRevenue[] = categories.map(({ categoryId, price, cost, quantity }) => ({
-                categoryId,
-                total: price * quantity,
-                cost: cost * quantity,
-            }));
-
-            const totalCost = products.reduce((sum, product) => {
-                return sum + ((product.cost[country] * product.quantity) || 0);
-            }, 0);
-
-            let total = 0
-
-            if (paymentType === 'niftipay') {
-
-                let coin = ""
-                let amount = 0
-                const paidEntry = order.orderMeta.find(item => item.event === "paid");
-                if (paidEntry) {
-                    coin = paidEntry.order.asset
-                    amount = paidEntry.order.amount
-                }
-
-                const url = `https://api.coingecko.com/api/v3/coins/${coins[coin]}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
-                const options = { method: 'GET', headers: { accept: 'application/json' } };
-
-                const res = await fetch(url, options)
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status} – ${res.statusText}`);
-                }
-
-                const result = await res.json()
-                const price = result.prices[0][1]
-                total = amount * price
-                console.log(total, amount, price)
-            }
-
-            const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from})::timestamptz AND to_timestamp(${to})::timestamptz`
-            const exchangeResult = await pgPool.query(exchangeQuery)
-            const result = exchangeResult.rows[0]
-            const USDEUR = result.EUR
-            const USDGBP = result.GBP
-
-            const revenueId = uuidv4();
-
-            if (country === 'GB') {
-                const discountGBP = Number(order.discountTotal)
-                const shippingGBP = Number(order.shippingTotal)
-                const costGBP = totalCost
-                let totalGBP = Number(order.totalAmount)
-
-                const discountUSD = discountGBP / USDGBP
-                const shippingUSD = shippingGBP / USDGBP
-                const costUSD = costGBP / USDGBP
-                let totalUSD = totalGBP / USDGBP
-
-                const discountEUR = discountGBP * (USDEUR / USDGBP)
-                const shippingEUR = shippingGBP * (USDEUR / USDGBP)
-                const costEUR = costGBP * (USDEUR / USDGBP)
-                let totalEUR = totalGBP * (USDEUR / USDGBP)
-
-                if (paymentType === 'niftipay') {
-                    totalUSD = total
-                    totalEUR = total * USDEUR
-                    totalGBP = total * USDEUR
-                }
-
-                const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                    "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                    "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                    "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${revenueId}', '${id}', 
-                    ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                    ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                    ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
-
-                const resultQuery = await pool.query(query)
-                const revenue = resultQuery.rows[0]
-
-                for (const ct of newCategories) {
-
-                    const catRevenueId = uuidv4();
-
-                    const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                    "USDtotal", "USDcost", 
-                    "GBPtotal", "GBPcost",
-                    "EURtotal", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                    ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
-                    ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                    ${(ct.total * (USDEUR / USDGBP)).toFixed(2)}, ${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
-
-                    await pool.query(query)
-                }
-
-                return NextResponse.json(revenue, { status: 200 });
-
-            } else if (euroCountries.includes(country)) {
-
-                const discountEUR = Number(order.discountTotal)
-                const shippingEUR = Number(order.shippingTotal)
-                const costEUR = totalCost
-                let totalEUR = Number(order.totalAmount)
-
-                const discountUSD = discountEUR / USDEUR
-                const shippingUSD = shippingEUR / USDEUR
-                const costUSD = costEUR / USDEUR
-                let totalUSD = totalEUR / USDEUR
-
-                const discountGBP = discountEUR * (USDGBP / USDEUR)
-                const shippingGBP = shippingEUR * (USDGBP / USDEUR)
-                const costGBP = costEUR * (USDGBP / USDEUR)
-                let totalGBP = totalEUR * (USDGBP / USDEUR)
-
-                if (paymentType === 'niftipay') {
-                    totalUSD = total
-                    totalEUR = total * USDEUR
-                    totalGBP = total * USDGBP
-                }
-
-                const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                    "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                    "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                    "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${revenueId}', '${id}', 
-                    ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                    ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                    ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
-
-                const resultQuery = await pool.query(query)
-                const revenue = resultQuery.rows[0]
-
-                for (const ct of newCategories) {
-
-                    const catRevenueId = uuidv4();
-
-                    const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                    "USDtotal", "USDcost", 
-                    "GBPtotal", "GBPcost",
-                    "EURtotal", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                    ${(ct.total / USDEUR).toFixed(2)}, ${(ct.cost / USDEUR).toFixed(2)},
-                    ${(ct.total * (USDGBP / USDEUR)).toFixed(2)}, ${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
-                    ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
-
-                    await pool.query(query)
-                }
-
-                return NextResponse.json(revenue, { status: 200 });
-            } else {
-
-                const discountUSD = Number(order.discountTotal)
-                const shippingUSD = Number(order.shippingTotal)
-                const costUSD = totalCost
-                let totalUSD = Number(order.totalAmount)
-
-                const discountEUR = discountUSD * USDEUR
-                const shippingEUR = shippingUSD * USDEUR
-                const costEUR = costUSD * USDEUR
-                let totalEUR = totalUSD * USDEUR
-
-                const discountGBP = discountUSD * USDGBP
-                const shippingGBP = shippingUSD * USDGBP
-                const costGBP = costUSD * USDGBP
-                let totalGBP = totalUSD * USDGBP
-
-                if (paymentType === 'niftipay') {
-                    totalUSD = total
-                    totalEUR = total * USDEUR
-                    totalGBP = total * USDGBP
-                }
-
-                const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                    "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                    "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                    "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${revenueId}', '${id}', 
-                    ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                    ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                    ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
-
-                const resultQuery = await pool.query(query)
-             
-                const revenue = resultQuery.rows[0]
-                console.log(revenue);
-
-                for (const ct of newCategories) {
-
-                    const catRevenueId = uuidv4();
-
-                    const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                    "USDtotal", "USDcost", 
-                    "GBPtotal", "GBPcost",
-                    "EURtotal", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                    ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                    ${(ct.total * USDGBP).toFixed(2)}, ${(ct.cost * USDGBP).toFixed(2)},
-                    ${(ct.total * USDEUR).toFixed(2)}, ${(ct.cost * USDEUR).toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
-
-                    await pool.query(query)
-                }
-                console.log(revenue);
-                return NextResponse.json(revenue, { status: 200 });
-            }
-        }
-
-    } catch (error) {
-        return NextResponse.json(error, { status: 500 });
+    /* ————— guard: duplicate ————— */
+    const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`;
+    const checkRows  = (await pool.query(checkQuery)).rows;
+    if (checkRows.length) {
+      return NextResponse.json(checkRows[0], { status: 200 });
     }
+
+    /* ————— fetch order basics ————— */
+    const orderQuery   = `SELECT * FROM orders WHERE id = '${id}' AND "organizationId" = '${organizationId}'`;
+    const order        = (await pool.query(orderQuery)).rows[0];
+    const { cartId, paymentMethod: paymentType, country } = order;
+
+    const date   = order.datePaid;
+    const from   = Math.floor(date / 1000);
+    const to     = from + 3600;
+
+    /* ————— cart lines ————— */
+    const productQuery = `
+      SELECT p.*, cp.quantity
+        FROM "cartProducts" cp
+        JOIN products p ON cp."productId" = p.id
+       WHERE cp."cartId" = '${cartId}'`;
+    const products = (await pool.query(productQuery)).rows;
+
+    /* ————— categories ————— */
+    const categoryQuery = `
+      SELECT cp.*, p.*, pc."categoryId"
+        FROM "cartProducts"  cp
+        JOIN products        p  ON cp."productId" = p.id
+   LEFT JOIN "productCategory" pc ON pc."productId" = p.id
+       WHERE cp."cartId" = '${cartId}'`;
+    const categoryRows = (await pool.query(categoryQuery)).rows;
+
+    const categories: CategoryRevenue[] = categoryRows.map((ct:any) => ({
+      categoryId: ct.categoryId,
+      price:      ct.regularPrice[country],
+      cost:       ct.cost[country],
+      quantity:   ct.quantity,
+    }));
+    const newCategories: TransformedCategoryRevenue[] = categories.map(
+      ({ categoryId, price, cost, quantity }) => ({
+        categoryId,
+        total: price * quantity,
+        cost:  cost  * quantity,
+      }),
+    );
+
+    /* ————— cost total ————— */
+    const totalCost = products.reduce(
+      (sum:any,p:any)=>sum+((p.cost[country]*p.quantity)||0),0,
+    );
+
+    /* ————— crypto branch ————— */
+    let total = 0;
+    if (paymentType === "niftipay") {
+      const paid = order.orderMeta.find((it:any)=>it.event==="paid");
+      if (paid) {
+        const { asset: coin, amount } = paid.order;
+        const url = `https://api.coingecko.com/api/v3/coins/${coins[coin]}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
+        const res = await fetch(url,{headers:{accept:"application/json"}});
+        if (!res.ok) throw new Error(`Coingecko ${res.status} ${res.statusText}`);
+        const price = (await res.json()).prices?.[0]?.[1] ?? 0;
+        total = amount * price;
+      }
+    }
+
+    /* ————— fx rates ————— */
+    const fxRow = (await pgPool.query(
+      `SELECT * FROM "exchangeRate"
+        WHERE date BETWEEN to_timestamp(${from}) AND to_timestamp(${to})`,
+    )).rows[0];
+    const USDEUR = fxRow.EUR;
+    const USDGBP = fxRow.GBP;
+
+    /* ————— revenue calculation ————— */
+    const revenueId = uuidv4();
+    const buildInsert = (
+      USDtotal:number, USDdiscount:number, USDship:number, USDcost:number,
+      GBPtotal:number, GBPdiscount:number, GBPship:number, GBPcost:number,
+      EURtotal:number, EURdiscount:number, EURship:number, EURcost:number,
+    ) => `
+      INSERT INTO "orderRevenue"
+        (id,"orderId","USDtotal","USDdiscount","USDshipping","USDcost",
+         "GBPtotal","GBPdiscount","GBPshipping","GBPcost",
+         "EURtotal","EURdiscount","EURshipping","EURcost",
+         "createdAt","updatedAt","organizationId")
+      VALUES
+        ('${revenueId}','${id}',
+         ${USDtotal.toFixed(2)},${USDdiscount.toFixed(2)},${USDship.toFixed(2)},${USDcost.toFixed(2)},
+         ${GBPtotal.toFixed(2)},${GBPdiscount.toFixed(2)},${GBPship.toFixed(2)},${GBPcost.toFixed(2)},
+         ${EURtotal.toFixed(2)},${EURdiscount.toFixed(2)},${EURship.toFixed(2)},${EURcost.toFixed(2)},
+         NOW(),NOW(),'${organizationId}')
+      RETURNING *`;
+
+    /* ————— currency‑specific branches ————— */
+    let revenue:any;
+    if (country === "GB") {
+      const GBPdiscount = +order.discountTotal;
+      const GBPship     = +order.shippingTotal;
+      const GBPcost     = totalCost;
+      let   GBPtotal    = +order.totalAmount;
+
+      const USDdiscount = GBPdiscount / USDGBP;
+      const USDship     = GBPship     / USDGBP;
+      const USDcost     = GBPcost     / USDGBP;
+      let   USDtotal    = GBPtotal    / USDGBP;
+
+      const EURdiscount = GBPdiscount * (USDEUR / USDGBP);
+      const EURship     = GBPship     * (USDEUR / USDGBP);
+      const EURcost     = GBPcost     * (USDEUR / USDGBP);
+      let   EURtotal    = GBPtotal    * (USDEUR / USDGBP);
+
+      if (paymentType === "niftipay") {
+        USDtotal = total;
+        EURtotal = total * USDEUR;
+        GBPtotal = total * USDEUR;
+      }
+
+      revenue = (await pool.query(buildInsert(
+        USDtotal, USDdiscount, USDship, USDcost,
+        GBPtotal, GBPdiscount, GBPship, GBPcost,
+        EURtotal, EURdiscount, EURship, EURcost,
+      ))).rows[0];
+
+    } else if (euroCountries.includes(country)) {
+      const EURdiscount = +order.discountTotal;
+      const EURship     = +order.shippingTotal;
+      const EURcost     = totalCost;
+      let   EURtotal    = +order.totalAmount;
+
+      const USDdiscount = EURdiscount / USDEUR;
+      const USDship     = EURship     / USDEUR;
+      const USDcost     = EURcost     / USDEUR;
+      let   USDtotal    = EURtotal    / USDEUR;
+
+      const GBPdiscount = EURdiscount * (USDGBP / USDEUR);
+      const GBPship     = EURship     * (USDGBP / USDEUR);
+      const GBPcost     = EURcost     * (USDGBP / USDEUR);
+      let   GBPtotal    = EURtotal    * (USDGBP / USDEUR);
+
+      if (paymentType === "niftipay") {
+        USDtotal = total;
+        EURtotal = total * USDEUR;
+        GBPtotal = total * USDGBP;
+      }
+
+      revenue = (await pool.query(buildInsert(
+        USDtotal, USDdiscount, USDship, USDcost,
+        GBPtotal, GBPdiscount, GBPship, GBPcost,
+        EURtotal, EURdiscount, EURship, EURcost,
+      ))).rows[0];
+
+    } else {
+      /* default – USD base */
+      const USDdiscount = +order.discountTotal;
+      const USDship     = +order.shippingTotal;
+      const USDcost     = totalCost;
+      let   USDtotal    = +order.totalAmount;
+
+      const EURdiscount = USDdiscount * USDEUR;
+      const EURship     = USDship     * USDEUR;
+      const EURcost     = USDcost     * USDEUR;
+      let   EURtotal    = USDtotal    * USDEUR;
+
+      const GBPdiscount = USDdiscount * USDGBP;
+      const GBPship     = USDship     * USDGBP;
+      const GBPcost     = USDcost     * USDGBP;
+      let   GBPtotal    = USDtotal    * USDGBP;
+
+      if (paymentType === "niftipay") {
+        USDtotal = total;
+        EURtotal = total * USDEUR;
+        GBPtotal = total * USDGBP;
+      }
+
+      revenue = (await pool.query(buildInsert(
+        USDtotal, USDdiscount, USDship, USDcost,
+        GBPtotal, GBPdiscount, GBPship, GBPcost,
+        EURtotal, EURdiscount, EURship, EURcost,
+      ))).rows[0];
+    }
+
+    /* ————— per‑category inserts ————— */
+    for (const ct of newCategories) {
+      const catId = uuidv4();
+      const insertCat = `
+        INSERT INTO "categoryRevenue"
+          (id,"categoryId",
+           "USDtotal","USDcost",
+           "GBPtotal","GBPcost",
+           "EURtotal","EURcost",
+           "createdAt","updatedAt","organizationId")
+        VALUES
+          ('${catId}','${ct.categoryId}',
+           ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
+           ${(ct.total * (USDGBP / USDEUR)).toFixed(2)}, ${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
+           ${(ct.total * USDEUR).toFixed(2)}, ${(ct.cost * USDEUR).toFixed(2)},
+           NOW(),NOW(),'${organizationId}')`;
+      await pool.query(insertCat);
+    }
+
+    return NextResponse.json(revenue, { status: 200 });
+
+  } catch (err:any) {
+    /* ————— safe logging & response ————— */
+    console.error("POST /api/order/:id/report", {
+      message: err?.message,
+      stack:   err?.stack,
+    });
+    return NextResponse.json(
+      { error: err?.message ?? "Internal server error", stack: err?.stack },
+      { status: 500 },
+    );
+  }
 }
