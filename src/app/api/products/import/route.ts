@@ -402,6 +402,7 @@ export async function POST(req: Request) {
                     if (stockArray.length === 0) stockArray.push(stocks)
 
                     for (let i = 0; i < countryArray.length; i++) {
+                        console.log(stockArray[i], productId)
                         await db.updateTable("warehouseStock")
                             .set({ quantity: stockArray[i] })
                             .where("country", "=", countryArray[i])

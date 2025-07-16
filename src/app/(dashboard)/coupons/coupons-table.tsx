@@ -1,4 +1,4 @@
-// src/components/CouponsTable.tsx
+// File: src/components/CouponsTable.tsx
 "use client";
 
 import React, {
@@ -6,6 +6,8 @@ import React, {
   useEffect,
   startTransition,
   type FormEvent,
+  useRef,
+  DragEvent,
 } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -19,15 +21,18 @@ import {
   Trash2,
   Edit,
   Copy,
+  Upload,
+  Download,
+  X,
 } from "lucide-react";
 
-import { authClient }       from "@/lib/auth-client";
+import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
-import { useDebounce }      from "@/hooks/use-debounce";     // ← NEW
+import { useDebounce } from "@/hooks/use-debounce";
 
-import { Badge }               from "@/components/ui/badge";
-import { Button }              from "@/components/ui/button";
-import { Input }               from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -62,9 +67,6 @@ import {
 
 import { toast } from "sonner";
 
-/* ------------------------------------------------------------------ */
-/*  Types                                                             */
-/* ------------------------------------------------------------------ */
 type Coupon = {
   id: string;
   name: string;
@@ -76,15 +78,12 @@ type Coupon = {
   expirationDate: string | null;
   limitPerUser: number;
   usageLimit: number;
-  expendingLimit: number;
   expendingMinimum: number;
+  expendingLimit: number;
   countries: string[];
   visibility: boolean;
 };
 
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                           */
-/* ------------------------------------------------------------------ */
 const fmtLocal = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString(undefined, {
@@ -93,56 +92,54 @@ const fmtLocal = (iso: string | null) =>
       })
     : "—";
 
-/* ------------------------------------------------------------------ */
-/*  Component                                                         */
-/* ------------------------------------------------------------------ */
 export function CouponsTable() {
   const router = useRouter();
 
-  /* ── active organisation id ───────────────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
-  /* ── permissions ──────────────────────────────────────────────── */
-  const { hasPermission: canCreate,  isLoading: permLoading } =
-    useHasPermission(organizationId, { coupon: ["create"] });
-  const { hasPermission: canUpdate } =
-    useHasPermission(organizationId, { coupon: ["update"] });
-  const { hasPermission: canDelete } =
-    useHasPermission(organizationId, { coupon: ["delete"] });
+  const { hasPermission: canCreate, isLoading: permLoading } = useHasPermission(
+    organizationId,
+    { coupon: ["create"] }
+  );
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, {
+    coupon: ["update"],
+  });
+  const { hasPermission: canDelete } = useHasPermission(organizationId, {
+    coupon: ["delete"],
+  });
 
-  /* ── coupon state ─────────────────────────────────────────────── */
-  const [coupons,        setCoupons       ] = useState<Coupon[]>([]);
-  const [loading,        setLoading       ] = useState(true);
-  const [totalPages,     setTotalPages    ] = useState(1);
-  const [currentPage,    setCurrentPage   ] = useState(1);
-  const [searchQuery,    setSearchQuery   ] = useState("");
-  const debounced                          = useDebounce(searchQuery, 300); // ← NEW
-  const [pageSize,       setPageSize      ] = useState(10);
-  const [sortColumn,     setSortColumn    ] = useState("name");
-  const [sortDirection,  setSortDirection ] = useState<"asc" | "desc">("asc");
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(1);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState("");
+  const debounced = useDebounce(searchQuery, 300);
+  const [pageSize, setPageSize] = useState(10);
+  const [sortColumn, setSortColumn] = useState("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [couponToDelete, setCouponToDelete] = useState<Coupon | null>(null);
 
-  /* ---------------------------------------------------------------- */
-  /*  Data fetching                                                   */
-  /* ---------------------------------------------------------------- */
+  // Import/Export state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
+
   const fetchCoupons = async () => {
     setLoading(true);
     try {
       const res = await fetch(
         `/api/coupons?page=${currentPage}&pageSize=${pageSize}&search=${encodeURIComponent(
-          debounced,
+          debounced
         )}`,
+        { credentials: "include" }
       );
       if (!res.ok) throw new Error("Failed to fetch coupons");
       const data = await res.json();
-
-      setCoupons(
-        data.coupons.map((c: Coupon) => ({
-          ...c,
-          countries: c.countries ?? [],
-        })),
-      );
+      setCoupons(data.coupons);
       setTotalPages(data.totalPages || 1);
     } catch (err) {
       console.error(err);
@@ -154,12 +151,8 @@ export function CouponsTable() {
 
   useEffect(() => {
     fetchCoupons();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, debounced]);
 
-  /* ---------------------------------------------------------------- */
-  /*  Sorting                                                         */
-  /* ---------------------------------------------------------------- */
   const handleSort = (col: string) => {
     if (sortColumn === col) {
       setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -183,12 +176,11 @@ export function CouponsTable() {
     return 0;
   });
 
-  /* ---------------------------------------------------------------- */
-  /*  Handlers                                                        */
-  /* ---------------------------------------------------------------- */
   const handleDuplicate = async (id: string) => {
     try {
-      const res = await fetch(`/api/coupons/${id}/duplicate`, { method: "POST" });
+      const res = await fetch(`/api/coupons/${id}/duplicate`, {
+        method: "POST",
+      });
       if (!res.ok) throw new Error("Duplication failed");
       toast.success("Coupon duplicated");
       fetchCoupons();
@@ -198,13 +190,14 @@ export function CouponsTable() {
   };
 
   const handleEdit = (c: Coupon) => router.push(`/coupons/${c.id}`);
-
-  const handleAdd  = () => router.push("/coupons/new");
+  const handleAdd = () => router.push("/coupons/new");
 
   const confirmDelete = async () => {
     if (!couponToDelete) return;
     try {
-      const res = await fetch(`/api/coupons/${couponToDelete.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/coupons/${couponToDelete.id}`, {
+        method: "DELETE",
+      });
       if (!res.ok) throw new Error("Failed to delete coupon");
       toast.success("Coupon deleted successfully");
       setCouponToDelete(null);
@@ -214,22 +207,177 @@ export function CouponsTable() {
     }
   };
 
-  /* ---------------------------------------------------------------- */
-  /*  Guards                                                          */
-  /* ---------------------------------------------------------------- */
+  // Export handler
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const res = await fetch("/api/coupons/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coupons: sortedCoupons }),
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "coupons.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Import handlers
+  const openImportModal = () => {
+    setImportMessage(null);
+    setImportErrors([]);
+    setShowImportModal(true);
+  };
+  const closeImportModal = () => {
+    setShowImportModal(false);
+    setIsImporting(false);
+    setImportMessage(null);
+    setImportErrors([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+  const processFile = async (file: File) => {
+    setIsImporting(true);
+    setImportMessage(null);
+    setImportErrors([]);
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await fetch("/api/coupons/import", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (res.status === 207 && data.errors) {
+        setImportMessage(`❌ Some rows failed to import`);
+        setImportErrors(
+          data.errors.map((e: any) => `Row ${e.row}: ${e.error}`)
+        );
+      } else if (!res.ok) {
+        let error = "";
+        for (const err of data.rowErrors || []) {
+          error += `❌ ${err.error} in row ${err.row}.\n`;
+        }
+        setImportMessage(error || "❌ Import failed");
+      } else {
+        setImportMessage(
+          `✅ ${data.successCount} coupon(s) created\n✅ ${data.editCount} updated`
+        );
+        fetchCoupons();
+      }
+    } catch (err: any) {
+      setImportMessage(`❌ ${err.message}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+  const handleFileChange = () => {
+    const file = fileInputRef.current?.files?.[0];
+    if (file) processFile(file);
+  };
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) processFile(file);
+  };
+  const handleDragOver = (e: DragEvent) => e.preventDefault();
+
   if (permLoading) return null;
 
-  /* ---------------------------------------------------------------- */
-  /*  JSX                                                             */
-  /* ---------------------------------------------------------------- */
   return (
     <div className="space-y-4">
-      {/* Header */}
+      {/* hidden file input */}
+      <Input
+        ref={fileInputRef}
+        id="file-upload"
+        type="file"
+        accept=".xlsx"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
+      {/* import modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md relative">
+            <button
+              className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
+              onClick={closeImportModal}
+            >
+              <X size={20} />
+            </button>
+            <h2 className="text-xl font-semibold mb-4">Import Coupons</h2>
+            <p className="text-left">
+              <a
+                className="text-blue-600"
+                href="/coupons-import-template.xlsx"
+                target="_blank"
+              >
+                Download a template
+              </a>{" "}
+              to see the import format
+            </p>
+            <div
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-6 cursor-pointer hover:border-gray-400 transition"
+            >
+              <Upload className="mb-2 h-6 w-6 text-gray-500" />
+              <span className="font-medium">Drag &amp; Drop file here</span>
+              <span className="text-sm text-gray-500 mt-1">
+                or click to select
+              </span>
+              <Button
+                variant="outline"
+                className="mt-3"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isImporting}
+              >
+                Browse files
+              </Button>
+            </div>
+            {importMessage && (
+              <p
+                className={`mt-4 text-center whitespace-pre-line font-medium ${
+                  importMessage.startsWith("✅")
+                    ? "text-green-600"
+                    : "text-red-600"
+                }`}
+              >
+                {importMessage}
+              </p>
+            )}
+            {importErrors.length > 0 && (
+              <ul className="mt-2 text-red-600 list-disc list-inside text-sm">
+                {importErrors.map((err, i) => (
+                  <li key={i}>{err}</li>
+                ))}
+              </ul>
+            )}
+            {isImporting && (
+              <div className="absolute inset-0 bg-white/75 flex items-center justify-center rounded-xl">
+                <span>Importing...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Header / Toolbar */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
         <form
           onSubmit={(e: FormEvent) => {
             e.preventDefault();
-            setCurrentPage(1);   // page reset, fetch triggered by effect
+            setCurrentPage(1);
           }}
           className="flex w-full sm:w-auto gap-2"
         >
@@ -240,28 +388,47 @@ export function CouponsTable() {
               placeholder="Search coupons…"
               className="pl-8 w-full"
               value={searchQuery}
-              onChange={(e) => {
-                const txt = e.target.value;
+              onChange={(e) =>
                 startTransition(() => {
-                  setSearchQuery(txt);
+                  setSearchQuery(e.target.value);
                   setCurrentPage(1);
-                });
-              }}
+                })
+              }
             />
           </div>
           <Button type="submit">Search</Button>
         </form>
 
-        {canCreate && (
-          <Button onClick={handleAdd}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Coupon
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {canCreate && (
+            <>
+              <Button
+                variant="outline"
+                onClick={openImportModal}
+                disabled={isImporting}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                Import
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleExport}
+                disabled={isExporting}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Export
+              </Button>
+              <Button onClick={handleAdd} disabled={isImporting || isExporting}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Coupon
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Table */}
-      <div className="rounded-md border">
+      <div className="rounded-md border overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -277,7 +444,8 @@ export function CouponsTable() {
                 onClick={() => handleSort("usageLimit")}
               >
                 Usage Limit{" "}
-                {sortColumn === "usageLimit" && (sortDirection === "asc" ? "↑" : "↓")}
+                {sortColumn === "usageLimit" &&
+                  (sortDirection === "asc" ? "↑" : "↓")}
               </TableHead>
               <TableHead>Expending Min</TableHead>
               <TableHead>Expending Limit</TableHead>
@@ -335,14 +503,14 @@ export function CouponsTable() {
                       <DropdownMenuContent align="end">
                         {canUpdate && (
                           <DropdownMenuItem onClick={() => handleEdit(c)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
+                            <Edit className="mr-2 h-4 w-4" /> Edit
                           </DropdownMenuItem>
                         )}
                         {canUpdate && (
-                          <DropdownMenuItem onClick={() => handleDuplicate(c.id)}>
-                            <Copy className="mr-2 h-4 w-4" />
-                            Duplicate
+                          <DropdownMenuItem
+                            onClick={() => handleDuplicate(c.id)}
+                          >
+                            <Copy className="mr-2 h-4 w-4" /> Duplicate
                           </DropdownMenuItem>
                         )}
                         {canDelete && (
@@ -350,8 +518,7 @@ export function CouponsTable() {
                             onClick={() => setCouponToDelete(c)}
                             className="text-destructive focus:text-destructive"
                           >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete
                           </DropdownMenuItem>
                         )}
                       </DropdownMenuContent>
@@ -389,7 +556,6 @@ export function CouponsTable() {
               ))}
             </SelectContent>
           </Select>
-          {/* nav */}
           <div className="flex items-center space-x-2">
             <Button
               variant="outline"
@@ -436,8 +602,8 @@ export function CouponsTable() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Coupon?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete “{couponToDelete?.name}”?
-              This action cannot be undone.
+              Are you sure you want to delete “{couponToDelete?.name}”? This
+              action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
