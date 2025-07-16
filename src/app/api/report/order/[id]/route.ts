@@ -315,7 +315,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                     RETURNING *`
 
                 const resultQuery = await pool.query(query)
+             
                 const revenue = resultQuery.rows[0]
+                console.log(revenue);
 
                 for (const ct of newCategories) {
 
@@ -335,6 +337,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
                     await pool.query(query)
                 }
+                console.log(revenue);
                 return NextResponse.json(revenue, { status: 200 });
             }
         }
