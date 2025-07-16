@@ -1,11 +1,9 @@
-/* ------------------------------------------------------------------ */
-/*  Product-Attributes – inline create / manage                       */
-/* ------------------------------------------------------------------ */
+// src/app/(dashboard)/products/components/product-attributes.tsx
 "use client"
 
 import { useState, useEffect } from "react"
 import { Plus, Trash, Check } from "lucide-react"
-import slugify from "slugify"                                   // <-- add this tiny dep
+import slugify from "slugify"
 import type { Attribute } from "@/types/product"
 
 import { Button } from "@/components/ui/button"
@@ -17,9 +15,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog"
-import {
-  Input,
-} from "@/components/ui/input"
+import { Input } from "@/components/ui/input"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -32,16 +28,12 @@ interface Props {
   productType: string
 }
 
-/* small helper – auto slug but keep user edits */
 const autoSlug = (v: string) => slugify(v, { lower: true, strict: true })
 
 export function ProductAttributes({ attributes, onAttributesChange, productType }: Props) {
-  /* ---------------------------------------------------------------- */
-  /*  Fetch available attributes once                                 */
-  /* ---------------------------------------------------------------- */
+  /* ——— fetch available attributes ——— */
   const [available, setAvailable] = useState<Array<{ id: string; name: string }>>([])
   const [loading,   setLoading]   = useState(false)
-
   const loadAttributes = async () => {
     setLoading(true)
     try {
@@ -52,10 +44,8 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
   }
   useEffect(() => { loadAttributes() }, [])
 
-  /* ---------------------------------------------------------------- */
-  /*  “Add attribute” flow                                            */
-  /* ---------------------------------------------------------------- */
-  const [picker, setPicker] = useState("")           // selected ID in dropdown
+  /* ——— add‑attribute flow ——— */
+  const [picker, setPicker] = useState("")
   const [showNewAttr, setShowNewAttr] = useState(false)
   const [attrName, setAttrName] = useState("")
   const [attrSlug, setAttrSlug] = useState("")
@@ -73,17 +63,13 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
       if (!r.ok) throw new Error()
       const created = await r.json()
       toast.success("Attribute created")
-      setShowNewAttr(false)
-      setAttrName(""); setAttrSlug("")
+      setShowNewAttr(false); setAttrName(""); setAttrSlug("")
       await loadAttributes()
-      setPicker(created.id)          // auto-select the new one
-      handleAddAttribute(created.id, created.name, []) // add empty attr object
+      setPicker(created.id)
+      handleAddAttribute(created.id, created.name, [])
     } catch { toast.error("Could not create attribute") } finally { setSavingAttr(false) }
   }
 
-  /* ---------------------------------------------------------------- */
-  /*  Add attribute that already exists in list                       */
-  /* ---------------------------------------------------------------- */
   const handleAddAttribute = async (id?: string, name?: string, terms?: any[]) => {
     const targetId = id ?? picker
     if (!targetId) return
@@ -105,9 +91,7 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
     } catch { toast.error("Failed to fetch attribute terms") }
   }
 
-  /* ---------------------------------------------------------------- */
-  /*  Term creation dialog state                                      */
-  /* ---------------------------------------------------------------- */
+  /* ——— term creation flow ——— */
   const [termModalFor, setTermModalFor] = useState<Attribute | null>(null)
   const [termName, setTermName]   = useState("")
   const [termSlug, setTermSlug]   = useState("")
@@ -126,7 +110,6 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
       if (!r.ok) throw new Error()
       const created = await r.json()
       toast.success("Term created")
-      /* mutate parent attribute locally */
       onAttributesChange(attributes.map(a => a.id === termModalFor.id
         ? { ...a, terms:[...a.terms, created], selectedTerms:[...a.selectedTerms, created.id] }
         : a))
@@ -134,15 +117,11 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
     } catch { toast.error("Could not create term") } finally { setSavingTerm(false) }
   }
 
-  /* ---------------------------------------------------------------- */
-  /*  misc helpers                                                    */
-  /* ---------------------------------------------------------------- */
+  /* ——— misc helpers ——— */
   const removeAttribute = (id: string) =>
     onAttributesChange(attributes.filter(a => a.id !== id))
-
   const toggleUseForVar = (id: string, v:boolean) =>
     onAttributesChange(attributes.map(a => a.id===id ? {...a,useForVariations:v}:a))
-
   const toggleTerm = (attrId:string, termId:string) =>
     onAttributesChange(attributes.map(a => {
       if (a.id!==attrId) return a
@@ -152,12 +131,10 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
       return {...a, selectedTerms:sel}
     }))
 
-  /* ---------------------------------------------------------------- */
-  /*  Render                                                          */
-  /* ---------------------------------------------------------------- */
+  /* ——— render ——— */
   return (
     <div className="space-y-6">
-      {/* Top row – picker + new button */}
+      {/* picker row */}
       <div className="flex flex-wrap gap-4">
         <div className="flex-1 min-w-[200px]">
           <Label>Add Attribute</Label>
@@ -170,11 +147,23 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={() => handleAddAttribute()} disabled={!picker}>Add</Button>
-        <Button type="button" variant="outline" onClick={()=>setShowNewAttr(true)}>+ New&nbsp;attribute</Button>
+        <Button
+          type="button"
+          onClick={() => handleAddAttribute()}
+          disabled={!picker}
+        >
+          Add
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setShowNewAttr(true)}
+        >
+          + New&nbsp;attribute
+        </Button>
       </div>
 
-      {/* Existing attributes table */}
+      {/* table */}
       {attributes.length === 0 ? (
         <p className="text-center py-8 text-muted-foreground">No attributes added.</p>
       ) : (
@@ -205,7 +194,6 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
                           {t.name}
                         </Badge>
                       ))}
-                      {/* add-term chip */}
                       <Badge
                         variant="secondary"
                         className="cursor-pointer select-none"
@@ -217,11 +205,19 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
                   </TableCell>
                   {productType==="variable" && (
                     <TableCell>
-                      <Switch checked={attr.useForVariations} onCheckedChange={v=>toggleUseForVar(attr.id,v)} />
+                      <Switch
+                        checked={attr.useForVariations}
+                        onCheckedChange={v=>toggleUseForVar(attr.id,v)}
+                      />
                     </TableCell>
                   )}
                   <TableCell>
-                    <Button variant="ghost" size="icon" onClick={()=>removeAttribute(attr.id)}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={()=>removeAttribute(attr.id)}
+                    >
                       <Trash className="h-4 w-4" />
                     </Button>
                   </TableCell>
@@ -232,7 +228,7 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
         </div>
       )}
 
-      {/* ───────────────────────── New Attribute Dialog ───────────────────── */}
+      {/* new‑attribute dialog */}
       <Dialog open={showNewAttr} onOpenChange={setShowNewAttr}>
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader><DialogTitle>New Attribute</DialogTitle></DialogHeader>
@@ -250,15 +246,15 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={()=>setShowNewAttr(false)}>Cancel</Button>
-            <Button disabled={!attrName||!attrSlug||savingAttr} onClick={createAttribute}>
+            <Button type="button" variant="outline" onClick={()=>setShowNewAttr(false)}>Cancel</Button>
+            <Button type="button" disabled={!attrName||!attrSlug||savingAttr} onClick={createAttribute}>
               {savingAttr?"Saving…":"Create"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ───────────────────────── New Term Dialog ────────────────────────── */}
+      {/* new‑term dialog */}
       <Dialog open={!!termModalFor} onOpenChange={()=>setTermModalFor(null)}>
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader><DialogTitle>
@@ -278,8 +274,8 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={()=>setTermModalFor(null)}>Cancel</Button>
-            <Button disabled={!termName||!termSlug||savingTerm} onClick={createTerm}>
+            <Button type="button" variant="outline" onClick={()=>setTermModalFor(null)}>Cancel</Button>
+            <Button type="button" disabled={!termName||!termSlug||savingTerm} onClick={createTerm}>
               {savingTerm?"Saving…":"Create"}
             </Button>
           </DialogFooter>
