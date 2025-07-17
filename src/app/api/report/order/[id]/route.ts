@@ -64,7 +64,7 @@ type TransformedCategoryRevenue = {
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx; 
+  const { organizationId } = ctx;
 
   try {
     const { id } = await params;
@@ -73,19 +73,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`
     const resultCheck = await pool.query(checkQuery);
     const check = resultCheck.rows
-    console.log("[orderRevenue] existing‑revenue‑rows", check.length);  
+    console.log("[orderRevenue] existing‑revenue‑rows", check.length);
 
-   // ✅ Revenue already stored → short‑circuit
-   if (check.length > 0) {
-     console.log("[orderRevenue] revenue‑already‑exists", {
-       orderId: id,
-       rows: check.length,
-     });
-     return NextResponse.json(check[0], { status: 200 });
-   }
-    
-      // ❌ No revenue yet → proceed to creation
-      {
+    // ✅ Revenue already stored → short‑circuit
+    if (check.length > 0) {
+      console.log("[orderRevenue] revenue‑already‑exists", {
+        orderId: id,
+        rows: check.length,
+      });
+      return NextResponse.json(check[0], { status: 200 });
+    }
+
+    // ❌ No revenue yet → proceed to creation
+    {
       const orderQuery = `SELECT * FROM orders WHERE id = '${id}' AND "organizationId" = '${organizationId}'`
       const resultOrders = await pool.query(orderQuery);
       const order = resultOrders.rows[0]
@@ -187,7 +187,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
    WHERE date BETWEEN to_timestamp(${from})::timestamptz
    AND to_timestamp(${to})::timestamptz
  `);
- console.log("[orderRevenue] exchange‑rows‑exact", exchangeResult.rows.length);
+      console.log("[orderRevenue] exchange‑rows‑exact", exchangeResult.rows.length);
       // 2️⃣ Fallback: latest prior rate
       if (exchangeResult.rows.length === 0) {
         exchangeResult = await pgPool.query(`
@@ -201,7 +201,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       let USDEUR = 0;
       let USDGBP = 0;
       console.log("[orderRevenue] exchange‑rows‑prior", exchangeResult.rows.length);
- 
+
       // 3️⃣ Still nothing – pull live rate
       if (exchangeResult.rows.length === 0) {
         const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
@@ -225,9 +225,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const row = exchangeResult.rows[0];
         USDEUR = row.EUR;
         USDGBP = row.GBP;
-      } 
+      }
       console.log("[orderRevenue] final‑rates", { USDEUR, USDGBP });
- 
+
       const revenueId = uuidv4();
       console.log("[orderRevenue] revenueId", revenueId);
       if (country === 'GB') {
