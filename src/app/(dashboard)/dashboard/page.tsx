@@ -84,13 +84,19 @@ const chartConfig = {
 
 export default function DashboardPage() {
   const { setHeaderTitle } = useHeaderTitle();
+  const [currency, setCurrency] = React.useState<"USD" | "GBP" | "EUR">("USD");
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(amount);
-  };
+  /**
+   * Format helper ― always respect the currency selected
+   */
+  const formatCurrency = React.useCallback(
+    (amount: number) =>
+      new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency, // <─ ties the symbol to the <Select />
+      }).format(amount),
+    [currency]
+  );
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-US", {
@@ -123,7 +129,6 @@ export default function DashboardPage() {
       revenue: number;
     }[]
   >([]);
-  const [currency, setCurrency] = React.useState<"USD" | "GBP" | "EUR">("USD");
 
   // Compute from/to params for API based on selection
   const getFromToParams = (): { from: string; to: string } => {
@@ -161,8 +166,9 @@ export default function DashboardPage() {
           chartData,
           growthRate,
         } = await resp.json();
+        console.log(chartData);
         setTotalOrders(orderAmount);
-        setTotalRevenue(revenue.toFixed(2));
+        setTotalRevenue(Number(revenue));
         setTotalClient(clientAmount);
         setTotalActive(activeAmount);
         setOrderList(orderList);
@@ -369,7 +375,9 @@ export default function DashboardPage() {
               <CardHeader>
                 <CardDescription>Total Revenue</CardDescription>
                 <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                  {totalRevenue !== null ? `${totalRevenue}$` : "Loading..."}
+                  {totalRevenue !== null
+                    ? formatCurrency(totalRevenue)
+                    : "Loading..."}
                 </CardTitle>
                 <CardAction className="flex items-center space-x-2">
                   <Select
@@ -495,24 +503,26 @@ export default function DashboardPage() {
                       axisLine={false}
                       tickMargin={8}
                       minTickGap={32}
-                      tickFormatter={(value) =>
-                        new Date(value).toLocaleDateString("en-US", {
+                      tickFormatter={(value) => {
+                        const dt = new Date(`${value}T00:00:00`);
+                        return dt.toLocaleDateString("en-US", {
                           month: "short",
                           day: "numeric",
-                        })
-                      }
+                        });
+                      }}
                     />
                     <ChartTooltip
                       cursor={false}
                       defaultIndex={isMobile ? -1 : 10}
                       content={
                         <ChartTooltipContent
-                          labelFormatter={(value) =>
-                            new Date(value).toLocaleDateString("en-US", {
+                          labelFormatter={(value) => {
+                            const dt = new Date(`${value}T00:00:00`);
+                            return dt.toLocaleDateString("en-US", {
                               month: "short",
                               day: "numeric",
-                            })
-                          }
+                            });
+                          }}
                           indicator="dot"
                         />
                       }

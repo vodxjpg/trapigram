@@ -83,7 +83,6 @@ export async function GET(req: NextRequest) {
 
             return acc + profit;
         }, 0);
-        console.log(revenue)
 
         const clientQuery = `SELECT * FROM "clients"
         WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz`;
@@ -128,15 +127,19 @@ export async function GET(req: NextRequest) {
             })
         }
 
-        const chartQuery = `SELECT "${currency}total" AS total, "${currency}discount" AS discount, "${currency}shipping" AS shipping, "${currency}cost" AS cost, "createdAt" FROM "orderRevenue"
-        WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz
-        ORDER BY "createdAt" DESC`;
+        const chartQuery = `SELECT DATE(o."datePaid"), r.id, r."orderId", r."${currency}total" AS total, r."${currency}shipping" AS shipping, r."${currency}discount" AS discount, r."${currency}cost" AS cost, 
+            r."createdAt", r."updatedAt", r."organizationId"  FROM "orderRevenue" r
+            JOIN orders o
+            ON r."orderId" = o.id
+            WHERE r."organizationId" = $1 AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
+            ORDER BY o."datePaid" DESC`;
 
         const chartResult = await pool.query(chartQuery, values);
         const chart = chartResult.rows
+        console.log(chart)
 
         const byDay = chart.reduce((acc, o) => {
-            const day = new Date(o.createdAt).toISOString().split('T')[0]; // 'YYYY-MM-DD'
+            const day = new Date(o.date).toISOString().split('T')[0];
             const total = parseFloat(o.total);
             const discount = parseFloat(o.discount);
             const shipping = parseFloat(o.shipping);
