@@ -22,7 +22,7 @@ export async function sendEmail({
     return
   }
 
-  // Build a payload that includes text or html (or both)
+  // Build a payload that includes text or html ( both)
   const payload: Record<string, any> = {
     from: 'no-reply@trapyfy.com',
     to,
