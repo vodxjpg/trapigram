@@ -5,7 +5,7 @@ import { pgPool } from '@/lib/db';
 export const runtime = 'nodejs'; // Node.js serverless
 
 export async function GET(req: NextRequest) {
-    const apiKey = '144659c7b175794ed4eae9bacf853944'
+    const apiKey = process.env.CURRENCY_LAYER_API_KEY
     if (!apiKey) {
         return NextResponse.json({ error: 'Missing CURRENCYLAYER_KEY env var' }, { status: 500 });
     }

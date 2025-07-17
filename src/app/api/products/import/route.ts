@@ -302,12 +302,10 @@ export async function POST(req: Request) {
                     }
                 }
 
-                console.log(newAttributes)
                 if (newAttributes) {
                     const attributes: AttributeEntry[] = [];
 
                     for (let i = 1; i <= 2; i++) {
-                        console.log(product[`attributeVariation${i}`])
 
                         const checkValues = (product[`attributeVariation${i}`] === 0 || product[`attributeVariation${i}`] === 1)
                         if (product[`attributeVariation${i}`] !== "" && checkValues) {
@@ -379,8 +377,6 @@ export async function POST(req: Request) {
                         }
                     }
 
-                    console.log(attributes)
-
                     for (const att of attributes) {
                         await db.insertInto("productAttributeValues")
                             .values({ productId, attributeId: att.name, termId: att.terms[att.name] })
@@ -402,7 +398,6 @@ export async function POST(req: Request) {
                     if (stockArray.length === 0) stockArray.push(stocks)
 
                     for (let i = 0; i < countryArray.length; i++) {
-                        console.log(stockArray[i], productId)
                         await db.updateTable("warehouseStock")
                             .set({ quantity: stockArray[i] })
                             .where("country", "=", countryArray[i])
