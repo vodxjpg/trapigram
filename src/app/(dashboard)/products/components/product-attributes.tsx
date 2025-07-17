@@ -254,7 +254,7 @@ export function ProductAttributes({ attributes, onAttributesChange, productType 
         </DialogContent>
       </Dialog>
 
-      {/* new‑term dialog */}
+      {/* new‑trm dialog */}
       <Dialog open={!!termModalFor} onOpenChange={()=>setTermModalFor(null)}>
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader><DialogTitle>
