@@ -75,7 +75,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const check = resultCheck.rows
     console.log("[orderRevenue] existing‑revenue‑rows", check.length);  
 
-    if (check.length === 0) {
+   // ✅ Revenue already stored → short‑circuit
+   if (check.length > 0) {
+     console.log("[orderRevenue] revenue‑already‑exists", {
+       orderId: id,
+       rows: check.length,
+     });
+     return NextResponse.json(check[0], { status: 200 });
+   }
+    
+      // ❌ No revenue yet → proceed to creation
+      {
       const orderQuery = `SELECT * FROM orders WHERE id = '${id}' AND "organizationId" = '${organizationId}'`
       const resultOrders = await pool.query(orderQuery);
       const order = resultOrders.rows[0]
