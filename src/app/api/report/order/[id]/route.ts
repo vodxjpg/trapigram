@@ -62,22 +62,24 @@ type TransformedCategoryRevenue = {
 };
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  /* const ctx = await getContext(req);
+  const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx; */
-  const organizationId = "W0duzyHA23ezm9Mcvso1y32KPko4XjRn"
+  const { organizationId } = ctx; 
 
   try {
     const { id } = await params;
+    console.log("[orderRevenue] ⇢ start", { id, organizationId });
 
     const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`
     const resultCheck = await pool.query(checkQuery);
     const check = resultCheck.rows
+    console.log("[orderRevenue] existing‑revenue‑rows", check.length);  
 
     if (check.length === 0) {
       const orderQuery = `SELECT * FROM orders WHERE id = '${id}' AND "organizationId" = '${organizationId}'`
       const resultOrders = await pool.query(orderQuery);
       const order = resultOrders.rows[0]
+      console.log("[orderRevenue] order‑fetched", { id: order?.id, datePaid: order?.datePaid });
 
       const cartId = order.cartId
       const paymentType = order.paymentMethod
@@ -94,6 +96,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       const productResult = await pool.query(productQuery)
       const products = productResult.rows
+      console.log("[orderRevenue] products‑in‑cart", products.length);
 
       const categoryQuery = `SELECT
                 cp.*,
@@ -109,6 +112,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       const categoryResult = await pool.query(categoryQuery)
       const categoryData = categoryResult.rows
+      console.log("[orderRevenue] category‑rows", categoryData.length);
 
       const categories: CategoryRevenue[] = [];
 
@@ -134,6 +138,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       let total = 0
 
       if (paymentType === 'niftipay') {
+        console.log("[orderRevenue] payment=niftipay ‑ using CoinGecko");
 
         let coin = ""
         let amount = 0
@@ -154,7 +159,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const result = await res.json()
         const price = result.prices[0][1]
         total = amount * price
-        console.log(total, amount, price)
+        console.log("[orderRevenue] coin‑conversion", { coin, amount, price, totalUSD: total });
       }
 
       /**
@@ -172,7 +177,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
    WHERE date BETWEEN to_timestamp(${from})::timestamptz
    AND to_timestamp(${to})::timestamptz
  `);
-
+ console.log("[orderRevenue] exchange‑rows‑exact", exchangeResult.rows.length);
       // 2️⃣ Fallback: latest prior rate
       if (exchangeResult.rows.length === 0) {
         exchangeResult = await pgPool.query(`
@@ -185,7 +190,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       let USDEUR = 0;
       let USDGBP = 0;
-
+      console.log("[orderRevenue] exchange‑rows‑prior", exchangeResult.rows.length);
+ 
       // 3️⃣ Still nothing – pull live rate
       if (exchangeResult.rows.length === 0) {
         const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
@@ -210,9 +216,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         USDEUR = row.EUR;
         USDGBP = row.GBP;
       } 
-
+      console.log("[orderRevenue] final‑rates", { USDEUR, USDGBP });
+ 
       const revenueId = uuidv4();
-
+      console.log("[orderRevenue] revenueId", revenueId);
       if (country === 'GB') {
         const discountGBP = Number(order.discountTotal)
         const shippingGBP = Number(order.shippingTotal)
@@ -234,7 +241,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           totalEUR = total * USDEUR
           totalGBP = total * USDEUR
         }
-
+        console.log("[orderRevenue] inserting orderRevenue for", country);
         const query = `INSERT INTO "orderRevenue"(id, "orderId",
             "USDtotal", "USDdiscount", "USDshipping", "USDcost",
             "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
@@ -326,8 +333,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     RETURNING * `
 
           await pool.query(query)
+          console.log("[orderRevenue] categoryRevenue inserted", catRevenueId);
         }
-
+        console.log("[orderRevenue] success");
         return NextResponse.json(revenue, { status: 200 });
       } else {
 
@@ -390,6 +398,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
   } catch (error) {
+    console.error("[orderRevenue] ERROR", error);
     return NextResponse.json(error, { status: 500 });
   }
 }
