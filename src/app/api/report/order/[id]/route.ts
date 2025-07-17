@@ -157,11 +157,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         console.log(total, amount, price)
       }
 
-      const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from})::timestamptz AND to_timestamp(${to})::timestamptz`
-      const exchangeResult = await pgPool.query(exchangeQuery)
+      /**
+ * ------------------------------------------------------------------
+ * Exchange‑rate lookup with graceful fallback
+ * 1. Exact hour window (original behaviour)
+ * 2. Most recent rate *before* the order timestamp
+ * 3. If still missing, fetch live rate and cache it
+ * ------------------------------------------------------------------
+ */
 
-      let USDEUR = 0
-      let USDGBP = 0
+      // 1️⃣ Exact window
+      let exchangeResult = await pgPool.query(`
+   SELECT * FROM "exchangeRate"
+   WHERE date BETWEEN to_timestamp(${from})::timestamptz
+   AND to_timestamp(${to})::timestamptz
+ `);
+
+      // 2️⃣ Fallback: latest prior rate
+      if (exchangeResult.rows.length === 0) {
+        exchangeResult = await pgPool.query(`
+     SELECT * FROM "exchangeRate"
+     WHERE date <= to_timestamp(${to})::timestamptz
+     ORDER BY date DESC
+     LIMIT 1
+   `);
+      }
+
+      let USDEUR = 0;
+      let USDGBP = 0;
+
+      // 3️⃣ Still nothing – pull live rate
       if (exchangeResult.rows.length === 0) {
         const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
         const res = await fetch(url);
@@ -170,24 +195,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const usdEur = data.quotes?.USDEUR;
         const usdGbp = data.quotes?.USDGBP;
         if (usdEur == null || usdGbp == null) {
-          return NextResponse.json({ error: 'Invalid API response' }, { status: 502 });
+          return NextResponse.json({ error: "Invalid CurrencyLayer response" }, { status: 502 });
         }
 
-        const insertSql = `
-          INSERT INTO "exchangeRate" ("EUR","GBP", date)
-          VALUES (${usdEur}, ${usdGbp}, NOW())
-          RETURNING *`;
-        const response = await pgPool.query(insertSql);
-        const result = response.rows[0]
-
-        USDEUR = result.EUR
-        USDGBP = result.GBP
+        const { rows } = await pgPool.query(`
+     INSERT INTO "exchangeRate"("EUR", "GBP", date)
+        VALUES(${usdEur}, ${usdGbp}, NOW())
+        RETURNING *
+          `);
+        USDEUR = rows[0].EUR;
+        USDGBP = rows[0].GBP;
       } else {
-
-        const result = exchangeResult.rows[0]
-        USDEUR = result.EUR
-        USDGBP = result.GBP
-      }
+        const row = exchangeResult.rows[0];
+        USDEUR = row.EUR;
+        USDGBP = row.GBP;
+      } 
 
       const revenueId = uuidv4();
 
@@ -213,17 +235,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           totalGBP = total * USDEUR
         }
 
-        const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                    "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                    "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                    "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${revenueId}', '${id}', 
-                    ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                    ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                    ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
+        const query = `INSERT INTO "orderRevenue"(id, "orderId",
+            "USDtotal", "USDdiscount", "USDshipping", "USDcost",
+            "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
+            "EURtotal", "EURdiscount", "EURshipping", "EURcost",
+            "createdAt", "updatedAt", "organizationId")
+        VALUES('${revenueId}', '${id}',
+          ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
+          ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
+          ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
+          NOW(), NOW(), '${organizationId}')
+        RETURNING * `
 
         const resultQuery = await pool.query(query)
         const revenue = resultQuery.rows[0]
@@ -232,17 +254,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
           const catRevenueId = uuidv4();
 
-          const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                    "USDtotal", "USDcost", 
-                    "GBPtotal", "GBPcost",
-                    "EURtotal", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                    ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
+          const query = `INSERT INTO "categoryRevenue"(id, "categoryId",
+          "USDtotal", "USDcost",
+          "GBPtotal", "GBPcost",
+          "EURtotal", "EURcost",
+          "createdAt", "updatedAt", "organizationId")
+        VALUES('${catRevenueId}', '${ct.categoryId}',
+          ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
                     ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
                     ${(ct.total * (USDEUR / USDGBP)).toFixed(2)}, ${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
+      NOW(), NOW(), '${organizationId}')
+      RETURNING * `
 
           await pool.query(query)
         }
@@ -272,17 +294,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           totalGBP = total * USDGBP
         }
 
-        const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                    "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                    "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                    "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${revenueId}', '${id}', 
-                    ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                    ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                    ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
+        const query = `INSERT INTO "orderRevenue"(id, "orderId",
+        "USDtotal", "USDdiscount", "USDshipping", "USDcost",
+        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
+        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
+        "createdAt", "updatedAt", "organizationId")
+      VALUES('${revenueId}', '${id}',
+        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
+        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
+        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
+        NOW(), NOW(), '${organizationId}')
+      RETURNING * `
 
         const resultQuery = await pool.query(query)
         const revenue = resultQuery.rows[0]
@@ -291,17 +313,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
           const catRevenueId = uuidv4();
 
-          const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                    "USDtotal", "USDcost", 
-                    "GBPtotal", "GBPcost",
-                    "EURtotal", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                    ${(ct.total / USDEUR).toFixed(2)}, ${(ct.cost / USDEUR).toFixed(2)},
+          const query = `INSERT INTO "categoryRevenue"(id, "categoryId",
+        "USDtotal", "USDcost",
+        "GBPtotal", "GBPcost",
+        "EURtotal", "EURcost",
+        "createdAt", "updatedAt", "organizationId")
+      VALUES('${catRevenueId}', '${ct.categoryId}',
+        ${(ct.total / USDEUR).toFixed(2)}, ${(ct.cost / USDEUR).toFixed(2)},
                     ${(ct.total * (USDGBP / USDEUR)).toFixed(2)}, ${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
                     ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
+    NOW(), NOW(), '${organizationId}')
+    RETURNING * `
 
           await pool.query(query)
         }
@@ -330,17 +352,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           totalGBP = total * USDGBP
         }
 
-        const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                    "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                    "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                    "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${revenueId}', '${id}', 
-                    ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                    ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                    ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
+        const query = `INSERT INTO "orderRevenue"(id, "orderId",
+      "USDtotal", "USDdiscount", "USDshipping", "USDcost",
+      "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
+      "EURtotal", "EURdiscount", "EURshipping", "EURcost",
+      "createdAt", "updatedAt", "organizationId")
+    VALUES('${revenueId}', '${id}',
+      ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
+      ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
+      ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
+      NOW(), NOW(), '${organizationId}')
+    RETURNING * `
 
         const resultQuery = await pool.query(query)
         const revenue = resultQuery.rows[0]
@@ -349,17 +371,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
           const catRevenueId = uuidv4();
 
-          const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                    "USDtotal", "USDcost", 
-                    "GBPtotal", "GBPcost",
-                    "EURtotal", "EURcost",
-                    "createdAt", "updatedAt", "organizationId")
-                    VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                    ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                    ${(ct.total * USDGBP).toFixed(2)}, ${(ct.cost * USDGBP).toFixed(2)},
+          const query = `INSERT INTO "categoryRevenue"(id, "categoryId",
+      "USDtotal", "USDcost",
+      "GBPtotal", "GBPcost",
+      "EURtotal", "EURcost",
+      "createdAt", "updatedAt", "organizationId")
+    VALUES('${catRevenueId}', '${ct.categoryId}',
+      ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
+      ${(ct.total * USDGBP).toFixed(2)}, ${(ct.cost * USDGBP).toFixed(2)},
                     ${(ct.total * USDEUR).toFixed(2)}, ${(ct.cost * USDEUR).toFixed(2)},
-                    NOW(), NOW(), '${organizationId}')
-                    RETURNING *`
+  NOW(), NOW(), '${organizationId}')
+  RETURNING * `
 
           await pool.query(query)
         }
