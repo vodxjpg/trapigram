@@ -50,7 +50,7 @@ export default function SelectOrganizationPage() {
     fetchOrganizations();
   }, []);
 
-  // Handle selecting an organization
+  // Handle selecting a organization
   async function handleSelectOrganization(orgId: string) {
     try {
       await authClient.organization.setActive({ organizationId: orgId });
