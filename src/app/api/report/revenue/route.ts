@@ -34,23 +34,23 @@ export async function GET(req: NextRequest) {
 
     try {
         const revenueQuery = `
-      SELECT
-        o."datePaid",
-        o."orderKey"   AS "orderNumber",
-        o."clientId"   AS "userId",
-        o.country,
-        r."${currency}total"       AS "totalPrice",
-        r."${currency}shipping"    AS "shippingCost",
-        r."${currency}discount" AS "discount",
-        r."${currency}cost" AS "cost",
-        o."orderMeta" AS asset
-      FROM "orderRevenue" r
-      JOIN orders o
-        ON r."orderId" = o.id
-      WHERE
-        r."organizationId" = $1
-        AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
-      ORDER BY o."datePaid" DESC
+        SELECT
+            o."datePaid",
+            o."orderKey"   AS "orderNumber",
+            o."clientId"   AS "userId",
+            o.country,
+            r."${currency}total"       AS "totalPrice",
+            r."${currency}shipping"    AS "shippingCost",
+            r."${currency}discount" AS "discount",
+            r."${currency}cost" AS "cost",
+            o."orderMeta" AS asset
+        FROM "orderRevenue" r
+        JOIN orders o
+            ON r."orderId" = o.id
+        WHERE
+            r."organizationId" = $1
+            AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
+        ORDER BY o."orderKey" DESC
     `;
         const values = [organizationId, from, to];
 
@@ -66,11 +66,11 @@ export async function GET(req: NextRequest) {
         })
 
         const chartQuery = `SELECT DATE(o."datePaid"), r.id, r."orderId", r."${currency}total" AS total, r."${currency}shipping" AS shipping, r."${currency}discount" AS discount, r."${currency}cost" AS cost, 
-                    r."createdAt", r."updatedAt", r."organizationId"  FROM "orderRevenue" r
-                    JOIN orders o
-                    ON r."orderId" = o.id
-                    WHERE r."organizationId" = $1 AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
-                    ORDER BY o."datePaid" DESC`;
+            r."createdAt", r."updatedAt", r."organizationId"  FROM "orderRevenue" r
+            JOIN orders o
+            ON r."orderId" = o.id
+            WHERE r."organizationId" = $1 AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
+            ORDER BY o."datePaid" DESC`;
 
         const chartResult = await pool.query(chartQuery, values);
         const chart = chartResult.rows
@@ -105,6 +105,7 @@ export async function GET(req: NextRequest) {
                 revenue: byDay[key]?.revenue ?? 0,
             };
         });
+        console.log(chartData)
 
         return NextResponse.json({ orders: row, chartData: chartData }, { status: 200 });
     } catch (err) {
