@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized user" }, { status: 403 });
     }
 
-    // Update the name in the user table
+    // Update the name in the user tablee
     await db
       .updateTable("user")
       .set({ name })
