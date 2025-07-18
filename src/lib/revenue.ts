@@ -159,7 +159,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     const usdEur = data.quotes?.USDEUR;
                     const usdGbp = data.quotes?.USDGBP;
                     if (usdEur == null || usdGbp == null) {
-                        return NextResponse.json({ error: 'Invalid API response' }, { status: 502 });
+                        return { error: 'Invalid API response' }
                     }
                     console.log(date)
                     const insertSql = `
@@ -363,7 +363,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     const usdEur = data.quotes?.USDEUR;
                     const usdGbp = data.quotes?.USDGBP;
                     if (usdEur == null || usdGbp == null) {
-                        return NextResponse.json({ error: 'Invalid API response' }, { status: 502 });
+                        return { error: 'Invalid API response' }
                     }
 
                     const insertSql = `
