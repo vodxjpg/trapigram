@@ -349,7 +349,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     }
                     return revenue
                 }
-            } else {
+            } else { //some changes
                 const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from})::timestamptz AND to_timestamp(${to})::timestamptz`
                 const exchangeResult = await pgPool.query(exchangeQuery)
 
