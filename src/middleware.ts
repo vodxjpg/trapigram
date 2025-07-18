@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie }          from "better-auth/cookies";
 import { enforceRateLimit }          from "@/lib/rateLimiter";
 
-/*──────────────────── Config ────────────────────*/
+/*──────────────────── Configs ────────────────────*/
 const ALLOWED_ORIGINS = new Set([
   "https://trapyfy.com",
   "https://www.trapyfy.com",
