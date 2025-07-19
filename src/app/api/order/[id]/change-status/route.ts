@@ -163,24 +163,24 @@ export async function PATCH(
         );
 
       /* redeem-discount points (charge) */
-      if (ord.pointsRedeemed > 0) {
-        const pts = -ord.pointsRedeemed;
+      if (ord.pointsRedeemed > 0 && becameActive) {  // Only apply on transition to ACTIVE
+        const pts = -ord.pointsRedeemed;  // e.g., -7
         const logId = uuidv4();
         await client.query(
           `INSERT INTO "affiliatePointLogs"
-             (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
-           VALUES($1,$2,$3,$4,'redeem_points','Redeemed points for discount',NOW(),NOW())`,
+            (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+          VALUES($1,$2,$3,$4,'redeem_points','Redeemed points for discount',NOW(),NOW())`,
           [logId, organizationId, ord.clientId, pts],
         );
         await client.query(
           `INSERT INTO "affiliatePointBalances"
-             ("clientId","organizationId","pointsCurrent","pointsSpent","createdAt","updatedAt")
-           VALUES($1,$2,$3,$4,NOW(),NOW())
-           ON CONFLICT("clientId","organizationId") DO UPDATE
-             SET "pointsCurrent" = "affiliatePointBalances"."pointsCurrent" + EXCLUDED."pointsCurrent",
-                 "pointsSpent"   = "affiliatePointBalances"."pointsSpent"   + EXCLUDED."pointsSpent",
-                 "updatedAt"     = NOW()`,
-          [ord.clientId, organizationId, -ord.pointsRedeemed, ord.pointsRedeemed],
+            ("clientId","organizationId","pointsCurrent","pointsSpent","createdAt","updatedAt")
+          VALUES($1,$2,$3,$4,NOW(),NOW())
+          ON CONFLICT("clientId","organizationId") DO UPDATE
+            SET "pointsCurrent" = "affiliatePointBalances"."pointsCurrent" + $3,
+                "pointsSpent"   = "affiliatePointBalances"."pointsSpent"   + $4,
+                "updatedAt"     = NOW()`,
+          [ord.clientId, organizationId, pts, ord.pointsRedeemed],  // Use pts (-7) and ord.pointsRedeemed (7)
         );
       }
     }
