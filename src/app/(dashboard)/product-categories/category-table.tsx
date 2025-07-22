@@ -318,7 +318,7 @@ export function CategoryTable() {
             <p className="text-left">
               <a
                 className="text-blue-600"
-                href="/product-categories-import-template.xlsx"
+                href="https://bjol9ok8s3a6bkjs.public.blob.vercel-storage.com/categories.xlsx"
                 target="_blank"
               >
                 Download a template

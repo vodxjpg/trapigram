@@ -275,7 +275,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
             <p className="text-left">
               <a
                 className="text-blue-600"
-                href={`/product-attributes/${attributeId}/terms-import-template.xlsx`}
+                href={`https://bjol9ok8s3a6bkjs.public.blob.vercel-storage.com/terms.xlsx`}
                 target="_blank"
               >
                 Download a template

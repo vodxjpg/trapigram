@@ -321,7 +321,7 @@ export function CouponsTable() {
             <p className="text-left">
               <a
                 className="text-blue-600"
-                href="/coupons-import-template.xlsx"
+                href="https://bjol9ok8s3a6bkjs.public.blob.vercel-storage.com/coupons.xlsx"
                 target="_blank"
               >
                 Download a template
