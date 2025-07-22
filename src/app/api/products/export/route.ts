@@ -15,7 +15,7 @@ export async function POST(request: Request) {
         const body = await request.json();
         const products = Array.isArray(body.products) ? body.products : [];
 
-        // Validate
+        // Validate data
         if (!products.length) {
             return NextResponse.json(
                 { error: "No products provided for export" },
