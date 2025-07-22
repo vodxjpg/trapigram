@@ -124,7 +124,7 @@ export async function getRevenue(id: string, organizationId: string) {
 
             let total = 0
 
-            if (paymentType === 'niftipay') {
+            if (paymentType == 'niftipay') {
                 let coin = ""
                 let amount = 0
                 const paidEntry = order.orderMeta.find(item => item.event === "paid");
@@ -196,7 +196,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     const costEUR = costGBP * (USDEUR / USDGBP)
                     let totalEUR = totalGBP * (USDEUR / USDGBP)
 
-                    if (paymentType === 'niftipay') {
+                    if (paymentType == 'niftipay') {
                         totalUSD = total
                         totalEUR = total * USDEUR
                         totalGBP = total * USDEUR
@@ -252,7 +252,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     const costGBP = costEUR * (USDGBP / USDEUR)
                     let totalGBP = totalEUR * (USDGBP / USDEUR)
 
-                    if (paymentType === 'niftipay') {
+                    if (paymentType == 'niftipay') {
                         totalUSD = total
                         totalEUR = total * USDEUR
                         totalGBP = total * USDGBP
@@ -308,7 +308,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     const costGBP = costUSD * USDGBP
                     let totalGBP = totalUSD * USDGBP
 
-                    if (paymentType === 'niftipay') {
+                    if (paymentType == 'niftipay') {
                         totalUSD = total
                         totalEUR = total * USDEUR
                         totalGBP = total * USDGBP
