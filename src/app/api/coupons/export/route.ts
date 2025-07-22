@@ -25,6 +25,7 @@ export async function POST(request: NextRequest) {
                 startDate: string;
                 expirationDate: string | null;
                 limitPerUser: number;
+                usagePerUser: number;
                 usageLimit: number;
                 expendingMinimum: number;
                 expendingLimit: number;
@@ -52,14 +53,33 @@ export async function POST(request: NextRequest) {
             expirationDate: c.expirationDate === '' ? formatDateSlash(c.expirationDate) : '',
             limitPerUser: c.limitPerUser,
             usageLimit: c.usageLimit,
+            usagePerUser: c.usagePerUser,
             expendingMinimum: c.expendingMinimum,
             expendingLimit: c.expendingLimit,
             countries: c.countries.join(', '),
-            visibility: c.visibility ? 'Visible' : 'Hidden',
+            visibility: c.visibility ? 1 : 0,
         }));
 
+        const dummyRow = {
+            id: 'example-id',
+            name: 'example-name',
+            code: 'example-code',
+            description: 'example-description',
+            discount: 'example-discount',
+            discountType: 'example-discountType',
+            startDate: 'example startDate DD/MM/YYYY',
+            expirationDate: 'example expirationDate DD/MM/YYYY',
+            limitPerUser: 'example-limitPerUser',
+            usageLimit: 'example-usageLimit',
+            usagePerUser: 'example-usagePerUser',
+            expendingMinimum: 'example-expendingMinimum',
+            expendingLimit: 'example-expendingLimit',
+            countries: 'example-countries',
+            visibility: 'example-visibility',
+        }
+
         // Build sheet & workbook
-        const ws = XLSX.utils.json_to_sheet(rows);
+        const ws = XLSX.utils.json_to_sheet([dummyRow, ...rows]);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Coupons');
 

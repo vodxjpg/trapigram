@@ -25,11 +25,17 @@ export async function POST(request: NextRequest) {
             id: attr.id,
             name: attr.name,
             slug: attr.slug,
-            terms: attr._count?.terms ?? 0,
         }));
 
+        // 2) Dummy row (put whatever you want here)
+        const dummyRow = {
+            id: 'example-id',
+            slug: 'example-slug',
+            name: 'example-name',
+        }
+
         // Create sheet and workbook
-        const worksheet = XLSX.utils.json_to_sheet(rows);
+        const worksheet = XLSX.utils.json_to_sheet([dummyRow, ...rows]);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Attributes');
 

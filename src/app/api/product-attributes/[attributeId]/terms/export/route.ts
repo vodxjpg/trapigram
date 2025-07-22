@@ -26,8 +26,14 @@ export async function POST(request: NextRequest) {
             slug: attr.slug,
         }));
 
+        const dummyRow = {
+            id: 'example-id',
+            slug: 'example-slug',
+            name: 'example-name',
+        }
+
         // Create sheet and workbook
-        const worksheet = XLSX.utils.json_to_sheet(rows);
+        const worksheet = XLSX.utils.json_to_sheet([dummyRow, ...rows]);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Attributes');
 

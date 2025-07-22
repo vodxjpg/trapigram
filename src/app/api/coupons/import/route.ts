@@ -194,23 +194,29 @@ export async function POST(req: Request) {
                     updatePayload.expirationDate = dmyToTimestampWithOffset(String(re).trim());
                 }
 
-                if (coupon.limitPerUser && coupon.limitPerUser.trim() !== "") {
+                const lpu = coupon.limitPerUser.toString()
+                console.log(coupon.limitPerUser, coupon.usagePerUser)
+                if (lpu && lpu.trim() !== "") {
                     updatePayload.limitPerUser = coupon.limitPerUser
                 }
 
-                if (coupon.usagePerUser && coupon.usagePerUser.trim() !== "") {
+                const upu = coupon.usagePerUser.toString()
+                if (upu && upu.trim() !== "") {
                     updatePayload.usagePerUser = coupon.usagePerUser
                 }
 
-                if (coupon.usageLimit && coupon.usageLimit.trim() !== "") {
+                const uspu = coupon.usageLimit.toString()
+                if (uspu && uspu.trim() !== "") {
                     updatePayload.usageLimit = coupon.usageLimit
                 }
 
-                if (coupon.expendingMinimum && coupon.expendingMinimum.trim() !== "") {
+                const emin = coupon.expendingMinimum.toString()
+                if (emin && emin.trim() !== "") {
                     updatePayload.expendingMinimum = coupon.expendingMinimum
                 }
 
-                if (coupon.expendingLimit && coupon.expendingLimit.trim() !== "") {
+                const emax = coupon.expendingLimit.toString()
+                if (emax && emax.trim() !== "") {
                     updatePayload.expendingLimit = coupon.expendingLimit
                 }
 
@@ -222,7 +228,8 @@ export async function POST(req: Request) {
                     updatePayload.countries = JSON.stringify(countryArray)
                 }
 
-                if (coupon.visibility && coupon.visibility.trim() !== "") {
+                const vis = coupon.visibility.toString()
+                if (vis && vis.trim() !== "") {
                     updatePayload.visibility = coupon.visibility = 1 ? true : false
                 }
 

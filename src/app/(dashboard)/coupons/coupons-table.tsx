@@ -78,6 +78,7 @@ type Coupon = {
   expirationDate: string | null;
   limitPerUser: number;
   usageLimit: number;
+  usagePerUser: number;
   expendingMinimum: number;
   expendingLimit: number;
   countries: string[];
@@ -139,6 +140,7 @@ export function CouponsTable() {
       );
       if (!res.ok) throw new Error("Failed to fetch coupons");
       const data = await res.json();
+      console.log(data);
       setCoupons(data.coupons);
       setTotalPages(data.totalPages || 1);
     } catch (err) {
@@ -447,6 +449,7 @@ export function CouponsTable() {
                 {sortColumn === "usageLimit" &&
                   (sortDirection === "asc" ? "↑" : "↓")}
               </TableHead>
+              <TableHead>Usage Per User</TableHead>
               <TableHead>Expending Min</TableHead>
               <TableHead>Expending Limit</TableHead>
               <TableHead>Countries</TableHead>
@@ -483,6 +486,7 @@ export function CouponsTable() {
                   <TableCell>{fmtLocal(c.expirationDate)}</TableCell>
                   <TableCell>{c.limitPerUser}</TableCell>
                   <TableCell>{c.usageLimit}</TableCell>
+                  <TableCell>{c.usagePerUser}</TableCell>
                   <TableCell>{c.expendingMinimum}</TableCell>
                   <TableCell>{c.expendingLimit}</TableCell>
                   <TableCell>

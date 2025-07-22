@@ -27,8 +27,16 @@ export async function POST(request: NextRequest) {
             parent: cat.parentName || '',
         }));
 
+        // 2) Dummy row (put whatever you want here)
+        const dummyRow = {
+            id: 'example-id',
+            slug: 'example-slug',
+            name: 'example-name',
+            parent: 'example-parent',
+        }
+
         // Build sheet & workbook
-        const ws = XLSX.utils.json_to_sheet(rows);
+        const ws = XLSX.utils.json_to_sheet([dummyRow, ...rows]);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Categories');
 
