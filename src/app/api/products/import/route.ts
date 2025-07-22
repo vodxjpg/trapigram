@@ -653,7 +653,7 @@ export async function POST(req: Request) {
 
                     const attributes: AttributeEntry[] = [];
 
-                    for (let i = 1; i <= 2; i++) {
+                    for (let i = 1; i <= 5; i++) {
 
                         const checkValues = (product[`attributeVariation${i}`] === 0 || product[`attributeVariation${i}`] === 1)
                         if (product[`attributeVariation${i}`] !== "" && checkValues) {
@@ -718,12 +718,12 @@ export async function POST(req: Request) {
                         }
                     }
 
-                    const countries = product.countries
+                    const countries = product.countries.toString()
                     const countryArray = countries
                         .split(",")
                         .map(s => s.trim());
 
-                    const stocks = product.stock
+                    const stocks = product.stock.toString()
                     const stockArray = stocks
                         .split(",")
                         .map(s => s.trim());

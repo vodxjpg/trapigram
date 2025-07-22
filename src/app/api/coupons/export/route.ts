@@ -4,6 +4,14 @@ import * as XLSX from 'xlsx';
 
 export const runtime = 'nodejs';
 
+function formatDateSlash(iso: string): string {
+    const d = new Date(iso);
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const yyyy = d.getUTCFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+}
+
 export async function POST(request: NextRequest) {
     try {
         const { coupons } = (await request.json()) as {
@@ -34,22 +42,20 @@ export async function POST(request: NextRequest) {
 
         // Map coupons to rows
         const rows = coupons.map(c => ({
-            ID: c.id,
-            Name: c.name,
-            Code: c.code,
-            Description: c.description,
-            Discount:
-                c.discountType === 'percentage'
-                    ? `${c.discountAmount}%`
-                    : c.discountAmount,
-            StartDate: c.startDate,
-            ExpirationDate: c.expirationDate ?? '',
-            LimitPerUser: c.limitPerUser,
-            UsageLimit: c.usageLimit,
-            ExpendingMinimum: c.expendingMinimum,
-            ExpendingLimit: c.expendingLimit,
-            Countries: c.countries.join(', '),
-            Visibility: c.visibility ? 'Visible' : 'Hidden',
+            id: c.id,
+            name: c.name,
+            code: c.code,
+            description: c.description,
+            discount: c.discountAmount,
+            discountType: c.discountType,
+            startDate: formatDateSlash(c.startDate),
+            expirationDate: c.expirationDate === '' ? formatDateSlash(c.expirationDate) : '',
+            limitPerUser: c.limitPerUser,
+            usageLimit: c.usageLimit,
+            expendingMinimum: c.expendingMinimum,
+            expendingLimit: c.expendingLimit,
+            countries: c.countries.join(', '),
+            visibility: c.visibility ? 'Visible' : 'Hidden',
         }));
 
         // Build sheet & workbook

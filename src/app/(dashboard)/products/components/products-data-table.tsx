@@ -1,8 +1,22 @@
 // src/app/(dashboard)/products/components/products-data-table.tsx
 "use client";
 
-import { useEffect, useState, useMemo, useCallback, startTransition } from "react";
-import { useDebounce } from "@/hooks/use-debounce";   // ← add
+// Props lifted for external pagination:
+export interface ProductsDataTableProps {
+  page: number;
+  pageSize: number;
+  onPageChange: (p: number) => void;
+  onPageSizeChange: (n: number) => void;
+}
+
+import {
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+  startTransition,
+} from "react";
+import { useDebounce } from "@/hooks/use-debounce"; // ← add
 import {
   type ColumnDef,
   type ColumnFiltersState,
@@ -92,7 +106,12 @@ export type Product = {
   }>;
 };
 
-export function ProductsDataTable() {
+export function ProductsDataTable({
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+}: ProductsDataTableProps) {
   /* ---------------------------------------------------------- */
   /*  1) Basic state & permissions                              */
   /* ---------------------------------------------------------- */
@@ -102,7 +121,7 @@ export function ProductsDataTable() {
 
   const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
     orgId,
-    { product: ["view"] },
+    { product: ["view"] }
   );
   const { hasPermission: canUpdate } = useHasPermission(orgId, {
     product: ["update"],
@@ -116,17 +135,17 @@ export function ProductsDataTable() {
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const [pageSize, setPageSize] = useState(10);
-  const [page, setPage] = useState(1);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   /** ----------------------------------------------------------------
    *  Search text
    *  ---------------------------------------------------------------- */
- const [query, setQuery] = useState("");           // search text
- const debounced         = useDebounce(query, 300);
+  const [query, setQuery] = useState(""); // search text
+  const debounced = useDebounce(query, 300);
   // individual server-side filters
-  const [statusFilter,    setStatusFilter]    = useState<"published" | "draft" | "">("");
-  const [categoryFilter,  setCategoryFilter]  = useState<string>(""); // categoryId or ""
+  const [statusFilter, setStatusFilter] = useState<"published" | "draft" | "">(
+    ""
+  );
+  const [categoryFilter, setCategoryFilter] = useState<string>(""); // categoryId or ""
   const [attributeFilter, setAttributeFilter] = useState<string>(""); // attributeId or ""
   const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
 
@@ -137,15 +156,20 @@ export function ProductsDataTable() {
   const [attributeOptions, setAttributeOptions] = useState<
     { id: string; name: string }[]
   >([]);
- 
-  const { products: productsRaw, isLoading, totalPages, mutate } = useProducts({
-      page,
-      pageSize,
-      search:      debounced,
-      status:      statusFilter || undefined,
-      categoryId:  categoryFilter || undefined,
-      attributeId: attributeFilter || undefined,
-    });
+
+  const {
+    products: productsRaw,
+    isLoading,
+    totalPages,
+    mutate,
+  } = useProducts({
+    page,
+    pageSize,
+    search: debounced,
+    status: statusFilter || undefined,
+    categoryId: categoryFilter || undefined,
+    attributeId: attributeFilter || undefined,
+  });
   const products = productsRaw ?? [];
 
   /* keep `page` within valid range */
@@ -171,7 +195,7 @@ export function ProductsDataTable() {
         setCategoryMap(map);
         setCategoryOptions(categories);
       })
-      .catch(() => { });
+      .catch(() => {});
 
     fetch("/api/product-attributes?page=1&pageSize=1000", {
       headers: {
@@ -180,7 +204,7 @@ export function ProductsDataTable() {
     })
       .then((r) => r.json())
       .then(({ attributes }) => setAttributeOptions(attributes))
-      .catch(() => { });
+      .catch(() => {});
   }, []);
 
   /* ---------------------------------------------------------- */
@@ -199,7 +223,7 @@ export function ProductsDataTable() {
         toast.error("Failed to duplicate product");
       }
     },
-    [mutate],
+    [mutate]
   );
 
   const handleStatusChange = useCallback(
@@ -217,7 +241,7 @@ export function ProductsDataTable() {
         toast.error("Failed to update product status");
       }
     },
-    [mutate],
+    [mutate]
   );
 
   /* ---------------------------------------------------------- */
@@ -233,7 +257,9 @@ export function ProductsDataTable() {
             className="h-4 w-4"
             checked={table.getIsAllRowsSelected()}
             aria-checked={
-              table.getIsSomeRowsSelected() ? "mixed" : table.getIsAllRowsSelected()
+              table.getIsSomeRowsSelected()
+                ? "mixed"
+                : table.getIsAllRowsSelected()
             }
             onCheckedChange={(chk) => table.toggleAllRowsSelected(!!chk)}
           />
@@ -284,7 +310,9 @@ export function ProductsDataTable() {
       {
         accessorKey: "title",
         header: "Product Title",
-        cell: ({ row }) => <div className="font-medium">{row.original.title}</div>,
+        cell: ({ row }) => (
+          <div className="font-medium">{row.original.title}</div>
+        ),
       },
       /* ---------- SKU column ---------- */
       {
@@ -327,7 +355,9 @@ export function ProductsDataTable() {
           </Select>
         ),
         filterFn: (row, _id, val) =>
-          val === undefined || val === "all" ? true : row.original.status === val,
+          val === undefined || val === "all"
+            ? true
+            : row.original.status === val,
       },
       /* ---------- price column ---------- */
       {
@@ -349,9 +379,7 @@ export function ProductsDataTable() {
           <Button
             variant="ghost"
             className="px-0 hover:bg-transparent"
-            onClick={() =>
-              column.toggleSorting(column.getIsSorted() === "asc")
-            }
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           >
             Price
             <ArrowUpDown className="ml-1 h-3 w-3" />
@@ -374,11 +402,12 @@ export function ProductsDataTable() {
           return (
             <div className="text-left">
               {display ? `$${display.toFixed(2)}` : "-"}
-              {p.productType === "simple" && p.salePrice?.[country] !== null && (
-                <span className="ml-2 text-sm text-gray-500 line-through">
-                  ${p.regularPrice[country]?.toFixed(2)}
-                </span>
-              )}
+              {p.productType === "simple" &&
+                p.salePrice?.[country] !== null && (
+                  <span className="ml-2 text-sm text-gray-500 line-through">
+                    ${p.regularPrice[country]?.toFixed(2)}
+                  </span>
+                )}
             </div>
           );
         },
@@ -406,7 +435,7 @@ export function ProductsDataTable() {
         header: "Categories",
         cell: ({ row }) => {
           const names = row.original.categories.map(
-            (id) => categoryMap[id] ?? id,
+            (id) => categoryMap[id] ?? id
           );
           return (
             <div className="flex flex-wrap gap-1">
@@ -458,9 +487,7 @@ export function ProductsDataTable() {
           <Button
             variant="ghost"
             className="px-0 hover:bg-transparent"
-            onClick={() =>
-              column.toggleSorting(column.getIsSorted() === "asc")
-            }
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           >
             Created&nbsp;At
             <ArrowUpDown className="ml-1 h-3 w-3" />
@@ -529,7 +556,7 @@ export function ProductsDataTable() {
       canDelete,
       handleStatusChange,
       handleDuplicateProduct,
-    ],
+    ]
   );
 
   /* ---------------------------------------------------------- */
@@ -549,11 +576,11 @@ export function ProductsDataTable() {
     onRowSelectionChange: setRowSelection,
     state: { sorting, columnFilters, columnVisibility, rowSelection },
   });
-/* ────────────────────────────────────────────────────────────────
- *  Whenever `pageSize` changes (from the <Select>) update
- *  react-table’s own page-size so it stops slicing at 10.
- * ────────────────────────────────────────────────────────────────*/
-useEffect(() => {
+  /* ────────────────────────────────────────────────────────────────
+   *  Whenever `pageSize` changes (from the <Select>) update
+   *  react-table’s own page-size so it stops slicing at 10.
+   * ────────────────────────────────────────────────────────────────*/
+  useEffect(() => {
     table.setPageSize(pageSize);
   }, [pageSize, table]);
 
@@ -561,9 +588,7 @@ useEffect(() => {
   /*  6) Bulk delete (needs `table`)                             */
   /* ---------------------------------------------------------- */
   const handleBulkDelete = useCallback(async () => {
-    const ids = table
-      .getSelectedRowModel()
-      .flatRows.map((r) => r.original.id);
+    const ids = table.getSelectedRowModel().flatRows.map((r) => r.original.id);
     if (!ids.length) return;
     try {
       const res = await fetch("/api/products", {
@@ -605,7 +630,7 @@ useEffect(() => {
   /* ---------------------------------------------------------- */
   const selectedCount = useMemo(
     () => Object.values(rowSelection).filter(Boolean).length,
-    [rowSelection],
+    [rowSelection]
   );
 
   useEffect(() => {
@@ -621,9 +646,6 @@ useEffect(() => {
     return null;
   }
 
-
-
-
   /* ---------------------------------------------------------- */
   /*  10) Render                                                 */
   /* ---------------------------------------------------------- */
@@ -632,28 +654,30 @@ useEffect(() => {
       {/* Toolbar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <Input
-          placeholder="Search products..."
-          value={query}
-          onChange={(e) => {
-            const txt = e.target.value;
-            startTransition(() => {
-              setQuery(txt);   // instant UI update
-              setPage(1);      // reset page without blocking paint
-            });
-          }}
-          className="w-full sm:max-w-sm"
+          <Input
+            placeholder="Search products..."
+            value={query}
+            onChange={(e) => {
+              const txt = e.target.value;
+              startTransition(() => {
+                setQuery(txt); // instant UI update
+                setPage(1); // reset page without blocking paint
+              });
+            }}
+            className="w-full sm:max-w-sm"
           />
 
           {/* Status filter */}
           <Select
-           value={statusFilter || "all"}
-           onValueChange={(v) => {
-            startTransition(() => {
-              setStatusFilter(v === "all" ? "" : (v as "published" | "draft"));
-              setPage(1);
-            });
-          }}
+            value={statusFilter || "all"}
+            onValueChange={(v) => {
+              startTransition(() => {
+                setStatusFilter(
+                  v === "all" ? "" : (v as "published" | "draft")
+                );
+                setPage(1);
+              });
+            }}
           >
             <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue placeholder="Filter by status" />
@@ -690,14 +714,13 @@ useEffect(() => {
 
           {/* Attribute filter */}
           <Select
-    
-               value={attributeFilter || "all"}
-               onValueChange={(v) => {
-                startTransition(() => {
-                  setAttributeFilter(v === "all" ? "" : v);
-                  setPage(1);
-                });
-              }}
+            value={attributeFilter || "all"}
+            onValueChange={(v) => {
+              startTransition(() => {
+                setAttributeFilter(v === "all" ? "" : v);
+                setPage(1);
+              });
+            }}
           >
             <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue placeholder="Filter by attribute" />
@@ -716,10 +739,10 @@ useEffect(() => {
           <Select
             value={pageSize.toString()}
             onValueChange={(v) => {
-                 startTransition(() => {
-                     setPageSize(Number(v));
-                     setPage(1);
-                   });
+              startTransition(() => {
+                setPageSize(Number(v));
+                setPage(1);
+              });
             }}
           >
             <SelectTrigger className="w-full sm:w-[100px]">
@@ -802,14 +825,20 @@ useEffect(() => {
                 >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext()
+                      )}
                     </TableCell>
                   ))}
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-24 text-center"
+                >
                   No products found.
                 </TableCell>
               </TableRow>
@@ -822,12 +851,11 @@ useEffect(() => {
       <div className="flex items-center justify-between space-x-2 py-4">
         <div className="text-sm text-muted-foreground">
           Showing {(page - 1) * pageSize + 1} to{" "}
-                    {Math.min(
+          {Math.min(
             page * pageSize,
-            (products.length ?? 0) + (page - 1) * pageSize,
-         )}{" "}
-         of
-          many entries
+            (products.length ?? 0) + (page - 1) * pageSize
+          )}{" "}
+          of many entries
         </div>
         <div className="flex items-center space-x-2">
           <Button

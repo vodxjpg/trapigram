@@ -7,9 +7,10 @@ export const runtime = 'nodejs';
 export async function POST(request: NextRequest) {
     try {
         // Parse incoming JSON
-        const { terms } = (await request.json()) as {
+        /* const { terms } = (await request.json()) as {
             terms: Array<{ name: string; slug: string; _count?: { terms: number } }>;
-        };
+        }; */
+        const { terms } = await request.json()
 
         if (!Array.isArray(terms)) {
             return new Response(
@@ -20,8 +21,9 @@ export async function POST(request: NextRequest) {
 
         // Prepare rows for Excel
         const rows = terms.map(attr => ({
-            Name: attr.name,
-            Slug: attr.slug,
+            id: attr.id,
+            name: attr.name,
+            slug: attr.slug,
         }));
 
         // Create sheet and workbook

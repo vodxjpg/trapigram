@@ -7,9 +7,11 @@ export const runtime = 'nodejs';
 export async function POST(request: NextRequest) {
     try {
         // Parse incoming JSON
-        const { attributes } = (await request.json()) as {
-            attributes: Array<{ name: string; slug: string; _count?: { terms: number } }>;
-        };
+        /*  const { attributes } = (await request.json()) as {
+             attributes: Array<{ name: string; slug: string; _count?: { terms: number } }>;
+         }; */
+        const { attributes } = await request.json()
+        console.log(attributes)
 
         if (!Array.isArray(attributes)) {
             return new Response(
@@ -20,9 +22,10 @@ export async function POST(request: NextRequest) {
 
         // Prepare rows for Excel
         const rows = attributes.map(attr => ({
-            Name: attr.name,
-            Slug: attr.slug,
-            Terms: attr._count?.terms ?? 0,
+            id: attr.id,
+            name: attr.name,
+            slug: attr.slug,
+            terms: attr._count?.terms ?? 0,
         }));
 
         // Create sheet and workbook

@@ -10,9 +10,10 @@ export async function POST(request: NextRequest) {
     if (ctx instanceof NextResponse) return ctx;
     try {
         // Expect the client to send { categories: Array<{ name, slug, parentName }> }
-        const { categories } = await request.json() as {
+        /* const { categories } = await request.json() as {
             categories: Array<{ name: string; slug: string; parentName?: string }>;
-        };
+        }; */
+        const { categories } = await request.json()
         console.log(categories)
         if (!Array.isArray(categories)) {
             return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
@@ -20,9 +21,10 @@ export async function POST(request: NextRequest) {
 
         // Map to rows for Excel
         const rows = categories.map(cat => ({
-            Name: cat.name,
-            Slug: cat.slug,
-            Parent: cat.parentName || '',
+            id: cat.id,
+            slug: cat.slug,
+            name: cat.name,
+            parent: cat.parentName || '',
         }));
 
         // Build sheet & workbook

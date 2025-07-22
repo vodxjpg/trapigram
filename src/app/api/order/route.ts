@@ -1,7 +1,7 @@
 // src/app/api/order/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";

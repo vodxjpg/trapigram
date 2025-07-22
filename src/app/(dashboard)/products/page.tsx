@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { Plus, Upload, Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ProductsDataTable } from "./components/products-data-table";
+import {
+  ProductsDataTable,
+  type Product,
+} from "./components/products-data-table";
 import { PageHeader } from "@/components/page-header";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
@@ -14,40 +17,40 @@ import { toast } from "sonner";
 export default function ProductsPage() {
   const router = useRouter();
 
-  /* ── active organisation ─────────────────────────────────── */
-  const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId = activeOrg?.id ?? null;
+  // ── Pagination & Export Data ─────────────────────────────────────────
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [currentProducts, setCurrentProducts] = useState<Product[]>([]);
 
-  /* ── permission flags ────────────────────────────────────── */
-  const { hasPermission: canViewProducts, isLoading: permLoading } =
-    useHasPermission(organizationId, { product: ["view"] });
-
-  const { hasPermission: canCreateProducts } = useHasPermission(
-    organizationId,
-    { product: ["create"] }
-  );
-
-  /* ── estado de botones ───────────────────────────────────── */
+  // ── Buttons & Import Modal State ────────────────────────────────────
   const [isLoading, setIsLoading] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-
-  /* ── estados modal import ────────────────────────────────── */
   const [showImportModal, setShowImportModal] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /* ── redirect if no visibility ───────────────────────────── */
+  // ── Active Org & Permissions ─────────────────────────────────────────
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+  const { hasPermission: canViewProducts, isLoading: permLoading } =
+    useHasPermission(organizationId, { product: ["view"] });
+  const { hasPermission: canCreateProducts } = useHasPermission(
+    organizationId,
+    { product: ["create"] }
+  );
+
+  // Redirect if no view permission
   useEffect(() => {
     if (!permLoading && !canViewProducts) {
       router.replace("/dashboard");
     }
   }, [permLoading, canViewProducts, router]);
 
-  if (permLoading || !canViewProducts) return null; // guard
+  if (permLoading || !canViewProducts) return null;
 
-  /* ── handlers ────────────────────────────────────────────── */
+  // ── Handlers ─────────────────────────────────────────────────────────
   const handleCreateProduct = () => {
     router.push("/products/new");
   };
@@ -70,35 +73,28 @@ export default function ProductsPage() {
     setIsImporting(true);
     setImportMessage(null);
     setImportErrors([]);
-
     const formData = new FormData();
     formData.append("file", file);
-
     try {
       const res = await fetch("/api/products/import", {
         method: "POST",
         body: formData,
       });
       const data = await res.json();
-      console.log(data);
-
       if (res.status === 207 && data.errors) {
-        // Partial success with errors
         setImportMessage(`❌ Some rows failed to import`);
         setImportErrors(
           data.errors.map((e: any) => `Row ${e.row}: ${e.error}`)
         );
       } else if (!res.ok) {
-        // General error
         let error = "";
         for (const err of data.rowErrors) {
-          error = error + `❌ ${err.error}in row ${err.row}.\n`;
+          error += `❌ ${err.error} in row ${err.row}.\n`;
         }
-        setImportMessage(`${error}`);
+        setImportMessage(error);
       } else {
-        // Success
         setImportMessage(
-          `✅ ${data.successCount} product(s) created successfully. \n✅ ${data.editCount} product(s) updated successfully.`
+          `✅ ${data.successCount} created. \n✅ ${data.editCount} updated.`
         );
         router.refresh();
       }
@@ -124,12 +120,33 @@ export default function ProductsPage() {
 
   const handleExport = async () => {
     setIsExporting(true);
-    // export logic...
+    try {
+      const res = await fetch("/api/products/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ products: currentProducts }),
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `products-page-${page}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
+  // ── Render ───────────────────────────────────────────────────────────
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
-      {/* hidden file input */}
+      {/* Hidden file input */}
       <Input
         ref={fileInputRef}
         id="file-upload"
@@ -251,7 +268,13 @@ export default function ProductsPage() {
       />
 
       <Suspense fallback={<div>Loading products table...</div>}>
-        <ProductsDataTable />
+        <ProductsDataTable
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          onProductsLoaded={setCurrentProducts}
+        />
       </Suspense>
     </div>
   );
