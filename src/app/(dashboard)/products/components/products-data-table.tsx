@@ -1,13 +1,4 @@
-// src/app/(dashboard)/products/components/products-data-table.tsx
 "use client";
-
-// Props lifted for external pagination:
-export interface ProductsDataTableProps {
-  page: number;
-  pageSize: number;
-  onPageChange: (p: number) => void;
-  onPageSizeChange: (n: number) => void;
-}
 
 import {
   useEffect,
@@ -15,8 +6,9 @@ import {
   useMemo,
   useCallback,
   startTransition,
+  useRef,
 } from "react";
-import { useDebounce } from "@/hooks/use-debounce"; // ← add
+import { useDebounce } from "@/hooks/use-debounce";
 import {
   type ColumnDef,
   type ColumnFiltersState,
@@ -26,7 +18,6 @@ import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
-  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
@@ -106,11 +97,20 @@ export type Product = {
   }>;
 };
 
+export interface ProductsDataTableProps {
+  page: number;
+  pageSize: number;
+  onPageChange: (p: number) => void;
+  onPageSizeChange: (n: number) => void;
+  onProductsLoaded?: (rows: Product[]) => void;
+}
+
 export function ProductsDataTable({
   page,
   pageSize,
   onPageChange,
   onPageSizeChange,
+  onProductsLoaded,
 }: ProductsDataTableProps) {
   /* ---------------------------------------------------------- */
   /*  1) Basic state & permissions                              */
@@ -136,17 +136,15 @@ export function ProductsDataTable({
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  /** ----------------------------------------------------------------
-   *  Search text
-   *  ---------------------------------------------------------------- */
-  const [query, setQuery] = useState(""); // search text
+
+  // search & individual server-side filters
+  const [query, setQuery] = useState("");
   const debounced = useDebounce(query, 300);
-  // individual server-side filters
   const [statusFilter, setStatusFilter] = useState<"published" | "draft" | "">(
     ""
   );
-  const [categoryFilter, setCategoryFilter] = useState<string>(""); // categoryId or ""
-  const [attributeFilter, setAttributeFilter] = useState<string>(""); // attributeId or ""
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [attributeFilter, setAttributeFilter] = useState<string>("");
   const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
 
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
@@ -172,10 +170,24 @@ export function ProductsDataTable({
   });
   const products = productsRaw ?? [];
 
+  /* ---------------------------------------------------------- */
+  /*  Push loaded rows up (avoid infinite loop)                 */
+  /* ---------------------------------------------------------- */
+  const lastSentIds = useRef<string>("");
+  useEffect(() => {
+    if (!onProductsLoaded) return;
+    const ids = products.map((p) => p.id).join(",");
+    if (ids !== lastSentIds.current) {
+      onProductsLoaded(products);
+      lastSentIds.current = ids;
+    }
+  }, [products, onProductsLoaded]);
+
   /* keep `page` within valid range */
   useEffect(() => {
-    if (page > totalPages) setPage(Math.max(totalPages, 1));
-  }, [totalPages, page]);
+    if (!totalPages) return;
+    if (page > totalPages) onPageChange(Math.max(totalPages, 1));
+  }, [page, totalPages, onPageChange]);
 
   /* ---------------------------------------------------------- */
   /*  2) Ancillary data fetches                                 */
@@ -249,7 +261,6 @@ export function ProductsDataTable({
   /* ---------------------------------------------------------- */
   const columns: ColumnDef<Product>[] = useMemo(
     () => [
-      /* ---------- selection column ---------- */
       {
         id: "select",
         header: ({ table }) => (
@@ -276,7 +287,6 @@ export function ProductsDataTable({
         ),
         enableSorting: false,
       },
-      /* ---------- image column ---------- */
       {
         accessorKey: "image",
         header: "Image",
@@ -306,7 +316,6 @@ export function ProductsDataTable({
           );
         },
       },
-      /* ---------- title column ---------- */
       {
         accessorKey: "title",
         header: "Product Title",
@@ -314,13 +323,11 @@ export function ProductsDataTable({
           <div className="font-medium">{row.original.title}</div>
         ),
       },
-      /* ---------- SKU column ---------- */
       {
         accessorKey: "sku",
         header: "SKU",
         cell: ({ row }) => <div className="text-sm">{row.original.sku}</div>,
       },
-      /* ---------- status column ---------- */
       {
         accessorKey: "status",
         header: "Status",
@@ -359,7 +366,6 @@ export function ProductsDataTable({
             ? true
             : row.original.status === val,
       },
-      /* ---------- price column ---------- */
       {
         accessorKey: "price",
         accessorFn: (p) => {
@@ -412,7 +418,6 @@ export function ProductsDataTable({
           );
         },
       },
-      /* ---------- stock status column ---------- */
       {
         accessorKey: "stockStatus",
         header: "Stock Status",
@@ -429,7 +434,6 @@ export function ProductsDataTable({
           </Badge>
         ),
       },
-      /* ---------- categories column ---------- */
       {
         accessorKey: "categories",
         header: "Categories",
@@ -461,7 +465,6 @@ export function ProductsDataTable({
         enableSorting: true,
         filterFn: (row, _id, val) => row.original.categories.includes(val),
       },
-      /* ---------- attributes column ---------- */
       {
         accessorKey: "attributes",
         header: "Attributes",
@@ -480,7 +483,6 @@ export function ProductsDataTable({
         filterFn: (row, _id, val) =>
           row.original.attributes.some((a) => a.id === val),
       },
-      /* ---------- created-at column ---------- */
       {
         accessorKey: "createdAt",
         header: ({ column }) => (
@@ -502,7 +504,6 @@ export function ProductsDataTable({
           );
         },
       },
-      /* ---------- actions column ---------- */
       {
         id: "actions",
         cell: ({ row }) => {
@@ -560,7 +561,7 @@ export function ProductsDataTable({
   );
 
   /* ---------------------------------------------------------- */
-  /*  5) Table instance (call hook every render)                */
+  /*  5) Table instance                                        */
   /* ---------------------------------------------------------- */
   const table = useReactTable({
     enableRowSelection: true,
@@ -576,16 +577,15 @@ export function ProductsDataTable({
     onRowSelectionChange: setRowSelection,
     state: { sorting, columnFilters, columnVisibility, rowSelection },
   });
-  /* ────────────────────────────────────────────────────────────────
-   *  Whenever `pageSize` changes (from the <Select>) update
-   *  react-table’s own page-size so it stops slicing at 10.
-   * ────────────────────────────────────────────────────────────────*/
+
+  // Sync react-table page size with our prop
   useEffect(() => {
     table.setPageSize(pageSize);
-  }, [pageSize, table]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageSize]);
 
   /* ---------------------------------------------------------- */
-  /*  6) Bulk delete (needs `table`)                             */
+  /*  6) Bulk delete                                            */
   /* ---------------------------------------------------------- */
   const handleBulkDelete = useCallback(async () => {
     const ids = table.getSelectedRowModel().flatRows.map((r) => r.original.id);
@@ -660,8 +660,8 @@ export function ProductsDataTable({
             onChange={(e) => {
               const txt = e.target.value;
               startTransition(() => {
-                setQuery(txt); // instant UI update
-                setPage(1); // reset page without blocking paint
+                setQuery(txt);
+                onPageChange(1);
               });
             }}
             className="w-full sm:max-w-sm"
@@ -675,7 +675,7 @@ export function ProductsDataTable({
                 setStatusFilter(
                   v === "all" ? "" : (v as "published" | "draft")
                 );
-                setPage(1);
+                onPageChange(1);
               });
             }}
           >
@@ -695,7 +695,7 @@ export function ProductsDataTable({
             onValueChange={(v) => {
               startTransition(() => {
                 setCategoryFilter(v === "all" ? "" : v);
-                setPage(1);
+                onPageChange(1);
               });
             }}
           >
@@ -718,7 +718,7 @@ export function ProductsDataTable({
             onValueChange={(v) => {
               startTransition(() => {
                 setAttributeFilter(v === "all" ? "" : v);
-                setPage(1);
+                onPageChange(1);
               });
             }}
           >
@@ -740,8 +740,8 @@ export function ProductsDataTable({
             value={pageSize.toString()}
             onValueChange={(v) => {
               startTransition(() => {
-                setPageSize(Number(v));
-                setPage(1);
+                onPageSizeChange(Number(v));
+                onPageChange(1);
               });
             }}
           >
@@ -756,7 +756,7 @@ export function ProductsDataTable({
           </Select>
         </div>
 
-        {/* Bulk-delete button (OUTSIDE any <Select>) */}
+        {/* Bulk-delete button */}
         {canDelete && selectedCount > 0 && (
           <Button
             variant="destructive"
@@ -861,7 +861,7 @@ export function ProductsDataTable({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            onClick={() => onPageChange(Math.max(1, page - 1))}
             disabled={page <= 1 || isLoading}
           >
             Previous
@@ -869,7 +869,7 @@ export function ProductsDataTable({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            onClick={() => onPageChange(Math.min(totalPages, page + 1))}
             disabled={page >= totalPages || isLoading}
           >
             Next
