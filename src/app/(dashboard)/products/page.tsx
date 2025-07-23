@@ -169,8 +169,76 @@ export default function ProductsPage() {
       {/* Import modal ... unchanged */}
       {showImportModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          {/* ... modal body unchanged ... */}
-          {/* keep your existing modal JSX */}
+          <div className="bg-white rounded-xl p-6 w-full max-w-md relative">
+            <button
+              className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
+              onClick={closeImportModal}
+            >
+              <X size={20} />
+            </button>
+            <h2 className="text-xl font-semibold mb-4">Import Products</h2>
+            <p className="text-left">
+              <a
+                className="text-blue-600"
+                href="https://bjol9ok8s3a6bkjs.public.blob.vercel-storage.com/product-import-update-example-QF5kH2bLyT7dReogJAIYEuvvED6Ppl.xlsx"
+                target="_blank"
+              >
+                Download a template
+              </a>{" "}
+              to see the import format
+            </p>
+            <div
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-6 cursor-pointer hover:border-gray-400 transition"
+            >
+              <Upload className="mb-2 h-6 w-6 text-gray-500" />
+              <span className="font-medium">Drag &amp; Drop file here</span>
+              <span className="text-sm text-gray-500 mt-1">
+                or click to select
+              </span>
+              <Button
+                variant="outline"
+                className="mt-3"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isImporting}
+              >
+                Browse files
+              </Button>
+            </div>
+            <div className="flex flex-col justify-center text-left mt-2">
+              <small className="text-blue-600">
+                <a href="/import-products" target="_blank">
+                  Learn how to import products
+                </a>
+              </small>
+            </div>
+            {importMessage && (
+              <p
+                className={`mt-4 text-center whitespace-pre-line font-medium ${
+                  importMessage.startsWith("✅")
+                    ? "text-green-600"
+                    : "text-red-600"
+                }`}
+              >
+                {importMessage}
+              </p>
+            )}
+
+            {importErrors.length > 0 && (
+              <ul className="mt-2 text-red-600 list-disc list-inside text-sm">
+                {importErrors.map((err, i) => (
+                  <li key={i}>{err}</li>
+                ))}
+              </ul>
+            )}
+
+            {isImporting && (
+              <div className="absolute inset-0 bg-white/75 flex items-center justify-center rounded-xl">
+                <span>Importing...</span>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
