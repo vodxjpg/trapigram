@@ -30,7 +30,7 @@ function isServiceAccount(req: NextRequest): boolean {
       /* fall through → maybe legacy x-api-key */
     }
   }
-  /* Legacy x-api-key */
+  /* Legacys x-api-key */
   return req.headers.get('x-api-key') === SERVICE_API_KEY;
 }
 
