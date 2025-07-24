@@ -65,6 +65,7 @@ export async function getRevenue(id: string, organizationId: string) {
         const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`
         const resultCheck = await pool.query(checkQuery);
         const check = resultCheck.rows
+        console.log(check)
 
         if (check.length > 0) {
             console.log("[orderRevenue] revenue‑already‑exists", {
@@ -78,6 +79,7 @@ export async function getRevenue(id: string, organizationId: string) {
             const orderQuery = `SELECT * FROM orders WHERE id = '${id}' AND "organizationId" = '${organizationId}'`
             const resultOrders = await pool.query(orderQuery);
             const order = resultOrders.rows[0]
+            console.log(order)
 
             const cartId = order.cartId
             const paymentType = order.paymentMethod
@@ -87,11 +89,15 @@ export async function getRevenue(id: string, organizationId: string) {
             const raw = order.datePaid;   // string or Date
             const paidDate = raw instanceof Date
                 ? raw
-                : new Date(raw);                     // ensure it's a JS Date
+                : new Date(raw);
+            console.log(raw)
+            console.log(paidDate)                     // ensure it's a JS Date
 
             // now get seconds since the Unix epoch
             const to = Math.floor(paidDate.getTime() / 1000);
             const from = to - 3600;
+            console.log(to)
+            console.log(from)
 
             const productQuery = `SELECT p.*, cp.quantity
                     FROM "cartProducts" cp
@@ -129,7 +135,7 @@ export async function getRevenue(id: string, organizationId: string) {
             }, 0);
 
             let total = 0
-
+            console.log(paymentType.toLowerCase())
             if (paymentType.toLowerCase() == 'niftipay') {
                 let coin = ""
                 let amount = 0
@@ -140,6 +146,7 @@ export async function getRevenue(id: string, organizationId: string) {
                 }
 
                 const url = `https://api.coingecko.com/api/v3/coins/${coins[coin]}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
+                console.log(url)
                 const options = { method: 'GET', headers: { accept: 'application/json' } };
 
                 const res = await fetch(url, options)
@@ -153,11 +160,13 @@ export async function getRevenue(id: string, organizationId: string) {
 
                 const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from}) AND to_timestamp(${to})`
                 const exchangeResult = await pgPool.query(exchangeQuery)
+                console.log(exchangeResult.rows)
 
                 let USDEUR = 0
                 let USDGBP = 0
                 if (exchangeResult.rows.length === 0) {
                     const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
+                    console.log(url)
                     const res = await fetch(url);
                     const data = await res.json();
 
