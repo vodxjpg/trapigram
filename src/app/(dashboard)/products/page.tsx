@@ -29,7 +29,7 @@ export default function ProductsPage() {
   const [pageSize, setPageSize] = useState(10);
   const [currentProducts, setCurrentProducts] = useState<Product[]>([]);
 
-  // ── Buttons & Import Modal State ────────────────────────────
+  // ── Buttons & Import Modal States1 ────────────────────────────
   const [isLoading, setIsLoading] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
