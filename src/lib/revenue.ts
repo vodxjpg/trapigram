@@ -83,9 +83,15 @@ export async function getRevenue(id: string, organizationId: string) {
             const paymentType = order.paymentMethod
             const country = order.country
 
-            const date = order.datePaid
-            const to = Math.floor(date / 1000)
-            const from = to - 3600
+            // --- after you've fetched `order` from the DB ---
+            const raw = order.datePaid;   // string or Date
+            const paidDate = raw instanceof Date
+                ? raw
+                : new Date(raw);                     // ensure it's a JS Date
+
+            // now get seconds since the Unix epoch
+            const to = Math.floor(paidDate.getTime() / 1000);
+            const from = to - 3600;
 
             const productQuery = `SELECT p.*, cp.quantity
                     FROM "cartProducts" cp
@@ -124,7 +130,7 @@ export async function getRevenue(id: string, organizationId: string) {
 
             let total = 0
 
-            if (paymentType == 'niftipay') {
+            if (paymentType.toLowerCase() == 'niftipay') {
                 let coin = ""
                 let amount = 0
                 const paidEntry = order.orderMeta.find(item => item.event === "paid");
@@ -134,7 +140,6 @@ export async function getRevenue(id: string, organizationId: string) {
                 }
 
                 const url = `https://api.coingecko.com/api/v3/coins/${coins[coin]}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
-                console.log(url)
                 const options = { method: 'GET', headers: { accept: 'application/json' } };
 
                 const res = await fetch(url, options)
@@ -146,7 +151,7 @@ export async function getRevenue(id: string, organizationId: string) {
                 const price = result.prices[0][1]
                 total = amount * price
 
-                const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from})::timestamptz AND to_timestamp(${to})::timestamptz`
+                const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from}) AND to_timestamp(${to})`
                 const exchangeResult = await pgPool.query(exchangeQuery)
 
                 let USDEUR = 0
@@ -161,12 +166,11 @@ export async function getRevenue(id: string, organizationId: string) {
                     if (usdEur == null || usdGbp == null) {
                         return { error: 'Invalid API response' }
                     }
-                    console.log(date)
                     const insertSql = `
                         INSERT INTO "exchangeRate" ("EUR","GBP", date)
                         VALUES ($1, $2, $3)
                         RETURNING *`;
-                    const values = [usdEur, usdGbp, new Date(date)]
+                    const values = [usdEur, usdGbp, new Date(paidDate)]
                     const response = await pgPool.query(insertSql, values);
                     const result = response.rows[0]
 
@@ -196,7 +200,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     const costEUR = costGBP * (USDEUR / USDGBP)
                     let totalEUR = totalGBP * (USDEUR / USDGBP)
 
-                    if (paymentType == 'niftipay') {
+                    if (paymentType.toLowerCase() == 'niftipay') {
                         totalUSD = total
                         totalEUR = total * USDEUR
                         totalGBP = total * USDEUR
@@ -252,7 +256,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     const costGBP = costEUR * (USDGBP / USDEUR)
                     let totalGBP = totalEUR * (USDGBP / USDEUR)
 
-                    if (paymentType == 'niftipay') {
+                    if (paymentType.toLowerCase() == 'niftipay') {
                         totalUSD = total
                         totalEUR = total * USDEUR
                         totalGBP = total * USDGBP
@@ -308,7 +312,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     const costGBP = costUSD * USDGBP
                     let totalGBP = totalUSD * USDGBP
 
-                    if (paymentType == 'niftipay') {
+                    if (paymentType.toLowerCase() == 'niftipay') {
                         totalUSD = total
                         totalEUR = total * USDEUR
                         totalGBP = total * USDGBP
@@ -350,7 +354,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     return revenue
                 }
             } else { //some changes
-                const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from})::timestamptz AND to_timestamp(${to})::timestamptz`
+                const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from}) AND to_timestamp(${to})`
                 const exchangeResult = await pgPool.query(exchangeQuery)
 
                 let USDEUR = 0
@@ -370,7 +374,7 @@ export async function getRevenue(id: string, organizationId: string) {
                         INSERT INTO "exchangeRate" ("EUR","GBP", date)
                         VALUES ($1, $2, $3)
                         RETURNING *`;
-                    const values = [usdEur, usdGbp, new Date(date)]
+                    const values = [usdEur, usdGbp, new Date(paidDate)]
                     const response = await pgPool.query(insertSql, values);
                     const result = response.rows[0]
 
