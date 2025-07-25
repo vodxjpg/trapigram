@@ -11,6 +11,7 @@ import {
   NotificationChannel // enum helper
 } from "@/lib/notifications";
 import { emit } from "@/lib/ticket-events";
+import { publish } from "@/lib/pubsub";     // ★ new
 
 export async function GET(
     req: NextRequest,
@@ -132,9 +133,10 @@ export async function POST(
     const saved = result.rows[0];
     saved.attachments = JSON.parse(saved.attachments);
 
-   /* 🔔 NEW – broadcast to live listeners
-   1. in-memory (still useful during dev / single process)                */
-emit(id, saved);
+    /* ── push to Redis so ticket UI updates instantly ───────────────── */
+   await publish(`ticket:${id}`, JSON.stringify(saved));
+   /* 🔔 still emit in‑process and Postgres NOTIFY for other consumers */
+   emit(id, saved);
 
 /*   2. cross-process via Postgres LISTEN/NOTIFY                           */
 const chan = `ticket_${id.replace(/-/g, "")}`;      // same channel name as /events

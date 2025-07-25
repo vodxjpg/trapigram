@@ -141,29 +141,28 @@ export default function TicketDetail() {
   }, [id, canView]);
 
    /* ────────────────────────── LIVE UPDATES (POLLING) ─────────────────────── */
-   useEffect(() => {
-     if (!id || !canView) return;
-  
-     const interval = setInterval(async () => {
-       try {
-         const res = await fetch(`/api/tickets/${id}/messages`);
-         if (!res.ok) throw new Error();
-         const fetchedMessages: TicketMessage[] = await res.json();
-         setMessages(prev => {
-           const existingIds = new Set(prev.map(m => m.id));
-           const newMessages = fetchedMessages.filter(m => !existingIds.has(m.id));
-           if (newMessages.length > 0) {
-             return [...prev, ...newMessages].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-           }
-           return prev;
-         });
-       } catch (err) {
-         console.error('Error fetching messages:', err);
-       }
-     }, 5000); // Poll every 5 seconds
-  
-     return () => clearInterval(interval);
-   }, [id, canView]);
+   /* ───────────────────────── real‑time via SSE ───────────────────────── */
+useEffect(() => {
+  if (!id || !canView) return;
+
+  // Server‑Sent Events stream
+  const es = new EventSource(`/api/tickets/${id}/messages/stream`);
+  es.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data) as TicketMessage;
+      setMessages(prev => {
+        if (prev.some(m => m.id === msg.id)) return prev;
+        return [...prev, { ...msg, createdAt: new Date(msg.createdAt) }];
+      });
+    } catch {
+      console.warn("Malformed ticket SSE message");
+    }
+  };
+  es.onerror = () => es.close();  // browser will auto‑reconnect
+
+  return () => es.close();
+}, [id, canView]);
+
 
   /* ---------------- guards AFTER all hooks ------------------------------ */
   if (viewLoading || !canView) return null;
