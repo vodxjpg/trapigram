@@ -261,16 +261,30 @@ if (!permLoading && !canViewOrder) {
     fetchOrderAndClient();
   }, [id]);
 
+  /* ───────────────────────── real‑time via SSE ───────────────────────── */
   useEffect(() => {
     if (!canViewChat) return;
   
-    fetchMessages(); // Initial fetch
+    fetchMessages();               // initial full thread
   
-    const intervalId = setInterval(fetchMessages, 5000); // Poll every 5 seconds
+    const es = new EventSource(`/api/order/${id}/messages/stream`);
   
-    return () => clearInterval(intervalId); // Cleanup on unmount or dependency change
-  }, [fetchMessages, canViewChat]);
-
+    es.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === msg.id)) return prev;   // de‑dup
+          return [...prev, { ...msg, createdAt: new Date(msg.createdAt) }];
+        });
+      } catch {
+        /* ignore malformed payloads */
+      }
+    };
+  
+    es.onerror = () => es.close();  // let browser auto‑reconnect
+  
+    return () => es.close();
+  }, [id, canViewChat, fetchMessages]);
   /* ————————— guards ————————— */
   if (permLoading) return null;
   if (loading)
