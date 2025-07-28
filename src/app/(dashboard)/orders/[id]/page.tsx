@@ -236,40 +236,60 @@ export default function OrderView() {
     /* 1️⃣ first load */
     fetchMessages();
 
-    /* 2️⃣ open EventSource directly to Upstash REST SSE */
-    const SSE_URL = `${
-      process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_URL
-    }/subscribe/order:${id}?_token=${
-      process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_TOKEN
-    }`;              // ← param must be _token (with underscore)
-    const es = new EventSource(SSE_URL);
-    es.onmessage = ({ data }) => {
-      try {
-        /* Upstash sends {"data":"<json string>"} per line */
-        const outer = JSON.parse(data);
-        const inner =
-          typeof outer.data === "string" ? JSON.parse(outer.data) : outer.data;
-        if (!inner?.id) return;
-        setMessages((prev) =>
-          prev.some((m) => m.id === inner.id)
-            ? prev
-            : [...prev, { ...inner, createdAt: new Date(inner.createdAt) }],
-        );
-        lastSeen.current = inner.createdAt;
-      } catch {
-        /* ignore malformed payloads */
-      }
-    };
+    /* 2️⃣ POST‑subscribe via fetch stream */
+    const url =
+      `${process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_URL}` +
+      `/subscribe/order:${id}?_token=${process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_TOKEN}`;
 
-    es.onerror = () => {
-      /* browser auto‑reconnects; polling below covers gaps */
-    };
+    const abort = new AbortController();
+
+    (async () => {
+      try {
+        const res = await fetch(url, {
+          method:  "POST",                       // ← MUST be POST
+          headers: { Accept: "text/event-stream" },
+          signal:  abort.signal,
+        });
+        if (!res.ok || !res.body) return;
+
+        const reader  = res.body.getReader();
+        const dec     = new TextDecoder();
+        let   buffer  = "";
+
+        /* Parse ndjson‑style SSE: one line per `data:` */
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += dec.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop()!;                 // keep last partial
+
+          for (const l of lines) {
+            if (!l.startsWith("data: ")) continue;
+            try {
+              const outer = JSON.parse(l.slice(6));
+              const inner =
+                typeof outer.data === "string" ? JSON.parse(outer.data) : outer.data;
+
+              if (!inner?.id) continue;
+              setMessages(prev =>
+                prev.some(m => m.id === inner.id)
+                  ? prev
+                  : [...prev, { ...inner, createdAt: new Date(inner.createdAt) }],
+              );
+              lastSeen.current = inner.createdAt;
+            } catch {/* ignore bad payloads */}
+          }
+        }
+      } catch {/* abort or network error – polling will cover gaps */}
+    })();
 
     /* 3️⃣ backup poll every 60 s */
     const poll = setInterval(fetchMessages, 60_000);
 
     return () => {
-      es.close();
+      abort.abort();
       clearInterval(poll);
     };
   }, [id, canViewChat, fetchMessages]);
