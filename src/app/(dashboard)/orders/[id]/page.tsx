@@ -45,8 +45,8 @@ interface ShippingInfo {
 }
 interface Order {
   id: string;
-  orderKey: string;                //  ← NEW
-  orderMeta: any[];            
+  orderKey: string;
+  orderMeta: any[];
   cartId: string;
   clientId: string;
   clientFirstName: string;
@@ -108,7 +108,7 @@ function groupByProduct(lines: Product[]) {
         image: string | null;
         isAffiliate: boolean;
         priceBuckets: { unitPrice: number; quantity: number }[];
-      }>
+      }>,
     )
     .map((b) => ({
       ...b,
@@ -119,30 +119,25 @@ function groupByProduct(lines: Product[]) {
 function parseCrypto(metaArr: any[]) {
   if (!metaArr?.length) return null;
 
-  // last element is usually the most up-to-date
   const last = metaArr[metaArr.length - 1];
-
-  // Some entries wrap data under last.order, some have .order + .event
   const o = last.order ?? last;
   const ev = last.event ?? last.status ?? "pending";
 
   const expected = Number(o.expected ?? o.amount) || 0;
-const received = Number(o.received ?? 0)          || 0;
-
-  const pending   = Math.max(0, expected - received);
+  const received = Number(o.received ?? 0) || 0;
+  const pending = Math.max(0, expected - received);
 
   return {
-    asset:     o.asset,
-    network:   o.network,
-    address:   o.address,
-    qrUrl:     o.qrUrl,
+    asset: o.asset,
+    network: o.network,
+    address: o.address,
+    qrUrl: o.qrUrl,
     expected,
     received,
     pending,
-    status:    ev,             // "pending", "underpaid", "paid", …
+    status: ev,
   };
 }
-
 
 export default function OrderView() {
   const { id } = useParams<{ id: string }>();
@@ -150,12 +145,12 @@ export default function OrderView() {
 
   /* ── active organisation ───────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
   /* ── permissions (new hook) ────────────────────────── */
   const {
     hasPermission: canViewOrder,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { order: ["view"] });
 
   const { hasPermission: canViewPricing } = useHasPermission(
@@ -169,9 +164,9 @@ export default function OrderView() {
   );
 
   /* ── state ─────────────────────────────────────────── */
-  const [order,    setOrder   ] = useState<Order | null>(null);
-  const [loading,  setLoading ] = useState(true);
-  const [error,    setError   ] = useState<string | null>(null);
+  const [order, setOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const lastSeen = useRef<string | null>(null);
@@ -191,8 +186,8 @@ export default function OrderView() {
 
       setOrder({
         ...o,
-        orderKey:   o.orderKey,          // ← keep it
-        orderMeta:  o.orderMeta ?? [],   // ← keep it (array; may be empty)
+        orderKey: o.orderKey,
+        orderMeta: o.orderMeta ?? [],
         clientFirstName: c.firstName ?? "",
         clientLastName: c.lastName ?? "",
         clientEmail: c.email ?? "",
@@ -208,31 +203,32 @@ export default function OrderView() {
   };
 
   /* ————————— fetch messages ————————— */
-   const fetchMessages = useCallback(async () => {
-       if (!id || !canViewChat) return;
-    
-       const qs  = lastSeen.current ? `?since=${encodeURIComponent(lastSeen.current)}` : "";
-       const res = await fetch(`/api/order/${id}/messages${qs}`);
-       if (!res.ok) return;
-    
-       const { messages: fresh } = await res.json();
-       if (!fresh.length) return;
-    
-       setMessages(prev => {
-         const seen = new Set(prev.map(p => p.id));
-         const newer = fresh
-           .filter((m:any) => !seen.has(m.id))
-           .map((m:any) => ({ ...m, createdAt: new Date(m.createdAt) }));
-         if (!newer.length) return prev;
-    
-         lastSeen.current = fresh[fresh.length - 1].createdAt; // keep ISO string
-         return [...prev, ...newer];
-       });
-     }, [id, canViewChat]);
+  const fetchMessages = useCallback(async () => {
+    if (!id || !canViewChat) return;
+
+    const qs = lastSeen.current ? `?since=${encodeURIComponent(lastSeen.current)}` : "";
+    const res = await fetch(`/api/order/${id}/messages${qs}`);
+    if (!res.ok) return;
+
+    const { messages: fresh } = await res.json();
+    if (!fresh.length) return;
+
+    setMessages((prev) => {
+      const seen = new Set(prev.map((p) => p.id));
+      const newer = fresh
+        .filter((m: any) => !seen.has(m.id))
+        .map((m: any) => ({ ...m, createdAt: new Date(m.createdAt) }));
+      if (!newer.length) return prev;
+
+      lastSeen.current = fresh[fresh.length - 1].createdAt;
+      return [...prev, ...newer];
+    });
+  }, [id, canViewChat]);
+
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
-  
-    const res = await fetch(`/api/order/${id}/messages`, {
+
+    await fetch(`/api/order/${id}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -243,59 +239,64 @@ export default function OrderView() {
         clientId: order!.clientId,
       }),
     });
-  
+
     setNewMessage("");
   };
 
   /* ————————— effects ————————— */
   useEffect(() => {
-    /* if the user lacks *any* visibility on Orders, bounce them back to   */
-/* the main dashboard (same pattern we used for Clients & Tickets).    */
-if (!permLoading && !canViewOrder) {
-  router.replace("/dashboard");
-}
+    if (!permLoading && !canViewOrder) {
+      router.replace("/dashboard");
+    }
   }, [permLoading, canViewOrder, router]);
 
   useEffect(() => {
     fetchOrderAndClient();
   }, [id]);
 
-  /* ───────────────────────── adaptive polling ───────────────────────── */
-    /* ───────────────────────── live updates via Upstash SSE ───────────── */
-   useEffect(() => {
-       if (!canViewChat) return;
-     
-       /* 1️⃣ first full load */
-       fetchMessages();
-     
-       /* 2️⃣ open EventSource to OUR bridge */
-       const es = new EventSource(`/api/order/${id}/messages/stream`);
-     
-       es.onmessage = ({ data }) => {
-         try {
-           const msg = JSON.parse(data);
-           setMessages(prev =>
-             prev.some(m => m.id === msg.id)
-               ? prev
-               : [...prev, { ...msg, createdAt: new Date(msg.createdAt) }]
-           );
-           lastSeen.current = msg.createdAt;     // advance cursor
-         } catch {/* ignore */}
-       };
-     
-       /* 3️⃣ backup: poll every 60 s in case the socket drops */
-       const poll = setInterval(fetchMessages, 60_000);
-     
-       es.onerror = () => {
-         /* browser auto‑reconnects; polling covers the gap */
-       };
-     
-       return () => {
-         es.close();
-         clearInterval(poll);
-       };
-     }, [id, canViewChat, fetchMessages]);
-  
+  /* ───────────────────────── live updates via Upstash SSE ───────────── */
+  useEffect(() => {
+    if (!canViewChat) return;
+
+    /* 1️⃣ first full load */
+    fetchMessages();
+
+    /* 2️⃣ open EventSource to our bridge */
+    const es = new EventSource(`/api/order/${id}/messages/stream`);
+
+    es.onmessage = ({ data }) => {
+      try {
+        // Upstash envelope → unwrap twice
+        const outer = JSON.parse(data);          // { data: "…string…" }
+        const inner =
+          typeof outer.data === "string" ? JSON.parse(outer.data) : outer.data;
+
+        if (!inner?.id) return; // guard against malformed payload
+
+        setMessages((prev) =>
+          prev.some((m) => m.id === inner.id)
+            ? prev
+            : [...prev, { ...inner, createdAt: new Date(inner.createdAt) }],
+        );
+        lastSeen.current = inner.createdAt;
+      } catch {
+        /* ignore bad payloads */
+      }
+    };
+
+    /* 3️⃣ backup: poll every 60 s in case the socket drops */
+    const poll = setInterval(fetchMessages, 60_000);
+
+    es.onerror = () => {
+      /* browser auto‑reconnects; polling covers the gap */
+    };
+
+    return () => {
+      es.close();
+      clearInterval(poll);
+    };
+  }, [id, canViewChat, fetchMessages]);
+
   /* ————————— guards ————————— */
   if (permLoading) return null;
   if (loading)
@@ -337,13 +338,17 @@ if (!permLoading && !canViewOrder) {
 
   /* ————— helpers ————— */
   const fmtMoney = (n: number) => formatCurrency(n, order.country);
-  const fmtPts   = (n: number) => `${n} pts`;
+  const fmtPts = (n: number) => `${n} pts`;
   const statusClr = (s: string) =>
     (
-      { open: "bg-blue-500", paid: "bg-green-500", cancelled: "bg-red-500", completed: "bg-purple-500" } as const
+      {
+        open: "bg-blue-500",
+        paid: "bg-green-500",
+        cancelled: "bg-red-500",
+        completed: "bg-purple-500",
+      } as const
     )[s as keyof typeof statusClr] ?? "bg-gray-500";
-    const crypto = parseCrypto(order.orderMeta);
-
+  const crypto = parseCrypto(order.orderMeta);
 
   const fmtMsgTime = (d: Date) => format(d, "MMM d, h:mm a");
   return (
