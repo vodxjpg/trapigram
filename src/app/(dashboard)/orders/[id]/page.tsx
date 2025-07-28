@@ -271,14 +271,18 @@ if (!permLoading && !canViewOrder) {
   
     es.onmessage = (e) => {
       try {
-        const msg = JSON.parse(e.data);
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === msg.id)) return prev;   // de‑dup
-          return [...prev, { ...msg, createdAt: new Date(msg.createdAt) }];
-        });
-      } catch {
-        /* ignore malformed payloads */
-      }
+          const outer = JSON.parse(e.data);              // { data: "…string…" }
+          const inner = JSON.parse(
+            typeof outer === "string" ? outer : outer.data || "{}"
+          );                                             // real message object
+        
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === inner.id)) return prev;
+            return [...prev, { ...inner, createdAt: new Date(inner.createdAt) }];
+          });
+        } catch (err) {
+          console.warn("SSE parse error", err);
+        }
     };
   
     es.onerror = () => {
