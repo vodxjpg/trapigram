@@ -22,16 +22,24 @@ export async function GET(
   if (ctx instanceof NextResponse) return ctx;
   try {
     const { id } = await params;
-    const since = req.nextUrl.searchParams.get("since");   // ISO string | null
+    const since = req.nextUrl.searchParams.get("since");   // ISO 8601 | null
+    /* ---- build SQL dynamically: include > $2 only when since is set ---- */
+    const baseSQL = `
+      SELECT om.id, om."orderId", om."clientId", om.message,
+             om."isInternal", om."createdAt", c.email
+        FROM "orderMessages" om
+        JOIN clients c ON c.id = om."clientId"
+       WHERE om."orderId" = $1
+    `;
+    const args: any[] = [id];
+    if (since) {
+      args.push(since); 
+    }
+    
     const { rows } = await pool.query(
-      `
-      SELECT om.id, om.message, om."isInternal", om."createdAt"
-      FROM   "orderMessages" om
-      WHERE  om."orderId" = $1
-      ${since ? 'AND om."createdAt" > $2' : ''}
-      ORDER  BY om."createdAt" ASC
-      `,
-      since ? [id, since] : [id],
+      baseSQL + (since ? ` AND om."createdAt" > $2` : "") +
+      ` ORDER BY om."createdAt" ASC`,
+      args,
     );
     return NextResponse.json({ messages: rows }, { status: 200 });
   } catch (err) {
@@ -48,6 +56,9 @@ export async function POST(
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
+
+   /* ── new: optional incremental sync ─────────────────────────── */
+
 
   try {
     const { id } = params;
