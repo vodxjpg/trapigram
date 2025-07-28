@@ -232,68 +232,63 @@ export default function OrderView() {
   /* ─────────────────────── Upstash direct SSE ─────────────────────── */
   useEffect(() => {
     if (!canViewChat) return;
-
-    /* 1️⃣ first load (in case we missed messages while offline) */
-    fetchMessages();
-
-    /* 2️⃣ open a GET stream with auth header */
+    fetchMessages();                       // initial pull
+  
     const url = `${process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_URL
       }/subscribe/order:${id}`;
-
     const abort = new AbortController();
-
+  
     (async () => {
       try {
         const res = await fetch(url, {
-          method:  "GET",
           headers: {
             Accept:        "text/event-stream",
             Authorization: `Bearer ${process.env.NEXT_PUBLIC_UPSTASH_REST_TOKEN}`,
           },
           signal: abort.signal,
         });
-        if (!res.ok || !res.body) return;       // auth error? network? -> polling fallback
-
+        if (!res.ok || !res.body) return;
+  
         const reader = res.body.getReader();
         const dec    = new TextDecoder();
         let   buf    = "";
-
+  
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
           buf += dec.decode(value, { stream: true });
-
+  
           const lines = buf.split("\n");
-          buf = lines.pop()!;                   // last partial fragment
-
-          for (const l of lines) {
-            if (!l.startsWith("data: ")) continue;
+          buf = lines.pop()!;                    // keep last partial
+  
+          for (let l of lines) {
+            l = l.trim();
+            if (!l) continue;
+  
+            // 🟢 NEW — support both formats
+            if (l.startsWith("data:")) l = l.slice(5).trim();
+  
             try {
-              // Upstash sends one JSON string per line → {"data":"…"}
-              const outer = JSON.parse(l.slice(6));
-              const inner =
-                typeof outer.data === "string" ? JSON.parse(outer.data) : outer.data;
+              const outer  = JSON.parse(l);                 // {data:"…"}
+              const inner  = typeof outer.data === "string"
+                ? JSON.parse(outer.data)
+                : outer.data;
               if (!inner?.id) continue;
-
+  
               setMessages(prev =>
                 prev.some(m => m.id === inner.id)
                   ? prev
                   : [...prev, { ...inner, createdAt: new Date(inner.createdAt) }],
               );
               lastSeen.current = inner.createdAt;
-            } catch { /* ignore bad payloads */ }
+            } catch {/* ignore parse errors */}
           }
         }
-      } catch { /* network or abort */ }
+      } catch {/* abort or network error */}
     })();
-
-    /* 3️⃣ backup poll every 60 s */
+  
     const poll = setInterval(fetchMessages, 60_000);
-
-    return () => {
-      abort.abort();
-      clearInterval(poll);
-    };
+    return () => { abort.abort(); clearInterval(poll); };
   }, [id, canViewChat, fetchMessages]);
   /* ————————— guards ————————— */
   if (permLoading) return null;
