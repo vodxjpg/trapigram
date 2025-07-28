@@ -239,11 +239,10 @@ export default function OrderView() {
     /* 2️⃣ open EventSource directly to Upstash REST SSE */
     const SSE_URL = `${
       process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_URL
-    }/subscribe/order:${id}?token=${
+    }/subscribe/order:${id}?_token=${
       process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_TOKEN
-    }`;
+    }`;              // ← param must be _token (with underscore)
     const es = new EventSource(SSE_URL);
-
     es.onmessage = ({ data }) => {
       try {
         /* Upstash sends {"data":"<json string>"} per line */
