@@ -10,7 +10,9 @@ const REST  = process.env.UPSTASH_REDIS_REST_URL!;
 const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN!;
 
 export function signedSseURL(channel: string): string {
-  if (!REST || !TOKEN) throw new Error("Upstash env vars missing");
-  const base = REST.replace(/\/$/, "");          // strip trailing /
-  return `${base}/sse/${TOKEN}?topic=${encodeURIComponent(channel)}`;
-}
+      if (!REST || !TOKEN) throw new Error("Upstash env vars missing");
+      const base = REST.replace(/\/$/, "");           // strip trailing /
+    
+      /* correct:  /subscribe/<channel>?token=<TOKEN>  */
+      return `${base}/subscribe/${encodeURIComponent(channel)}?token=${TOKEN}`;
+    }
