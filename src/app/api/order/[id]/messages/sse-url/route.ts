@@ -1,12 +1,16 @@
 // src/app/api/order/[id]/messages/sse-url/route.ts
 import { NextResponse } from "next/server";
 import { signedSseURL } from "@/lib/upstash";
+import { getContext }   from "@/lib/context";   // ✅ optional auth
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: { id: string } },
 ) {
-  /* OPTIONAL: auth check – ensure caller can view this order */
-  const url = signedSseURL(`order:${params.id}`, 3600);
+  /* optional: reject if user has no permission to view this order */
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+
+  const url = signedSseURL(`order:${params.id}`);
   return NextResponse.json({ url });
 }

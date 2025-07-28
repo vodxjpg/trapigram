@@ -1,14 +1,16 @@
 // src/lib/upstash.ts
-import { Redis } from "@upstash/redis/cloudflare";
-
-export const redis = new Redis({
-  url:   process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-});
-
 /**
- * Create a pre‑signed SSE URL for one channel, valid N seconds
+ * Build a pre‑signed SSE URL that can be opened safely in the browser
+ * (no Authorization header required).
+ *
+ * Upstash format:
+ *   https://<rest‑url>/sse/<TOKEN>?topic=<channel>
  */
-export function signedSseURL(channel: string, ttlSec = 3600) {
-  return redis.sse.subscribeUrl(channel, { expiresIn: ttlSec });
+const REST  = process.env.UPSTASH_REDIS_REST_URL!;
+const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN!;
+
+export function signedSseURL(channel: string): string {
+  if (!REST || !TOKEN) throw new Error("Upstash env vars missing");
+  const base = REST.replace(/\/$/, "");          // strip trailing /
+  return `${base}/sse/${TOKEN}?topic=${encodeURIComponent(channel)}`;
 }
