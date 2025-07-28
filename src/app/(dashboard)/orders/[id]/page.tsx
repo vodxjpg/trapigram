@@ -1,7 +1,7 @@
 // src/app/(dashboard)/orders/[id]/page.tsx
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, CreditCard, Package, Truck, Send } from "lucide-react";
 import Image from "next/image";
@@ -174,6 +174,7 @@ export default function OrderView() {
   const [error,    setError   ] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
+  const lastSeen = useRef<string | null>(null);
 
   /* ————————— fetch order + client ————————— */
   const fetchOrderAndClient = async () => {
@@ -208,17 +209,29 @@ export default function OrderView() {
 
   /* ————————— fetch messages ————————— */
   const fetchMessages = useCallback(async () => {
-    if (!id || !order || !canViewChat) return;
-  
-    try {
-      const res = await fetch(`/api/order/${id}/messages`);
-      if (!res.ok) throw new Error("Forbidden");
-      const data = await res.json();
-      setMessages(data.messages.map(msg => ({ ...msg, createdAt: new Date(msg.createdAt) })));
-    } catch (err) {
-      console.error('Error fetching messages:', err);
-    }
-  }, [id, order, canViewChat]);
+      /* nothing to do if we don’t have an order or permission */
+      if (!id || !canViewChat) return;
+    
+      /* add `?since=…` only after the first run */
+      const qs = lastSeen.current
+        ? `?since=${encodeURIComponent(lastSeen.current)}`
+        : "";
+    
+      const res = await fetch(`/api/order/${id}/messages${qs}`);
+      if (!res.ok) return;
+    
+      const { messages: newMsgs } = await res.json();
+      if (!newMsgs.length) return;           // no news
+    
+      /* append and convert ISO → Date */
+      setMessages(prev => [
+        ...prev,
+        ...newMsgs.map((m:any) => ({ ...m, createdAt: new Date(m.createdAt) }))
+      ]);
+    
+      /* remember newest timestamp for next poll */
+      lastSeen.current = newMsgs[newMsgs.length - 1].createdAt;
+    }, [id, canViewChat]);
 
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
@@ -245,6 +258,7 @@ export default function OrderView() {
         createdAt: new Date(m.messages.createdAt),
       },
     ]);
+    lastSeen.current = m.messages.createdAt;
     setNewMessage("");
   };
 
@@ -263,34 +277,13 @@ if (!permLoading && !canViewOrder) {
 
   /* ───────────────────────── real‑time via SSE ───────────────────────── */
   useEffect(() => {
-    if (!canViewChat) return;
+      if (!canViewChat) return;
+    
+      fetchMessages();                       // first load
+      const int = setInterval(fetchMessages, 5_000);   // poll every 5 s
+      return () => clearInterval(int);
+    }, [id, canViewChat, fetchMessages]);
   
-    fetchMessages();               // initial full thread
-  
-    const es = new EventSource(`/api/order/${id}/messages/stream`);
-  
-    es.onmessage = (e) => {
-      try {
-          const outer = JSON.parse(e.data);              // { data: "…string…" }
-          const inner = JSON.parse(
-            typeof outer === "string" ? outer : outer.data || "{}"
-          );                                             // real message object
-        
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === inner.id)) return prev;
-            return [...prev, { ...inner, createdAt: new Date(inner.createdAt) }];
-          });
-        } catch (err) {
-          console.warn("SSE parse error", err);
-        }
-    };
-  
-    es.onerror = () => {
-        /* let the browser reopen the connection by itself */
-      };
-  
-    return () => es.close();
-  }, [id, canViewChat, fetchMessages]);
   /* ————————— guards ————————— */
   if (permLoading) return null;
   if (loading)

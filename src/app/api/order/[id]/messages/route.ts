@@ -22,14 +22,16 @@ export async function GET(
   if (ctx instanceof NextResponse) return ctx;
   try {
     const { id } = await params;
+    const since = req.nextUrl.searchParams.get("since");   // ISO string | null
     const { rows } = await pool.query(
-      `SELECT om.id, om."orderId", om."clientId", om.message,
-              om."isInternal", om."createdAt", c.email
-         FROM "orderMessages" om
-         JOIN clients c ON c.id = om."clientId"
-        WHERE om."orderId" = $1
-     ORDER BY om."createdAt" ASC`,
-      [id],
+      `
+      SELECT om.id, om.message, om."isInternal", om."createdAt"
+      FROM   "orderMessages" om
+      WHERE  om."orderId" = $1
+      ${since ? 'AND om."createdAt" > $2' : ''}
+      ORDER  BY om."createdAt" ASC
+      `,
+      since ? [id, since] : [id],
     );
     return NextResponse.json({ messages: rows }, { status: 200 });
   } catch (err) {
