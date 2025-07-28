@@ -1,16 +1,12 @@
-// src/app/api/order/[id]/messages/sse-url/route.ts
 import { NextResponse } from "next/server";
 import { signedSseURL } from "@/lib/upstash";
-import { getContext }   from "@/lib/context";   // ✅ optional auth
 
+// Node runtime (needs crypto); do NOT mark as `"edge"`
 export async function GET(
-  req: Request,
+  _req: Request,
   { params }: { params: { id: string } },
 ) {
-  /* optional: reject if user has no permission to view this order */
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-
-  const url = signedSseURL(`order:${params.id}`);
+  // todo: add your auth/permissions check here …
+  const url = signedSseURL(`order:${params.id}`, 3600); // 1 h validity
   return NextResponse.json({ url });
 }
