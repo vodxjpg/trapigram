@@ -1,4 +1,3 @@
-// src/app/api/order/[id]/messages/stream/route.ts
 import { NextRequest } from "next/server";
 export const runtime = "edge";
 
@@ -12,24 +11,46 @@ export async function GET(
   const { id } = params;
   if (!URL || !TOKEN) return new Response("Redis not configured", { status: 500 });
 
+  /* ── 1. open the Upstash streaming endpoint ───────────────────────── */
   const upstream = await fetch(`${URL}/subscribe/order:${id}`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
-    cache: "no-store",
+    cache:   "no-store",
   });
   if (!upstream.ok || !upstream.body)
     return new Response("Upstash error", { status: 502 });
 
-  /* ---- manual reader → writer pump (no buffering) ---- */
+  /* ── 2. bridge → SSE with heart‑beats ─────────────────────────────── */
+  const enc   = new TextEncoder();
+  const dec   = new TextDecoder();
   const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+
+  /* 2‑a: send an initial comment so headers flush instantly */
+  await writer.write(enc.encode(`: hello\n\n`));
+
+  /* 2‑b: heartbeat every 25 s so CF never closes the pipe */
+  const ping = setInterval(() => {
+    writer.write(enc.encode(`: ping\n\n`));
+  }, 25_000);
+
   (async () => {
     const reader = upstream.body!.getReader();
-    const writer = writable.getWriter();
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      await writer.write(value);    // push chunk straight through
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        // Upstash delivers \n‑delimited JSON strings. Split in case of coalesced chunks.
+        dec.decode(value)
+           .split("\n")
+           .filter(Boolean)
+           .forEach(line =>
+             writer.write(enc.encode(`data: ${line}\n\n`))
+           );
+      }
+    } finally {
+      clearInterval(ping);
+      writer.close();
     }
-    writer.close();
   })();
 
   return new Response(readable, {
@@ -37,6 +58,7 @@ export async function GET(
     headers: {
       "Content-Type":  "text/event-stream",
       "Cache-Control": "no-cache",
+      Connection:      "keep-alive",
     },
   });
 }

@@ -63,7 +63,7 @@ export async function POST(
       [msgId, id, clientId, message, isInternal],
     );
 
-    /* ── push to Redis so dashboards update instantly ──────────────── */
+    /* ── push to Redis so dashboards update instantlys ──────────────── */
     await publish(`order:${id}`, JSON.stringify(saved));
 
     /* ── notifications (unchanged) ─────────────────────────────────── */
