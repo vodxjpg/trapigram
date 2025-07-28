@@ -1,8 +1,7 @@
 const URL = process.env.UPSTASH_REDIS_REST_URL;
 const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-/** Fire-and-forget publish – errors are swallowed (but logged) */
-export async function publish(channel: string, payload: string) {
+export async function publish(channel: string, payload: object) {
   if (!URL || !TOKEN) {
     console.error("[pubsub] Upstash URL or TOKEN not configured");
     return;
@@ -15,7 +14,7 @@ export async function publish(channel: string, payload: string) {
         Authorization: `Bearer ${TOKEN}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ data: payload }), // Upstash expects {data:"…"}
+      body: JSON.stringify(payload), // Send the object directly
     });
     if (!response.ok) {
       throw new Error(`Failed to publish: ${response.statusText}`);

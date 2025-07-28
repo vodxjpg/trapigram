@@ -222,71 +222,49 @@ export default function OrderView() {
   useEffect(() => {
     if (!canViewChat) return;
     fetchMessages();
-
+  
     const url = `${process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_URL}/subscribe/order:${id}`;
-    const abort = new AbortController();
-
-    (async () => {
-      try {
-        const res = await fetch(url, {
-          headers: {
-            Accept: "text/event-stream",
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_UPSTASH_REST_TOKEN}`,
-          },
-          signal: abort.signal,
-        });
-        if (!res.ok || !res.body) {
-          console.error("[page.tsx] Failed to subscribe to Upstash:", res.statusText);
-          return;
-        }
-        console.log("[page.tsx] SSE connection established for order:", id);
-
-        const reader = res.body.getReader();
-        const dec = new TextDecoder();
-        let buf = "";
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) {
-            console.log("[page.tsx] SSE connection closed");
-            break;
-          }
-          buf += dec.decode(value, { stream: true });
-
-          const lines = buf.split("\n");
-          buf = lines.pop()!;
-
-          for (let l of lines) {
-            l = l.trim();
-            if (!l) continue;
-
-            if (l.startsWith("data:")) l = l.slice(5).trim();
-
-            try {
-              const outer = JSON.parse(l);
-              const inner = typeof outer.data === "string" ? JSON.parse(outer.data) : outer.data;
-              if (!inner?.id) continue;
-
-              console.log("[page.tsx] Received SSE event:", inner);
-              setMessages((prev) =>
-                prev.some((m) => m.id === inner.id)
-                  ? prev
-                  : [...prev, { ...inner, createdAt: new Date(inner.createdAt) }],
-              );
-              lastSeen.current = inner.createdAt;
-            } catch (err) {
-              console.error("[page.tsx] Failed to parse SSE event:", l, err);
-            }
-          }
-        }
-      } catch (err) {
-        console.error("[page.tsx] SSE error:", err);
+    const es = new EventSource(url, {
+      withCredentials: false,
+    });
+  
+    es.onopen = () => {
+      console.log("[EventSource] Connection opened for order:", id);
+    };
+  
+    es.onmessage = (event) => {
+      console.log("[EventSource] Raw event data:", event.data);
+      // Check if the data is a subscription acknowledgment
+      if (event.data.startsWith("subscribe,")) {
+        console.log("[EventSource] Subscription confirmed:", event.data);
+        return;
       }
-    })();
-
+  
+      try {
+        // Parse the event data as JSON
+        const msg = JSON.parse(event.data);
+        // If the message has a 'data' field, parse that as well
+        const messageData = typeof msg.data === "string" ? JSON.parse(msg.data) : msg;
+        console.log("[EventSource] Received message:", messageData);
+  
+        setMessages((prev) =>
+          prev.some((m) => m.id === messageData.id)
+            ? prev
+            : [...prev, { ...messageData, createdAt: new Date(messageData.createdAt) }],
+        );
+        lastSeen.current = messageData.createdAt;
+      } catch (err) {
+        console.error("[EventSource] Failed to parse message:", event.data, err);
+      }
+    };
+  
+    es.onerror = (err) => {
+      console.error("[EventSource] Error:", err);
+    };
+  
     const poll = setInterval(fetchMessages, 60_000);
     return () => {
-      abort.abort();
+      es.close();
       clearInterval(poll);
     };
   }, [id, canViewChat, fetchMessages]);

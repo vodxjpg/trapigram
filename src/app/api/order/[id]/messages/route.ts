@@ -68,7 +68,7 @@ export async function POST(
     );
 
     // Publish to Upstash
-    await publish(`order:${id}`, JSON.stringify(saved));
+    await publish(`order:${id}`, saved); // 'saved' is the message object
     console.log(`[POST /api/order/:id/messages] Published message for order:${id}`);
 
     if (!isInternal) {
