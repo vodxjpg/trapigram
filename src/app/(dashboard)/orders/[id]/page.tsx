@@ -261,46 +261,55 @@ if (!permLoading && !canViewOrder) {
   }, [id]);
 
   /* ───────────────────────── adaptive polling ───────────────────────── */
-useEffect(() => {
-  if (!canViewChat) return;
-
-  let interval = 5_000;             // 5 s while active
-  let timer   : NodeJS.Timeout;
-  let lastAny = Date.now();
-
-  const loop = async () => {
-    await fetchMessages();
-
-    // if nothing new for 2 minutes → slow down to 30 s
-    if (Date.now() - lastAny > 120_000) interval = 30_000;
-
-    // if user changed tab → pause (visibility API)
-    if (document.visibilityState === "hidden") {
-      timer = setTimeout(loop, 60_000);     // 1‑min heartbeat
-    } else {
-      timer = setTimeout(loop, interval);
-    }
-  };
-
-  fetchMessages().then(() => {           // prime lastAny on first run
-    lastAny = Date.now();
-    timer = setTimeout(loop, interval);
-  });
-
-  const vis = () => {
-    /* wake immediately when the tab becomes visible */
-    if (document.visibilityState === "visible") {
-      clearTimeout(timer);
-      timer = setTimeout(loop, 0);
-    }
-  };
-  document.addEventListener("visibilitychange", vis);
-
-  return () => {
-    clearTimeout(timer);
-    document.removeEventListener("visibilitychange", vis);
-  };
-}, [id, canViewChat, fetchMessages]);
+    /* ───────────────────────── live updates via Upstash SSE ───────────── */
+  useEffect(() => {
+    if (!canViewChat) return;
+  
+    let es: EventSource | null = null;
+    let pollTimer: NodeJS.Timeout | undefined;
+  
+    /* fallback poll every 60 s in case the SSE socket ever dies silently */
+    const startPolling = () => {
+      if (!pollTimer) pollTimer = setInterval(fetchMessages, 60_000);
+    };
+  
+    (async () => {
+      try {
+        /* 1️⃣  grab a pre‑signed SSE URL (cheap, 1 request) */
+        const r = await fetch(`/api/order/${id}/messages/sse-url`);
+        if (!r.ok) throw new Error("no SSE url");
+        const { url } = await r.json();
+  
+        /* 2️⃣  connect straight to Upstash – no Vercel function kept open */
+        es = new EventSource(url);
+  
+        es.onmessage = ({ data }) => {
+          try {
+            const msg = JSON.parse(data);
+            setMessages(prev =>
+              prev.some(m => m.id === msg.id)
+                ? prev
+                : [...prev, { ...msg, createdAt: new Date(msg.createdAt) }]
+            );
+            lastSeen.current = msg.createdAt;        // advance cursor
+          } catch {/* ignore malformed payloads */}
+        };
+  
+        es.onerror = () => startPolling();           // add slow poll backup
+      } catch {
+        /* couldn’t obtain SSE URL → just poll */
+        startPolling();
+      }
+    })();
+  
+    /* one initial load of the full thread */
+    fetchMessages();
+  
+    return () => {
+      es?.close();
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  }, [id, canViewChat, fetchMessages]);
   
   /* ————————— guards ————————— */
   if (permLoading) return null;
