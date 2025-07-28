@@ -18,16 +18,20 @@ export async function GET(
 
   /* Proxy Upstash’s SSE stream so the token never reaches the browser */
   const upstream = await fetch(`${URL}/subscribe/order:${id}`, {
-    headers: { Authorization: `Bearer ${TOKEN}` },
-    cache: "no-store",
-  });
-
-  return new Response(upstream.body, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      cache: "no-store",
+    });
+    
+    /* Vercel Edge needs an explicit pipe to keep bytes flowing */
+    const { readable, writable } = new TransformStream();
+    upstream.body!.pipeTo(writable);              // never await
+    
+    return new Response(readable, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        /* Connection & Transfer‑Encoding are added automatically */
+      },
+    });
 }

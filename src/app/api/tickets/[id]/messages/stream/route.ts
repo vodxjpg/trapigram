@@ -15,16 +15,19 @@ export async function GET(
     return new Response("Redis not configured", { status: 500 });
   }
   // Proxy Upstash SSE so token never reaches browser
-  const upstream = await fetch(`${URL}/subscribe/ticket:${id}`, {
-    headers: { Authorization: `Bearer ${TOKEN}` },
-    cache: "no-store",
-  });
-  return new Response(upstream.body, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+   const upstream = await fetch(`${URL}/subscribe/ticket:${id}`, {
+       headers: { Authorization: `Bearer ${TOKEN}` },
+       cache: "no-store",
+     });
+    
+     const { readable, writable } = new TransformStream();
+     upstream.body!.pipeTo(writable);
+    
+     return new Response(readable, {
+       status: 200,
+       headers: {
+         "Content-Type": "text/event-stream",
+         "Cache-Control": "no-cache",
+       },
+     });
 }
