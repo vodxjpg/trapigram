@@ -281,7 +281,9 @@ if (!permLoading && !canViewOrder) {
       }
     };
   
-    es.onerror = () => es.close();  // let browser auto‑reconnect
+    es.onerror = () => {
+        /* let the browser reopen the connection by itself */
+      };
   
     return () => es.close();
   }, [id, canViewChat, fetchMessages]);
