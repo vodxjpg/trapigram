@@ -208,31 +208,27 @@ export default function OrderView() {
   };
 
   /* ————————— fetch messages ————————— */
-  const fetchMessages = useCallback(async () => {
-      /* nothing to do if we don’t have an order or permission */
-      if (!id || !canViewChat) return;
+   const fetchMessages = useCallback(async () => {
+       if (!id || !canViewChat) return;
     
-      /* add `?since=…` only after the first run */
-      const qs = lastSeen.current
-        ? `?since=${encodeURIComponent(lastSeen.current)}`
-        : "";
+       const qs  = lastSeen.current ? `?since=${encodeURIComponent(lastSeen.current)}` : "";
+       const res = await fetch(`/api/order/${id}/messages${qs}`);
+       if (!res.ok) return;
     
-      const res = await fetch(`/api/order/${id}/messages${qs}`);
-      if (!res.ok) return;
+       const { messages: fresh } = await res.json();
+       if (!fresh.length) return;
     
-      const { messages: newMsgs } = await res.json();
-      if (!newMsgs.length) return;           // no news
+       setMessages(prev => {
+         const seen = new Set(prev.map(p => p.id));
+         const newer = fresh
+           .filter((m:any) => !seen.has(m.id))
+           .map((m:any) => ({ ...m, createdAt: new Date(m.createdAt) }));
+         if (!newer.length) return prev;
     
-      /* append and convert ISO → Date */
-      setMessages(prev => [
-        ...prev,
-        ...newMsgs.map((m:any) => ({ ...m, createdAt: new Date(m.createdAt) }))
-      ]);
-    
-      /* remember newest timestamp for next poll */
-      lastSeen.current = newMsgs[newMsgs.length - 1].createdAt;
-    }, [id, canViewChat]);
-
+         lastSeen.current = fresh[fresh.length - 1].createdAt; // keep ISO string
+         return [...prev, ...newer];
+       });
+     }, [id, canViewChat]);
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
   
@@ -248,17 +244,6 @@ export default function OrderView() {
       }),
     });
   
-    const m = await res.json();
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: m.messages.id,
-        message: m.messages.message,
-        isInternal: m.messages.isInternal,
-        createdAt: new Date(m.messages.createdAt),
-      },
-    ]);
-    lastSeen.current = m.messages.createdAt;
     setNewMessage("");
   };
 
