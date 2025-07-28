@@ -1,3 +1,4 @@
+// src/app/api/order/[id]/messages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
@@ -5,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { sendNotification, NotificationChannel } from "@/lib/notifications";
 import { publish } from "@/lib/pubsub";
+import { pusher } from "@/lib/pusher-server";            // ★ NEW
 
 const messagesSchema = z.object({
   message: z.string().min(1, { message: "Message is required." }),
@@ -29,9 +31,7 @@ export async function GET(
        WHERE om."orderId" = $1
     `;
     const args: any[] = [id];
-    if (since) {
-      args.push(since);
-    }
+    if (since) args.push(since);
     const { rows } = await pool.query(
       baseSQL + (since ? ` AND om."createdAt" > $2` : "") +
       ` ORDER BY om."createdAt" ASC`,
@@ -67,10 +67,11 @@ export async function POST(
       [msgId, id, clientId, message, isInternal],
     );
 
-    // Publish to Upstash
-    await publish(`order:${id}`, saved); // 'saved' is the message object
-    console.log(`[POST /api/order/:id/messages] Published message for order:${id}`);
+    /* ── realtime fan‑out ─────────────────────────────────────────── */
+    await publish(`order:${id}`, saved);                      // Upstash (old)
+    await pusher.trigger(`order-${id}`, "new-message", saved); // Pusher (new)
 
+    /* ── notifications (unchanged) ───────────────────────────────── */
     if (!isInternal) {
       const {
         rows: [ord],

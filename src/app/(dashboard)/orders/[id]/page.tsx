@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Pusher from "pusher-js";                          // ★ NEW
 import { ArrowLeft, CreditCard, Package, Truck, Send } from "lucide-react";
 import Image from "next/image";
 import { format } from "date-fns";
@@ -23,6 +24,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 import { formatCurrency } from "@/lib/currency";
+
 
 interface Product {
   id: string;
@@ -221,48 +223,36 @@ export default function OrderView() {
 
   useEffect(() => {
     if (!canViewChat) return;
-    fetchMessages();
-  
-    const url = `/api/sse/order:${id}`; // Use the proxy API route
-    const es = new EventSource(url);
-  
-    es.onopen = () => {
-      console.log("[EventSource] Connection opened for order:", id);
-    };
-  
-    es.onmessage = (event) => {
-      console.log("[EventSource] Raw event data:", event.data);
-      if (event.data.startsWith("subscribe,")) {
-        console.log("[EventSource] Subscription confirmed:", event.data);
-        return;
-      }
-  
-      try {
-        const msg = JSON.parse(event.data);
-        const messageData = typeof msg.data === "string" ? JSON.parse(msg.data) : msg;
-        console.log("[EventSource] Received message:", messageData);
-  
-        setMessages((prev) =>
-          prev.some((m) => m.id === messageData.id)
-            ? prev
-            : [...prev, { ...messageData, createdAt: new Date(messageData.createdAt) }],
-        );
-        lastSeen.current = messageData.createdAt;
-      } catch (err) {
-        console.error("[EventSource] Failed to parse message:", event.data, err);
-      }
-    };
-  
-    es.onerror = (err) => {
-      console.error("[EventSource] Error:", err);
-    };
-  
+
+    fetchMessages();                               // initial back‑fill
+
+    const pusher = new Pusher("6f9adcf7a6b2d8780aa9", {
+      cluster: "eu",
+      channelAuthorization: { transport: "ajax" }, // no‑op (public channel)
+    });
+    const channel = pusher.subscribe(`order-${id}`);
+
+    channel.bind("new-message", (msg: any) => {
+      setMessages((prev) =>
+        prev.some((m) => m.id === msg.id)
+          ? prev
+          : [...prev, { ...msg, createdAt: new Date(msg.createdAt) }],
+      );
+      lastSeen.current = msg.createdAt;
+    });
+
+    /* backup poll every 60 s */
     const poll = setInterval(fetchMessages, 60_000);
+
     return () => {
-      es.close();
+      channel.unbind_all();
+      pusher.unsubscribe(`order-${id}`);
+      pusher.disconnect();
       clearInterval(poll);
     };
   }, [id, canViewChat, fetchMessages]);
+
+
 
   if (permLoading) return null;
   if (loading)
