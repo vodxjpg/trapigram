@@ -25,6 +25,9 @@ import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 import { formatCurrency } from "@/lib/currency";
 
+/* ——————————————————— DEBUG FLAG ——————————————————— */
+const DEBUG = true;
+
 /* ——————————————————— TYPES ——————————————————— */
 interface Product {
   id: string;
@@ -211,6 +214,7 @@ export default function OrderView() {
     if (!res.ok) return;
 
     const { messages: fresh } = await res.json();
+    if (DEBUG) console.log("[poll] fetched", fresh);
     if (!fresh.length) return;
 
     setMessages((prev) => {
@@ -228,7 +232,7 @@ export default function OrderView() {
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
 
-    await fetch(`/api/order/${id}/messages`, {
+    const res = await fetch(`/api/order/${id}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -239,7 +243,7 @@ export default function OrderView() {
         clientId: order!.clientId,
       }),
     });
-
+    if (DEBUG) console.log("[send] status", res.status);
     setNewMessage("");
   };
 
@@ -264,12 +268,18 @@ export default function OrderView() {
     /* 2️⃣ open EventSource to our bridge */
     const es = new EventSource(`/api/order/${id}/messages/stream`);
 
+    es.onopen = () => {
+      if (DEBUG) console.log("[SSE] connection opened");
+    };
+
     es.onmessage = ({ data }) => {
+      if (DEBUG) console.log("[SSE] raw data", data);
       try {
-        // Upstash envelope → unwrap twice
-        const outer = JSON.parse(data);          // { data: "…string…" }
+        const outer = JSON.parse(data); // { data: "…string…" }
+        if (DEBUG) console.log("[SSE] outer envelope", outer);
         const inner =
           typeof outer.data === "string" ? JSON.parse(outer.data) : outer.data;
+        if (DEBUG) console.log("[SSE] inner payload", inner);
 
         if (!inner?.id) return; // guard against malformed payload
 
@@ -279,17 +289,18 @@ export default function OrderView() {
             : [...prev, { ...inner, createdAt: new Date(inner.createdAt) }],
         );
         lastSeen.current = inner.createdAt;
-      } catch {
-        /* ignore bad payloads */
+      } catch (err) {
+        if (DEBUG) console.error("[SSE] parse error", err);
       }
+    };
+
+    es.onerror = (ev) => {
+      if (DEBUG) console.error("[SSE] error", ev);
+      /* browser auto‑reconnects; polling covers the gap */
     };
 
     /* 3️⃣ backup: poll every 60 s in case the socket drops */
     const poll = setInterval(fetchMessages, 60_000);
-
-    es.onerror = () => {
-      /* browser auto‑reconnects; polling covers the gap */
-    };
 
     return () => {
       es.close();
@@ -351,6 +362,7 @@ export default function OrderView() {
   const crypto = parseCrypto(order.orderMeta);
 
   const fmtMsgTime = (d: Date) => format(d, "MMM d, h:mm a");
+
   return (
     <div className="container mx-auto py-8 px-4 max-w-7xl">
       {/* Back + title */}
@@ -367,6 +379,7 @@ export default function OrderView() {
 
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start">
         <div className="xl:col-span-3 space-y-6">
+          {/* ---------------- Order Information ---------------- */}
           <Card>
             <CardHeader>
               <CardTitle className="flex justify-between">
@@ -401,6 +414,7 @@ export default function OrderView() {
             </CardContent>
           </Card>
 
+          {/* ---------------- Products ---------------- */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -431,12 +445,12 @@ export default function OrderView() {
                     {grouped.map((g) => {
                       const qty = g.priceBuckets.reduce(
                         (s, pb) => s + pb.quantity,
-                        0
+                        0,
                       );
                       const cheapest = g.priceBuckets[0];
                       const sub = g.priceBuckets.reduce(
                         (s, pb) => s + pb.unitPrice * pb.quantity,
-                        0
+                        0,
                       );
                       return (
                         <TableRow key={g.id}>
@@ -533,6 +547,7 @@ export default function OrderView() {
             </CardContent>
           </Card>
 
+          {/* ---------------- Shipping & Payment ---------------- */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -558,58 +573,60 @@ export default function OrderView() {
               </div>
             </CardContent>
           </Card>
+
+          {/* ---------------- Crypto Payment (if any) ---------------- */}
           {crypto && (
-  <Card>
-    <CardHeader>
-      <CardTitle className="flex items-center gap-2">
-        <CreditCard className="h-5 w-5" /> Crypto Payment
-      </CardTitle>
-    </CardHeader>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CreditCard className="h-5 w-5" /> Crypto Payment
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Network / Asset</p>
+                    <p className="font-medium">
+                      {crypto.network} / {crypto.asset}
+                    </p>
 
-    <CardContent className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <p className="text-sm text-muted-foreground">Network / Asset</p>
-          <p className="font-medium">
-            {crypto.network} / {crypto.asset}
-          </p>
-
-          <p className="text-sm text-muted-foreground mt-4">Wallet&nbsp;Address</p>
-          <p className="font-mono break-all">{crypto.address}</p>
+                    <p className="text-sm text-muted-foreground mt-4">
+                      Wallet&nbsp;Address
+                    </p>
+                    <p className="font-mono break-all">{crypto.address}</p>
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <div className="w-40 h-40 relative">
+                      <img
+                        src={crypto.qrUrl}
+                        alt={`QR for ${crypto.asset}`}
+                        className="w-40 h-40 object-contain rounded-md border"
+                      />
+                    </div>
+                    <div className="mt-4 space-y-1 text-center">
+                      <p className="text-sm">
+                        Expected:{" "}
+                        <span className="font-medium">{crypto.expected}</span>
+                      </p>
+                      {crypto.status === "underpaid" && (
+                        <>
+                          <p className="text-sm text-red-600">
+                            Received: {crypto.received}
+                          </p>
+                          <p className="text-sm text-red-600 font-semibold">
+                            Pending: {crypto.pending}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
-        <div className="flex flex-col items-center">
-          {/* QR */}
-          <div className="w-40 h-40 relative">
-          <img
-              src={crypto.qrUrl}
-              alt={`QR for ${crypto.asset}`}
-              className="w-40 h-40 object-contain rounded-md border"
-            />
-          </div>
-
-          {/* Amounts */}
-          <div className="mt-4 space-y-1 text-center">
-            <p className="text-sm">Expected: <span className="font-medium">{crypto.expected}</span></p>
-            {crypto.status === "underpaid" && (
-              <>
-                <p className="text-sm text-red-600">
-                  Received: {crypto.received}
-                </p>
-                <p className="text-sm text-red-600 font-semibold">
-                  Pending:  {crypto.pending}
-                </p>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    </CardContent>
-  </Card>
-)}
-
-        </div>
-
+        {/* ---------------- Chat ---------------- */}
         <div className="xl:col-span-1">
           <Card className="h-[800px] flex flex-col">
             <CardHeader className="flex-shrink-0 pb-4">
@@ -619,7 +636,7 @@ export default function OrderView() {
               </div>
             </CardHeader>
             <CardContent className="flex-1 flex flex-col min-h-0 p-0">
-            {canViewChat ? (
+              {canViewChat ? (
                 <>
                   <div className="flex-1 min-h-0">
                     <ScrollArea className="h-full">
@@ -633,11 +650,17 @@ export default function OrderView() {
                           messages.map((m) => (
                             <div
                               key={m.id}
-                              className={`flex ${m.isInternal ? "justify-end" : "justify-start"} mb-4`}
+                              className={`flex ${
+                                m.isInternal ? "justify-end" : "justify-start"
+                              } mb-4`}
                             >
                               <div className="max-w-[85%] flex flex-col">
                                 <div
-                                  className={`flex items-start gap-2 ${m.isInternal ? "flex-row-reverse" : "flex-row"}`}
+                                  className={`flex items-start gap-2 ${
+                                    m.isInternal
+                                      ? "flex-row-reverse"
+                                      : "flex-row"
+                                  }`}
                                 >
                                   <Avatar className="w-8 h-8 flex-shrink-0">
                                     <AvatarFallback className="text-xs">
@@ -649,13 +672,19 @@ export default function OrderView() {
                                     </AvatarFallback>
                                   </Avatar>
                                   <div
-                                    className={`rounded-lg p-3 break-words ${m.isInternal ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"}`}
+                                    className={`rounded-lg p-3 break-words ${
+                                      m.isInternal
+                                        ? "bg-primary text-primary-foreground"
+                                        : "bg-muted text-foreground"
+                                    }`}
                                   >
                                     <p className="text-sm">{m.message}</p>
                                   </div>
                                 </div>
                                 <div
-                                  className={`text-xs text-muted-foreground mt-1 ${m.isInternal ? "text-right" : "text-left"}`}
+                                  className={`text-xs text-muted-foreground mt-1 ${
+                                    m.isInternal ? "text-right" : "text-left"
+                                  }`}
                                 >
                                   {fmtMsgTime(m.createdAt)}
                                 </div>
