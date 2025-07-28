@@ -262,54 +262,39 @@ if (!permLoading && !canViewOrder) {
 
   /* ───────────────────────── adaptive polling ───────────────────────── */
     /* ───────────────────────── live updates via Upstash SSE ───────────── */
-  useEffect(() => {
-    if (!canViewChat) return;
-  
-    let es: EventSource | null = null;
-    let pollTimer: NodeJS.Timeout | undefined;
-  
-    /* fallback poll every 60 s in case the SSE socket ever dies silently */
-    const startPolling = () => {
-      if (!pollTimer) pollTimer = setInterval(fetchMessages, 60_000);
-    };
-  
-    (async () => {
-      try {
-        /* 1️⃣  grab a pre‑signed SSE URL (cheap, 1 request) */
-        const r = await fetch(`/api/order/${id}/messages/sse-url`);
-        if (!r.ok) throw new Error("no SSE url");
-        const { url } = await r.json();
-  
-        /* 2️⃣  connect straight to Upstash – no Vercel function kept open */
-        es = new EventSource(url);
-  
-        es.onmessage = ({ data }) => {
-          try {
-            const msg = JSON.parse(data);
-            setMessages(prev =>
-              prev.some(m => m.id === msg.id)
-                ? prev
-                : [...prev, { ...msg, createdAt: new Date(msg.createdAt) }]
-            );
-            lastSeen.current = msg.createdAt;        // advance cursor
-          } catch {/* ignore malformed payloads */}
-        };
-  
-        es.onerror = () => startPolling();           // add slow poll backup
-      } catch {
-        /* couldn’t obtain SSE URL → just poll */
-        startPolling();
-      }
-    })();
-  
-    /* one initial load of the full thread */
-    fetchMessages();
-  
-    return () => {
-      es?.close();
-      if (pollTimer) clearInterval(pollTimer);
-    };
-  }, [id, canViewChat, fetchMessages]);
+   useEffect(() => {
+       if (!canViewChat) return;
+     
+       /* 1️⃣ first full load */
+       fetchMessages();
+     
+       /* 2️⃣ open EventSource to OUR bridge */
+       const es = new EventSource(`/api/order/${id}/messages/stream`);
+     
+       es.onmessage = ({ data }) => {
+         try {
+           const msg = JSON.parse(data);
+           setMessages(prev =>
+             prev.some(m => m.id === msg.id)
+               ? prev
+               : [...prev, { ...msg, createdAt: new Date(msg.createdAt) }]
+           );
+           lastSeen.current = msg.createdAt;     // advance cursor
+         } catch {/* ignore */}
+       };
+     
+       /* 3️⃣ backup: poll every 60 s in case the socket drops */
+       const poll = setInterval(fetchMessages, 60_000);
+     
+       es.onerror = () => {
+         /* browser auto‑reconnects; polling covers the gap */
+       };
+     
+       return () => {
+         es.close();
+         clearInterval(poll);
+       };
+     }, [id, canViewChat, fetchMessages]);
   
   /* ————————— guards ————————— */
   if (permLoading) return null;
