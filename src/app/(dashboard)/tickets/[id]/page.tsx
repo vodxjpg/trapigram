@@ -32,7 +32,7 @@ import {
   AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
   AlertDialogCancel, AlertDialogAction
 } from "@/components/ui/alert-dialog";
-
+import Pusher from "pusher-js";
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -142,26 +142,27 @@ export default function TicketDetail() {
 
    /* ────────────────────────── LIVE UPDATES (POLLING) ─────────────────────── */
    /* ───────────────────────── real‑time via SSE ───────────────────────── */
-useEffect(() => {
-  if (!id || !canView) return;
+   useEffect(() => {
+    if (!id || !canView) return;
 
-  // Server‑Sent Events stream
-  const es = new EventSource(`/api/tickets/${id}/messages/stream`);
-  es.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data) as TicketMessage;
-      setMessages(prev => {
-        if (prev.some(m => m.id === msg.id)) return prev;
-        return [...prev, { ...msg, createdAt: new Date(msg.createdAt) }];
-      });
-    } catch {
-      console.warn("Malformed ticket SSE message");
-    }
-  };
-  es.onerror = () => es.close();  // browser will auto‑reconnect
+    /* replace old SSE */
+    const p = new Pusher("6f9adcf7a6b2d8780aa9", { cluster: "eu" });
+    const ch = p.subscribe(`ticket-${id}`);
 
-  return () => es.close();
-}, [id, canView]);
+    ch.bind("new-message", (msg: any) => {
+      setMessages(prev =>
+        prev.some(m => m.id === msg.id)
+          ? prev
+          : [...prev, { ...msg, createdAt: new Date(msg.createdAt) }],
+      );
+    });
+
+    return () => {
+      ch.unbind_all();
+      p.unsubscribe(`ticket-${id}`);
+      p.disconnect();
+    };
+  }, [id, canView]);
 
 
   /* ---------------- guards AFTER all hooks ------------------------------ */
