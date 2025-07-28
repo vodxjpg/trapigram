@@ -260,14 +260,47 @@ if (!permLoading && !canViewOrder) {
     fetchOrderAndClient();
   }, [id]);
 
-  /* ───────────────────────── real‑time via SSE ───────────────────────── */
-  useEffect(() => {
-      if (!canViewChat) return;
-    
-      fetchMessages();                       // first load
-      const int = setInterval(fetchMessages, 5_000);   // poll every 5 s
-      return () => clearInterval(int);
-    }, [id, canViewChat, fetchMessages]);
+  /* ───────────────────────── adaptive polling ───────────────────────── */
+useEffect(() => {
+  if (!canViewChat) return;
+
+  let interval = 5_000;             // 5 s while active
+  let timer   : NodeJS.Timeout;
+  let lastAny = Date.now();
+
+  const loop = async () => {
+    await fetchMessages();
+
+    // if nothing new for 2 minutes → slow down to 30 s
+    if (Date.now() - lastAny > 120_000) interval = 30_000;
+
+    // if user changed tab → pause (visibility API)
+    if (document.visibilityState === "hidden") {
+      timer = setTimeout(loop, 60_000);     // 1‑min heartbeat
+    } else {
+      timer = setTimeout(loop, interval);
+    }
+  };
+
+  fetchMessages().then(() => {           // prime lastAny on first run
+    lastAny = Date.now();
+    timer = setTimeout(loop, interval);
+  });
+
+  const vis = () => {
+    /* wake immediately when the tab becomes visible */
+    if (document.visibilityState === "visible") {
+      clearTimeout(timer);
+      timer = setTimeout(loop, 0);
+    }
+  };
+  document.addEventListener("visibilitychange", vis);
+
+  return () => {
+    clearTimeout(timer);
+    document.removeEventListener("visibilitychange", vis);
+  };
+}, [id, canViewChat, fetchMessages]);
   
   /* ————————— guards ————————— */
   if (permLoading) return null;
