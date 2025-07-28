@@ -223,10 +223,8 @@ export default function OrderView() {
     if (!canViewChat) return;
     fetchMessages();
   
-    const url = `${process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_URL}/subscribe/order:${id}`;
-    const es = new EventSource(url, {
-      withCredentials: false,
-    });
+    const url = `/api/sse/order:${id}`; // Use the proxy API route
+    const es = new EventSource(url);
   
     es.onopen = () => {
       console.log("[EventSource] Connection opened for order:", id);
@@ -234,16 +232,13 @@ export default function OrderView() {
   
     es.onmessage = (event) => {
       console.log("[EventSource] Raw event data:", event.data);
-      // Check if the data is a subscription acknowledgment
       if (event.data.startsWith("subscribe,")) {
         console.log("[EventSource] Subscription confirmed:", event.data);
         return;
       }
   
       try {
-        // Parse the event data as JSON
         const msg = JSON.parse(event.data);
-        // If the message has a 'data' field, parse that as well
         const messageData = typeof msg.data === "string" ? JSON.parse(msg.data) : msg;
         console.log("[EventSource] Received message:", messageData);
   
