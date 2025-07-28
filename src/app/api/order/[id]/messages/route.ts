@@ -1,11 +1,10 @@
-// src/app/api/order/[id]/messages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { sendNotification, NotificationChannel } from "@/lib/notifications";
-import { publish } from "@/lib/pubsub";     // ★ new
+import { publish } from "@/lib/pubsub";
 
 const messagesSchema = z.object({
   message: z.string().min(1, { message: "Message is required." }),
@@ -13,7 +12,6 @@ const messagesSchema = z.object({
   isInternal: z.boolean(),
 });
 
-/* ---------- GET /api/order/[orderId]/messages ---------- */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -22,8 +20,7 @@ export async function GET(
   if (ctx instanceof NextResponse) return ctx;
   try {
     const { id } = await params;
-    const since = req.nextUrl.searchParams.get("since");   // ISO 8601 | null
-    /* ---- build SQL dynamically: include > $2 only when since is set ---- */
+    const since = req.nextUrl.searchParams.get("since");
     const baseSQL = `
       SELECT om.id, om."orderId", om."clientId", om.message,
              om."isInternal", om."createdAt", c.email
@@ -33,9 +30,8 @@ export async function GET(
     `;
     const args: any[] = [id];
     if (since) {
-      args.push(since); 
+      args.push(since);
     }
-    
     const { rows } = await pool.query(
       baseSQL + (since ? ` AND om."createdAt" > $2` : "") +
       ` ORDER BY om."createdAt" ASC`,
@@ -48,7 +44,6 @@ export async function GET(
   }
 }
 
-/* ---------- POST /api/order/[orderId]/messages ---------- */
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
@@ -57,16 +52,12 @@ export async function POST(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId, userId } = ctx;
 
-   /* ── new: optional incremental sync ─────────────────────────── */
-
-
   try {
     const { id } = params;
     const isInternal = req.headers.get("x-is-internal") === "true";
     const raw = await req.json();
     const { message, clientId } = messagesSchema.parse({ ...raw, isInternal });
 
-    /* insert */
     const msgId = uuidv4();
     const {
       rows: [saved],
@@ -76,10 +67,10 @@ export async function POST(
       [msgId, id, clientId, message, isInternal],
     );
 
-    /* ── push to Redis so dashboards update instantlys ──────────────── */
+    // Publish to Upstash
     await publish(`order:${id}`, JSON.stringify(saved));
+    console.log(`[POST /api/order/:id/messages] Published message for order:${id}`);
 
-    /* ── notifications (unchanged) ─────────────────────────────────── */
     if (!isInternal) {
       const {
         rows: [ord],

@@ -1,4 +1,3 @@
-// src/app/(dashboard)/orders/[id]/page.tsx
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -25,7 +24,6 @@ import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 import { formatCurrency } from "@/lib/currency";
 
-/* ——————————————————— TYPES ——————————————————— */
 interface Product {
   id: string;
   title: string;
@@ -73,7 +71,6 @@ interface Message {
   createdAt: Date;
 }
 
-/* ——————————————————— HELPERS ——————————————————— */
 function groupByProduct(lines: Product[]) {
   return lines
     .reduce((acc, l) => {
@@ -132,11 +129,9 @@ export default function OrderView() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
 
-  /* ── active organisation ───────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
 
-  /* ── permissions ───────────────────────────────────── */
   const { hasPermission: canViewOrder, isLoading: permLoading } =
     useHasPermission(organizationId, { order: ["view"] });
   const { hasPermission: canViewPricing } = useHasPermission(
@@ -148,7 +143,6 @@ export default function OrderView() {
     { orderChat: ["view"] },
   );
 
-  /* ── state ─────────────────────────────────────────── */
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +150,6 @@ export default function OrderView() {
   const [newMessage, setNewMessage] = useState("");
   const lastSeen = useRef<string | null>(null);
 
-  /* ————————— fetch order + client ————————— */
   const fetchOrderAndClient = async () => {
     if (!id) return;
     try {
@@ -187,7 +180,6 @@ export default function OrderView() {
     }
   };
 
-  /* ————————— fetch messages ————————— */
   const fetchMessages = useCallback(async () => {
     if (!id || !canViewChat) return;
     const qs = lastSeen.current ? `?since=${encodeURIComponent(lastSeen.current)}` : "";
@@ -206,7 +198,6 @@ export default function OrderView() {
     });
   }, [id, canViewChat]);
 
-  /* ————————— send message ————————— */
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
     await fetch(`/api/order/${id}/messages`, {
@@ -220,7 +211,6 @@ export default function OrderView() {
     setNewMessage("");
   };
 
-  /* ————————— effects ————————— */
   useEffect(() => {
     if (!permLoading && !canViewOrder) router.replace("/dashboard");
   }, [permLoading, canViewOrder, router]);
@@ -229,68 +219,78 @@ export default function OrderView() {
     fetchOrderAndClient();
   }, [id]);
 
-  /* ─────────────────────── Upstash direct SSE ─────────────────────── */
   useEffect(() => {
     if (!canViewChat) return;
-    fetchMessages();                       // initial pull
-  
-    const url = `${process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_URL
-      }/subscribe/order:${id}`;
+    fetchMessages();
+
+    const url = `${process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_URL}/subscribe/order:${id}`;
     const abort = new AbortController();
-  
+
     (async () => {
       try {
         const res = await fetch(url, {
           headers: {
-            Accept:        "text/event-stream",
+            Accept: "text/event-stream",
             Authorization: `Bearer ${process.env.NEXT_PUBLIC_UPSTASH_REST_TOKEN}`,
           },
           signal: abort.signal,
         });
-        if (!res.ok || !res.body) return;
-  
+        if (!res.ok || !res.body) {
+          console.error("[page.tsx] Failed to subscribe to Upstash:", res.statusText);
+          return;
+        }
+        console.log("[page.tsx] SSE connection established for order:", id);
+
         const reader = res.body.getReader();
-        const dec    = new TextDecoder();
-        let   buf    = "";
-  
+        const dec = new TextDecoder();
+        let buf = "";
+
         while (true) {
           const { value, done } = await reader.read();
-          if (done) break;
+          if (done) {
+            console.log("[page.tsx] SSE connection closed");
+            break;
+          }
           buf += dec.decode(value, { stream: true });
-  
+
           const lines = buf.split("\n");
-          buf = lines.pop()!;                    // keep last partial
-  
+          buf = lines.pop()!;
+
           for (let l of lines) {
             l = l.trim();
             if (!l) continue;
-  
-            // 🟢 NEW — support both formats
+
             if (l.startsWith("data:")) l = l.slice(5).trim();
-  
+
             try {
-              const outer  = JSON.parse(l);                 // {data:"…"}
-              const inner  = typeof outer.data === "string"
-                ? JSON.parse(outer.data)
-                : outer.data;
+              const outer = JSON.parse(l);
+              const inner = typeof outer.data === "string" ? JSON.parse(outer.data) : outer.data;
               if (!inner?.id) continue;
-  
-              setMessages(prev =>
-                prev.some(m => m.id === inner.id)
+
+              console.log("[page.tsx] Received SSE event:", inner);
+              setMessages((prev) =>
+                prev.some((m) => m.id === inner.id)
                   ? prev
                   : [...prev, { ...inner, createdAt: new Date(inner.createdAt) }],
               );
               lastSeen.current = inner.createdAt;
-            } catch {/* ignore parse errors */}
+            } catch (err) {
+              console.error("[page.tsx] Failed to parse SSE event:", l, err);
+            }
           }
         }
-      } catch {/* abort or network error */}
+      } catch (err) {
+        console.error("[page.tsx] SSE error:", err);
+      }
     })();
-  
+
     const poll = setInterval(fetchMessages, 60_000);
-    return () => { abort.abort(); clearInterval(poll); };
+    return () => {
+      abort.abort();
+      clearInterval(poll);
+    };
   }, [id, canViewChat, fetchMessages]);
-  /* ————————— guards ————————— */
+
   if (permLoading) return null;
   if (loading)
     return <div className="container mx-auto py-8 text-center">Loading order…</div>;
@@ -304,7 +304,6 @@ export default function OrderView() {
       </div>
     );
 
-  /* ————— derive aggregates ————— */
   const grouped = groupByProduct(order.products);
 
   const monetarySubtotal = grouped
@@ -326,7 +325,6 @@ export default function OrderView() {
   const calculatedTotal =
     monetarySubtotal + order.shipping - order.discount - (order.pointsRedeemedAmount ?? 0);
 
-  /* ————— helpers ————— */
   const fmtMoney = (n: number) => formatCurrency(n, order.country);
   const fmtPts = (n: number) => `${n} pts`;
   const statusClr = (s: string) =>
@@ -344,7 +342,6 @@ export default function OrderView() {
 
   return (
     <div className="container mx-auto py-8 px-4 max-w-7xl">
-      {/* Back + title */}
       <div className="mb-6">
         <Button
           variant="ghost"
@@ -358,7 +355,6 @@ export default function OrderView() {
 
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start">
         <div className="xl:col-span-3 space-y-6">
-          {/* ---------------- Order Information ---------------- */}
           <Card>
             <CardHeader>
               <CardTitle className="flex justify-between">
@@ -393,7 +389,6 @@ export default function OrderView() {
             </CardContent>
           </Card>
 
-          {/* ---------------- Products ---------------- */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -526,7 +521,6 @@ export default function OrderView() {
             </CardContent>
           </Card>
 
-          {/* ---------------- Shipping & Payment ---------------- */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -553,7 +547,6 @@ export default function OrderView() {
             </CardContent>
           </Card>
 
-          {/* ---------------- Crypto Payment (if any) ---------------- */}
           {crypto && (
             <Card>
               <CardHeader>
@@ -605,7 +598,6 @@ export default function OrderView() {
           )}
         </div>
 
-        {/* ---------------- Chat ---------------- */}
         <div className="xl:col-span-1">
           <Card className="h-[800px] flex flex-col">
             <CardHeader className="flex-shrink-0 pb-4">
