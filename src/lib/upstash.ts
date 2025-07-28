@@ -9,10 +9,9 @@
 const REST  = process.env.UPSTASH_REDIS_REST_URL!;
 const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN!;
 
+// ✅ browser‑friendly SSE endpoint – token is part of the URL
 export function signedSseURL(channel: string): string {
       if (!REST || !TOKEN) throw new Error("Upstash env vars missing");
-      const base = REST.replace(/\/$/, "");           // strip trailing /
-    
-      /* correct:  /subscribe/<channel>?token=<TOKEN>  */
-      return `${base}/subscribe/${encodeURIComponent(channel)}?token=${TOKEN}`;
+      const base = REST.replace(/\/$/, "");   // trim trailing “/”
+      return `${base}/sse/${TOKEN}?topic=${encodeURIComponent(channel)}`;
     }
