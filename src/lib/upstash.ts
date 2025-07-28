@@ -1,29 +1,29 @@
+/**
+ * Build a browser‑safe SSE URL for a single Redis channel.
+ *
+ * Usage:
+ *   const url = sseURL("order:123");
+ *
+ * The URL embeds the Upstash REST token (read‑only), so the browser can
+ * connect directly without any extra headers.  No HMAC signing is needed.
+ */
 
-// src/lib/upstash.ts        (NEW FILE)
-import crypto from "crypto";
-
-const BASE  = process.env.UPSTASH_REDIS_REST_URL!;   // e.g. https://eu1-magic.upstash.io
-const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN!; // your secret – never sent to browser
+const BASE  = process.env.UPSTASH_REDIS_REST_URL!;   // e.g. https://eu1-xxx.upstash.io
+const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN!; // the **REST** token (not the redis password)
 
 /**
- * Returns a short‑lived read‑only SSE URL for a given channel.
- * The browser can subscribe to it directly, but cannot write to Redis.
- *
- *   const url = signedSseURL("order:123", 900); // 15 min
+ * Returns a full `https://…/sse/<TOKEN>?topic=<channel>` URL
+ * ready to be passed to `new EventSource(url)`.
  */
-export function signedSseURL(channel: string, ttl = 900): string {
-  if (!BASE || !TOKEN) throw new Error("Upstash env vars missing");
+export function sseURL(channel: string): string {
+  if (!BASE || !TOKEN) {
+    throw new Error("Missing UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN");
+  }
 
-  const expire  = Math.floor(Date.now() / 1000) + ttl;      // unix sec
-  const message = `${channel}:${expire}`;
-  const sig     = crypto
-    .createHmac("sha256", TOKEN)          // sign with your real token
-    .update(message)
-    .digest("hex");
+  // ensure no trailing slash on BASE
+  const baseClean = BASE.replace(/\/$/, "");
 
-  const u = new URL(BASE.replace(/\/$/, "") +  "/sse");      // …/sse
-  u.searchParams.set("topic",     channel);
-  u.searchParams.set("expire",    String(expire));
-  u.searchParams.set("signature", sig);
-  return u.toString();                                      // ready for EventSource
+  const u = new URL(`${baseClean}/sse/${encodeURIComponent(TOKEN)}`);
+  u.searchParams.set("topic", channel);   // Upstash expects ?topic=<channel>
+  return u.toString();
 }

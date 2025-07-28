@@ -1,12 +1,21 @@
 import { NextResponse } from "next/server";
-import { signedSseURL } from "@/lib/upstash";
+import { sseURL } from "@/lib/upstash";
 
-// Node runtime (needs crypto); do NOT mark as `"edge"`
+/**
+ * GET /api/order/[id]/messages/sse-url
+ *
+ * Returns a JSON payload: { url: "https://…/sse/…?topic=order:<id>" }
+ * that the front‑end can feed into `new EventSource(url)`.
+ *
+ * You may add whatever auth / permission checks you need before
+ * returning the URL.
+ */
 export async function GET(
   _req: Request,
   { params }: { params: { id: string } },
 ) {
-  // todo: add your auth/permissions check here …
-  const url = signedSseURL(`order:${params.id}`, 3600); // 1 h validity
+  // TODO: enforce permissions here if required
+
+  const url = sseURL(`order:${params.id}`);   // read‑only stream URL
   return NextResponse.json({ url });
 }
