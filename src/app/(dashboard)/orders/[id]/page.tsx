@@ -25,9 +25,6 @@ import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 import { formatCurrency } from "@/lib/currency";
 
-/* ——————————————————— DEBUG FLAG ——————————————————— */
-const DEBUG = true;
-
 /* ——————————————————— TYPES ——————————————————— */
 interface Product {
   id: string;
@@ -79,40 +76,33 @@ interface Message {
 /* ——————————————————— HELPERS ——————————————————— */
 function groupByProduct(lines: Product[]) {
   return lines
-    .reduce(
-      (acc, l) => {
-        let bucket = acc.find((b) => b.id === l.id);
-        if (!bucket) {
-          bucket = {
-            id: l.id,
-            title: l.title,
-            sku: l.sku,
-            description: l.description,
-            image: l.image,
-            isAffiliate: l.isAffiliate,
-            priceBuckets: [] as { unitPrice: number; quantity: number }[],
-          };
-          acc.push(bucket);
-        }
-        const pb = bucket.priceBuckets.find((p) => p.unitPrice === l.unitPrice);
-        if (pb) pb.quantity += l.quantity;
-        else
-          bucket.priceBuckets.push({
-            unitPrice: l.unitPrice,
-            quantity: l.quantity,
-          });
-        return acc;
-      },
-      [] as Array<{
-        id: string;
-        title: string;
-        sku: string;
-        description: string;
-        image: string | null;
-        isAffiliate: boolean;
-        priceBuckets: { unitPrice: number; quantity: number }[];
-      }>,
-    )
+    .reduce((acc, l) => {
+      let bucket = acc.find((b) => b.id === l.id);
+      if (!bucket) {
+        bucket = {
+          id: l.id,
+          title: l.title,
+          sku: l.sku,
+          description: l.description,
+          image: l.image,
+          isAffiliate: l.isAffiliate,
+          priceBuckets: [] as { unitPrice: number; quantity: number }[],
+        };
+        acc.push(bucket);
+      }
+      const pb = bucket.priceBuckets.find((p) => p.unitPrice === l.unitPrice);
+      if (pb) pb.quantity += l.quantity;
+      else bucket.priceBuckets.push({ unitPrice: l.unitPrice, quantity: l.quantity });
+      return acc;
+    }, [] as Array<{
+      id: string;
+      title: string;
+      sku: string;
+      description: string;
+      image: string | null;
+      isAffiliate: boolean;
+      priceBuckets: { unitPrice: number; quantity: number }[];
+    }>)
     .map((b) => ({
       ...b,
       priceBuckets: [...b.priceBuckets].sort((a, z) => a.unitPrice - z.unitPrice),
@@ -121,15 +111,11 @@ function groupByProduct(lines: Product[]) {
 
 function parseCrypto(metaArr: any[]) {
   if (!metaArr?.length) return null;
-
   const last = metaArr[metaArr.length - 1];
   const o = last.order ?? last;
   const ev = last.event ?? last.status ?? "pending";
-
   const expected = Number(o.expected ?? o.amount) || 0;
   const received = Number(o.received ?? 0) || 0;
-  const pending = Math.max(0, expected - received);
-
   return {
     asset: o.asset,
     network: o.network,
@@ -137,7 +123,7 @@ function parseCrypto(metaArr: any[]) {
     qrUrl: o.qrUrl,
     expected,
     received,
-    pending,
+    pending: Math.max(0, expected - received),
     status: ev,
   };
 }
@@ -150,17 +136,13 @@ export default function OrderView() {
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
 
-  /* ── permissions (new hook) ────────────────────────── */
-  const {
-    hasPermission: canViewOrder,
-    isLoading: permLoading,
-  } = useHasPermission(organizationId, { order: ["view"] });
-
+  /* ── permissions ───────────────────────────────────── */
+  const { hasPermission: canViewOrder, isLoading: permLoading } =
+    useHasPermission(organizationId, { order: ["view"] });
   const { hasPermission: canViewPricing } = useHasPermission(
     organizationId,
     { order: ["view_pricing"] },
   );
-
   const { hasPermission: canViewChat } = useHasPermission(
     organizationId,
     { orderChat: ["view"] },
@@ -208,98 +190,83 @@ export default function OrderView() {
   /* ————————— fetch messages ————————— */
   const fetchMessages = useCallback(async () => {
     if (!id || !canViewChat) return;
-
     const qs = lastSeen.current ? `?since=${encodeURIComponent(lastSeen.current)}` : "";
     const res = await fetch(`/api/order/${id}/messages${qs}`);
     if (!res.ok) return;
-
     const { messages: fresh } = await res.json();
-    if (DEBUG) console.log("[poll] fetched", fresh);
     if (!fresh.length) return;
-
     setMessages((prev) => {
       const seen = new Set(prev.map((p) => p.id));
       const newer = fresh
         .filter((m: any) => !seen.has(m.id))
         .map((m: any) => ({ ...m, createdAt: new Date(m.createdAt) }));
       if (!newer.length) return prev;
-
       lastSeen.current = fresh[fresh.length - 1].createdAt;
       return [...prev, ...newer];
     });
   }, [id, canViewChat]);
 
+  /* ————————— send message ————————— */
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
-
-    const res = await fetch(`/api/order/${id}/messages`, {
+    await fetch(`/api/order/${id}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-is-internal": "true",
       },
-      body: JSON.stringify({
-        message: newMessage,
-        clientId: order!.clientId,
-      }),
+      body: JSON.stringify({ message: newMessage, clientId: order!.clientId }),
     });
-    if (DEBUG) console.log("[send] status", res.status);
     setNewMessage("");
   };
 
   /* ————————— effects ————————— */
   useEffect(() => {
-    if (!permLoading && !canViewOrder) {
-      router.replace("/dashboard");
-    }
+    if (!permLoading && !canViewOrder) router.replace("/dashboard");
   }, [permLoading, canViewOrder, router]);
 
   useEffect(() => {
     fetchOrderAndClient();
   }, [id]);
 
-  /* ───────────────────────── live updates via Upstash SSE ───────────── */
+  /* ─────────────────────── Upstash direct SSE ─────────────────────── */
   useEffect(() => {
     if (!canViewChat) return;
 
-    /* 1️⃣ first full load */
+    /* 1️⃣ first load */
     fetchMessages();
 
-    /* 2️⃣ open EventSource to our bridge */
-    const es = new EventSource(`/api/order/${id}/messages/stream`);
-
-    es.onopen = () => {
-      if (DEBUG) console.log("[SSE] connection opened");
-    };
+    /* 2️⃣ open EventSource directly to Upstash REST SSE */
+    const SSE_URL = `${
+      process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_URL
+    }/subscribe/order:${id}?token=${
+      process.env.NEXT_PUBLIC_UPSTASH_REDIS_REST_TOKEN
+    }`;
+    const es = new EventSource(SSE_URL);
 
     es.onmessage = ({ data }) => {
-      if (DEBUG) console.log("[SSE] raw data", data);
       try {
-        const outer = JSON.parse(data); // { data: "…string…" }
-        if (DEBUG) console.log("[SSE] outer envelope", outer);
+        /* Upstash sends {"data":"<json string>"} per line */
+        const outer = JSON.parse(data);
         const inner =
           typeof outer.data === "string" ? JSON.parse(outer.data) : outer.data;
-        if (DEBUG) console.log("[SSE] inner payload", inner);
-
-        if (!inner?.id) return; // guard against malformed payload
-
+        if (!inner?.id) return;
         setMessages((prev) =>
           prev.some((m) => m.id === inner.id)
             ? prev
             : [...prev, { ...inner, createdAt: new Date(inner.createdAt) }],
         );
         lastSeen.current = inner.createdAt;
-      } catch (err) {
-        if (DEBUG) console.error("[SSE] parse error", err);
+      } catch {
+        /* ignore malformed payloads */
       }
     };
 
-    es.onerror = (ev) => {
-      if (DEBUG) console.error("[SSE] error", ev);
-      /* browser auto‑reconnects; polling covers the gap */
+    es.onerror = () => {
+      /* browser auto‑reconnects; polling below covers gaps */
     };
 
-    /* 3️⃣ backup: poll every 60 s in case the socket drops */
+    /* 3️⃣ backup poll every 60 s */
     const poll = setInterval(fetchMessages, 60_000);
 
     return () => {
@@ -311,10 +278,7 @@ export default function OrderView() {
   /* ————————— guards ————————— */
   if (permLoading) return null;
   if (loading)
-    return (
-      <div className="container mx-auto py-8 text-center">Loading order…</div>
-    );
-
+    return <div className="container mx-auto py-8 text-center">Loading order…</div>;
   if (error || !order)
     return (
       <div className="container mx-auto py-8 text-center">
