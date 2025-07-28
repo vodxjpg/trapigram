@@ -134,7 +134,7 @@ export async function POST(
     saved.attachments = JSON.parse(saved.attachments);
 
     /* ── push to Redis so ticket UI updates instantly ───────────────── */
-   await publish(`ticket:${id}`, JSON.stringify(saved));
+   await publish(`ticket:${id}`, saved);
    /* 🔔 still emit in‑process and Postgres NOTIFY for other consumers */
    emit(id, saved);
 

@@ -67,7 +67,7 @@ interface Order {
   country?: string;
 }
 interface Message {
-  id: number;
+  id: string;
   message: string;
   isInternal: boolean;
   createdAt: Date;
