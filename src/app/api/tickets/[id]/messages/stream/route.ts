@@ -1,6 +1,5 @@
 // src/app/api/tickets/[id]/messages/stream/route.ts
 import { NextRequest } from "next/server";
-
 export const runtime = "edge";
 
 const URL   = process.env.UPSTASH_REDIS_REST_URL!;
@@ -11,23 +10,32 @@ export async function GET(
   { params }: { params: { id: string } },
 ) {
   const { id } = params;
-  if (!URL || !TOKEN) {
-    return new Response("Redis not configured", { status: 500 });
-  }
-  // Proxy Upstash SSE so token never reaches browser
-   const upstream = await fetch(`${URL}/subscribe/ticket:${id}`, {
-       headers: { Authorization: `Bearer ${TOKEN}` },
-       cache: "no-store",
-     });
-    
-     const { readable, writable } = new TransformStream();
-     upstream.body!.pipeTo(writable);
-    
-     return new Response(readable, {
-       status: 200,
-       headers: {
-         "Content-Type": "text/event-stream",
-         "Cache-Control": "no-cache",
-       },
-     });
+  if (!URL || !TOKEN) return new Response("Redis not configured", { status: 500 });
+
+  const upstream = await fetch(`${URL}/subscribe/ticket:${id}`, {
+    headers: { Authorization: `Bearer ${TOKEN}` },
+    cache: "no-store",
+  });
+  if (!upstream.ok || !upstream.body)
+    return new Response("Upstash error", { status: 502 });
+
+  const { readable, writable } = new TransformStream();
+  (async () => {
+    const reader = upstream.body.getReader();
+    const writer = writable.getWriter();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      await writer.write(value);
+    }
+    writer.close();
+  })();
+
+  return new Response(readable, {
+    status: 200,
+    headers: {
+      "Content-Type":  "text/event-stream",
+      "Cache-Control": "no-cache",
+    },
+  });
 }

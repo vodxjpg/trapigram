@@ -1,6 +1,5 @@
 // src/app/api/order/[id]/messages/stream/route.ts
 import { NextRequest } from "next/server";
-
 export const runtime = "edge";
 
 const URL   = process.env.UPSTASH_REDIS_REST_URL!;
@@ -11,27 +10,33 @@ export async function GET(
   { params }: { params: { id: string } },
 ) {
   const { id } = params;
+  if (!URL || !TOKEN) return new Response("Redis not configured", { status: 500 });
 
-  if (!URL || !TOKEN) {
-    return new Response("Redis not configured", { status: 500 });
-  }
-
-  /* Proxy Upstash’s SSE stream so the token never reaches the browser */
   const upstream = await fetch(`${URL}/subscribe/order:${id}`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-      cache: "no-store",
-    });
-    
-    /* Vercel Edge needs an explicit pipe to keep bytes flowing */
-    const { readable, writable } = new TransformStream();
-    upstream.body!.pipeTo(writable);              // never await
-    
-    return new Response(readable, {
-      status: 200,
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        /* Connection & Transfer‑Encoding are added automatically */
-      },
-    });
+    headers: { Authorization: `Bearer ${TOKEN}` },
+    cache: "no-store",
+  });
+  if (!upstream.ok || !upstream.body)
+    return new Response("Upstash error", { status: 502 });
+
+  /* ---- manual reader → writer pump (no buffering) ---- */
+  const { readable, writable } = new TransformStream();
+  (async () => {
+    const reader = upstream.body!.getReader();
+    const writer = writable.getWriter();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      await writer.write(value);    // push chunk straight through
+    }
+    writer.close();
+  })();
+
+  return new Response(readable, {
+    status: 200,
+    headers: {
+      "Content-Type":  "text/event-stream",
+      "Cache-Control": "no-cache",
+    },
+  });
 }
