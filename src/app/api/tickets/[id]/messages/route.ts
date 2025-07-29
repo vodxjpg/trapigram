@@ -58,23 +58,35 @@ export async function POST(
     });
 
     /* ---------- insert DB row ---------- */
-    const msgId = uuidv4();
-    const { rows: [saved] } = await pool.query(
-      `INSERT INTO "ticketMessages"
-         (id,"ticketId",message,attachments,"isInternal","createdAt","updatedAt")
-       VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
-       RETURNING *`,
-      [msgId, id, parsed.message, parsed.attachments, parsed.isInternal],
-    );
-    saved.attachments = JSON.parse(saved.attachments);
+const msgId = uuidv4();
+const { rows: [saved] } = await pool.query(/* … */);
+saved.attachments = JSON.parse(saved.attachments);
 
-    /* ---------- realtime fan‑out ---------- */
-    await publish(`ticket:${id}`, saved);                       // Upstash (legacy)
-    await pusher.trigger(`ticket-${id}`, "new-message", saved); // Pusher (new)
-    emit(id, saved);                                            // in‑process
+/* ---------- realtime fan‑out ---------- */
+await publish(`ticket:${id}`, saved);                       // Upstash (legacy)
+await pusher.trigger(`ticket-${id}`, "new-message", saved); // Pusher (dashboard)
+emit(id, saved);                                            // in‑process
 
-    const chan = `ticket_${id.replace(/-/g, "")}`;
-    await pool.query('SELECT pg_notify($1, $2)', [chan, JSON.stringify(saved)]);
+/* ★★★★★ PUSH TO THE BOT ★★★★★ */
+if (parsed.isInternal) {
+  /* we need the ticket owner */
+  const { rows: [{ clientid: clientId, title }] } =
+    await pool.query(`SELECT "clientId", title FROM tickets WHERE id = $1 LIMIT 1`, [id]);
+
+  await pusher.trigger(
+    `org-${organizationId}-client-${clientId}`,
+    "admin-message",                          // same event the bot already listens for
+    {
+      text: saved.message,
+      ticketId: id,
+      ticketTitle: title ?? "",
+    },
+  );
+}
+/* -------------------------------------------------------------------- */
+
+const chan = `ticket_${id.replace(/-/g, "")}`;
+await pool.query('SELECT pg_notify($1, $2)', [chan, JSON.stringify(saved)]);
 
     /* ---------- public reply notification ---------- */
     if (!parsed.isInternal) {
