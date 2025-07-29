@@ -75,15 +75,8 @@ export async function POST(
        if (isInternal) {
          await pusher.trigger(
            `org-${organizationId}-client-${clientId}`,
-            "admin-message",
-            {
-              text: message,
-              orderId:  id,
-              orderKey: (await pool.query(
-                `SELECT "orderKey" FROM orders WHERE id = $1 LIMIT 1`,
-                [id],
-              )).rows[0]?.orderKey ?? "",
-            }
+           "admin-message",
+           { text: message }     // shape expected by the bot
          );
        }
 
