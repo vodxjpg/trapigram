@@ -24,14 +24,19 @@ export async function GET(req: NextRequest) {
     }
 
     let dataSql = `
-      SELECT id,
-             "orderId",
-             text,
-             rate,
-             "createdAt",
-             "updatedAt"
-      FROM reviews
-      WHERE "organizationId" = $1
+           SELECT r.id,
+             r."orderId",
+             r.text,
+             r.rate,
+             r."createdAt",
+             r."updatedAt",
+             o."dateCreated"            AS "orderDate",
+             o."totalAmount"::numeric   AS "orderAmount"
+      FROM reviews r
+      LEFT JOIN orders o
+             ON  o.id              = r."orderId"
+             AND o."organizationId" = r."organizationId"
+      WHERE r."organizationId" = $1
     `;
     const dataVals: any[] = [organizationId];
     if (search) {
