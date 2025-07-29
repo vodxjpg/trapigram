@@ -68,8 +68,17 @@ export async function POST(
     );
 
     /* ── realtime fan‑out ─────────────────────────────────────────── */
-    await publish(`order:${id}`, saved);                      // Upstash (old)
-    await pusher.trigger(`order-${id}`, "new-message", saved); // Pusher (new)
+       await publish(`order:${id}`, saved);                // Upstash (keep)
+       await pusher.trigger(`order-${id}`, "new-message", saved); // external UI
+    
+       /* Push INTERNAL admin replies straight to the Telegram bot */
+       if (isInternal) {
+         await pusher.trigger(
+           `org-${organizationId}-client-${clientId}`,
+           "admin-message",
+           { text: message }     // shape expected by the bot
+         );
+       }
 
     /* ── notifications (unchanged) ───────────────────────────────── */
     if (!isInternal) {

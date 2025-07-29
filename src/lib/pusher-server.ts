@@ -1,10 +1,13 @@
 // src/lib/pusher-server.ts
 import Pusher from "pusher";
+// only needed if you're not on Next.js (which auto‑loads .env* for you)
+// import dotenv from "dotenv";
+// dotenv.config();
 
 export const pusher = new Pusher({
-  appId:  "2028930",
-  key:    "6f9adcf7a6b2d8780aa9",
-  secret: "3ae274686e4b9c65828e",
-  cluster:"eu",
-  useTLS: true,
+  appId:    process.env.PUSHER_APP_ID!,
+  key:      process.env.PUSHER_KEY!,
+  secret:   process.env.PUSHER_SECRET!,
+  cluster:  process.env.PUSHER_CLUSTER!,
+  useTLS:   true,
 });
