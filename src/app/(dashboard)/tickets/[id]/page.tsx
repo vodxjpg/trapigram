@@ -225,15 +225,72 @@ export default function TicketDetail() {
     }
   };
 
-  const handleAttachmentChange = (e: React.ChangeEvent<HTMLInputElement>) =>
-    e.target.files && setAttachments(Array.from(e.target.files));
+  const handleAttachmentChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    if (!e.target.files) return;
+  
+    /* ---------- allowed types & limits ---------- */
+    const imgTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    const vidTypes = [
+      "video/mp4",
+      "video/webm",
+      "video/ogg",
+      "video/quicktime",
+      "video/x-msvideo",
+      "video/mpeg",
+    ];
+    const maxImg = 5 * 2 ** 20;      // 5 MB
+    const maxVid = 150 * 2 ** 20;    // 150 MB
+  
+    const accepted: File[] = [];
+  
+    Array.from(e.target.files).forEach((file) => {
+      const isImg = imgTypes.includes(file.type);
+      const isVid = vidTypes.includes(file.type);
+  
+      /* — Type guard — */
+      if (!isImg && !isVid) {
+        toast.warning(`“${file.name}” – unsupported file type`);
+        return;
+      }
+  
+      /* — Size guard — */
+      if ((isImg && file.size > maxImg) || (isVid && file.size > maxVid)) {
+        const limitLabel = isImg ? "5 MB" : "150 MB";
+        toast.warning(`“${file.name}” is too large (max ${limitLabel})`);
+        return;
+      }
+  
+      accepted.push(file);
+    });
+  
+    setAttachments(accepted);
+  };
+  
 
   /** upload one file and return {name, url, size} */
   const uploadFile = async (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
     const up = await fetch("/api/upload", { method: "POST", body: fd });
-    if (!up.ok) throw new Error("upload failed");
+      if (!up.ok) {
+          let reason = "Upload failed";
+      
+          /* 400 with JSON from our route ----------------------------------- */
+          if (up.headers.get("content-type")?.includes("application/json")) {
+            try {
+              const { error } = await up.json();
+              reason = error || reason;
+            } catch {/* ignore */}
+      
+          /* 413 returned by the Vercel platform ----------------------------- */
+          } else if (up.status === 413) {
+            reason = "File too large for the platform (max ≈ 4 MB per request)";
+          }
+      
+          throw new Error(reason);
+        }
     const { filePath } = await up.json();
     return { name: file.name, url: filePath, size: file.size };
   };
@@ -269,9 +326,15 @@ export default function TicketDetail() {
       setMessages((m) => [...m, created]);
       setNewMessage("");
       setAttachments([]);
-    } catch (err) {
+    } catch (err: unknown) {
+      /* Type‑narrow the error before using .message */
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to send message";
+    
       console.error(err);
-      toast.error("Failed to send message");
+      toast.error(msg);
     }
   };
   
