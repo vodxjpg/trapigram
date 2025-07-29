@@ -91,29 +91,29 @@ export async function POST(
     /* ------------------------------------------------------------------ */
     /* 3️⃣  Push *internal* replies to the customer’s Telegram bot       */
     /* ------------------------------------------------------------------ */
-    if (parsed.isInternal) {
-      const {
-        rows: [
-          {
-            clientid: clientId,
-            title: ticketTitle,
-          },
-        ],
-      } = await pool.query(
-        `SELECT "clientId", title FROM tickets WHERE id = $1 LIMIT 1`,
-        [ticketId],
-      );
+   /* ★ PUSH TO THE BOT (only for staff → user messages) ★ */
+if (parsed.isInternal) {
+  const {
+    rows: [{ clientId, title: ticketTitle }],
+  } = await pool.query(
+    `SELECT "clientId", title
+       FROM tickets
+      WHERE id = $1
+      LIMIT 1`,
+    [ticketId],
+  );
 
-      await pusher.trigger(
-        `org-${organizationId}-client-${clientId}`,
-        "admin-message", // the event the bot listens for
-        {
-          text: saved.message,
-          ticketId,
-          ticketTitle: ticketTitle ?? "",
-        },
-      );
-    }
+  await pusher.trigger(
+    `org-${organizationId}-client-${clientId}`,
+    "admin-message",
+    {
+      text: saved.message,
+      ticketId,
+      ticketTitle,
+    },
+  );
+}
+
 
     /* ------------------------------------------------------------------ */
     /* 4️⃣  PostgreSQL NOTIFY for in‑process workers                      */
