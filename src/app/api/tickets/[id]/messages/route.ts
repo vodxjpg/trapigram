@@ -110,6 +110,7 @@ if (parsed.isInternal) {
       text: saved.message,
       ticketId,
       ticketTitle,
+      attachments: saved.attachments,       // ← NEW
     },
   );
 }
