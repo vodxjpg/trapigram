@@ -73,10 +73,21 @@ export async function POST(
     
        /* Push INTERNAL admin replies straight to the Telegram bot */
        if (isInternal) {
+        // lookup the human‑friendly orderKey once
+         const {
+           rows: [ordInfo],
+         } = await pool.query(
+           `SELECT "orderKey" FROM orders WHERE id = $1 LIMIT 1`,
+           [id],
+         );
          await pusher.trigger(
            `org-${organizationId}-client-${clientId}`,
            "admin-message",
-           { text: message }     // shape expected by the bot
+           {                                      // new – everything the bot needs
+                text:      message,
+                orderId:   id,
+                orderKey:  ordInfo.orderKey,
+              }
          );
        }
 
