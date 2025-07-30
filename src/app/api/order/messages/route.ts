@@ -4,9 +4,11 @@ import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
 export async function POST(req: NextRequest) {
-  const ctx = await getContext(req);
+  /* ① give getContext its own copy  */
+  const ctx = await getContext(req.clone());
   if (ctx instanceof NextResponse) return ctx;
 
+  /* ② now _our_ copy is still intact */
   const { orderIds = [] } = await req.json();
   if (!Array.isArray(orderIds) || orderIds.length === 0) {
     return NextResponse.json({ last: {} });
@@ -14,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   const { rows } = await pool.query(
     `SELECT DISTINCT ON ("orderId")
-         "orderId", id, "isInternal", "createdAt"
+            "orderId", id, "isInternal", "createdAt"
        FROM "orderMessages"
       WHERE "orderId" = ANY($1::text[])
       ORDER BY "orderId", "createdAt" DESC`,
