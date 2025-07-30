@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     `SELECT DISTINCT ON ("orderId")
          "orderId", id, "isInternal", "createdAt"
        FROM "orderMessages"
-      WHERE "orderId" = ANY($1::uuid[])
+      WHERE "orderId" = ANY($1::text[])
       ORDER BY "orderId", "createdAt" DESC`,
     [orderIds],
   );
