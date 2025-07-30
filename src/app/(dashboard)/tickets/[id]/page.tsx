@@ -321,9 +321,19 @@ export default function TicketDetail() {
         }),
       });
       if (!res.ok) throw new Error();
-  
+      
       const created: TicketMessage = await res.json();
-      setMessages((m) => [...m, created]);
+      
+      /* ── ⬇︎ insert ONLY if not already there (race‑safe) ─────────────── */
+      setMessages(prev =>
+        prev.some(m => m.id === created.id)
+          ? prev
+          : [
+              ...prev,
+              { ...created, createdAt: new Date(created.createdAt) }, // keep type parity
+            ]
+      );
+      
       setNewMessage("");
       setAttachments([]);
     } catch (err: unknown) {
