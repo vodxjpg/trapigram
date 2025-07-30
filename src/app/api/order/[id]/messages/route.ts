@@ -84,6 +84,7 @@ export async function POST(
            `org-${organizationId}-client-${clientId}`,
            "admin-message",
            {                                      // new – everything the bot needs
+                id:       saved.id,
                 text:      message,
                 orderId:   id,
                 orderKey:  ordInfo.orderKey,
