@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------ *\
 |  /api/tickets/[id]/messages – create a new ticket message           |
 |                                                                     |
-|  • Persists the message in Postgres                                 |
+|  • Persists the message in Postgrs                                 |
 |  • Broadcasts to dashboard / SSE / worker listeners                 |
 |  • Sends internal (staff→user) replies to the Telegram bot          |
 |  • Notifies the customer on public replies via e‑mail + in‑app      |
