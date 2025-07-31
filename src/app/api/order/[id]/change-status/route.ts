@@ -949,18 +949,19 @@ export async function PATCH(
  * ──────────────────────────────────────────────────────────── */
 if (newStatus === "paid" && ord.status !== "paid") {
   /*  1) fetch affiliate-settings (points & steps) */
-  const { rows: [affSet] } = await client.query(
-    `SELECT "pointsPerReferral",
-            "spendingStep",
-            "pointsPerSpendingStep"
+    /* ── grab settings (use real column names, alias them to old variable names) ── */
+    const { rows: [affSet] } = await client.query(
+      `SELECT "pointsPerReferral",
+              "spendingNeeded"      AS "spendingStep",
+              "pointsPerSpending"   AS "pointsPerSpendingStep"
        FROM "affiliateSettings"
       WHERE "organizationId" = $1
       LIMIT 1`,
     [organizationId],
   );
   const ptsPerReferral = Number(affSet?.pointsPerReferral        || 0);
-  const stepEur        = Number(affSet?.spendingStep             || 0);
-  const ptsPerStep     = Number(affSet?.pointsPerSpendingStep    || 0);
+    const stepEur        = Number(affSet?.spendingStep             || 0);   // ← alias above
+    const ptsPerStep     = Number(affSet?.pointsPerSpendingStep    || 0);   // ← alias above
 
   /*  2) has this buyer been referred?  award referrer once   */
   const { rows: [cli] } = await client.query(
@@ -1016,7 +1017,7 @@ if (newStatus === "paid" && ord.status !== "paid") {
          FROM "affiliatePointLogs"
         WHERE "organizationId" = $1
           AND "clientId"       = $2
-          AND action           = 'spending'`,
+         AND action           = 'spending_bonus'`,
       [organizationId, ord.clientId],
     );
 
@@ -1029,7 +1030,7 @@ if (newStatus === "paid" && ord.status !== "paid") {
         `INSERT INTO "affiliatePointLogs"
            (id,"organizationId","clientId",points,action,description,
             "createdAt","updatedAt")
-         VALUES ($1,$2,$3,$4,'spending',
+         VALUES ($1,$2,$3,$4,'spending_bonus',
                  'Milestone spending bonus',NOW(),NOW())`,
         [logId, organizationId, ord.clientId, delta],
       );
