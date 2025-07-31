@@ -731,6 +731,33 @@ interface DB {
     date: Date
   }
 
+  inventoryCount: {
+    id: string;
+    warehouseId: string;
+    organizationId: string;
+    userId: string;
+    reference: string;
+    countType: string;
+    countries: string;
+    isCompleted: boolean;
+    createdAt: Date;
+    updatedAt: Date
+  }
+
+  inventoryCountItems: {
+    id: string;
+    inventoryCountId: string;
+    productId: string;
+    variationId: string;
+    country: string;
+    expectedQuantity: number;
+    countedQuantity: number;
+    discrepancyReason: string;
+    isCounted: boolean;
+    createdAt: Date;
+    updatedAt: Date
+  }
+
   /* ─────────────── Placeholders (internal) ─────────────── */
   placeholders: {
     key: string;           // '{review_count}' → 'review_count'
