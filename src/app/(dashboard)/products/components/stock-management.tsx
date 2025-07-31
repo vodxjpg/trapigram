@@ -30,16 +30,19 @@ export function StockManagement({ warehouses, stockData, onStockChange }: StockM
     })
   }
 
-  const handleStockChange = (warehouseId: string, country: string, value: number) => {
-    const newStockData = {
-      ...stockData,
-      [warehouseId]: {
-        ...stockData[warehouseId],
-        [country]: value,
-      },
-    }
-    onStockChange(newStockData)
-  }
+   const handleStockChange = (
+       warehouseId: string,
+       country: string,
+       value: number,
+     ) => {
+       onStockChange((prev) => {
+         const wh = prev[warehouseId] ?? {};
+         return {
+           ...prev,
+           [warehouseId]: { ...wh, [country]: value },
+         };
+       });
+     };
 
   return (
     <div className="space-y-4">
