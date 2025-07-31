@@ -82,9 +82,20 @@ export function StockManagement({ warehouses, stockData, onStockChange }: StockM
                             <Input
                               type="number"
                               min="0"
-                              value={stockData[warehouse.id]?.[country] || 0}
+                              value={
+                                  stockData[warehouse.id]?.[country] === undefined ||
+                                  Number.isNaN(stockData[warehouse.id]?.[country])
+                                    ? ""
+                                    : stockData[warehouse.id][country]
+                                }
                               onChange={(e) =>
-                                handleStockChange(warehouse.id, country, Number.parseInt(e.target.value) || 0)
+                                  handleStockChange(
+                                      warehouse.id,
+                                      country,
+                                      Number.isNaN(e.target.valueAsNumber)
+                                        ? NaN                      // keep it blank in state
+                                        : Math.max(0, e.target.valueAsNumber)
+                                    )
                               }
                             />
                           </TableCell>
