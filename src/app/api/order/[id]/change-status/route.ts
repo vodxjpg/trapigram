@@ -1,7 +1,8 @@
 // src/app/api/order/[id]/change-status/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
+import type { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
@@ -671,6 +672,7 @@ export async function PATCH(
               "shippingMethod",
               "notifiedPaidOrCompleted",
               "orderMeta",
+              COALESCE("referralAwarded",FALSE)          AS "referralAwarded",
               COALESCE("pointsRedeemed",0) AS "pointsRedeemed"
          FROM orders
         WHERE id = $1
@@ -795,8 +797,14 @@ export async function PATCH(
     WHERE id = $2`,
       [newStatus, id],
     );
-    console.log(`Order ${id} updated to ${newStatus}`);
-    await client.query("COMMIT");
+     console.log(`Order ${id} updated to ${newStatus}`);
+    
+     /* ── Affiliate / referral bonuses (runs once, on first transition to PAID) ── */
+     if (newStatus === "paid" && ord.status !== "paid") {
+       // … entire bonus block here …
+     }
+    
+     await client.query("COMMIT");
     console.log(`Transaction committed for order ${id}`);
 
     // ─── trigger revenue update for paid orders ───
@@ -809,6 +817,8 @@ export async function PATCH(
         console.error(`Failed to update revenue for order ${id}:`, revErr);
       }
     }
+
+
 
     /* ─────────────────────────────────────────────
      *  Notification logic
@@ -933,7 +943,110 @@ export async function PATCH(
         },
       });
 
-      /* mark flag only for paid / completed (NOT underpaid) */
+      /* ─────────────────────────────────────────────────────────────
+ *  Affiliate / referral bonuses
+ *     – ONLY once, when the order first becomes PAID
+ * ──────────────────────────────────────────────────────────── */
+if (newStatus === "paid" && ord.status !== "paid") {
+  /*  1) fetch affiliate-settings (points & steps) */
+  const { rows: [affSet] } = await client.query(
+    `SELECT "pointsPerReferral",
+            "spendingStep",
+            "pointsPerSpendingStep"
+       FROM "affiliateSettings"
+      WHERE "organizationId" = $1
+      LIMIT 1`,
+    [organizationId],
+  );
+  const ptsPerReferral = Number(affSet?.pointsPerReferral        || 0);
+  const stepEur        = Number(affSet?.spendingStep             || 0);
+  const ptsPerStep     = Number(affSet?.pointsPerSpendingStep    || 0);
+
+  /*  2) has this buyer been referred?  award referrer once   */
+  const { rows: [cli] } = await client.query(
+    `SELECT "referredBy" FROM clients WHERE id = $1`,
+    [ord.clientId],
+  );
+
+  if (!ord.referralAwarded && cli?.referredBy && ptsPerReferral > 0) {
+    const logId = uuidv4();
+    await client.query(
+      `INSERT INTO "affiliatePointLogs"
+         (id,"organizationId","clientId",points,action,description,
+          "sourceClientId","createdAt","updatedAt")
+       VALUES ($1,$2,$3,$4,'referral_bonus',
+               'Bonus from referral order',$5,NOW(),NOW())`,
+      [logId, organizationId, cli.referredBy, ptsPerReferral, ord.clientId],
+    );
+    await client.query(
+      `INSERT INTO "affiliatePointBalances" AS b
+         ("clientId","organizationId","pointsCurrent","createdAt","updatedAt")
+       VALUES ($1,$2,$3,NOW(),NOW())
+       ON CONFLICT("clientId","organizationId") DO UPDATE
+         SET "pointsCurrent" = b."pointsCurrent" + EXCLUDED."pointsCurrent",
+             "updatedAt"     = NOW()`,
+      [cli.referredBy, organizationId, ptsPerReferral],
+    );
+    /* mark order so we never double-award this ref bonus */
+    await client.query(
+      `UPDATE orders
+          SET "referralAwarded" = TRUE,
+              "updatedAt"       = NOW()
+        WHERE id = $1`,
+      [id],
+    );
+  }
+
+  /*  3) spending milestones for *buyer*  (step-based)        */
+  if (stepEur > 0 && ptsPerStep > 0) {
+    /* total paid so far (ONLY paid orders) */
+    const { rows: [spent] } = await client.query(
+      `SELECT COALESCE(SUM("totalAmount"),0) AS sum
+         FROM orders
+        WHERE "clientId" = $1
+          AND "organizationId" = $2
+          AND status = 'paid'`,
+      [ord.clientId, organizationId],
+    );
+    const totalEur = Math.floor(Number(spent.sum));   // in store currency
+
+    /* how many spending-bonuses already written? */
+    const { rows: [prev] } = await client.query(
+      `SELECT COALESCE(SUM(points),0) AS pts
+         FROM "affiliatePointLogs"
+        WHERE "organizationId" = $1
+          AND "clientId"       = $2
+          AND action           = 'spending'`,
+      [organizationId, ord.clientId],
+    );
+
+    const shouldHave = Math.floor(totalEur / stepEur) * ptsPerStep;
+    const delta      = shouldHave - Number(prev.pts);
+
+    if (delta > 0) {
+      const logId = uuidv4();
+      await client.query(
+        `INSERT INTO "affiliatePointLogs"
+           (id,"organizationId","clientId",points,action,description,
+            "createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,'spending',
+                 'Milestone spending bonus',NOW(),NOW())`,
+        [logId, organizationId, ord.clientId, delta],
+      );
+      await client.query(
+        `INSERT INTO "affiliatePointBalances" AS b
+           ("clientId","organizationId","pointsCurrent","createdAt","updatedAt")
+         VALUES ($1,$2,$3,NOW(),NOW())
+         ON CONFLICT("clientId","organizationId") DO UPDATE
+           SET "pointsCurrent" = b."pointsCurrent" + EXCLUDED."pointsCurrent",
+               "updatedAt"     = NOW()`,
+        [ord.clientId, organizationId, delta],
+      );
+    }
+  }
+}
+
+     /* mark flag only for completed (NOT needed for paid anymore) */
       if (newStatus === "completed") {
         await client.query(
           `UPDATE orders
