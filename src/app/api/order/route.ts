@@ -99,9 +99,15 @@ export async function GET(req: NextRequest) {
       const vals: unknown[] = [organizationId, filterClientId];
 
       if (filterStatus) {
-        clauses.push(`o.status = $${vals.length + 1}`);
-        vals.push(filterStatus);
-      }
+        const statuses = filterStatus.split(",");
+        if (statuses.length > 1) {
+          clauses.push(`o.status IN (${statuses.map((_, i) => `$${vals.length + i + 1}`).join(",")})`);
+          vals.push(...statuses);
+        } else {
+          clauses.push(`o.status = $${vals.length + 1}`);
+          vals.push(filterStatus);
+        }
+  }
       /* ─── referralAwarded filter – NULL = not-awarded ─── */
       if (filterReferral === "false") {
         clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
@@ -138,10 +144,16 @@ export async function GET(req: NextRequest) {
     const clauses: string[] = [`o."organizationId" = $1`];
     const vals: unknown[] = [organizationId];
 
-    if (filterStatus) {
-      clauses.push(`o.status = $${vals.length + 1}`);
-      vals.push(filterStatus);
-    }
+      if (filterStatus) {
+            const statuses = filterStatus.split(",");
+            if (statuses.length > 1) {
+              clauses.push(`o.status IN (${statuses.map((_, i) => `$${vals.length + i + 1}`).join(",")})`);
+              vals.push(...statuses);
+            } else {
+              clauses.push(`o.status = $${vals.length + 1}`);
+              vals.push(filterStatus);
+            }
+      }
      if (filterReferral === "false") {
          clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
        }
