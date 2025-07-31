@@ -102,9 +102,12 @@ export async function GET(req: NextRequest) {
         clauses.push(`o.status = $${vals.length + 1}`);
         vals.push(filterStatus);
       }
-      if (filterReferral === "true" || filterReferral === "false") {
-        clauses.push(`o."referralAwarded" = $${vals.length + 1}`);
-        vals.push(filterReferral === "true");
+      /* ─── referralAwarded filter – NULL = not-awarded ─── */
+      if (filterReferral === "false") {
+        clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
+      }
+      if (filterReferral === "true") {
+        clauses.push(`o."referralAwarded" = TRUE`);
       }
 
       const sql = `
@@ -126,6 +129,7 @@ export async function GET(req: NextRequest) {
         lastName: o.lastName,
         username: o.username,
         email: o.email,
+        referralAwarded: !!o.referralAwarded,
       }));
       return NextResponse.json(orders, { status: 200 });
     }
@@ -138,11 +142,12 @@ export async function GET(req: NextRequest) {
       clauses.push(`o.status = $${vals.length + 1}`);
       vals.push(filterStatus);
     }
-    if (filterReferral === "true" || filterReferral === "false") {
-      clauses.push(`o."referralAwarded" = $${vals.length + 1}`);
-      vals.push(filterReferral === "true");
-    }
-
+     if (filterReferral === "false") {
+         clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
+       }
+       if (filterReferral === "true") {
+         clauses.push(`o."referralAwarded" = TRUE`);
+       }
     const listSql = `
       SELECT o.*, c."firstName", c."lastName", c."username", c.email
         FROM orders o
@@ -163,6 +168,7 @@ export async function GET(req: NextRequest) {
       username: o.username,
       email: o.email,
       shippingCompany: o.shippingService ?? o.shippingService ?? null,
+      referralAwarded: !!o.referralAwarded
     }));
     return NextResponse.json(orders, { status: 200 });
   } catch (err) {
