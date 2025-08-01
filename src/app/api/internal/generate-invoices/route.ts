@@ -1,4 +1,3 @@
-// src/app/api/internal/generate-invoices/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "kysely";
 import { db } from "@/lib/db";
@@ -19,13 +18,10 @@ export async function POST(req: NextRequest) {
   // 3️⃣ Fetch organization owners via tenant metadata
   const owners = await db
     .selectFrom('organization as o')
-    .innerJoin(
-      'tenant as t',
-      sql`(o.metadata::json->>'tenantId')::text`,
-      '=',
-      't.id'
+    .innerJoin('tenant as t', (join) =>
+      join.on(sql`(o.metadata::json->>'tenantId')::text`, '=', 't.id')
     )
-    .innerJoin('user as u', 'u.id', '=', 't.ownerUserId')
+    .innerJoin('user as u', 'u.id', 't.ownerUserId')
     .select(['t.ownerUserId as userId', 'u.createdAt as createdAt'])
     .distinct()
     .execute();
@@ -44,10 +40,10 @@ export async function POST(req: NextRequest) {
     const year = today.getUTCFullYear();
     const month = today.getUTCMonth();
     const startDate = new Date(Date.UTC(year, month - 1, dayOfMonth, 0, 0, 0));
-    const endDate   = new Date(Date.UTC(year, month, dayOfMonth - 1, 23, 59, 59));
+    const endDate = new Date(Date.UTC(year, month, dayOfMonth - 1, 23, 59, 59));
     const periodStart = startDate.toISOString().split('T')[0];
-    const periodEnd   = endDate.toISOString().split('T')[0];
-    const dueDate     = today.toISOString().split('T')[0];
+    const periodEnd = endDate.toISOString().split('T')[0];
+    const dueDate = today.toISOString().split('T')[0];
 
     // Skip if already invoiced
     const exists = await db
@@ -55,8 +51,9 @@ export async function POST(req: NextRequest) {
       .select('id')
       .where('userId', '=', userId)
       .where('periodStart', '=', periodStart)
-      .where('periodEnd',   '=', periodEnd)
+      .where('periodEnd', '=', periodEnd)
       .executeTakeFirst();
+
     if (exists) continue;
 
     // Sum all fees in window
@@ -67,6 +64,7 @@ export async function POST(req: NextRequest) {
       .where('capturedAt', '>=', startDate)
       .where('capturedAt', '<=', endDate)
       .executeTakeFirst();
+
     const totalAmount = sumRow?.total ?? 0;
     if (totalAmount <= 0) continue;
 
