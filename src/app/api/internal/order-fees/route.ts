@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireInternalAuth } from "@/lib/internalAuth";
+import crypto from "crypto";
 
 export async function POST(req: NextRequest) {
   // 1) auth
@@ -48,11 +49,8 @@ export async function POST(req: NextRequest) {
     .select("percent")
     .where("userId", "=", owner.userId)
     .where("startsAt", "<=", now)
-    .where((eb) =>
-      eb
-        .where("endsAt", ">", now)
-        .orWhere("endsAt", "is", null)
-    )
+    // group endsAt condition via raw SQL to avoid builder bug
+    .whereRaw("(\"endsAt\" > ? OR \"endsAt\" IS NULL)", [now])
     .orderBy("startsAt", "desc")
     .executeTakeFirst();
   if (!rate) {
@@ -61,16 +59,20 @@ export async function POST(req: NextRequest) {
 
   // 6) calculate fee
   const pct = parseFloat(rate.percent);
-  const fee = (pct / 100) * order.totalAmount;
+  const fee = (pct / 100) * Number(order.totalAmount);
 
   // 7) record fee
+  const id = crypto.randomUUID();
+  const capturedAt = new Date();
   const inserted = await db
     .insertInto("orderFees")
     .values({
+      id,
       orderId,
       userId: owner.userId,
       percentApplied: pct.toString(),
       feeAmount: fee.toString(),
+      capturedAt,
     })
     .returning([
       "id",
