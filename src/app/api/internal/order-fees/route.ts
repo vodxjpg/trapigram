@@ -42,26 +42,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Organization owner not found" }, { status: 404 });
   }
 
-  // 5) load current fee rate
+  // 5) load all rates and pick the active one in JS
   const now = new Date();
-  const rate = await db
+  const allRates = await db
     .selectFrom("userFeeRates")
-    .select("percent")
+    .select(["percent", "startsAt", "endsAt"])
     .where("userId", "=", owner.userId)
-    .where("startsAt", "<=", now)
-    .where((eb) =>
-      eb
-        .where("endsAt", ">", now)
-        .orWhere("endsAt", "is", null)
-    )
     .orderBy("startsAt", "desc")
-    .executeTakeFirst();
-  if (!rate) {
+    .execute();
+
+  const active = allRates.find((r) => {
+    const start = new Date(r.startsAt);
+    const end = r.endsAt ? new Date(r.endsAt) : null;
+    return start <= now && (!end || end > now);
+  });
+  if (!active) {
     return NextResponse.json({ error: "No fee rate defined for user" }, { status: 404 });
   }
 
   // 6) calculate fee
-  const pct = parseFloat(rate.percent);
+  const pct = parseFloat(active.percent);
   const fee = (pct / 100) * Number(order.totalAmount);
 
   // 7) record fee
