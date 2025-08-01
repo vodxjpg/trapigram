@@ -869,7 +869,7 @@ export async function PATCH(
       const productList = Object.entries(grouped)
         .map(([cat, items]) => {
           const lines = items
-            .map((it) => `- x${it.q} ${it.t}`)
+            .map((it) => `${it.t} - x${it.q}`)
             .join("<br>");
           return `<b>${cat.toUpperCase()}</b><br>${lines}`;
         })
@@ -1000,17 +1000,21 @@ if (newStatus === "paid" && ord.status !== "paid") {
 
   /*  3) spending milestones for *buyer*  (step-based)        */
   if (stepEur > 0 && ptsPerStep > 0) {
-    /* total paid so far (ONLY paid orders) */
+    /* --------------------------------------------------------------
+     * Lifetime spend in **EUR** – we rely on orderRevenue which was
+     * (re)-generated a few lines above for this order.
+     * -------------------------------------------------------------- */
     const { rows: [spent] } = await client.query(
-      `SELECT COALESCE(SUM("totalAmount"),0) AS sum
-         FROM orders
-        WHERE "clientId" = $1
-          AND "organizationId" = $2
-          AND status = 'paid'`,
+      `SELECT COALESCE(SUM(r."EURtotal"),0) AS sum
+         FROM "orderRevenue" r
+         JOIN orders o ON o.id = r."orderId"
+        WHERE o."clientId"       = $1
+          AND o."organizationId" = $2
+          AND o.status           = 'paid'`,
       [ord.clientId, organizationId],
     );
-    const totalEur = Math.floor(Number(spent.sum));   // in store currency
-
+    
+    const totalEur = Number(spent.sum);   // already a decimal string → number
     /* how many spending-bonuses already written? */
     const { rows: [prev] } = await client.query(
       `SELECT COALESCE(SUM(points),0) AS pts
@@ -1023,6 +1027,12 @@ if (newStatus === "paid" && ord.status !== "paid") {
 
     const shouldHave = Math.floor(totalEur / stepEur) * ptsPerStep;
     const delta      = shouldHave - Number(prev.pts);
+
+   console.log(
+       `[affiliate] spending check – client %s: total %.2f EUR, step %d,` +
+       ` prev %d pts, delta %d`,
+       ord.clientId, totalEur, stepEur, Number(prev.pts), delta,
+     );
 
     if (delta > 0) {
       const logId = uuidv4();
