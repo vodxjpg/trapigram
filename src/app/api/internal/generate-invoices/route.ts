@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   const today = dateParam ? new Date(dateParam) : new Date();
   const genDay = today.getUTCDate();
 
-  // 3️⃣ Fetch all organization owners via tenant metadata
+  // 3️⃣ Fetch all organization user owners via tenant metadata
   const owners = await db
     .selectFrom("organization as o")
     .innerJoin(
