@@ -4,97 +4,83 @@ import { db } from "@/lib/db";
 import { requireInternalAuth } from "@/lib/internalAuth";
 
 export async function POST(req: NextRequest) {
+  // 1) auth
   const err = requireInternalAuth(req);
   if (err) return err;
 
+  // 2) parse + validate body
   let body: { orderId?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-
-  const orderId = body.orderId;
+  const { orderId } = body;
   if (!orderId) {
-    return NextResponse.json({ error: "orderId required" }, { status: 400 });
+    return NextResponse.json({ error: "orderId is required" }, { status: 400 });
   }
 
-  // 1. Fetch order and ensure it's paid
+  // 3) fetch order
   const order = await db
     .selectFrom("orders")
-    .select(["id", "totalAmount", "organizationId", "datePaid"])
+    .select(["organizationId", "totalAmount"])
     .where("id", "=", orderId)
     .executeTakeFirst();
-
   if (!order) {
     return NextResponse.json({ error: "Order not found" }, { status: 404 });
   }
-  if (!order.datePaid) {
-    return NextResponse.json({ error: "Order not paid" }, { status: 400 });
-  }
 
-  // 2. Resolve tenant-owner userId
-  const org = await db
-    .selectFrom("organization")
-    .select("metadata")
-    .where("id", "=", order.organizationId)
+  // 4) find organization owner
+  const owner = await db
+    .selectFrom("member")
+    .select("userId")
+    .where("organizationId", "=", order.organizationId)
+    .where("role", "=", "owner")
     .executeTakeFirst();
-  if (!org) {
-    return NextResponse.json({ error: "Organization not found" }, { status: 404 });
+  if (!owner) {
+    return NextResponse.json({ error: "Organization owner not found" }, { status: 404 });
   }
 
-  let tenantId: string | undefined;
-  if (org.metadata) {
-    try {
-      const meta = typeof org.metadata === "string" ? JSON.parse(org.metadata) : org.metadata;
-      tenantId = meta?.tenantId;
-    } catch {}
-  }
-  if (!tenantId) {
-    return NextResponse.json({ error: "Tenant not found in metadata" }, { status: 400 });
-  }
-
-  const tenant = await db
-    .selectFrom("tenant")
-    .select("ownerUserId")
-    .where("id", "=", tenantId)
-    .executeTakeFirst();
-  if (!tenant?.ownerUserId) {
-    return NextResponse.json({ error: "Tenant owner not found" }, { status: 404 });
-  }
-  const userId = tenant.ownerUserId;
-
-  // 3. Look up active fee rate
+  // 5) load current fee rate
   const now = new Date();
   const rate = await db
-    .selectFrom('"userFeeRates"')
-    .select(['"percent"'])
-    .where('"userId"', "=", userId)
-    .where('"startsAt"', "<=", now)
-    .where((qb) =>
-      qb.where('"endsAt"', ">", now).orWhere('"endsAt"', "is", null)
+    .selectFrom("userFeeRates")
+    .select("percent")
+    .where("userId", "=", owner.userId)
+    .where("startsAt", "<=", now)
+    .where((eb) =>
+      eb
+        .where("endsAt", ">", now)
+        .orWhere("endsAt", "is", null)
     )
-    .orderBy('"startsAt"', "desc")
+    .orderBy("startsAt", "desc")
     .executeTakeFirst();
-
   if (!rate) {
-    return NextResponse.json({ error: "No active fee rate for user" }, { status: 400 });
+    return NextResponse.json({ error: "No fee rate defined for user" }, { status: 404 });
   }
 
-  // 4. Compute and record fee
-  const percent = Number(rate.percent);
-  const feeAmount = Number(order.totalAmount) * (percent / 100);
+  // 6) calculate fee
+  const pct = parseFloat(rate.percent);
+  const fee = (pct / 100) * order.totalAmount;
 
+  // 7) record fee
   const inserted = await db
-    .insertInto('"orderFees"')
+    .insertInto("orderFees")
     .values({
       orderId,
-      userId,
-      feeAmount,
-      percentApplied: percent,
+      userId: owner.userId,
+      percentApplied: pct.toString(),
+      feeAmount: fee.toString(),
     })
-    .returning(['"id"', '"orderId"', '"userId"', '"feeAmount"', '"percentApplied"', '"capturedAt"'])
+    .returning([
+      "id",
+      "orderId",
+      "userId",
+      "percentApplied",
+      "feeAmount",
+      "capturedAt",
+    ])
     .executeTakeFirst();
 
-  return NextResponse.json({ item: inserted }, { status: 201 });
+  return NextResponse.json({ item: inserted! }, { status: 201 });
 }
