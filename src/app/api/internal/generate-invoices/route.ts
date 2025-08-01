@@ -6,17 +6,19 @@ import { requireInternalAuth } from "@/lib/internalAuth";
 import crypto from "crypto";
 
 export async function POST(req: NextRequest) {
+  // ── 1) Auth
   const authErr = requireInternalAuth(req);
   if (authErr) return authErr;
 
-  // pick a “today” (from ?date=) and its day-of-month
+  // ── 2) Parse “today” date & genDay
   const url = new URL(req.url);
   const today = url.searchParams.get("date")
     ? new Date(url.searchParams.get("date")!)
     : new Date();
   const genDay = today.getUTCDate();
+  console.log(`[generate-invoices] invoked for date=${today.toISOString().slice(0,10)} (day=${genDay})`);
 
-  // 1️⃣ pull every member with role='owner'
+  // ── 3) Fetch all org-owners from member→user
   const owners = await db
     .selectFrom("member as m")
     .innerJoin("user as u", "u.id", "m.userId")
@@ -27,11 +29,15 @@ export async function POST(req: NextRequest) {
     .where("m.role", "=", "owner")
     .execute();
 
-  // 2️⃣ only keep those whose signup‐day matches today’s DOM
+  console.log(`[generate-invoices] total owners fetched: ${owners.length}`);
+  console.dir(owners, { depth: 1 });
+
+  // ── 4) Filter by sign-up DOM
   const eligible = owners.filter(({ createdAt }) => {
     const d = new Date(createdAt);
     return d.getUTCDate() === genDay && d < today;
   });
+  console.log(`[generate-invoices] eligible owners (signup DOM === ${genDay}): ${eligible.map(o => o.userId).join(", ")}`);
 
   const created: Array<{
     id: string;
@@ -43,17 +49,20 @@ export async function POST(req: NextRequest) {
     createdAt: string;
   }> = [];
 
+  // ── 5) Loop & invoice
   for (const { userId } of eligible) {
-    // build last‐month window [genDay‐1 → genDay‐2]
+    // compute last-month window
     const y = today.getUTCFullYear();
     const m = today.getUTCMonth();
-    const start = new Date(Date.UTC(y, m - 1, genDay,      0, 0,  0));
+    const start = new Date(Date.UTC(y, m - 1, genDay, 0, 0, 0));
     const end   = new Date(Date.UTC(y, m,     genDay - 1, 23, 59, 59));
     const ps = start.toISOString().slice(0, 10);
     const pe = end.toISOString().slice(0, 10);
     const due = today.toISOString().slice(0, 10);
 
-    // skip if we’ve already invoiced this user for that period
+    console.log(`— user ${userId}: window ${ps} → ${pe}, due ${due}`);
+
+    // skip if already invoiced
     const exists = await db
       .selectFrom("userInvoices")
       .select("id")
@@ -61,9 +70,12 @@ export async function POST(req: NextRequest) {
       .where("periodStart", "=", ps)
       .where("periodEnd", "=", pe)
       .executeTakeFirst();
-    if (exists) continue;
+    if (exists) {
+      console.log(`  → skipping, invoice already exists (${exists.id})`);
+      continue;
+    }
 
-    // sum up fees in that window
+    // sum up fees
     const sumRow = await db
       .selectFrom("orderFees")
       .select(sql<number>`coalesce(sum("feeAmount"), 0)`.as("total"))
@@ -72,9 +84,14 @@ export async function POST(req: NextRequest) {
       .where("capturedAt", "<=", end)
       .executeTakeFirst();
     const total = sumRow?.total ?? 0;
-    if (total <= 0) continue;
+    console.log(`  → total fees for period: ${total}`);
 
-    // create the invoice
+    if (total <= 0) {
+      console.log("  → skipping, nothing to invoice");
+      continue;
+    }
+
+    // insert invoice
     const inv = await db
       .insertInto("userInvoices")
       .values({
@@ -94,7 +111,9 @@ export async function POST(req: NextRequest) {
       ])
       .executeTakeFirstOrThrow();
 
-    // attach each fee
+    console.log(`  → created invoice ${inv.id}`);
+
+    // attach items
     const fees = await db
       .selectFrom("orderFees")
       .select(["id as orderFeeId", "feeAmount as amount"])
@@ -103,6 +122,7 @@ export async function POST(req: NextRequest) {
       .where("capturedAt", "<=", end)
       .execute();
 
+    console.log(`  → attaching ${fees.length} fee items`);
     for (const { orderFeeId, amount } of fees) {
       await db
         .insertInto("invoiceItems")
@@ -116,15 +136,16 @@ export async function POST(req: NextRequest) {
     }
 
     created.push({
-      id: inv.id,
-      userId: inv.userId,
-      periodStart: inv.periodStart,
-      periodEnd:   inv.periodEnd,
-      totalAmount: inv.totalAmount.toString(),
-      dueDate:     inv.dueDate,
-      createdAt:   (inv.createdAt as Date).toISOString(),
+      id:           inv.id,
+      userId:       inv.userId,
+      periodStart:  inv.periodStart,
+      periodEnd:    inv.periodEnd,
+      totalAmount:  inv.totalAmount.toString(),
+      dueDate:      inv.dueDate,
+      createdAt:    (inv.createdAt as Date).toISOString(),
     });
   }
 
+  console.log(`[generate-invoices] done, created ${created.length} invoices`);
   return NextResponse.json({ invoices: created });
 }
