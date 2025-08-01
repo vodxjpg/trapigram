@@ -766,6 +766,51 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+    /** Platform fee rates */
+   userFeeRates: {
+     id: string;
+     userId: string;
+     percent: string;       // numeric
+     startsAt: Date;
+     endsAt: Date | null;
+     createdAt: Date;
+    };
+  
+    /** Captured fees per order */
+   orderFees: {
+     id: string;
+     orderId: string;
+     userId: string;
+     feeAmount: string;     // numeric
+     percentApplied: string;// numeric
+     capturedAt: Date;
+    };
+  
+    /** Monthly invoices */
+   userInvoices: {
+     id: string;
+     userId: string;
+     periodStart: string;   // DATE
+     periodEnd: string;     // DATE
+     totalAmount: string;   // numeric
+     status: string;        // pending|sent|paid
+     dueDate: string;       // DATE
+     createdAt: Date;
+     niftipayOrderId: string | null;
+     niftipayReference: string | null;
+     niftipayNetwork: string;
+     niftipayAsset: string;
+     niftipayAddress: string | null;
+     niftipayQrUrl: string | null;
+    };
+  
+    /** Line items for invoices */
+   invoiceItems: {
+     id: string;
+     invoiceId: string;
+     orderFeeId: string;
+     amount: string;        // numeric
+    };
 }
 
 /* ──────────────────────────────────────────────────────────────── *

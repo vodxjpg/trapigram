@@ -9,9 +9,16 @@ export async function GET(req: NextRequest) {
   if (err) return err;
 
   const rates = await db
-    .selectFrom('"userFeeRates"')
-    .select(['"id"', '"userId"', '"percent"', '"startsAt"', '"endsAt"', '"createdAt"'])
-    .orderBy('"startsAt"', 'desc')
+    .selectFrom("userFeeRates")
+    .select([
+      "id",
+      "userId",
+      "percent",
+      "startsAt",
+      "endsAt",
+      "createdAt",
+    ])
+    .orderBy("startsAt", "desc")
     .execute();
 
   return NextResponse.json({ items: rates });
@@ -22,7 +29,12 @@ export async function POST(req: NextRequest) {
   const err = requireInternalAuth(req);
   if (err) return err;
 
-  let body: { userId?: string; percent?: number; startsAt?: string; endsAt?: string };
+  let body: {
+    userId?: string;
+    percent?: number;
+    startsAt?: string;
+    endsAt?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -32,21 +44,32 @@ export async function POST(req: NextRequest) {
   const { userId, percent, startsAt, endsAt } = body;
   if (!userId || typeof percent !== "number" || percent < 0) {
     return NextResponse.json(
-      { error: "userId (string) and percent (non-negative number) required" },
+      {
+        error:
+          "userId (string) and percent (non-negative number) are required",
+      },
       { status: 400 }
     );
   }
 
   const inserted = await db
-    .insertInto('"userFeeRates"')
+    .insertInto("userFeeRates")
     .values({
-      "userId": userId,
-      "percent": percent,
-      "startsAt": startsAt ? new Date(startsAt) : undefined,
-      "endsAt": endsAt ? new Date(endsAt) : undefined,
+      userId,
+      // cast numeric to string so it matches DB interface
+      percent: percent.toString(),
+      startsAt: startsAt ? new Date(startsAt) : undefined,
+      endsAt: endsAt ? new Date(endsAt) : undefined,
     })
-    .returning(['"id"', '"userId"', '"percent"', '"startsAt"', '"endsAt"', '"createdAt"'])
+    .returning([
+      "id",
+      "userId",
+      "percent",
+      "startsAt",
+      "endsAt",
+      "createdAt",
+    ])
     .executeTakeFirst();
 
-  return NextResponse.json({ item: inserted }, { status: 201 });
+  return NextResponse.json({ item: inserted! }, { status: 201 });
 }
