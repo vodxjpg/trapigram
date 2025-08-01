@@ -3,31 +3,39 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "kysely";
 import { db } from "@/lib/db";
 import { requireInternalAuth } from "@/lib/internalAuth";
+import crypto from "crypto";
 
 export async function POST(req: NextRequest) {
+  // 1️⃣ Auth
   const err = requireInternalAuth(req);
   if (err) return err;
 
+  // 2️⃣ Parse optional date param (YYYY-MM-DD)
   const url = new URL(req.url);
   const dateParam = url.searchParams.get("date");
   const today = dateParam ? new Date(dateParam) : new Date();
   const genDay = today.getUTCDate();
 
-  // 1️⃣ fetch distinct owner users of any org
+  // 3️⃣ Fetch all organization owners via tenant metadata
   const owners = await db
-    .selectFrom('"organization" as o')
-    .innerJoin('"tenant" as t', sql`(o."metadata"->>'tenantId')::text`, 't.id')
-    .innerJoin('"user" as u', 'u."id"', 't."ownerUserId"')
-    .select(['t."ownerUserId" as userId', 'u."createdAt"'])
+    .selectFrom('organization as o')
+    .innerJoin('tenant as t', jb =>
+      jb.on(
+        sql`(o.metadata::json->>'tenantId')::text`,
+        '=',
+        't.id'
+      )
+    )
+    .innerJoin('user as u', 'u.id', '=', 't.ownerUserId')
+    .select(['t.ownerUserId as userId', 'u.createdAt as createdAt'])
     .distinct()
     .execute();
 
-  // 2️⃣ filter by join-day and account-age
-  const eligible = owners.filter(
-    ({ createdAt }) =>
-      new Date(createdAt).getUTCDate() === genDay &&
-      new Date(createdAt) < today
-  );
+  // 4️⃣ Filter owners by signup day
+  const eligible = owners.filter(({ createdAt }) => {
+    const joined = new Date(createdAt);
+    return joined.getUTCDate() === genDay && joined < today;
+  });
 
   const createdInvoices: Array<{
     id: string;
@@ -39,66 +47,73 @@ export async function POST(req: NextRequest) {
     createdAt: string;
   }> = [];
 
+  // 5️⃣ Loop through each eligible owner
   for (const { userId } of eligible) {
-    // compute billing window
+    // Compute last month billing window
     const year = today.getUTCFullYear();
     const month = today.getUTCMonth();
-    const periodStart = new Date(Date.UTC(year, month - 1, genDay, 0, 0, 0));
-    const periodEnd = new Date(Date.UTC(year, month, genDay - 1, 23, 59, 59));
+    const start = new Date(Date.UTC(year, month - 1, genDay, 0, 0, 0));
+    const end = new Date(Date.UTC(year, month, genDay - 1, 23, 59, 59));
 
-    // skip existing
+    // Skip if invoice already exists
     const exists = await db
-      .selectFrom('"userInvoices"')
+      .selectFrom('userInvoices')
       .select('id')
-      .where('"userId"', '=', userId)
-      .where('"periodStart"', '=', periodStart)
-      .where('"periodEnd"', '=', periodEnd)
+      .where('userId', '=', userId)
+      .where('periodStart', '=', start)
+      .where('periodEnd', '=', end)
       .executeTakeFirst();
     if (exists) continue;
 
-    // sum all fees across all orgs for this user
+    // Sum fees for user in period
     const sumRow = await db
-      .selectFrom('"orderFees"')
-      .select(sql<number>`coalesce(sum("feeAmount"),0)`.as('sum'))
-      .where('"userId"', '=', userId)
-      .where('"capturedAt"', '>=', periodStart)
-      .where('"capturedAt"', '<=', periodEnd)
+      .selectFrom('orderFees')
+      .select(sql<number>`coalesce(sum(feeAmount), 0)`.as('sum'))
+      .where('userId', '=', userId)
+      .where('capturedAt', '>=', start)
+      .where('capturedAt', '<=', end)
       .executeTakeFirst();
-    const totalAmount = sumRow?.sum ?? 0;
-    if (totalAmount === 0) continue;
 
-    // insert invoice
+    const total = sumRow?.sum ?? 0;
+    if (total <= 0) continue;
+
+    // Insert invoice header
     const invoice = await db
-      .insertInto('"userInvoices"')
+      .insertInto('userInvoices')
       .values({
-        "userId": userId,
-        "periodStart": periodStart,
-        "periodEnd": periodEnd,
-        "totalAmount": totalAmount,
-        "dueDate": today,
+        id: crypto.randomUUID(),
+        userId,
+        periodStart: start,
+        periodEnd: end,
+        totalAmount: total,
+        status: 'pending',
+        dueDate: today,
+        niftipayNetwork: 'ETH',
+        niftipayAsset: 'USDT'
       })
       .returning([
-        '"id"', '"userId"', '"periodStart"', '"periodEnd"',
-        '"totalAmount"', '"status"', '"dueDate"', '"createdAt"'
+        'id','userId','periodStart','periodEnd',
+        'totalAmount','status','dueDate','createdAt'
       ])
       .executeTakeFirstOrThrow();
 
-    // attach all fee items
+    // Attach each fee as an invoice item
     const fees = await db
-      .selectFrom('"orderFees"')
-      .select(['"id"', '"feeAmount"'])
-      .where('"userId"', '=', userId)
-      .where('"capturedAt"', '>=', periodStart)
-      .where('"capturedAt"', '<=', periodEnd)
+      .selectFrom('orderFees')
+      .select(['id as orderFeeId','feeAmount as feeStr'])
+      .where('userId', '=', userId)
+      .where('capturedAt', '>=', start)
+      .where('capturedAt', '<=', end)
       .execute();
 
-    for (const fee of fees) {
+    for (const f of fees) {
       await db
-        .insertInto('"invoiceItems"')
+        .insertInto('invoiceItems')
         .values({
-          "invoiceId": invoice.id,
-          "orderFeeId": fee.id,
-          "amount": fee.feeAmount
+          id: crypto.randomUUID(),
+          invoiceId: invoice.id,
+          orderFeeId: f.orderFeeId,
+          amount: parseFloat(f.feeStr),
         })
         .execute();
     }
@@ -109,8 +124,8 @@ export async function POST(req: NextRequest) {
       periodStart: invoice.periodStart.toISOString(),
       periodEnd: invoice.periodEnd.toISOString(),
       totalAmount: invoice.totalAmount.toString(),
-      dueDate: invoice.dueDate.toISOString().split("T")[0],
-      createdAt: invoice.createdAt.toISOString(),
+      dueDate: invoice.dueDate.toISOString().split('T')[0],
+      createdAt: (invoice.createdAt as Date).toISOString(),
     });
   }
 
