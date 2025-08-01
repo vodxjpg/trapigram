@@ -859,7 +859,7 @@ export async function PATCH(
     `,
         [ord.cartId],
       );
-      /* ✨ group by category */
+      /* ✨ group by categories */
       const grouped: Record<string, { q: number; t: string }[]> = {};
       for (const r of prodRows) {
         grouped[r.category] ??= [];
@@ -871,7 +871,7 @@ export async function PATCH(
           const lines = items
             .map((it) => `${it.t} - x${it.q}`)
             .join("<br>");
-          return `<b>${cat.toUpperCase()}</b><br>${lines}`;
+          return `<b>${cat.toUpperCase()}</b><br><br>${lines}`;
         })
         .join("<br><br>");
 
@@ -1028,11 +1028,15 @@ if (newStatus === "paid" && ord.status !== "paid") {
     const shouldHave = Math.floor(totalEur / stepEur) * ptsPerStep;
     const delta      = shouldHave - Number(prev.pts);
 
-   console.log(
-       `[affiliate] spending check – client %s: total %.2f EUR, step %d,` +
-       ` prev %d pts, delta %d`,
-       ord.clientId, totalEur, stepEur, Number(prev.pts), delta,
-     );
+    console.log(
+        `[affiliate] spending check – client %s: total %s EUR, step %d, ` +
+        `prev %d pts, delta %d`,
+        ord.clientId,
+        totalEur.toFixed(2),
+        stepEur,
+        Number(prev.pts),
+        delta,
+      );
 
     if (delta > 0) {
       const logId = uuidv4();
