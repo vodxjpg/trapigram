@@ -9,7 +9,7 @@ import { v4 as uuidv4 } from "uuid";
 const createSchema = z.object({
   groupId: z.string().min(1),
   groupName: z.string().min(1),
-  points: z.coerce.number().int().min(0),
+  points:    z.coerce.number().int().default(1).transform(p => Math.max(p, 1)),
   platform: z.enum(["telegram"]).default("telegram"),
 });
 
