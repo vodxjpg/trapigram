@@ -7,8 +7,8 @@ import crypto from "crypto";
 
 export async function POST(req: NextRequest) {
   // 1️⃣ Auth
-  const err = requireInternalAuth(req);
-  if (err) return err;
+  const authErr = requireInternalAuth(req);
+  if (authErr) return authErr;
 
   // 2️⃣ Parse optional date param (YYYY-MM-DD)
   const url = new URL(req.url);
@@ -18,16 +18,15 @@ export async function POST(req: NextRequest) {
 
   // 3️⃣ Fetch all organization owners via tenant metadata
   const owners = await db
-    .selectFrom('organization as o')
-    .innerJoin('tenant as t', jb =>
-      jb.on(
-        sql`(o.metadata::json->>'tenantId')::text`,
-        '=',
-        't.id'
-      )
+    .selectFrom("organization as o")
+    .innerJoin(
+      "tenant as t",
+      "(o.metadata::json->>'tenantId')::text",
+      "=",
+      "t.id"
     )
-    .innerJoin('user as u', 'u.id', '=', 't.ownerUserId')
-    .select(['t.ownerUserId as userId', 'u.createdAt as createdAt'])
+    .innerJoin("user as u", "u.id", "=", "t.ownerUserId")
+    .select(["t.ownerUserId as userId", "u.createdAt"])
     .distinct()
     .execute();
 
@@ -57,21 +56,21 @@ export async function POST(req: NextRequest) {
 
     // Skip if invoice already exists
     const exists = await db
-      .selectFrom('userInvoices')
-      .select('id')
-      .where('userId', '=', userId)
-      .where('periodStart', '=', start)
-      .where('periodEnd', '=', end)
+      .selectFrom("userInvoices")
+      .select("id")
+      .where("userId", "=", userId)
+      .where("periodStart", "=", start)
+      .where("periodEnd", "=", end)
       .executeTakeFirst();
     if (exists) continue;
 
     // Sum fees for user in period
     const sumRow = await db
-      .selectFrom('orderFees')
-      .select(sql<number>`coalesce(sum(feeAmount), 0)`.as('sum'))
-      .where('userId', '=', userId)
-      .where('capturedAt', '>=', start)
-      .where('capturedAt', '<=', end)
+      .selectFrom("orderFees")
+      .select(sql<number>`coalesce(sum("feeAmount"), 0)`.as('sum'))
+      .where("userId", "=", userId)
+      .where("capturedAt", ">=", start)
+      .where("capturedAt", "<=", end)
       .executeTakeFirst();
 
     const total = sumRow?.sum ?? 0;
@@ -79,7 +78,7 @@ export async function POST(req: NextRequest) {
 
     // Insert invoice header
     const invoice = await db
-      .insertInto('userInvoices')
+      .insertInto("userInvoices")
       .values({
         id: crypto.randomUUID(),
         userId,
@@ -99,21 +98,21 @@ export async function POST(req: NextRequest) {
 
     // Attach each fee as an invoice item
     const fees = await db
-      .selectFrom('orderFees')
-      .select(['id as orderFeeId','feeAmount as feeStr'])
-      .where('userId', '=', userId)
-      .where('capturedAt', '>=', start)
-      .where('capturedAt', '<=', end)
+      .selectFrom("orderFees")
+      .select(['id as orderFeeId','feeAmount as amount'])
+      .where("userId", "=", userId)
+      .where("capturedAt", ">=", start)
+      .where("capturedAt", "<=", end)
       .execute();
 
-    for (const f of fees) {
+    for (const { orderFeeId, amount } of fees) {
       await db
-        .insertInto('invoiceItems')
+        .insertInto("invoiceItems")
         .values({
           id: crypto.randomUUID(),
           invoiceId: invoice.id,
-          orderFeeId: f.orderFeeId,
-          amount: parseFloat(f.feeStr),
+          orderFeeId,
+          amount
         })
         .execute();
     }
@@ -121,11 +120,11 @@ export async function POST(req: NextRequest) {
     createdInvoices.push({
       id: invoice.id,
       userId: invoice.userId,
-      periodStart: invoice.periodStart.toISOString(),
-      periodEnd: invoice.periodEnd.toISOString(),
+      periodStart: (invoice.periodStart as Date).toISOString(),
+      periodEnd:   (invoice.periodEnd as Date).toISOString(),
       totalAmount: invoice.totalAmount.toString(),
-      dueDate: invoice.dueDate.toISOString().split('T')[0],
-      createdAt: (invoice.createdAt as Date).toISOString(),
+      dueDate:     (invoice.dueDate as Date).toISOString().split('T')[0],
+      createdAt:   (invoice.createdAt as Date).toISOString(),
     });
   }
 
