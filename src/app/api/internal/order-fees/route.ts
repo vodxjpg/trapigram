@@ -49,8 +49,11 @@ export async function POST(req: NextRequest) {
     .select("percent")
     .where("userId", "=", owner.userId)
     .where("startsAt", "<=", now)
-    // group endsAt condition via raw SQL to avoid builder bug
-    .whereRaw("(\"endsAt\" > ? OR \"endsAt\" IS NULL)", [now])
+    .where((eb) =>
+      eb
+        .where("endsAt", ">", now)
+        .orWhere("endsAt", "is", null)
+    )
     .orderBy("startsAt", "desc")
     .executeTakeFirst();
   if (!rate) {
