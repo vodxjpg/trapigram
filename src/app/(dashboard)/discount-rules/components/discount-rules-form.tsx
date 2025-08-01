@@ -213,39 +213,69 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
 
 
   // --- Products / Variations ---
-  const [productOptions, setProductOptions] = useState<
-    { value: any; label: string }[]
-  >([]);
-  useEffect(() => {
-    fetch("/api/products")
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch products");
-        return res.json();
-      })
-      .then((data) => {
-        const opts: any[] = [];
-        data.products.forEach((p: any) => {
-          if (p.productType === "simple") {
-            opts.push({
-              value: { productId: p.id, variationId: null },
-              label: p.title,
-            });
-          } else {
-            p.variations.forEach((v: any) => {
-              opts.push({
-                value: { productId: null, variationId: v.id },
-                label: `${p.title} (${Object.values(v.attributes).join(
-                  ", "
-                )})`,
-              });
-            });
-          }
-        });
-        setProductOptions(opts);
-      })
-      .catch((err) => toast.error(err.message));
-  }, []);
-
+   const [productOptions, setProductOptions] = useState<
+     { value: { productId: string | null; variationId: string | null }; label: string }[]
+   >([]);
+  
+   /** fetch **every** page so previously-saved items are guaranteed to be present */
+   useEffect(() => {
+     (async () => {
+       try {
+         const collected: any[] = [];
+         let page = 1, totalPages = 1;
+         do {
+           const res = await fetch(`/api/products?page=${page}&pageSize=100`);
+           if (!res.ok) throw new Error("Failed to fetch products");
+           const json = await res.json();
+           collected.push(...json.products);
+           totalPages = json.pagination?.totalPages ?? 1;
+           page++;
+         } while (page <= totalPages);
+  
+         const opts: any[] = [];
+         collected.forEach((p: any) => {
+           if (p.productType === "simple") {
+             opts.push({ value: { productId: p.id, variationId: null }, label: p.title });
+           } else {
+             p.variations.forEach((v: any) => {
+               opts.push({
+                 value: { productId: null, variationId: v.id },
+                 label: `${p.title} (${Object.values(v.attributes).join(", ")})`,
+               });
+             });
+           }
+         });
+  
+         setProductOptions(opts);
+       } catch (err: any) {
+         toast.error(err.message);
+       }
+     })();
+   }, []);
+  
+   /** after both: rule loaded **and** options fetched → be sure options cover the saved items */
+   useEffect(() => {
+     if (!isEditing || !discountRuleData || productOptions.length === 0) return;
+  
+     const missingOpts = discountRuleData.products
+       .filter(
+         (p) =>
+           !productOptions.some(
+             (o) =>
+               o.value.productId === p.productId &&
+               o.value.variationId === p.variationId
+           )
+       )
+       .map((p) => ({
+         value: { productId: p.productId, variationId: p.variationId },
+         // fallback label – you can fetch the real title if you want
+         label: "Previously selected item",
+       }));
+  
+     if (missingOpts.length) {
+       setProductOptions((prev) => [...prev, ...missingOpts]);
+     }
+   }, [isEditing, discountRuleData, productOptions]);
   const onSubmit = async (vals: FormValues) => {
     try {
       const url = isEditing ? `/api/tier-pricing/${(discountRuleData as any).id}` : "/api/tier-pricing"
