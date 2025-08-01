@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
 import { sendNotification } from "@/lib/notifications";
+import { createHmac } from "crypto";
 import type { NotificationType } from "@/lib/notifications";
 
 
@@ -808,15 +809,41 @@ export async function PATCH(
     console.log(`Transaction committed for order ${id}`);
 
     // ─── trigger revenue update for paid orders ───
-    if (newStatus === "paid") {
-      try {
-        // call getRevenue with order ID and organization ID
-        await getRevenue(id, organizationId);
-        console.log(`Revenue updated for order ${id}`);
-      } catch (revErr) {
-        console.error(`Failed to update revenue for order ${id}:`, revErr);
+    // ─── trigger revenue update & platform‐fee capture for paid orders ───
+if (newStatus === "paid") {
+  try {
+    // 1) update revenue
+    await getRevenue(id, organizationId);
+    console.log(`Revenue updated for order ${id}`);
+
+    // 2) capture platform fee via internal API
+    const ts = Date.now().toString();
+    const sig = createHmac("sha256", process.env.SERVICE_API_KEY!)
+      .update(ts)
+      .digest("hex");
+
+    await fetch(
+      `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key":    process.env.SERVICE_API_KEY!,
+          "x-timestamp":  ts,
+          "x-signature":  sig,
+        },
+        body: JSON.stringify({ orderId: id }),
       }
-    }
+    );
+    console.log(`Platform fee captured for order ${id}`);
+
+  } catch (err) {
+    console.error(
+      `Failed to update revenue or capture fee for order ${id}:`,
+      err
+    );
+  }
+}
 
 
 
