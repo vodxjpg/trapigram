@@ -48,7 +48,7 @@ function validHmac(ts: string, sig: string): boolean {
 
 /**
  * Call at top of internal route handlers.
- * Returns a NextResponse on error, or nothing on success.
+ * Returns a NextResponse on error, or nothing.
  */
 export function requireInternalAuth(req: NextRequest): NextResponse | void {
   const apiKey = req.headers.get("x-api-key") ?? "";
