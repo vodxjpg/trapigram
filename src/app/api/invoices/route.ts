@@ -1,42 +1,55 @@
 // src/app/api/invoices/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { requireInternalAuth } from "@/lib/internalAuth";
+import { NextRequest, NextResponse } from "next/server"
+import { db } from "@/lib/db"
+import { requireInternalAuth } from "@/lib/internalAuth"
 
 export async function GET(req: NextRequest) {
-  const err = requireInternalAuth(req);
-  if (err) return err;
+  const authErr = requireInternalAuth(req)
+  if (authErr) return authErr
 
-  const url = new URL(req.url);
-  const userId = url.searchParams.get("userId");
-  const periodStart = url.searchParams.get("periodStart");
-  const periodEnd = url.searchParams.get("periodEnd");
-
+  const url = new URL(req.url)
+  const userId = url.searchParams.get("userId")
   if (!userId) {
-    return NextResponse.json({ error: "userId is required" }, { status: 400 });
+    return NextResponse.json({ error: "userId is required" }, { status: 400 })
   }
 
-  let query = db
-    .selectFrom('"userInvoices"')
+  // page & limit for pagination
+  const page = parseInt(url.searchParams.get("page") || "1", 10)
+  const limit = parseInt(url.searchParams.get("limit") || "10", 10)
+  const offset = (page - 1) * limit
+
+  // get total count
+  const [{ count }] = await db
+    .selectFrom("userInvoices")
+    .select(db.fn.count<string>("id").as("count"))
+    .where("userId", "=", userId)
+    .execute()
+
+  // fetch page
+  const items = await db
+    .selectFrom("userInvoices")
     .select([
-      '"id"',
-      '"userId"',
-      '"periodStart"',
-      '"periodEnd"',
-      '"totalAmount"',
-      '"status"',
-      '"dueDate"',
-      '"createdAt"',
+      "id",
+      "periodStart",
+      "periodEnd",
+      "totalAmount",
+      "status",
+      "dueDate",
+      "createdAt",
     ])
-    .where('"userId"', "=", userId);
+    .where("userId", "=", userId)
+    .orderBy("periodStart", "desc")
+    .limit(limit)
+    .offset(offset)
+    .execute()
 
-  if (periodStart) {
-    query = query.where('"periodStart"', ">=", new Date(periodStart));
-  }
-  if (periodEnd) {
-    query = query.where('"periodEnd"', "<=", new Date(periodEnd));
-  }
-
-  const items = await query.orderBy('"periodStart"', "desc").execute();
-  return NextResponse.json({ items });
+  return NextResponse.json({
+    items,
+    meta: {
+      total: Number(count),
+      page,
+      limit,
+      pages: Math.ceil(Number(count) / limit),
+    },
+  })
 }
