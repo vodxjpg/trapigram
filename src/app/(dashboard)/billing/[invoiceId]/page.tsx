@@ -1,14 +1,21 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { useHeaderTitle } from "@/context/HeaderTitleContext"
 import { authClient } from "@/lib/auth-client"
 import { useHasPermission } from "@/hooks/use-has-permission"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 
 interface Item {
@@ -18,7 +25,6 @@ interface Item {
   percentApplied: string
   amount: string
 }
-
 interface InvoiceDetail {
   id: string
   periodStart: string
@@ -36,7 +42,7 @@ export default function InvoiceDetailPage() {
 
   const { setHeaderTitle } = useHeaderTitle()
 
-  // permissions
+  // 1) permission guard
   const { data: activeOrg } = authClient.useActiveOrganization()
   const orgId = activeOrg?.id ?? null
   const { hasPermission: canView, isLoading: permLoading } =
@@ -51,9 +57,7 @@ export default function InvoiceDetailPage() {
   }, [setHeaderTitle])
 
   useEffect(() => {
-    if (!permLoading && !canView) {
-      router.replace("/billing")
-    }
+    if (!permLoading && !canView) router.replace("/billing")
   }, [permLoading, canView, router])
 
   useEffect(() => {
@@ -80,9 +84,9 @@ export default function InvoiceDetailPage() {
   }
 
   const total = parseFloat(inv.totalAmount)
-  const paid = inv.status === "paid" ? total : 0
-  const partial = inv.status === "underpaid" ? total * 0.5 /* example */ : 0
-  const done = paid + partial
+  const paid = inv.status === "paid" ? total : inv.status === "underpaid" ? total * 0.5 : 0
+  const pending = total - paid
+  const progress = total > 0 ? (paid / total) * 100 : 0
 
   return (
     <div className="p-6 space-y-6">
@@ -126,22 +130,19 @@ export default function InvoiceDetailPage() {
               </Badge>
             </p>
             <div className="pt-2">
-              <Progress value={(done / total) * 100} className="h-2" />
+              <Progress value={progress} className="h-2" />
               <p className="text-sm">
-                Paid: ${paid.toFixed(2)}{" "}
-                {partial > 0 && `(Partial: $${partial.toFixed(2)})`} / $
-                {(total - done).toFixed(2)} pending
+                Paid: ${paid.toFixed(2)} / ${pending.toFixed(2)} pending
               </p>
             </div>
           </div>
-          <div className="col-span-2">
-            <p className="font-medium">QR Code</p>
-            {/* replace data with real payment URI */}
+          <div className="col-span-2 text-center">
             <img
               src={`https://api.qrserver.com/v1/create-qr-code?size=150x150&data=${encodeURIComponent(
                 inv.id
               )}`}
               alt="QR Code"
+              className="mx-auto"
             />
           </div>
         </CardContent>
@@ -165,9 +166,13 @@ export default function InvoiceDetailPage() {
               {items.map((it) => (
                 <TableRow key={it.itemId}>
                   <TableCell>{it.orderId}</TableCell>
-                  <TableCell>${parseFloat(it.feeAmount).toFixed(2)}</TableCell>
+                  <TableCell>
+                    ${parseFloat(it.feeAmount).toFixed(2)}
+                  </TableCell>
                   <TableCell>{it.percentApplied}%</TableCell>
-                  <TableCell>${parseFloat(it.amount).toFixed(2)}</TableCell>
+                  <TableCell>
+                    ${parseFloat(it.amount).toFixed(2)}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
