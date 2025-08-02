@@ -1,20 +1,21 @@
 // src/app/api/invoices/[invoiceId]/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { requireInternalAuth } from "@/lib/internalAuth";
+import { NextRequest, NextResponse } from "next/server"
+import { db } from "@/lib/db"
+import { getContext } from "@/lib/context"
 
-type Params = { params: { invoiceId: string } };
+type Params = { params: { invoiceId: string } }
 
 export async function GET(req: NextRequest, { params }: Params) {
-  const authErr = requireInternalAuth(req);
-  if (authErr) return authErr;
+  // 1) auth + context
+  const ctxOrRes = await getContext(req)
+  if (ctxOrRes instanceof NextResponse) return ctxOrRes
+  const { userId } = ctxOrRes
 
-  // Fetch the invoice header
+  // 2) fetch invoice header, ensure owner
   const invoice = await db
     .selectFrom("userInvoices")
     .select([
       "id",
-      "userId",
       "periodStart",
       "periodEnd",
       "totalAmount",
@@ -23,13 +24,14 @@ export async function GET(req: NextRequest, { params }: Params) {
       "createdAt",
     ])
     .where("id", "=", params.invoiceId)
-    .executeTakeFirst();
+    .where("userId", "=", userId)
+    .executeTakeFirst()
 
   if (!invoice) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ error: "Not found" }, { status: 404 })
   }
 
-  // Fetch its line items
+  // 3) fetch line items
   const items = await db
     .selectFrom("invoiceItems as ii")
     .innerJoin("orderFees as of", "of.id", "ii.orderFeeId")
@@ -41,7 +43,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       "of.percentApplied as percentApplied",
     ])
     .where("ii.invoiceId", "=", params.invoiceId)
-    .execute();
+    .execute()
 
-  return NextResponse.json({ invoice, items });
+  return NextResponse.json({ invoice, items })
 }

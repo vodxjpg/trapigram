@@ -1,31 +1,32 @@
 // src/app/api/invoices/route.ts
 import { NextRequest, NextResponse } from "next/server"
+import { sql } from "kysely"
 import { db } from "@/lib/db"
-import { requireInternalAuth } from "@/lib/internalAuth"
+import { getContext } from "@/lib/context"
 
 export async function GET(req: NextRequest) {
-  const authErr = requireInternalAuth(req)
-  if (authErr) return authErr
+  // 1) auth + context
+  const ctxOrRes = await getContext(req)
+  if (ctxOrRes instanceof NextResponse) return ctxOrRes
+  const { userId } = ctxOrRes
 
-  const url = new URL(req.url)
-  const userId = url.searchParams.get("userId")
-  if (!userId) {
-    return NextResponse.json({ error: "userId is required" }, { status: 400 })
-  }
-
-  // page & limit for pagination
-  const page = parseInt(url.searchParams.get("page") || "1", 10)
-  const limit = parseInt(url.searchParams.get("limit") || "10", 10)
+  // 2) parse pagination
+  const url    = new URL(req.url)
+  const page   = Math.max(1, parseInt(url.searchParams.get("page")  ?? "1",  10))
+  const limit  = Math.max(1, parseInt(url.searchParams.get("limit") ?? "10", 10))
   const offset = (page - 1) * limit
 
-  // get total count
+  // 3) total count
   const [{ count }] = await db
     .selectFrom("userInvoices")
-    .select(db.fn.count<string>("id").as("count"))
+    .select(sql<number>`count(*)`.as("count"))
     .where("userId", "=", userId)
     .execute()
 
-  // fetch page
+  const total = Number(count)
+  const pages = Math.ceil(total / limit)
+
+  // 4) fetch page
   const items = await db
     .selectFrom("userInvoices")
     .select([
@@ -43,13 +44,5 @@ export async function GET(req: NextRequest) {
     .offset(offset)
     .execute()
 
-  return NextResponse.json({
-    items,
-    meta: {
-      total: Number(count),
-      page,
-      limit,
-      pages: Math.ceil(Number(count) / limit),
-    },
-  })
+  return NextResponse.json({ items, meta: { total, pages, page, limit } })
 }
