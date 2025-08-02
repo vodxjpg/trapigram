@@ -1,3 +1,4 @@
+// src/app/(dashboard)/billing/[invoiceId]/page.tsx
 "use client"
 
 import { useState, useEffect } from "react"
@@ -17,6 +18,7 @@ import {
   TableCell,
 } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
+import { IconCopy } from "@tabler/icons-react"
 
 interface Item {
   itemId: string
@@ -25,14 +27,17 @@ interface Item {
   percentApplied: string
   amount: string
 }
+
 interface InvoiceDetail {
   id: string
   periodStart: string
   periodEnd: string
   totalAmount: string
+  paidAmount: string
   status: string
   dueDate: string
   createdAt: string
+  depositAddress: string | null
 }
 
 export default function InvoiceDetailPage() {
@@ -84,9 +89,19 @@ export default function InvoiceDetailPage() {
   }
 
   const total = parseFloat(inv.totalAmount)
-  const paid = inv.status === "paid" ? total : inv.status === "underpaid" ? total * 0.5 : 0
+  const paid = inv.status === "paid"
+    ? total
+    : inv.status === "underpaid"
+      ? parseFloat(inv.paidAmount)
+      : 0
   const pending = total - paid
   const progress = total > 0 ? (paid / total) * 100 : 0
+
+  const copyAddress = () => {
+    if (inv.depositAddress) {
+      navigator.clipboard.writeText(inv.depositAddress)
+    }
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -120,7 +135,7 @@ export default function InvoiceDetailPage() {
               <Badge
                 variant={
                   inv.status === "paid"
-                    ? "success"
+                    ? "secondary"
                     : inv.status === "underpaid"
                     ? "destructive"
                     : "outline"
@@ -136,10 +151,29 @@ export default function InvoiceDetailPage() {
               </p>
             </div>
           </div>
+
+          {/* Deposit address + copy */}
+          {inv.depositAddress && (
+            <div className="col-span-2 text-center space-y-1">
+              <p className="font-medium">Deposit Address</p>
+              <div className="flex items-center justify-center space-x-2">
+                <code className="truncate max-w-xs">{inv.depositAddress}</code>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={copyAddress}
+                >
+                  <IconCopy className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* QR code */}
           <div className="col-span-2 text-center">
             <img
               src={`https://api.qrserver.com/v1/create-qr-code?size=150x150&data=${encodeURIComponent(
-                inv.id
+                inv.depositAddress ?? inv.id
               )}`}
               alt="QR Code"
               className="mx-auto"
@@ -166,13 +200,9 @@ export default function InvoiceDetailPage() {
               {items.map((it) => (
                 <TableRow key={it.itemId}>
                   <TableCell>{it.orderId}</TableCell>
-                  <TableCell>
-                    ${parseFloat(it.feeAmount).toFixed(2)}
-                  </TableCell>
+                  <TableCell>${parseFloat(it.feeAmount).toFixed(2)}</TableCell>
                   <TableCell>{it.percentApplied}%</TableCell>
-                  <TableCell>
-                    ${parseFloat(it.amount).toFixed(2)}
-                  </TableCell>
+                  <TableCell>${parseFloat(it.amount).toFixed(2)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
