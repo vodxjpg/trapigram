@@ -1,16 +1,19 @@
 // src/app/api/invoices/[invoiceId]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requireInternalAuth } from "@/lib/internalAuth";
+import { getContext } from "@/lib/context";
 
 type Params = { params: { invoiceId: string } };
 
 export async function GET(req: NextRequest, { params }: Params) {
-  // 1) auth
-  const err = requireInternalAuth(req);
-  if (err) return err;
+  // 1) Auth & context
+  const ctxOrRes = await getContext(req);
+  if (ctxOrRes instanceof NextResponse) return ctxOrRes;
+  const { userId } = ctxOrRes;
 
-  // 2) invoice header
+  const { invoiceId } = params;
+
+  // 2) invoice header (only if it belongs to this user)
   const invoice = await db
     .selectFrom("userInvoices")
     .select([
@@ -25,7 +28,8 @@ export async function GET(req: NextRequest, { params }: Params) {
       "createdAt",
       "niftipayAddress as depositAddress",
     ])
-    .where("id", "=", params.invoiceId)
+    .where("id", "=", invoiceId)
+    .where("userId", "=", userId)
     .executeTakeFirst();
 
   if (!invoice) {
@@ -43,7 +47,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       "of.feeAmount",
       "of.percentApplied",
     ])
-    .where("ii.invoiceId", "=", params.invoiceId)
+    .where("ii.invoiceId", "=", invoiceId)
     .execute();
 
   return NextResponse.json({ invoice, items });
