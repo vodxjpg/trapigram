@@ -35,24 +35,49 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({}, { status: 200 });
   }
 
-  // 4) Decide new status
+  // 4) Decide new status & paidAmount
   let newStatus = inv.status;
-  if (evt === "paid")        newStatus = "paid";
-  else if (evt === "underpaid") newStatus = "underpaid";
-  else if (evt === "expired")   newStatus = "cancelled";
+  let newPaidAmount: number | undefined;
 
-  console.log(`[niftipay] current status='${inv.status}', newStatus='${newStatus}'`);
+  if (evt === "paid") {
+    newStatus = "paid";
+    // when fully paid, Niftipay reports `order.amount`
+    newPaidAmount = Number(payload.order.amount);
+  } else if (evt === "underpaid") {
+    newStatus = "underpaid";
+    // on underpaid, Niftipay includes payload.order.received
+    newPaidAmount = Number(payload.order.received);
+  } else if (evt === "expired") {
+    newStatus = "cancelled";
+    // no amount to set on expiry
+  }
 
-  // 5) Only update if it actually changed
-  if (newStatus !== inv.status) {
+  console.log(
+    `[niftipay] current status='${inv.status}', newStatus='${newStatus}', newPaidAmount=${newPaidAmount}`
+  );
+
+  // 5) Only update if something actually changed
+  if (newStatus !== inv.status || newPaidAmount !== undefined) {
+    const update: Record<string, unknown> = { status: newStatus };
+    if (newPaidAmount !== undefined) {
+      update.paidAmount = newPaidAmount;
+    }
+
     await db
       .updateTable("userInvoices")
-      .set({ status: newStatus })
+      .set(update)
       .where("id", "=", ref)
       .execute();
-    console.log(`[niftipay] invoice ${ref} status updated to '${newStatus}'`);
+
+    console.log(
+      `[niftipay] invoice ${ref} updated → status='${newStatus}'${
+        newPaidAmount !== undefined
+          ? `, paidAmount=${newPaidAmount}`
+          : ""
+      }`
+    );
   } else {
-    console.log("[niftipay] status unchanged, no update");
+    console.log("[niftipay] nothing to update");
   }
 
   // 6) Return 200 so Niftipay knows we handled it

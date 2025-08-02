@@ -1,49 +1,50 @@
 // src/app/api/invoices/[invoiceId]/route.ts
-import { NextRequest, NextResponse } from "next/server"
-import { db } from "@/lib/db"
-import { getContext } from "@/lib/context"
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { requireInternalAuth } from "@/lib/internalAuth";
 
-type Params = { params: { invoiceId: string } }
+type Params = { params: { invoiceId: string } };
 
 export async function GET(req: NextRequest, { params }: Params) {
-  // 1) auth + context
-  const ctxOrRes = await getContext(req)
-  if (ctxOrRes instanceof NextResponse) return ctxOrRes
-  const { userId } = ctxOrRes
+  // 1) auth
+  const err = requireInternalAuth(req);
+  if (err) return err;
 
-  // 2) fetch invoice header, ensure owner
+  // 2) invoice header
   const invoice = await db
     .selectFrom("userInvoices")
     .select([
       "id",
+      "userId",
       "periodStart",
       "periodEnd",
       "totalAmount",
+      "paidAmount",
       "status",
       "dueDate",
       "createdAt",
+      "niftipayAddress as depositAddress",
     ])
     .where("id", "=", params.invoiceId)
-    .where("userId", "=", userId)
-    .executeTakeFirst()
+    .executeTakeFirst();
 
   if (!invoice) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 })
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // 3) fetch line items
+  // 3) line items
   const items = await db
     .selectFrom("invoiceItems as ii")
     .innerJoin("orderFees as of", "of.id", "ii.orderFeeId")
     .select([
       "ii.id as itemId",
-      "ii.amount as amount",
-      "of.orderId as orderId",
-      "of.feeAmount as feeAmount",
-      "of.percentApplied as percentApplied",
+      "ii.amount",
+      "of.orderId",
+      "of.feeAmount",
+      "of.percentApplied",
     ])
     .where("ii.invoiceId", "=", params.invoiceId)
-    .execute()
+    .execute();
 
-  return NextResponse.json({ invoice, items })
+  return NextResponse.json({ invoice, items });
 }

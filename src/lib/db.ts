@@ -792,7 +792,8 @@ interface DB {
      userId: string;
      periodStart: string;   // DATE
      periodEnd: string;     // DATE
-     totalAmount: string;   // numeric
+     totalAmount: number;   // numeric
+     paidAmount: number;
      status: string;        // pending|sent|paid
      dueDate: string;       // DATE
      createdAt: Date;
