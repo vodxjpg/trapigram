@@ -51,15 +51,20 @@ export async function POST(request: Request) {
             newProduct.description = result.description
             newProduct.allowBackorders = result.allowBackorders === true ? 1 : 0
             newProduct.manageStock = result.manageStock === true ? 1 : 0
-            newProduct.regularPrice = Object.entries(result.salePrice)
+
+            const regularPriceObj = result.regularPrice ?? {};
+            const salePriceObj = result.salePrice ?? {};
+            const costObj = result.cost ?? {};
+
+            newProduct.regularPrice = Object.entries(regularPriceObj)
                 .map(([country, amount]) => `${country}:${amount}`)
-                .join(", ")
-            newProduct.salePrice = Object.entries(result.salePrice)
+                .join(", ");
+            newProduct.salePrice = Object.entries(salePriceObj)
                 .map(([country, amount]) => `${country}:${amount}`)
-                .join(", ")
-            newProduct.cost = Object.entries(result.salePrice)
+                .join(", ");
+            newProduct.cost = Object.entries(costObj)
                 .map(([country, amount]) => `${country}:${amount}`)
-                .join(", ")
+                .join(", ");
 
             const attributesQuery = `SELECT
                 pav."productId",
