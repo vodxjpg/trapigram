@@ -1,5 +1,5 @@
 /*───────────────────────────────────────────────────────────────────
-  src/app/api/auth/check-status/route.ts
+  src/app/api/auth/check-status/route.ts       — UPDATED OVERDUE LOGIC
 ───────────────────────────────────────────────────────────────────*/
 
 import { NextRequest, NextResponse } from "next/server";
@@ -21,10 +21,8 @@ export async function GET(req: NextRequest) {
     const currentSessionId = session.session.id as string;
     const userId = session.user.id as string;
 
-    /* 2️⃣ single-session check: is this the LATEST session row? */
-    const { rows: [latest] } = await pgPool.query<
-      { id: string }
-    >(
+    /* 2️⃣ single-session check */
+    const { rows: [latest] } = await pgPool.query<{ id: string }>(
       `SELECT id
          FROM session
         WHERE "userId" = $1
@@ -32,31 +30,26 @@ export async function GET(req: NextRequest) {
         LIMIT 1`,
       [userId],
     );
-
     if (!latest || latest.id !== currentSessionId) {
-      console.log(
-        `session ${currentSessionId} is stale (latest is ${latest?.id}) → logout`,
-      );
       return NextResponse.json({ redirect: "/login" }, { status: 401 });
     }
 
-    /* ── everything below is unchanged business-logic ───────────── */
+    /* —— unchanged business logic up to onboarding —— */
     const isGuest = (session.user as any).is_guest ?? false;
-
     const { rows: credRows } = await pgPool.query(
       `SELECT 1 FROM account
-       WHERE "userId" = $1 AND "providerId" = 'credential' LIMIT 1`,
+       WHERE "userId" = $1 AND "providerId" = 'credential'
+       LIMIT 1`,
       [userId],
     );
     const hasPassword = credRows.length > 0;
 
-    if (isGuest && !hasPassword && !originalPath.startsWith("/accept-invitation/")) {
+    if (isGuest &&
+        !hasPassword &&
+        !originalPath.startsWith("/accept-invitation/")) {
       return NextResponse.json({ redirect: "/set-password" });
     }
 
-    /* subscription / tenant / onboarding checks … (kept exactly as before) */
-    /* ------------------------------------------------------------------- */
-    /*  subscription check                                                 */
     const { rows: subscriptions } = await pgPool.query(
       `SELECT * FROM subscription
        WHERE "userId" = $1
@@ -78,13 +71,14 @@ export async function GET(req: NextRequest) {
     }
 
     const { rows: tenants } = await pgPool.query(
-      `SELECT "onboardingCompleted" FROM tenant WHERE "ownerUserId" = $1`,
+      `SELECT "onboardingCompleted"
+         FROM tenant
+        WHERE "ownerUserId" = $1`,
       [userId],
     );
     if (!tenants.length && !isGuest) {
       return NextResponse.json({ redirect: "/subscribe" });
     }
-
     if (!isGuest) {
       const onboardingDone = tenants[0]?.onboardingCompleted === -1;
       if (!onboardingDone) {
@@ -96,8 +90,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ redirect: "/select-organization" });
     }
 
-    /* ── NEW: Overdue invoice check ───────────────────────────────── */
-    // If the user has ANY non-paid invoice past its due date, send them to /billing
+    /* ── NEW: Overdue-invoice check ─────────────────────────────
+       If they have any unpaid invoice past due, redirect them
+       to /billing — but *only* if they’re NOT already on any
+       /billing… page (list or detail). */
     const today = new Date().toISOString().slice(0, 10);
     const { rows: overdueRows } = await pgPool.query(
       `SELECT id
@@ -108,10 +104,14 @@ export async function GET(req: NextRequest) {
         LIMIT 1`,
       [userId, today],
     );
-    if (overdueRows.length > 0) {
+
+    const isBillingPath = originalPath === "/billing"
+      || originalPath.startsWith("/billing/");
+
+    if (overdueRows.length > 0 && !isBillingPath) {
       return NextResponse.json({ redirect: "/billing" });
     }
-    /* ──────────────────────────────────────────────────────── */
+    /* ──────────────────────────────────────────────────────────── */
 
     /* all good → allow navigation */
     return NextResponse.json({ redirect: null });
