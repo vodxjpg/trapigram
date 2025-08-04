@@ -175,10 +175,7 @@ export default function OnboardingPage() {
         toast.error("No organization ID found!");
         return;
       }
-      if (!tenantId) {
-        toast.error("No tenant ID found!");
-        return;
-      }
+     
       const resp = await fetch("/api/internal/warehouses", {
         method: "POST",
         headers: {
@@ -189,7 +186,6 @@ export default function OnboardingPage() {
           organizationIds: [orgId], // Send as array, can expand later
           warehouseName: data.warehouseName,
           countries: data.countries,
-          tenantId: tenantId, // Pass tenantId to the API
         }),
       });
       if (!resp.ok) {
