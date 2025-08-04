@@ -37,13 +37,13 @@ export async function POST(req: NextRequest) {
   let percent: string;
   switch (plan) {
     case "enterprise":
-      percent = "0.05"; // 0.5%
+      percent = "5"; // 0.5%
       break;
     case "pro":
-      percent = "0.05";  // 1%
+      percent = "5";  // 1%
       break;
     default:
-      percent = "0.05";  // 2%
+      percent = "5";  // 2%
   }
 
   const tenantId = crypto.randomUUID();
