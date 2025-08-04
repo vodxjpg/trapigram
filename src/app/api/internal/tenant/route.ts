@@ -57,14 +57,14 @@ export async function POST(req: NextRequest) {
       await trx
         .insertInto("tenant")
         .values({
-          id:             tenantId,
-          ownerUserId:    userId,
-          ownerName:      session.user.name ?? null,
-          ownerEmail:     session.user.email ?? null,
+          id:                   tenantId,
+          ownerUserId:          userId,
+          ownerName:            session.user.name ?? null,
+          ownerEmail:           session.user.email ?? null,
           plan,
-          createdAt:      now,
-          updatedAt:      now,
-          onboardingCompleted: 0,
+          createdAt:            now,
+          updatedAt:            now,
+          onboardingCompleted:  0,
         })
         .execute();
 
@@ -89,8 +89,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return NextResponse.json(
-    { tenantId, plan, defaultPercent: percent },
-    { status: 201 }
-  );
+  // 5) Redirect to onboarding
+  const url = new URL("/onboarding", req.url);
+  return NextResponse.redirect(url, { status: 302 });
 }
