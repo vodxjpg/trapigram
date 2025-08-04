@@ -1,30 +1,39 @@
 // src/app/api/internal/tenant/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requireInternalAuth } from "@/lib/internalAuth";
+import { auth } from "@/lib/auth";
 import crypto from "crypto";
 
 export async function POST(req: NextRequest) {
-  // 1) only your internal clients
-  const authErr = requireInternalAuth(req);
-  if (authErr) return authErr;
+  // 1) Ensure we have a valid user session
+  const session = await auth.api.getSession({ headers: req.headers });
+  if (!session) {
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+  const userId = session.user.id;
 
-  // 2) parse payload
-  let body: { plan?: string; userId?: string };
+  // 2) Parse & validate body
+  let body: { plan?: string };
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  const { plan, userId } = body;
-  if (!plan || !userId) {
     return NextResponse.json(
-      { error: "plan and userId are required" },
+      { error: "Invalid JSON" },
+      { status: 400 }
+    );
+  }
+  const { plan } = body;
+  if (!plan) {
+    return NextResponse.json(
+      { error: "plan is required" },
       { status: 400 }
     );
   }
 
-  // 3) pick default percent by plan
+  // 3) Pick default fee % by plan
   let percent: string;
   switch (plan) {
     case "enterprise":
@@ -41,43 +50,47 @@ export async function POST(req: NextRequest) {
   const rateId   = crypto.randomUUID();
   const now      = new Date();
 
-  // 4) do both inserts in a single transaction
+  // 4) Create tenant + initial fee rate in one transaction
   try {
     await db.transaction().execute(async (trx) => {
-      // a) create tenant
+      // a) create the tenant
       await trx
         .insertInto("tenant")
         .values({
-          id: tenantId,
-          ownerUserId: userId,
-          ownerName: null,
-          ownerEmail: null,
+          id:             tenantId,
+          ownerUserId:    userId,
+          ownerName:      session.user.name ?? null,
+          ownerEmail:     session.user.email ?? null,
           plan,
-          createdAt: now,
-          updatedAt: now,
+          createdAt:      now,
+          updatedAt:      now,
+          onboardingCompleted: 0,
         })
         .execute();
 
-      // b) insert initial fee rate
+      // b) insert the user's first fee rate
       await trx
         .insertInto("userFeeRates")
         .values({
-          id: rateId,
+          id:        rateId,
           userId,
           percent,
-          startsAt: now,
-          endsAt: null,
+          startsAt:  now,
+          endsAt:    null,
           createdAt: now,
         })
         .execute();
     });
   } catch (err) {
-    console.error("tenant/fee transaction failed:", err);
+    console.error("[tenant/fee] transaction failed:", err);
     return NextResponse.json(
       { error: "Failed to create tenant & fee rate" },
       { status: 500 }
     );
   }
 
-  return NextResponse.json({ tenantId, plan, defaultPercent: percent });
+  return NextResponse.json(
+    { tenantId, plan, defaultPercent: percent },
+    { status: 201 }
+  );
 }
