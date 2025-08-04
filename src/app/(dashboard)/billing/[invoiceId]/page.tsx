@@ -169,7 +169,7 @@ export default function InvoiceDetailPage() {
             </div>
           )}
 
-          {/* QR code */}
+          {/* QR code show up */}
           <div className="col-span-2 text-center">
             <img
               src={`https://api.qrserver.com/v1/create-qr-code?size=150x150&data=${encodeURIComponent(
