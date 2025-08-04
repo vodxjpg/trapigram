@@ -10,6 +10,10 @@ import { v4 as uuidv4 } from "uuid";
 // Run this route in Node.js so that Buffer, FormData.arrayBuffer(), etc. work
 export const runtime = "nodejs";
 
+function safeTrim(value: any): string {
+    return typeof value === "string" ? value.trim() : "";
+}
+
 function cleanDescription(dirty: string) {
     return sanitizeHtml(dirty, {
         // whitelist only the tags you actually want (you can also leave this out
@@ -35,7 +39,7 @@ function capitalizeFirstLetter(str: string): string {
 
 const arrayToJson = (arr) =>
     arr.reduce((acc, pair) => {
-        const [key, value] = pair.split(":").map((s) => s.trim());
+        const [key, value] = pair.split(":").map((s) => safeTrim(s));
         acc[key] = Number(value);
         return acc;
     }, {});
@@ -81,7 +85,7 @@ export async function POST(req: Request) {
     });
 
     // 2) Pull off the header row, skip the second row, collect the rest
-    const [headerRow, /* skip */, ...dataRows] = rows;
+    const [headerRow, ...dataRows] = rows;
 
     // 3) Rebuild an array of objects, mapping each dataRow back to headerRow
     const data = dataRows.map((row) => {
@@ -116,7 +120,7 @@ export async function POST(req: Request) {
 
             // 1) find existing by id or sku
             let res = ""
-            if (product.productType.trim() === "variation") {
+            if (safeTrim(product.productType) === "variation") {
                 const findQuery = `SELECT * FROM "productVariations" WHERE sku = '${product.sku}'`
                 const result = await pgPool.query(findQuery);
                 res = result
@@ -133,7 +137,7 @@ export async function POST(req: Request) {
                 //updating product code
                 console.log("UPDATING")
                 let productId = ""
-                if (product.productType.trim() === "variation") {
+                if (safeTrim(product.productType) === "variation") {
                     productId = res.rows[0].productId
                 } else {
                     productId = res.rows[0].id
@@ -142,67 +146,68 @@ export async function POST(req: Request) {
                 const existing = res.rows[0];
                 const safeDescription = cleanDescription(product.description);
 
-                const rp = product.regularPrice
-                const rawRegularPrice = rp
-                    .split(",")
-                    .map(s => s.trim());
-                const regularPrice = arrayToJson(rawRegularPrice)
+                const rp = product.regularPrice ?? "";
+                const rawRegularPrice = typeof rp === "string"
+                    ? rp.split(",").map(s => safeTrim(s))
+                    : [];
+                const regularPrice = arrayToJson(rawRegularPrice);
 
-                const sp = product.salePrice
-                const rawSalePrice = sp
-                    .split(",")
-                    .map(s => s.trim());
-                const salePrice = arrayToJson(rawSalePrice)
+                const sp = product.salePrice ?? "";
+                const rawSalePrice = typeof sp === "string"
+                    ? sp.split(",").map(s => safeTrim(s))
+                    : [];
+                const salePrice = arrayToJson(rawSalePrice);
 
-                const ct = product.cost
-                const rawCost = ct
-                    .split(",")
-                    .map(s => s.trim());
-                const cost = arrayToJson(rawCost)
+                const ct = product.cost ?? "";
+                const rawCost = typeof ct === "string"
+                    ? ct.split(",").map(s => safeTrim(s))
+                    : [];
+                const cost = arrayToJson(rawCost);
 
                 // start with the timestamp
                 const updatePayload: Record<string, any> = {
                     updatedAt: new Date(),
                 };
+                const columnExists = (col: string) => headerRow.includes(col);
 
                 // only include each field if the incoming cell wasn’t empty
-                if (product.title && product.title.trim() !== "") {
+                if (columnExists("title") && product.title && safeTrim(product.title) !== "") {
                     updatePayload.title = product.title;
                 }
 
-                if (product.description && product.description.trim() !== "") {
+                if (columnExists("description") && product.description && safeTrim(product.description) !== "") {
                     updatePayload.description = safeDescription;
                 }
 
-                if (hasId && product.sku && product.sku.trim() !== "") {
+                if (columnExists("sku") && hasId && product.sku && safeTrim(product.sku) !== "") {
                     updatePayload.sku = product.sku;
                 }
 
-                if (product.published !== "" && (product.published === 1 || product.published === 0)) {
+                if (columnExists("status") && product.published !== "" && (product.published === 1 || product.published === 0)) {
                     updatePayload.status = product.published === 1 ? "published" : "draft";
                 }
 
-                if (product.managedStock !== "" && (product.managedStock === 1 || product.managedStock === 0)) {
+                if (columnExists("managedStock") && product.managedStock !== "" && (product.managedStock === 1 || product.managedStock === 0)) {
                     updatePayload.managedStock = product.managedStock === 1 ? true : false;
                 }
 
-                if (product.backorder !== "" && (product.backorder === 1 || product.backorder === 0)) {
+                if (columnExists("backorder") && product.backorder !== "" && (product.backorder === 1 || product.backorder === 0)) {
                     updatePayload.allowBackorders = product.backorder === 1 ? true : false;
                 }
 
-                if (product.productType && product.productType.trim() !== "" && product.productType.trim() !== "variation") {
+                if (columnExists("productType") && product.productType && safeTrim(product.productType) !== "" && safeTrim(product.productType) !== "variation") {
                     updatePayload.productType = product.productType;
                 }
 
-                if (product.regularPrice && product.regularPrice.trim() !== "") {
+                if (columnExists("regularPrice") && product.regularPrice && safeTrim(product.regularPrice) !== "") {
                     updatePayload.regularPrice = regularPrice;
                 }
 
-                if (product.salePrice && product.salePrice.trim() !== "") {
+                if (columnExists("salePrice") && product.salePrice && safeTrim(product.salePrice) !== "") {
                     updatePayload.salePrice = salePrice;
                 }
 
-                if (product.cost && product.cost.trim() !== "") {
+                if (columnExists("cost") && product.cost && safeTrim(product.cost) !== "") {
                     updatePayload.cost = cost;
                 }
 
@@ -223,7 +228,7 @@ export async function POST(req: Request) {
                 }
 
                 let newCategories = false
-                const checkCategories = (product.categories && product.categories.trim() !== "")
+                const checkCategories = (product.categories && safeTrim(product.categories) !== "")
 
                 if (checkCategories) {
                     await db.deleteFrom("productCategory").where("productId", "=", existing.id).execute();
@@ -239,8 +244,8 @@ export async function POST(req: Request) {
                 }
 
                 let newAttributes = false
-                const att1 = String(product.attributeVariation1).trim()
-                const att2 = String(product.attributeVariation2).trim()
+                const att1 = safeTrim(String(product.attributeVariation1))
+                const att2 = safeTrim(String(product.attributeVariation2))
                 const attributeVariation1 = (att1.length === 1 && (Number(att1) !== 0 || Number(att1) !== 1))
                 const attributeVariation2 = (att2.length === 1 && (Number(att2) !== 0 || Number(att2) !== 1))
                 const checkAttributeVariations = (attributeVariation1 || attributeVariation2)
@@ -255,7 +260,7 @@ export async function POST(req: Request) {
                     const slugs = product.categories
                     const catArray = slugs
                         .split(",")
-                        .map(s => s.trim());
+                        .map(s => safeTrim(s));
 
                     for (const cat of catArray) {
                         const catQuery = `SELECT id FROM "productCategories" WHERE slug = '${cat}' AND "organizationId" = '${organizationId}'`
@@ -312,10 +317,10 @@ export async function POST(req: Request) {
                             const terms = product[`attributeValues${i}`]
                             const termsArray = terms
                                 .split(",")
-                                .map(s => s.trim());
+                                .map(s => safeTrim(s));
 
                             const name = product[`attributeSlug${i}`]
-                            const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
+                            const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}' AND "organizationId" = '${organizationId}'`
                             const nameResult = await pgPool.query(nameQuery)
 
                             let nameId = ""
@@ -342,7 +347,7 @@ export async function POST(req: Request) {
                             }
 
                             for (const t of termsArray) {
-                                const nameQuery = `SELECT id FROM "productAttributeTerms" WHERE slug = '${t}'`
+                                const nameQuery = `SELECT id FROM "productAttributeTerms" WHERE slug = '${t}' AND "organizationId" = '${organizationId}'`
                                 const nameResult = await pgPool.query(nameQuery)
 
                                 let termId = ""
@@ -388,13 +393,13 @@ export async function POST(req: Request) {
                     const countries = product.countries
                     const countryArray = countries
                         .split(",")
-                        .map(s => s.trim());
+                        .map(s => safeTrim(s));
                     if (countryArray.length === 0) countryArray.push(countries)
 
                     const stocks = (product.stock).toString()
                     const stockArray = stocks
                         .split(",")
-                        .map(s => s.trim());
+                        .map(s => safeTrim(s));
                     if (stockArray.length === 0) stockArray.push(stocks)
 
                     for (let i = 0; i < countryArray.length; i++) {
@@ -444,12 +449,12 @@ export async function POST(req: Request) {
                                 const terms = product[`attributeValues${i}`]
                                 const termsArray = terms
                                     .split(",")
-                                    .map(s => s.trim());
+                                    .map(s => safeTrim(s));
 
                                 let nameId = ""
 
                                 const name = product[`attributeSlug${i}`]
-                                const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
+                                const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}' AND "organizationId" = '${organizationId}'`
                                 const nameResult = await pgPool.query(nameQuery)
 
                                 if (nameResult.rows.length > 0) {
@@ -469,7 +474,7 @@ export async function POST(req: Request) {
                                 }
 
                                 for (const t of termsArray) {
-                                    const nameQuery = `SELECT id FROM "productAttributeTerms" WHERE slug = '${t}'`
+                                    const nameQuery = `SELECT id FROM "productAttributeTerms" WHERE slug = '${t}' AND "organizationId" = '${organizationId}'`
                                     const nameResult = await pgPool.query(nameQuery)
 
                                     let termId = ""
@@ -568,7 +573,7 @@ export async function POST(req: Request) {
                     const slugs = product.categories
                     const catArray = slugs
                         .split(",")
-                        .map(s => s.trim());
+                        .map(s => safeTrim(s));
 
                     const categories: CategoryEntry[] = [];
 
@@ -605,23 +610,23 @@ export async function POST(req: Request) {
 
                     const productId = uuidv4()
 
-                    const rp = product.regularPrice
-                    const rawRegularPrice = rp
-                        .split(",")
-                        .map(s => s.trim());
-                    const regularPrice = arrayToJson(rawRegularPrice)
+                    const rp = product.regularPrice ?? "";
+                    const rawRegularPrice = typeof rp === "string"
+                        ? rp.split(",").map(s => safeTrim(s))
+                        : [];
+                    const regularPrice = arrayToJson(rawRegularPrice);
 
-                    const sp = product.salePrice
-                    const rawSalePrice = sp
-                        .split(",")
-                        .map(s => s.trim());
-                    const salePrice = arrayToJson(rawSalePrice)
+                    const sp = product.salePrice ?? "";
+                    const rawSalePrice = typeof sp === "string"
+                        ? sp.split(",").map(s => safeTrim(s))
+                        : [];
+                    const salePrice = arrayToJson(rawSalePrice);
 
-                    const ct = product.cost
-                    const rawCost = ct
-                        .split(",")
-                        .map(s => s.trim());
-                    const cost = arrayToJson(rawCost)
+                    const ct = product.cost ?? "";
+                    const rawCost = typeof ct === "string"
+                        ? ct.split(",").map(s => safeTrim(s))
+                        : [];
+                    const cost = arrayToJson(rawCost);
 
                     const safeDescription = cleanDescription(product.description);
 
@@ -660,7 +665,7 @@ export async function POST(req: Request) {
                             const terms = product[`attributeValues${i}`]
                             const termsArray = terms
                                 .split(",")
-                                .map(s => s.trim());
+                                .map(s => safeTrim(s));
 
                             const name = product[`attributeSlug${i}`]
                             const nameQuery = `SELECT id FROM "productAttributes" WHERE slug = '${name}'`
@@ -721,12 +726,12 @@ export async function POST(req: Request) {
                     const countries = product.countries.toString()
                     const countryArray = countries
                         .split(",")
-                        .map(s => s.trim());
+                        .map(s => safeTrim(s));
 
                     const stocks = product.stock.toString()
                     const stockArray = stocks
                         .split(",")
-                        .map(s => s.trim());
+                        .map(s => safeTrim(s));
 
                     for (let i = 0; i < countryArray.length; i++) {
                         await db.insertInto("warehouseStock").values({

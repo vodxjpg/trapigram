@@ -14,6 +14,7 @@ export async function POST(request: Request) {
     try {
         const body = await request.json();
         const products = Array.isArray(body.products) ? body.products : [];
+        console.log(products)
 
         // Validate data
         if (!products.length) {
