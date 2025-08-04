@@ -1,5 +1,5 @@
 /*───────────────────────────────────────────────────────────────────
-  src/app/api/auth/check-status/route.ts       — FULL REPLACEMENT
+  src/app/api/auth/check-status/route.ts
 ───────────────────────────────────────────────────────────────────*/
 
 import { NextRequest, NextResponse } from "next/server";
@@ -95,6 +95,23 @@ export async function GET(req: NextRequest) {
     if (!session.session.activeOrganizationId) {
       return NextResponse.json({ redirect: "/select-organization" });
     }
+
+    /* ── NEW: Overdue invoice check ───────────────────────────────── */
+    // If the user has ANY non-paid invoice past its due date, send them to /billing
+    const today = new Date().toISOString().slice(0, 10);
+    const { rows: overdueRows } = await pgPool.query(
+      `SELECT id
+         FROM "userInvoices"
+        WHERE "userId" = $1
+          AND status != 'paid'
+          AND "dueDate" < $2
+        LIMIT 1`,
+      [userId, today],
+    );
+    if (overdueRows.length > 0) {
+      return NextResponse.json({ redirect: "/billing" });
+    }
+    /* ──────────────────────────────────────────────────────── */
 
     /* all good → allow navigation */
     return NextResponse.json({ redirect: null });

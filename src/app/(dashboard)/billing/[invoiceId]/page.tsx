@@ -1,4 +1,3 @@
-// src/app/(dashboard)/billing/[invoiceId]/page.tsx
 "use client"
 
 import { useState, useEffect } from "react"
@@ -89,9 +88,10 @@ export default function InvoiceDetailPage() {
   }
 
   const total = parseFloat(inv.totalAmount)
-  const paid = inv.status === "paid"
-    ? total
-    : inv.status === "underpaid"
+  const paid =
+    inv.status === "paid"
+      ? total
+      : inv.status === "underpaid"
       ? parseFloat(inv.paidAmount)
       : 0
   const pending = total - paid
@@ -157,19 +157,17 @@ export default function InvoiceDetailPage() {
             <div className="col-span-2 text-center space-y-1">
               <p className="font-medium">Deposit Address</p>
               <div className="flex items-center justify-center space-x-2">
-                <code className="truncate max-w-xs">{inv.depositAddress}</code>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={copyAddress}
-                >
+                <code className="truncate max-w-xs">
+                  {inv.depositAddress}
+                </code>
+                <Button variant="ghost" size="icon" onClick={copyAddress}>
                   <IconCopy className="h-4 w-4" />
                 </Button>
               </div>
             </div>
           )}
 
-          {/* QR code show up */}
+          {/* QR code */}
           <div className="col-span-2 text-center">
             <img
               src={`https://api.qrserver.com/v1/create-qr-code?size=150x150&data=${encodeURIComponent(
@@ -200,9 +198,13 @@ export default function InvoiceDetailPage() {
               {items.map((it) => (
                 <TableRow key={it.itemId}>
                   <TableCell>{it.orderId}</TableCell>
-                  <TableCell>${parseFloat(it.feeAmount).toFixed(2)}</TableCell>
+                  <TableCell>
+                    ${parseFloat(it.feeAmount).toFixed(2)}
+                  </TableCell>
                   <TableCell>{it.percentApplied}%</TableCell>
-                  <TableCell>${parseFloat(it.amount).toFixed(2)}</TableCell>
+                  <TableCell>
+                    ${parseFloat(it.amount).toFixed(2)}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

@@ -1,4 +1,3 @@
-// src/app/(dashboard)/billing/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";

@@ -1,4 +1,3 @@
-// src/app/(dashboard)/billing/components/invoices-data-table.tsx
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
@@ -74,9 +73,7 @@ export function InvoicesDataTable({
       setIsLoading(true);
       const res = await fetch(
         `/api/invoices?page=${page}&limit=${pageSize}`,
-        {
-          credentials: "include",
-        }
+        { credentials: "include" }
       );
       if (res.ok) {
         const json = (await res.json()) as InvoicesResponse;
@@ -225,10 +222,7 @@ export function InvoicesDataTable({
                 <TableRow key={row.id}>
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext()
-                      )}
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}
                 </TableRow>
