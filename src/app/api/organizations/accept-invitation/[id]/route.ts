@@ -1,11 +1,11 @@
 // src/app/api/organizations/accept-invitation/[id]/route.ts
-export const runtime = "nodejs";              // If Node is available, use it
-export const dynamic = "force-dynamic";       // Disable edge-cache for safety
+export const runtime  = "nodejs";        // If Node is available, use it
+export const dynamic  = "force-dynamic"; // Disable edge-cache for safety
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
-import crypto from "crypto";
+import { auth }   from "@/lib/auth";
+import { db }     from "@/lib/db";
+import crypto     from "crypto";
 
 /* helper – works with Edge (Promise params) or Node (plain object) */
 async function extractId(
@@ -21,7 +21,7 @@ async function extractId(
 
 export async function GET(
   req: NextRequest,
-  ctx: { params: { id: string } } | { params: Promise<{ id: string }> }
+  ctx: { params: { id: string } } | { params: Promise<{ id: string }> },
 ) {
   const invitationId = await extractId(ctx.params);
   if (!invitationId) {
@@ -86,13 +86,16 @@ export async function GET(
         .executeTakeFirst();
 
       if (!exists) {
-        await trx.insertInto("member").values({
-          id: crypto.randomUUID(),
-          userId: session.user.id,
-          organizationId: invite.organizationId!,
-          role: invite.role,
-          createdAt: new Date(),
-        }).execute();
+        await trx
+          .insertInto("member")
+          .values({
+            id: crypto.randomUUID(),
+            userId: session.user.id,
+            organizationId: invite.organizationId!,
+            role: invite.role,
+            createdAt: new Date(),
+          })
+          .execute();
       }
     });
 
@@ -105,9 +108,16 @@ export async function GET(
         .executeTakeFirst();
     }
 
-    const redirect = session.user.hasPassword
-      ? "/dashboard"
-      : `/set-password?invitationId=${invitationId}`;
+    /* ──────────────── REDIRECT LOGIC (FIX) ─────────────────
+       • Guests without a credential password → set-password
+       • Everyone else                           → dashboard  */
+    const needsPassword =
+      (session.user as any).is_guest === true &&
+      session.user.hasPassword === false;
+
+    const redirect = needsPassword
+      ? `/set-password?invitationId=${invitationId}`
+      : "/dashboard";
 
     return NextResponse.json({ success: true, redirect });
   }
@@ -124,25 +134,28 @@ export async function GET(
   const userId = existingUser
     ? existingUser.id
     : (
-      await (await auth.$context).internalAdapter.createUser({
-        name: invite.email.split("@")[0] ?? "User",
-        email: invite.email,
-        emailVerified: false,
-        phone: null,
-        country: null,
-        is_guest: true,
-      })
-    ).id;
+        await (await auth.$context).internalAdapter.createUser({
+          name: invite.email.split("@")[0] ?? "User",
+          email: invite.email,
+          emailVerified: false,
+          phone: null,
+          country: null,
+          is_guest: true,
+        })
+      ).id;
 
   /* membership – ignore duplicate-key errors gracefully */
   try {
-    await db.insertInto("member").values({
-      id: crypto.randomUUID(),
-      userId,
-      organizationId: invite.organizationId!,
-      role: invite.role,
-      createdAt: new Date(),
-    }).execute();
+    await db
+      .insertInto("member")
+      .values({
+        id: crypto.randomUUID(),
+        userId,
+        organizationId: invite.organizationId!,
+        role: invite.role,
+        createdAt: new Date(),
+      })
+      .execute();
   } catch (e: any) {
     if (e?.code !== "23505") throw e; // silence only “duplicate key”
   }
