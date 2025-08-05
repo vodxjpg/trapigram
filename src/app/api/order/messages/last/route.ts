@@ -4,22 +4,23 @@ import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
 /**
- * POST /api/order/messages/last?clientId=<clientId>
+ * POST /api/order/messages/last?clientId=…
  *
  * Body: { orderIds: string[] }
- * Response: { last: { [orderId]: { id, isInternal, createdAt } } }
+ * Returns: { last: { [orderId]: { id, isInternal, createdAt } } }
  *
- * Returns, for each orderId, the **latest internal** message that has NOT
- * been acknowledged by the given client (see orderMessageReceipts).
+ * For every orderId, we give back the newest *internal* message that
+ * the given client has **not** acknowledged yet (no row in
+ * orderMessageReceipts for that <messageId,clientId> pair).
  */
 export async function POST(req: NextRequest) {
-  /* ① auth / context ---------------------------------------------------- */
+  /* ① auth ------------------------------------------------------------ */
   const ctx = await getContext(req.clone());
-  if (ctx instanceof NextResponse) return ctx;          // auth failed → early exit
+  if (ctx instanceof NextResponse) return ctx;
 
-  /* ② parse inputs ------------------------------------------------------ */
+  /* ② inputs ---------------------------------------------------------- */
   const { orderIds = [] } = await req.json().catch(() => ({}));
-  const clientId = req.nextUrl.searchParams.get("clientId"); // mandatory
+  const clientId = req.nextUrl.searchParams.get("clientId");
 
   if (!clientId) {
     return NextResponse.json(
@@ -31,28 +32,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ last: {} });
   }
 
-  /* ③ run query – NOT-EXISTS skips messages already in receipts --------- */
+  /* ③ query ----------------------------------------------------------- */
   const sql = `
     SELECT DISTINCT ON (om."orderId")
            om."orderId",
            om.id,
            om."isInternal",
            om."createdAt"
-      FROM "orderMessages" om
-     WHERE om."orderId" = ANY ($1::text[])
+      FROM "orderMessages"           om
+ LEFT JOIN "orderMessageReceipts"    r
+        ON  r."messageId" = om.id
+        AND r."clientId"  = $2            -- only for *this* client
+     WHERE om."orderId"   = ANY ($1::text[])
        AND om."isInternal"
-       AND NOT EXISTS (
-             SELECT 1
-               FROM "orderMessageReceipts" r
-              WHERE r."messageId" = om.id
-                AND r."clientId"  = $2
-           )
-     ORDER BY om."orderId", om."createdAt" DESC
+       AND r."messageId"  IS NULL         -- ✨ not yet acknowledged
+  ORDER BY om."orderId", om."createdAt" DESC
   `;
   const { rows } = await pool.query(sql, [orderIds, clientId]);
 
-  /* ④ shape response ---------------------------------------------------- */
-  const last: Record<string, { id: string; isInternal: boolean; createdAt: string }> = {};
+  /* ④ shape ----------------------------------------------------------- */
+  const last: Record<
+    string,
+    { id: string; isInternal: boolean; createdAt: string }
+  > = {};
   for (const r of rows) {
     last[r.orderId] = {
       id:         r.id,
