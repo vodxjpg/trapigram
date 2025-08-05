@@ -10,6 +10,7 @@ export async function POST(req: NextRequest) {
 
   /* ② now _our_ copy is still intact */
   const { orderIds = [] } = await req.json();
+  const clientId = req.nextUrl.searchParams.get("clientId");   // ← new
   if (!Array.isArray(orderIds) || orderIds.length === 0) {
     return NextResponse.json({ last: {} });
   }
@@ -17,10 +18,16 @@ export async function POST(req: NextRequest) {
   const { rows } = await pool.query(
     `SELECT DISTINCT ON ("orderId")
             "orderId", id, "isInternal", "createdAt"
-       FROM "orderMessages"
-      WHERE "orderId" = ANY($1::text[])
-      ORDER BY "orderId", "createdAt" DESC`,
-    [orderIds],
+           FROM "orderMessages" om
+${clientId ? `
+     LEFT JOIN "orderMessageReceipts" r
+            ON r."messageId" = om.id
+           AND r."clientId"  = $2
+` : ""}
+    WHERE om."orderId" = ANY($1::text[])
+      ${clientId ? "AND r.\"messageId\" IS NULL" : ""}
+    ORDER BY om."orderId", om."createdAt" DESC`,
+  clientId ? [orderIds, clientId] : [orderIds],
   );
 
   const map: Record<string, any> = {};
