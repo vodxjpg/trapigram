@@ -616,8 +616,7 @@ export function CategoryTable() {
             <DialogHeader>
               <DialogTitle>Delete category</DialogTitle>
               <DialogDescription>
-                Deleting a category will orphan sub-categories & unlink
-                products. Proceed?
+                Deleteing a category means sub-categories and products won’t have any category attached to them. You will need to manually adjust. Are you sure you would like to continue?
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="sm:justify-end">
