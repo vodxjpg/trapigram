@@ -20,27 +20,34 @@ import { PageHeader } from "@/components/page-header";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export default function ProductsPage() {
   const router = useRouter();
 
-  // ── Pagination & Export Data ────────────────────────────────
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [currentProducts, setCurrentProducts] = useState<Product[]>([]);
 
-  // ── Buttons & Import Modal States ────────────────────────────
   const [isLoading, setIsLoading] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [showExportDialog, setShowExportDialog] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ── Active Org & Permissions ────────────────────────────────
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
+  const userEmail = authClient.useSession()?.data?.user?.email;
+
   const { hasPermission: canViewProducts, isLoading: permLoading } =
     useHasPermission(organizationId, { product: ["view"] });
   const { hasPermission: canCreateProducts } = useHasPermission(
@@ -48,7 +55,6 @@ export default function ProductsPage() {
     { product: ["create"] }
   );
 
-  // Redirect effect (doesn't change hook order)
   useEffect(() => {
     if (!permLoading && !canViewProducts) {
       router.replace("/dashboard");
@@ -69,6 +75,11 @@ export default function ProductsPage() {
     setImportMessage(null);
     setImportErrors([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleFileChange = () => {
+    const file = fileInputRef.current?.files?.[0];
+    if (file) processFile(file);
   };
 
   const processFile = async (file: File) => {
@@ -107,11 +118,6 @@ export default function ProductsPage() {
     }
   };
 
-  const handleFileChange = () => {
-    const file = fileInputRef.current?.files?.[0];
-    if (file) processFile(file);
-  };
-
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
@@ -125,9 +131,22 @@ export default function ProductsPage() {
       const res = await fetch("/api/products/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ products: currentProducts }),
+        body: JSON.stringify({
+          products: currentProducts,
+          userEmail: userEmail,
+        }),
       });
+
       if (!res.ok) throw new Error("Export failed");
+
+      if (res.headers.get("Content-Type")?.includes("application/json")) {
+        const result = await res.json();
+        if (result.sentToEmail) {
+          setShowExportDialog(true);
+          return;
+        }
+      }
+
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -148,8 +167,6 @@ export default function ProductsPage() {
     setCurrentProducts(rows);
   }, []);
 
-  // If still loading perms, or user has no view perms, just render nothing.
-  // (But we didn't return BEFORE hooks, so order is stable)
   if (permLoading || !canViewProducts) {
     return null;
   }
@@ -165,6 +182,21 @@ export default function ProductsPage() {
         onChange={handleFileChange}
         className="hidden"
       />
+
+      <Dialog open={showExportDialog} onOpenChange={setShowExportDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Export Sent by Email</DialogTitle>
+          </DialogHeader>
+          <p>
+            Your export contains many rows and has been sent to your email
+            address.
+          </p>
+          <DialogFooter>
+            <Button onClick={() => setShowExportDialog(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Import modal ... unchanged */}
       {showImportModal && (

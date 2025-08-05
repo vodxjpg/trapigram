@@ -2,6 +2,8 @@
 import { pgPool as pool } from "@/lib/db";
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
+import { sendEmail } from "@/lib/email"; // ✅ Import email sender
+import { auth } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -11,10 +13,11 @@ interface Grouped {
 }
 
 export async function POST(request: Request) {
+    const session = await auth.api.getSession({ headers: request.headers });
     try {
         const body = await request.json();
         const products = Array.isArray(body.products) ? body.products : [];
-        console.log(products)
+        const userEmail = session?.user.email
 
         // Validate data
         if (!products.length) {
@@ -177,6 +180,21 @@ export async function POST(request: Request) {
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Products");
         const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+
+        if (worksheetData.length > 50 && userEmail) {
+            const base64File = Buffer.from(buf).toString("base64");
+            await sendEmail({
+                to: userEmail,
+                subject: "Your product export file",
+                text: "Please find attached your exported product data.",
+                html: `<p>Hi! Your export is ready. Download the file attached.</p>` +
+                    `<p><em>(Note: some email providers might not preview attachments)</em></p>` +
+                    `<p>Thank you!</p>` +
+                    `<p>Trapyfy</p>` +
+                    `<a href='data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${base64File}' download='products-export.xlsx'>Download export</a>`
+            });
+            return NextResponse.json({ sentToEmail: true }, { status: 200 });
+        }
 
         // Return as downloadable file
         return new Response(Buffer.from(buf), {

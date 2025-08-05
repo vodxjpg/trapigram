@@ -189,14 +189,15 @@ export function ClientsTable() {
     try {
       const res = await fetch(`/api/clients/${id}`);
       const data = await res.json();
-      console.log(data);
       setStatsData({
         totalOrders: data.totalOrders,
         mostPurchased: data.mostPurchased,
         quantityPurchased: data.quantityPurchased,
         lastPurchase: data.lastPurchase.createdAt,
       });
+      console.log(statsData);
     } catch (err: any) {
+      err.message = "This client doesn't have any stats";
       toast.error(err.message);
       setStatsData(null);
     } finally {
