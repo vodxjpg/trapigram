@@ -1,3 +1,4 @@
+// src/app/api/tickets/messages/receipt/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { z } from "zod";
@@ -16,7 +17,7 @@ export async function POST(req: NextRequest) {
     const { messageIds, clientId } = schema.parse(await req.json());
 
     await pool.query(
-      `INSERT INTO "orderMessageReceipts" ("messageId","clientId")
+      `INSERT INTO "ticketMessageReceipts" ("messageId","clientId")
          SELECT id, $2 FROM unnest($1::text[]) AS id
          ON CONFLICT DO NOTHING`,
       [messageIds, clientId],
