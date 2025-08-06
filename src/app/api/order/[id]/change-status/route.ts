@@ -12,12 +12,13 @@ import type { NotificationType } from "@/lib/notifications";
 
 
 // ── diagnostics ──────────────────────────────────────────────
+
+const apiKey = process.env.CURRENCY_LAYER_API_KEY
 const dbg  = (...a: any[]) => console.log("[orderRevenue]", ...a);
 if (!apiKey) console.warn("[orderRevenue] ⚠️  CURRENCY_LAYER_API_KEY is not set");
 
 //------------- Order Revenue---------------------//
 
-const apiKey = process.env.CURRENCY_LAYER_API_KEY
 
 const euroCountries = [
   "AT", // Austria
