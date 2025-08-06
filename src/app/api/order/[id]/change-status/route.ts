@@ -11,6 +11,10 @@ import { createHmac } from "crypto";
 import type { NotificationType } from "@/lib/notifications";
 
 
+// ── diagnostics ──────────────────────────────────────────────
+const dbg  = (...a: any[]) => console.log("[orderRevenue]", ...a);
+if (!apiKey) console.warn("[orderRevenue] ⚠️  CURRENCY_LAYER_API_KEY is not set");
+
 //------------- Order Revenue---------------------//
 
 const apiKey = process.env.CURRENCY_LAYER_API_KEY
@@ -156,10 +160,11 @@ async function getRevenue(id: string, organizationId: string) {
         }
 
         const url = `https://api.coingecko.com/api/v3/coins/${coins[coin]}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
-        console.log(url)
+        dbg("CoinGecko →", url)
         const options = { method: 'GET', headers: { accept: 'application/json' } };
 
         const res = await fetch(url, options)
+        dbg("CoinGecko ←", res.status, res.statusText)
         if (!res.ok) {
           throw new Error(`HTTP ${res.status} – ${res.statusText}`);
         }
@@ -176,8 +181,9 @@ async function getRevenue(id: string, organizationId: string) {
         let USDGBP = 0
         if (exchangeResult.rows.length === 0) {
           const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
-          console.log(url)
+          dbg("CurrencyLayer →", url)
           const res = await fetch(url);
+          dbg("CurrencyLayer ←", res.status, res.statusText)
           const data = await res.json();
 
           const usdEur = data.quotes?.USDEUR;

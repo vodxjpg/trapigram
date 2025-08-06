@@ -5,7 +5,9 @@ import { v4 as uuidv4 } from "uuid";
 
 // nothing
 const apiKey = process.env.CURRENCY_LAYER_API_KEY
-
+const dbg  = (...a: any[]) => console.log("[orderRevenue]", ...a);
+if (!process.env.CURRENCY_LAYER_API_KEY)
+  console.warn("[orderRevenue] ⚠️  CURRENCY_LAYER_API_KEY is not set");
 const euroCountries = [
   "AT", // Austria
   "BE", // Belgium
@@ -159,9 +161,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
 
         const url = `https://api.coingecko.com/api/v3/coins/${coins[coin]}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
+        dbg("CoinGecko →", url);
         const options = { method: 'GET', headers: { accept: 'application/json' } };
 
+
         const res = await fetch(url, options)
+        dbg("CoinGecko ←", res.status, res.statusText);
         if (!res.ok) {
           throw new Error(`HTTP ${res.status} – ${res.statusText}`);
         }
@@ -205,7 +210,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // 3️⃣ Still nothing – pull live rate
       if (exchangeResult.rows.length === 0) {
         const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
+        dbg("CurrencyLayer →", url);
         const res = await fetch(url);
+        dbg("CurrencyLayer ←", res.status, res.statusText);
         const data = await res.json();
 
         const usdEur = data.quotes?.USDEUR;
