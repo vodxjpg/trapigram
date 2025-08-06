@@ -31,7 +31,7 @@ const euroCountries = [
   "ES"  // Spain
 ];
 
-const coins = {
+const coins: Record<string, string> = {
   'BTC': 'bitcoin',
   'ETH': 'ethereum',
   'USDT': 'tether',
@@ -152,15 +152,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (paymentType === 'niftipay') {
         console.log("[orderRevenue] payment=niftipay ‑ using CoinGecko");
 
-        let coin = ""
+        let coinRaw = ""
         let amount = 0
         const paidEntry = order.orderMeta.find(item => item.event === "paid");
         if (paidEntry) {
-          coin = paidEntry.order.asset
+         coinRaw = paidEntry.order.asset ?? ""
           amount = paidEntry.order.amount
         }
 
-        const url = `https://api.coingecko.com/api/v3/coins/${coins[coin]}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
+                const coinKey = coinRaw.toUpperCase();
+        const coinId  = coins[coinKey];
+        if (!coinId) {
+          dbg("⚠️ unsupported asset:", coinKey);
+          throw new Error(`Unsupported crypto asset "${coinKey}"`);
+        }
+        const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
         dbg("CoinGecko →", url);
         const options = { method: 'GET', headers: { accept: 'application/json' } };
 
