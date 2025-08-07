@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
@@ -122,6 +122,53 @@ export default function OrderForm() {
   const [searchTerm, setSearchTerm]   = useState("");
   const [searching, setSearching]     = useState(false);
   const [searchResults, setResults]   = useState<any[]>([]);
+
+  /* keep a memoised local filter so we see matches immediately while typing */
+const filteredClients = useMemo(() => {
+  if (searchTerm.trim().length < 3) return clients;
+  const t = searchTerm.toLowerCase();
+  return clients.filter(
+    (c) =>
+      c.username?.toLowerCase().includes(t) ||
+      c.email?.toLowerCase().includes(t) ||
+      `${c.firstName} ${c.lastName}`.toLowerCase().includes(t),
+  );
+}, [clients, searchTerm]);
+
+/* ────────────────────────────────────────────────────────────────
+   Remote search (debounced)
+   – runs only when the user typed ≥3 chars
+   – hits GET /api/clients?search=…&pageSize=10
+───────────────────────────────────────────────────────────────── */
+useEffect(() => {
+    const q = searchTerm.trim();
+    if (q.length < 3) {              // short query → reset
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+  
+    const timer = setTimeout(async () => {
+      try {
+        setSearching(true);
+        const url = `/api/clients?search=${encodeURIComponent(q)}&page=1&pageSize=10`;
+        const res = await fetch(url, {
+          headers: {
+            "x-internal-secret": process.env.INTERNAL_API_SECRET!,
+          },
+        });
+        if (!res.ok) throw new Error("Search failed");
+        const { clients: found } = await res.json();
+        setResults(found);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, DEBOUNCE_MS);                 // 400 ms debounce
+  
+    return () => clearTimeout(timer); // cleanup on next keystroke/unmount
+  }, [searchTerm]);
 
   const [orderGenerated, setOrderGenerated] = useState(false);
 
@@ -889,7 +936,7 @@ const addProduct = async () => {
 
                     <ScrollArea className="max-h-72">
                       {/* Local clients first */}
-                      {clients.map(c => (
+                      {filteredClients.map(c => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.firstName} {c.lastName} — {c.username} ({c.email})
                         </SelectItem>
