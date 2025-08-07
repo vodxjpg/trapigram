@@ -170,6 +170,21 @@ export default function OrderForm() {
 
   const calcRowSubtotal = (p: Product, qty: number) => p.price * qty;
 
+  /*───────────────────────────────────────────────────────────────
+  When the user chooses a row (local or remote) we:  
+    1. set it as the selected client  
+    2. cache remote results so the rest of the form works normally  
+    3. reset the search UI                                               
+─────────────────────────────────────────────────────────────────*/
+const pickClient = (id: string, obj: any) => {
+  setSelectedClient(id);
+  if (!clients.some((c) => c.id === id)) {
+    setClients((prev) => [...prev, obj]);
+  }
+  setSearchTerm("");
+  setResults([]);
+};
+
   // Added useEffect to recalculate subtotal whenever orderItems change
   useEffect(() => {
     const sum = orderItems.reduce(
