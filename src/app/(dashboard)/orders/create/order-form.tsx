@@ -110,6 +110,14 @@ function fmt(n: number | string): string {
 }
 
 
+function firstPointPrice(pp: any): number {
+  if (!pp) return 0;
+  const firstLvl   = Object.values(pp)[0] as any ?? {};
+  const firstCtMap = Object.values(firstLvl)[0] as any ?? {};
+  return (firstCtMap.sale ?? firstCtMap.regular) ?? 0;
+}
+
+
 const DEBOUNCE_MS = 400;
 export default function OrderForm() {
   const router = useRouter();
@@ -382,12 +390,11 @@ export default function OrderForm() {
 
         // 2) affiliate products
         ...aff.map((a: any) => {
-          /* flat “€ price” → same trick as in edit form */
-          const costFirstCountry = Object.values(a.cost)[0] ?? 0;
+           const firstPts = firstPointPrice(a.pointsPrice);
 
-          const regularPrice: Record<string, number> = Object.fromEntries(
-            Object.entries(a.cost).map(([country, c]) => [country, c]),
-          );
+          const regularPrice: Record<string, number> = {    // keep it simple
+            pts: firstPts,
+          };
 
           return {
             id: a.id,
@@ -396,7 +403,7 @@ export default function OrderForm() {
             description: a.description,
             image: a.image,
             regularPrice,
-            price: costFirstCountry,
+            price: firstPts,
             stockData: a.stock ?? {},           // often empty → unlimited
             isAffiliate: true,
             subtotal: 0,
@@ -577,7 +584,7 @@ export default function OrderForm() {
       try {
         setNiftipayLoading(true);
         const res = await fetch(
-          `/api/niftipay/payment-methods`,
+          `${NIFTIPAY_BASE}/api/niftipay/payment-methods`,
           { headers: { "x-api-key": pm.apiKey } },
         );
         if (!res.ok) throw new Error("Failed to load Niftipay networks");
