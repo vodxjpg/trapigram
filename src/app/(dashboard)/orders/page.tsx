@@ -1,13 +1,16 @@
 "use client";
 
-import { useState, useEffect }      from "react";
-import { useRouter }                from "next/navigation";
-import { useHasPermission }         from "@/hooks/use-has-permission";
-import { authClient }               from "@/lib/auth-client";
-import { Button }                   from "@/components/ui/button";
-import { Input }                    from "@/components/ui/input";
-import { Edit, Mail, MoreVertical,
-         Search, Truck, CalendarIcon } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { type DateRange } from "react-day-picker";
+import { useRouter } from "next/navigation";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Edit, Mail, MoreVertical,
+  Search, Truck, CalendarIcon
+} from "lucide-react";
 import {
   Select, SelectContent, SelectItem,
   SelectTrigger, SelectValue,
@@ -19,17 +22,19 @@ import {
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
-import { Calendar }                 from "@/components/ui/calendar";
+import { Calendar } from "@/components/ui/calendar";
 import {
   Table, TableBody, TableCell,
   TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Badge }                    from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle }
-                                  from "@/components/ui/card";
-import { format, startOfDay, endOfDay,
-         subWeeks, subMonths }      from "date-fns";
-import { toast }                   from "sonner";
+  from "@/components/ui/card";
+import {
+  format, startOfDay, endOfDay,
+  subWeeks, subMonths
+} from "date-fns";
+import { toast } from "sonner";
 import {
   Dialog, DialogContent, DialogHeader,
   DialogTitle, DialogFooter,
@@ -64,41 +69,40 @@ export default function OrdersPage() {
 
   /* ── active organisation id ───────────────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
   /* ── permission flags (new hook) ───────────────────────────────── */
-  const { hasPermission: canViewDetail    } = useHasPermission(organizationId, { order: ["view"] });
-  const { hasPermission: canViewPricing   } = useHasPermission(organizationId, { order: ["view_pricing"] });
-  const { hasPermission: canUpdate        } = useHasPermission(organizationId, { order: ["update"] });
-  const { hasPermission: canUpdateTracking} = useHasPermission(organizationId, { order: ["update_tracking"] });
+  const { hasPermission: canViewDetail } = useHasPermission(organizationId, { order: ["view"] });
+  const { hasPermission: canViewPricing } = useHasPermission(organizationId, { order: ["view_pricing"] });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, { order: ["update"] });
+  const { hasPermission: canUpdateTracking } = useHasPermission(organizationId, { order: ["update_tracking"] });
   const {
     hasPermission: canUpdateStatus,
     isLoading: permissionsLoading,
-  }                                        = useHasPermission(organizationId, { order: ["update_status"] });
+  } = useHasPermission(organizationId, { order: ["update_status"] });
 
   /* ── orders & ui state ────────────────────────────────────────── */
-  const [orders,           setOrders          ] = useState<Order[]>([]);
-  const [loading,          setLoading         ] = useState(true);
-  const [error,            setError           ] = useState<string | null>(null);
-  const [dialogOpen,       setDialogOpen      ] = useState(false);
-  const [selectedOrderId,  setSelectedOrderId ] = useState<string | null>(null);
-  const [draftTracking,    setDraftTracking   ] = useState("");
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [draftTracking, setDraftTracking] = useState("");
 
   /* filters */
-  const [filteredOrders,   setFilteredOrders  ] = useState<Order[]>([]);
-  const [searchQuery,      setSearchQuery     ] = useState("");
-  const [statusFilter,     setStatusFilter    ] = useState<string>("all");
-  const [dateFilter,       setDateFilter      ] = useState<DateFilterOption>("all");
-  const [dateRange,        setDateRange       ] = useState<{ from?: Date; to?: Date; }>({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [dateFilter, setDateFilter] = useState<DateFilterOption>("all");
+  const [dateRange, setDateRange] = useState<DateRange>();  // ← correct type
 
   /* pagination */
-  const [currentPage,      setCurrentPage     ] = useState(1);
+  const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
   /* shipping companies */
-  const [shippingCompanies,setShippingCompanies] = useState<ShippingCompany[]>([]);
-  const [shippingLoading,  setShippingLoading ] = useState(false);
-  const [selectedCompany,  setSelectedCompany ] = useState<string>();
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
+  const [shippingLoading, setShippingLoading] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState<string>();
 
   /* ---------------------------------------------------------------- */
   /*  Data fetching                                                   */
@@ -111,90 +115,103 @@ export default function OrdersPage() {
         return res.json();
       })
       .then((data: Order[]) => { setOrders(data); setError(null); })
-      .catch((err: Error)     => setError(err.message))
-      .finally(()            => setLoading(false));
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false));
   }, []);
 
   /* ---------------------------------------------------------------- */
-  /*  Filters                                                         */
+  /*  Memoised filtering (no state writes → no render loop)           */
   /* ---------------------------------------------------------------- */
-  useEffect(() => {
-    let result = orders.map((o) => ({
-      ...o,
-      createdAt: new Date(o.createdAt).toString(),
-    })) as Order[];
+  const filteredOrders = useMemo(() => {
+    let result = [...orders];
 
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
+    /* text search ---------------------------------------------------*/
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
       result = result.filter((o) =>
-        o.orderKey.toLowerCase().includes(q) ||
-        o.email.toLowerCase().includes(q),
+        String(o.orderKey).toLowerCase().includes(q) ||            // order #
+        (o.email ?? "").toLowerCase().includes(q) ||             // e-mail
+        `${o.firstName} ${o.lastName}`.toLowerCase().includes(q) ||// full name
+        (o.username ?? "").toLowerCase().includes(q),              // username
       );
     }
 
+    /* status filter -------------------------------------------------*/
     if (statusFilter !== "all") {
       result = result.filter((o) => o.status === statusFilter);
     }
 
+    /* date filter ---------------------------------------------------*/
     if (dateFilter !== "all") {
       const now = new Date();
+      const created = (d: string) => new Date(d);
+
       if (dateFilter === "today") {
-        const start = startOfDay(now);
-        result = result.filter((o) => new Date(o.createdAt) >= start);
+        const from = startOfDay(now);
+        result = result.filter((o) => created(o.createdAt) >= from);
       } else if (dateFilter === "last-week") {
-        const since = startOfDay(subWeeks(now, 1));
-        result = result.filter((o) => new Date(o.createdAt) >= since);
+        const from = startOfDay(subWeeks(now, 1));
+        result = result.filter((o) => created(o.createdAt) >= from);
       } else if (dateFilter === "last-month") {
-        const since = startOfDay(subMonths(now, 1));
-        result = result.filter((o) => new Date(o.createdAt) >= since);
-      } else if (dateFilter === "custom" && dateRange.from) {
+        const from = startOfDay(subMonths(now, 1));
+        result = result.filter((o) => created(o.createdAt) >= from);
+      } else if (dateFilter === "custom" && dateRange?.from) {
         const from = startOfDay(dateRange.from);
-        const to   = dateRange.to ? endOfDay(dateRange.to) : endOfDay(now);
-        result     = result.filter((o) =>
-          new Date(o.createdAt) >= from && new Date(o.createdAt) <= to,
+        const to = dateRange.to ? endOfDay(dateRange.to) : endOfDay(now);
+        result = result.filter(
+          (o) => created(o.createdAt) >= from && created(o.createdAt) <= to,
         );
       }
     }
 
-    setFilteredOrders(result);
-    setCurrentPage(1);
+    return result;
   }, [orders, searchQuery, statusFilter, dateFilter, dateRange]);
 
+  /* keep pagination sane when filters change ------------------------*/
+  useEffect(() => { setCurrentPage(1); }, [
+    searchQuery, statusFilter, dateFilter, dateRange,
+  ]);
+
+  /* helper to collapse the custom-range picker when needed ----------*/
+  const handleDateFilterChange = (opt: DateFilterOption) => {
+    setDateFilter(opt);
+    if (opt !== "custom") setDateRange(undefined);
+  };
   /* ---------------------------------------------------------------- */
   /*  Helpers                                                         */
   /* ---------------------------------------------------------------- */
   const getStatusColor = (s: OrderStatus) => {
     switch (s) {
-      case "open"      : return "bg-blue-500";
-      case "paid"      : return "bg-green-500";
+      case "open": return "bg-blue-500";
+      case "paid": return "bg-green-500";
       case "cancelled":
-      case "refunded"  : return "bg-red-500";
-      case "underpaid" : return "bg-orange-500";
-      case "completed" : return "bg-purple-500";
-      default          : return "bg-gray-500";
+      case "refunded": return "bg-red-500";
+      case "underpaid": return "bg-orange-500";
+      case "completed": return "bg-purple-500";
+      default: return "bg-gray-500";
     }
   };
-/* fetch shipping companies when the dialog opens */
-useEffect(() => {
-  if (!dialogOpen) return;
-  (async () => {
-    setShippingLoading(true);
-    try {
-      const res = await fetch("/api/shipping-companies", {
-        headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
-      });
-      if (!res.ok) throw new Error("Failed to fetch shipping companies");
+  /* fetch shipping companies when the dialog opens */
+  useEffect(() => {
+    if (!dialogOpen) return;
+    (async () => {
+      setShippingLoading(true);
+      try {
+        const res = await fetch("/api/shipping-companies", {
+          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+        });
+        if (!res.ok) throw new Error("Failed to fetch shipping companies");
 
-      // API returns { shippingMethods: [...] }
-      const { shippingMethods } = await res.json();
-      setShippingCompanies(shippingMethods);
-    } catch (err: any) {
-      toast.error(err.message);
-    } finally {
-      setShippingLoading(false);
-    }
-  })();
-}, [dialogOpen]);
+        // API returns { shippingMethods: [...] }
+        const { shippingMethods } = await res.json();
+        setShippingCompanies(shippingMethods);
+      } catch (err: any) {
+        toast.error(err.message);
+      } finally {
+        setShippingLoading(false);
+      }
+    })();
+  }, [dialogOpen]);
 
   /* ------------------------------------------------------------- */
   /*  Pre-select the saved company when the dialog opens            */
@@ -236,10 +253,10 @@ useEffect(() => {
   /* ---------------------------------------------------------------- */
   /*  JSX                                                             */
   /* ---------------------------------------------------------------- */
-  const pageCount       = Math.ceil(filteredOrders.length / itemsPerPage);
+  const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
   const paginatedOrders = filteredOrders.slice(
     (currentPage - 1) * itemsPerPage,
-    currentPage         * itemsPerPage,
+    currentPage * itemsPerPage,
   );
   const formatDate = (d: string) => format(new Date(d), "MMM dd, yyyy");
 
@@ -247,9 +264,9 @@ useEffect(() => {
   const handleStatusChange = async (orderId: string, newStatus: OrderStatus) => {
     try {
       const res = await fetch(`/api/order/${orderId}/change-status`, {
-        method : "PATCH",
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body   : JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: newStatus }),
       });
       if (!res.ok) throw new Error("Failed to update status");
       setOrders((prev) =>
@@ -270,7 +287,7 @@ useEffect(() => {
     setSelectedCompany(prevCompany?.id);
     setDialogOpen(true);
   };
-  
+
   const saveTracking = async () => {
     if (!selectedOrderId || !selectedCompany) return;
     const company = shippingCompanies.find((c) => c.id === selectedCompany);
@@ -369,7 +386,7 @@ useEffect(() => {
                     className="justify-start text-left font-normal"
                   >
                     <CalendarIcon className="mr-2 h-4 w-4" />
-                    {dateRange.from ? (
+                    {dateRange?.from ? (
                       dateRange.to ? (
                         <>
                           {format(dateRange.from, "LLL dd, y")} -{" "}
@@ -387,9 +404,7 @@ useEffect(() => {
                   <Calendar
                     mode="range"
                     selected={dateRange}
-                    onSelect={(range) =>
-                      setDateRange(range || { from: undefined, to: undefined })
-                    }
+                    onSelect={(range) => setDateRange(range)}   // react-day-picker already returns DateRange|undefined
                     initialFocus
                   />
                 </PopoverContent>
@@ -440,7 +455,7 @@ useEffect(() => {
                       </TableCell>
                       {/* Status Select showing only badges or editable based on permission */}
                       <TableCell>
-                      {canUpdateStatus ? (
+                        {canUpdateStatus ? (
                           <Select
                             value={order.status}
                             onValueChange={(v) =>
@@ -517,19 +532,19 @@ useEffect(() => {
                         <TableCell>${order.total.toFixed(2)}</TableCell>
                       )}
                       {/* Shipping Company */}
-         <TableCell>
-           {order.shippingCompany ?? (
-             <span className="text-muted-foreground">—</span>
-           )}
-         </TableCell>
-         {/* Tracking Number */}
-         <TableCell>
-           {order.trackingNumber ? (
-             <code className="font-mono">{order.trackingNumber}</code>
-           ) : (
-             <span className="text-muted-foreground">—</span>
-           )}
-         </TableCell>
+                      <TableCell>
+                        {order.shippingCompany ?? (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      {/* Tracking Number */}
+                      <TableCell>
+                        {order.trackingNumber ? (
+                          <code className="font-mono">{order.trackingNumber}</code>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -615,11 +630,11 @@ useEffect(() => {
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent>
             <DialogHeader>
-            <DialogTitle>
-  {orders.find(o => o.id === selectedOrderId)?.trackingNumber
-    ? "Update Tracking Number"
-    : "Set Tracking Number"}
-</DialogTitle>
+              <DialogTitle>
+                {orders.find(o => o.id === selectedOrderId)?.trackingNumber
+                  ? "Update Tracking Number"
+                  : "Set Tracking Number"}
+              </DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               {/* NEW: Shipping Company selector */}
