@@ -10,6 +10,8 @@ interface UseProductsProps {
    status?: "published" | "draft"
    categoryId?: string
    attributeId?: string
+ orderBy?: "createdAt" | "updatedAt" | "title" | "sku"
+ orderDir?: "asc" | "desc"
  }
 
 // Generic fetcher returns parsed JSON directly
@@ -29,6 +31,8 @@ export function useProducts({
     status,
     categoryId,
     attributeId,
+    orderBy,
+    orderDir,
   }: UseProductsProps) {
  const params = new URLSearchParams({
      page:     page.toString(),
@@ -37,6 +41,8 @@ export function useProducts({
      ...(status      ? { status }      : {}),
      ...(categoryId  ? { categoryId }  : {}),
      ...(attributeId ? { attributeId } : {}),
+       ...(orderBy     ? { orderBy }     : {}),
+  ...(orderDir    ? { orderDir }    : {}),
    })
 
   const { data, error, mutate } = useSWR<{

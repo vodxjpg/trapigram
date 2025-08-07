@@ -89,9 +89,14 @@ export async function GET(req: NextRequest) {
 
   try {
     const { searchParams } = new URL(req.url);
-    const page = parseInt(searchParams.get("page") || "1");
-    const pageSize = parseInt(searchParams.get("pageSize") || "10");
+        const page     = parseInt(searchParams.get("page") || "1");
+        const pageSize = parseInt(searchParams.get("pageSize") || "10");
     const search = searchParams.get("search") || "";
+    /* ---------- validated ordering ------------------------------ */
+    const allowedCols = new Set(["createdAt", "updatedAt", "title", "sku"]);
+    const rawOrderBy  = searchParams.get("orderBy")  || "createdAt";
+    const orderBy     = allowedCols.has(rawOrderBy) ? rawOrderBy : "createdAt";
+    const orderDir = searchParams.get("orderDir") === "asc" ? "asc" : "desc";
     const categoryId = searchParams.get("categoryId") || "";
     const rawStatus = searchParams.get("status");            // string | null
     const status: "published" | "draft" | undefined =
@@ -129,7 +134,8 @@ export async function GET(req: NextRequest) {
           .where("attributeId", "=", attributeId),
       );
 
-    const idRows = await idQuery
+        const idRows = await idQuery
+          .orderBy(orderBy as any, orderDir)   // ↞ cast is safe after whitelist
       .limit(pageSize)
       .offset((page - 1) * pageSize)
       .execute();
@@ -163,7 +169,8 @@ export async function GET(req: NextRequest) {
         "createdAt",
         "updatedAt",
       ])
-      .where("id", "in", productIds)
+          .where("id", "in", productIds)
+          .orderBy(orderBy as any, orderDir)
       .execute();
 
     /* -------- STEP 3 – related data in bulk --------------------- */

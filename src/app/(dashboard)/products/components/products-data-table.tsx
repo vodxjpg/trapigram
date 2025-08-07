@@ -9,6 +9,7 @@ import {
   useRef,
 } from "react";
 import { useDebounce } from "@/hooks/use-debounce";
+type OrderField = "createdAt" | "updatedAt" | "title" | "sku";
 import {
   type ColumnDef,
   type ColumnFiltersState,
@@ -131,6 +132,16 @@ export function ProductsDataTable({
   });
 
   const [sorting, setSorting] = useState<SortingState>([]);
+   /* NEW – server-side sort (field dir) ------------------------- */
+   const [serverSort, setServerSort] = useState<{
+      field: OrderField;
+      dir: "asc" | "desc";
+    }>({
+      field: "createdAt",
+      dir  : "desc",
+    });
+    
+
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -167,6 +178,8 @@ export function ProductsDataTable({
     status: statusFilter || undefined,
     categoryId: categoryFilter || undefined,
     attributeId: attributeFilter || undefined,
+    orderBy : serverSort.field,
+    orderDir: serverSort.dir,
   });
   const products = productsRaw ?? [];
 
@@ -577,6 +590,22 @@ export function ProductsDataTable({
     onRowSelectionChange: setRowSelection,
     state: { sorting, columnFilters, columnVisibility, rowSelection },
   });
+
+  /* ————————————————— react-table ⇆ server sort sync ———————————— */
+useEffect(() => {
+    if (!sorting.length) return;
+    const { id, desc } = sorting[0];
+     // allow only columns we’ve whitelisted
+     const isOrderField = (col: string): col is OrderField =>
+       ["createdAt", "updatedAt", "title", "sku"].includes(col);
+     if (!isOrderField(id)) return;
+    startTransition(() => {
+      setServerSort({ field: id, dir: desc ? "desc" : "asc" });
+      onPageChange(1);                     // reset to first page
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sorting]);
+  
 
   // Sync react-table page size with our prop
   useEffect(() => {
