@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";    
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/currency";
 /* ─── constants ──────────────────────────────────────────────── */
@@ -106,6 +107,8 @@ function fmt(n: number | string): string {
   });
 }
 
+
+const DEBOUNCE_MS = 400;
 export default function OrderForm() {
   const router = useRouter();
   const { data: activeOrg } = authClient.useActiveOrganization();
@@ -115,6 +118,9 @@ export default function OrderForm() {
   const [clientsLoading, setClientsLoading] = useState(true);
   const [selectedClient, setSelectedClient] = useState("");
   const [clientCountry, setClientCountry] = useState("");
+  const [searchTerm, setSearchTerm]   = useState("");
+  const [searching, setSearching]     = useState(false);
+  const [searchResults, setResults]   = useState<any[]>([]);
 
   const [orderGenerated, setOrderGenerated] = useState(false);
 
@@ -840,28 +846,64 @@ const addProduct = async () => {
                 <Select
                   value={selectedClient}
                   onValueChange={(val) => {
-                    setSelectedClient(val);
-                    const client = clients.find((c) => c.id === val);
-                    if (client) setClientCountry(client.country);
+                    const obj = [...clients, ...searchResults].find(c => c.id === val);
+                    if (obj) pickClient(val, obj);
                   }}
                   disabled={clientsLoading || orderGenerated}
                 >
                   <SelectTrigger>
                     <SelectValue
                       placeholder={
-                        clientsLoading ? "Loading…" : "Select a client"
+                        clientsLoading ? "Loading…" : "Select or search client"
                       }
                     />
                   </SelectTrigger>
-                  <SelectContent>
-                    {clients.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.firstName} {c.lastName} — {c.username} ({c.email})
-                      </SelectItem>
-                    ))}
+
+                  <SelectContent className="w-[450px]">
+                    {/* Search bar ------------------------------------------------ */}
+                    <div className="p-3 border-b flex items-center gap-2">
+                      <Search className="h-4 w-4 text-muted-foreground" />
+                      <Input
+                        value={searchTerm}
+                        onChange={e => setSearchTerm(e.target.value)}
+                        placeholder="Search (min 3 chars)"
+                        className="h-8"
+                      />
+                    </div>
+
+                    <ScrollArea className="max-h-72">
+                      {/* Local clients first */}
+                      {clients.map(c => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.firstName} {c.lastName} — {c.username} ({c.email})
+                        </SelectItem>
+                      ))}
+
+                      {/* Divider only if we have results */}
+                      {searchResults.length > 0 && (
+                        <Separator className="my-2" />
+                      )}
+
+                      {/* Remote search results (exclude already-listed ids) */}
+                      {searchResults
+                        .filter(c => !clients.some(lc => lc.id === c.id))
+                        .map(c => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.firstName} {c.lastName} — {c.username} ({c.email})
+                            <span className="ml-1 text-xs text-muted-foreground">(remote)</span>
+                          </SelectItem>
+                        ))}
+                      {searching && (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
+                      )}
+                      {!searching && searchTerm && searchResults.length === 0 && (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
+                      )}
+                    </ScrollArea>
                   </SelectContent>
                 </Select>
               </div>
+
               <div className="flex items-end">
                 <Button
                   onClick={generateOrder}
@@ -872,6 +914,7 @@ const addProduct = async () => {
               </div>
             </CardContent>
           </Card>
+
 
           {/* Product Selection */}
 
