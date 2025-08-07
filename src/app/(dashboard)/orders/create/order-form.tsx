@@ -16,6 +16,7 @@ import {
   Tag,
   DollarSign,
   Truck,
+  Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
