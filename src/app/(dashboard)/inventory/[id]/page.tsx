@@ -1,5 +1,7 @@
+// MODIFIED: InventoryDetailPage with discrepancy modal
 "use client";
 
+import { useCallback } from "react";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Label } from "@/components/ui/label";
@@ -17,7 +19,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
+/**
+ * Inventory metadata
+ */
 type InventoryData = {
   id: string;
   reference: string;
@@ -26,89 +38,149 @@ type InventoryData = {
   createdAt: string;
 };
 
+/**
+ * Product record for UI and API
+ */
 interface Product {
-  id: string;
+  id: string; // composite row key
+  productId: string; // actual backend ID
   name: string;
   sku: string;
   expectedQuantity: number;
   countedQuantity: number | null;
-  country: string; // <- importante
+  country: string; // important
+  variationId: string;
+  isCounted: boolean;
 }
+
+/**
+ * Helper: send PATCH with full product fields, countedQuantity and optional reason.
+ */
+const saveProductCount = async (
+  inventoryId: string,
+  product: Omit<Product, "countedQuantity">,
+  countedQuantity: number,
+  discrepancyReason?: string
+) => {
+  const { id: _rowKey, ...rest } = product;
+  const payload: Record<string, any> = { ...rest, countedQuantity };
+  if (discrepancyReason) {
+    payload.discrepancyReason = discrepancyReason;
+  }
+  return fetch(`/api/inventory/${inventoryId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+};
 
 export default function InventoryDetailPage() {
   const { id } = useParams();
   const [inventory, setInventory] = useState<InventoryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [countries, setCountries] = useState<string[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [countriesToBeCounted, setCountriesToBeCounted] = useState<string[]>(
+    []
+  );
+  const [countriesCounted, setCountriesCounted] = useState<string[]>([]);
 
-  // Product table state
   const [currentPage, setCurrentPage] = useState(1);
   const [countedValues, setCountedValues] = useState<Record<string, string>>(
     {}
   );
-  const [products, setProducts] = useState<Product[]>([]);
   const itemsPerPage = 10;
 
-  const parsePostgresArray = (str: string): string[] => {
-    return str
-      .replace(/[{}"]/g, "")
-      .split(",")
-      .map((c) => c.trim());
-  };
+  const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);
+  const [discrepancyReason, setDiscrepancyReason] = useState("");
+  const [pendingProductId, setPendingProductId] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function fetchInventory() {
-      try {
-        const response = await fetch(`/api/inventory/${id}`);
-        if (!response.ok) throw new Error("Inventory not found");
-        const data = await response.json();
-        const { inventory, countProduct } = data;
+  const fetchInventory = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/inventory/${id}`);
+      if (!response.ok) throw new Error("Inventory not found");
+      const data = await response.json();
+      const { inventory, countProduct } = data;
+      setInventory(inventory);
 
-        setInventory(inventory);
-
-        const parsedCountries = parsePostgresArray(inventory.countries);
-        setCountries(parsedCountries);
-
-        const parsedProducts: Product[] = countProduct.map((p, index) => ({
-          id: `${p.sku}-${p.country}-${index}`, // unique id
+      const parsedProducts: Product[] = countProduct.map(
+        (p: any, i: number) => ({
+          id: `${p.sku}-${p.country}-${i}`,
+          productId: p.id,
           name: p.title,
           sku: p.sku,
           expectedQuantity: p.expectedQuantity,
-          countedQuantity: null,
+          countedQuantity: p.countedQuantity,
           country: p.country,
-        }));
+          variationId: p.variationId,
+          isCounted: p.isCounted,
+        })
+      );
+      setProducts(parsedProducts);
 
-        setProducts(parsedProducts);
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
+      const toBeCountedCountries = parsedProducts
+        .filter((p) => !p.isCounted)
+        .map((p) => p.country);
+      setCountriesToBeCounted(Array.from(new Set(toBeCountedCountries)));
+
+      const countedCountries = parsedProducts
+        .filter((p) => p.isCounted)
+        .map((p) => p.country);
+      setCountriesCounted(Array.from(new Set(countedCountries)));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-    if (id) fetchInventory();
   }, [id]);
+
+  useEffect(() => {
+    if (id) fetchInventory();
+  }, [id, fetchInventory]);
 
   const handleCountedChange = (productId: string, value: string) => {
     setCountedValues((prev) => ({ ...prev, [productId]: value }));
   };
 
-  const handleSave = (productId: string) => {
+  const confirmDiscrepancySave = async () => {
+    if (!pendingProductId) return;
+    const product = products.find((p) => p.id === pendingProductId);
+    const value = countedValues[pendingProductId];
+    if (!product || value == null) return;
+    const numeric = Number(value);
+
+    await saveProductCount(id!, { ...product }, numeric, discrepancyReason);
+    setShowDiscrepancyModal(false);
+    setDiscrepancyReason("");
+    setPendingProductId(null);
+    setCountedValues((prev) => {
+      const copy = { ...prev };
+      delete copy[pendingProductId];
+      return copy;
+    });
+    await fetchInventory();
+  };
+
+  const handleSave = async (productId: string) => {
+    const product = products.find((p) => p.id === productId);
     const value = countedValues[productId];
-    if (value) {
-      setProducts((prev) =>
-        prev.map((product) =>
-          product.id === productId
-            ? { ...product, countedQuantity: Number.parseInt(value) }
-            : product
-        )
-      );
-      setCountedValues((prev) => {
-        const newValues = { ...prev };
-        delete newValues[productId];
-        return newValues;
-      });
+    if (!product || value == null) return;
+    const numeric = Number(value);
+
+    if (numeric !== product.expectedQuantity) {
+      setPendingProductId(productId);
+      setShowDiscrepancyModal(true);
+      return;
     }
+
+    await saveProductCount(id!, { ...product }, numeric);
+    setCountedValues((prev) => {
+      const copy = { ...prev };
+      delete copy[productId];
+      return copy;
+    });
+    await fetchInventory();
   };
 
   const getFilteredProducts = (
@@ -119,8 +191,8 @@ export default function InventoryDetailPage() {
       return (
         product.country === country &&
         (status === "to-be-counted"
-          ? product.countedQuantity === null
-          : product.countedQuantity !== null)
+          ? product.isCounted === false
+          : product.isCounted === true)
       );
     });
   };
@@ -169,7 +241,6 @@ export default function InventoryDetailPage() {
                     </span>
                   ) : (
                     <Input
-                      type="number"
                       placeholder="0"
                       value={countedValues[product.id] || ""}
                       onChange={(e) =>
@@ -317,18 +388,21 @@ export default function InventoryDetailPage() {
             </TabsList>
 
             <TabsContent value="to-be-counted" className="mt-4">
-              <Tabs defaultValue={countries[0] || ""} className="w-full">
+              <Tabs
+                defaultValue={countriesToBeCounted[0] || ""}
+                className="w-full"
+              >
                 <TabsList
-                  className={`grid w-full grid-cols-${countries.length}`}
+                  className={`grid w-full grid-cols-${countriesToBeCounted.length}`}
                 >
-                  {countries.map((country) => (
+                  {countriesToBeCounted.map((country) => (
                     <TabsTrigger key={country} value={country}>
                       {country}
                     </TabsTrigger>
                   ))}
                 </TabsList>
 
-                {countries.map((country) => (
+                {countriesToBeCounted.map((country) => (
                   <TabsContent key={country} value={country} className="mt-4">
                     <ProductTable country={country} status="to-be-counted" />
                   </TabsContent>
@@ -337,14 +411,18 @@ export default function InventoryDetailPage() {
             </TabsContent>
 
             <TabsContent value="counted" className="mt-4">
-              <Tabs defaultValue="GB" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="GB">GB</TabsTrigger>
-                  <TabsTrigger value="US">US</TabsTrigger>
-                  <TabsTrigger value="ES">ES</TabsTrigger>
+              <Tabs defaultValue={countriesCounted[0] || ""} className="w-full">
+                <TabsList
+                  className={`grid w-full grid-cols-${countriesCounted.length}`}
+                >
+                  {countriesCounted.map((country) => (
+                    <TabsTrigger key={country} value={country}>
+                      {country}
+                    </TabsTrigger>
+                  ))}
                 </TabsList>
 
-                {countries.map((country) => (
+                {countriesCounted.map((country) => (
                   <TabsContent key={country} value={country} className="mt-4">
                     <ProductTable country={country} status="counted" />
                   </TabsContent>
@@ -354,6 +432,40 @@ export default function InventoryDetailPage() {
           </Tabs>
         </CardContent>
       </Card>
+
+      {/* Discrepancy Modal */}
+      <Dialog
+        open={showDiscrepancyModal}
+        onOpenChange={setShowDiscrepancyModal}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Discrepancy Reason</DialogTitle>
+          </DialogHeader>
+          <p>
+            The counted quantity differs from the expected. Please explain why:
+          </p>
+          <Textarea
+            value={discrepancyReason}
+            onChange={(e) => setDiscrepancyReason(e.target.value)}
+            placeholder="Explain discrepancy..."
+          />
+          <DialogFooter>
+            <Button
+              onClick={() => setShowDiscrepancyModal(false)}
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmDiscrepancySave}
+              disabled={!discrepancyReason.trim()}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
