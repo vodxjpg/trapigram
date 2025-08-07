@@ -1,33 +1,57 @@
+/* ────────────────────────────────────────────────────────────────
+   src/app/(dashboard)/affiliates/products/components/level-points-management.tsx
+   (FULL FILE)
+───────────────────────────────────────────────────────────────── */
 "use client";
 
 import { useEffect, useState } from "react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { PointsManagement } from "./points-management";
 import { CountryPts, PointsByLvl } from "@/lib/affiliatePoints";
 
 interface Props {
+  title   : string;
   countries: string[];
-  levels   : { id: string; name: string }[];  // from /api/affiliate/levels
-  value    : PointsByLvl;
-  onChange : (val: PointsByLvl) => void;
-  title    : string;
+  levels  : { id: string; name: string }[];
+  value   : PointsByLvl;
+  onChange: (m: PointsByLvl) => void;
+
+  /* NEW — cost handling */
+  costData    : Record<string, number>;
+  onCostChange: (m: Record<string, number>) => void;
 }
 
-/** Renders a selector (default + each level) and reuses
-    the existing country‑table for the active level       */
-export function LevelPointsManagement({ countries, levels, value, onChange, title }: Props) {
+export function LevelPointsManagement({
+  title,
+  countries,
+  levels,
+  value,
+  onChange,
+  costData,
+  onCostChange,
+}: Props) {
   const [active, setActive] = useState<string>("default");
 
-  /* always ensure object exists */
+  /* ensure object exists for current tab */
   useEffect(() => {
-    if (!value[active])
-      onChange({ ...value, [active]: Object.fromEntries(countries.map(c => [c, { regular: 0, sale: null }])) });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!value[active]) {
+      const blank = Object.fromEntries(
+        countries.map((c) => [c, { regular: 0, sale: null }]),
+      ) as Record<string, CountryPts>;
+      onChange({ ...value, [active]: blank });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, countries]);
 
-  const update = (map: Record<string, CountryPts>) =>
-    onChange({ ...value, [active]: map });
+  const updatePoints = (m: Record<string, CountryPts>) =>
+    onChange({ ...value, [active]: m });
 
   return (
     <Card className="p-4 space-y-4">
@@ -39,20 +63,28 @@ export function LevelPointsManagement({ countries, levels, value, onChange, titl
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="default">All levels (default)</SelectItem>
-            {levels.map(l => (
-              <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+            {levels.map((l) => (
+              <SelectItem key={l.id} value={l.id}>
+                {l.name}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
 
-      {/* existing table UI reused */}
       {value[active] && (
         <PointsManagement
-          title={`Prices for ${active === "default" ? "all levels" : levels.find(x=>x.id===active)?.name}`}
+          title={`Prices for ${
+            active === "default"
+              ? "all levels"
+              : levels.find((x) => x.id === active)?.name
+          }`}
           countries={countries}
+          /* fixed prop names + cost support */
           pointsData={value[active]}
-          onChange={update}
+          onPointsChange={updatePoints}
+          costData={costData}
+          onCostChange={onCostChange}
         />
       )}
     </Card>
