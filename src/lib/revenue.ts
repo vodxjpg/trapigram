@@ -98,7 +98,7 @@ export async function getRevenue(id: string, organizationId: string) {
             console.log(raw)
             console.log(paidDate)                     // ensure it's a JS Date
 
-            // now get seconds since the Unix epoch
+            // now get seconds since the Unix epoch **
             const to = Math.floor(paidDate.getTime() / 1000);
             const from = to - 3600;
             console.log(to)
