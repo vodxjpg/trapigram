@@ -1,7 +1,7 @@
 // src/app/(dashboard)/orders/[id]/edit/orderForm.tsx
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
@@ -14,6 +14,7 @@ import {
   Trash2,
   Minus,
   Plus,
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/currency";
@@ -51,6 +53,7 @@ interface Product {
   image: string;
   stockData: Record<string, { [countryCode: string]: number }>;
   subtotal: number;
+  isAffiliate?: boolean;
 }
 interface OrderItem {
   product: Product;
@@ -86,6 +89,8 @@ interface OrderItemLine {
 const NIFTIPAY_BASE =
   (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com")
     .replace(/\/+$/, "");          // strip trailing “/” just in case
+
+const DEBOUNCE_MS = 400;
 
 function mergeLinesByProduct(
   lines: Array<{
@@ -198,6 +203,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
   const [quantity, setQuantity] = useState(1);
+
+  /* ▼ product-search state (local + remote) */
+  const [prodTerm, setProdTerm] = useState("");
+  const [prodSearching, setProdSearching] = useState(false);
+  const [prodResults, setProdResults] = useState<Product[]>([]);
 
   const [addresses, setAddresses] = useState<{ id: string; address: string }[]>(
     []
@@ -363,8 +373,8 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     try {
       // no custom headers needed
       const [normRes, affRes] = await Promise.all([
-        fetch("/api/products"),
-        fetch("/api/affiliate/products"),
+        fetch("/api/products?page=1&pageSize=1000"),
+        fetch("/api/affiliate/products?limit=1000"),
       ]);
       if (!normRes.ok || !affRes.ok) {
         throw new Error("Failed to fetch product lists");
@@ -386,6 +396,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           // use the first country’s salePrice or regularPrice as fallback price
           price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
           stockData: p.stockData,
+          isAffiliate: false,
           subtotal: 0,
         })),
 
@@ -414,6 +425,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             regularPrice,
             price,
             stockData: a.stock ?? {},
+            isAffiliate: true,
             subtotal: 0,
           };
         }),
@@ -485,17 +497,78 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   }, [selectedPaymentMethod, paymentMethods]);
 
 
-  const countryProducts = products.filter((p) => {
-    // if no stockData at all (affiliate), show it
-    if (!Object.keys(p.stockData).length) return true;
+  /* ─── country-aware catalogue (affiliates always pass) ─── */
+  const countryProducts = products.filter(p =>
+    p.isAffiliate
+      ? true
+      : Object.values(p.stockData).reduce(
+        (sum, e) => sum + (e[clientCountry] || 0),
+        0,
+      ) > 0,
+  );
 
-    // otherwise only those with stock in this country
-    const totalStock = Object.values(p.stockData).reduce(
-      (sum, e) => sum + (e[clientCountry] || 0),
-      0
+  /* ─── instant local filter while typing ─────────────────── */
+  const filteredProducts = useMemo(() => {
+    if (prodTerm.trim().length < 3) return countryProducts;
+    const q = prodTerm.toLowerCase();
+    return countryProducts.filter(
+      p =>
+        p.title.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q),
     );
-    return totalStock > 0;
-  });
+  }, [countryProducts, prodTerm]);
+
+  /* ─── debounced remote search (/api/products & /api/affiliate/products) ─── */
+  useEffect(() => {
+    const q = prodTerm.trim();
+    if (q.length < 3) {
+      setProdResults([]); setProdSearching(false); return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        setProdSearching(true);
+        const [shop, aff] = await Promise.all([
+          fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`)
+            .then(r => r.json()).then(d => d.products as any[]),
+          fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`)
+            .then(r => r.json()).then(d => d.products as any[]),
+        ]);
+
+        const mapShop = (p: any): Product => ({
+          ...p,
+          price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
+          stockData: p.stockData,
+          subtotal: 0,
+          isAffiliate: false,
+        });
+        const mapAff = (a: any): Product => ({
+          id: a.id,
+          title: a.title,
+          sku: a.sku,
+          description: a.description,
+          image: a.image,
+          regularPrice: Object.fromEntries(
+            Object.entries(a.cost).map(([cc, c]) => [cc, c]),
+          ),
+          price: Object.values(a.pointsPrice)[0] ?? 0,
+          stockData: a.stock ?? {},
+          subtotal: 0,
+          isAffiliate: true,
+        });
+
+        setProdResults([...shop.map(mapShop), ...aff.map(mapAff)]);
+      } catch { setProdResults([]); }
+      finally { setProdSearching(false); }
+    }, DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [prodTerm]);
+
+  /* helper: keep remote rows in `products` so Select can resolve labels */
+  const pickProduct = (id: string, obj: Product) => {
+    setSelectedProduct(id);
+    if (!products.some(p => p.id === id)) setProducts(prev => [...prev, obj]);
+    setProdTerm(""); setProdResults([]);
+  };
 
   const loadShipping = async () => {
     setShippingLoading(true);
@@ -1104,29 +1177,68 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                   <Label>Select Product</Label>
                   <Select
                     value={selectedProduct}
-                    onValueChange={setSelectedProduct}
+                    onValueChange={val => {
+                      const obj = [...products, ...prodResults].find(p => p.id === val);
+                      if (obj) pickProduct(val, obj);
+                    }}
                     disabled={productsLoading}
                   >
                     <SelectTrigger>
-                      <SelectValue
-                        placeholder={
-                          productsLoading ? "Loading…" : "Select a product"
-                        }
-                      />
+                      <SelectValue placeholder={productsLoading ? "Loading…" : "Select a product"} />
                     </SelectTrigger>
-                    <SelectContent>
-                      {countryProducts.map((p) => {
-                        const price = p.regularPrice[clientCountry];
-                        const stockCount = Object.values(p.stockData).reduce(
-                          (sum, e) => sum + (e[clientCountry] || 0),
-                          0
-                        );
-                        return (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.title} — ${price} — Stock: {stockCount}
-                          </SelectItem>
-                        );
-                      })}
+
+                    <SelectContent className="w-[500px]">
+                      {/* — search bar — */}
+                      <div className="p-3 border-b flex items-center gap-2">
+                        <Search className="h-4 w-4 text-muted-foreground" />
+                        <Input
+                          value={prodTerm}
+                          onChange={e => setProdTerm(e.target.value)}
+                          placeholder="Search products (min 3 chars)"
+                          className="h-8"
+                        />
+                      </div>
+
+                      <ScrollArea className="max-h-72">
+                        {/* shop products */}
+                        {filteredProducts
+                          .filter(p => !p.isAffiliate)
+                          .map(p => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.title} — ${p.regularPrice[clientCountry] ?? p.price}
+                            </SelectItem>
+                          ))}
+
+                        {/* divider before affiliates */}
+                        {filteredProducts.some(p => p.isAffiliate) && <Separator className="my-2" />}
+
+                        {/* affiliate products (local) */}
+                        {filteredProducts
+                          .filter(p => p.isAffiliate)
+                          .map(p => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.title} — {p.price} pts
+                            </SelectItem>
+                          ))}
+
+                        {/* remote results (not yet cached) */}
+                        {prodResults.length > 0 && <Separator className="my-2" />}
+                        {prodResults
+                          .filter(p => !products.some(lp => lp.id === p.id))
+                          .map(p => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.title} — {p.isAffiliate ? `${p.price} pts` : `$${p.price}`}
+                              <span className="ml-1 text-xs text-muted-foreground">(remote)</span>
+                            </SelectItem>
+                          ))}
+
+                        {prodSearching && (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
+                        )}
+                        {!prodSearching && prodTerm && prodResults.length === 0 && (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
+                        )}
+                      </ScrollArea>
                     </SelectContent>
                   </Select>
                 </div>
