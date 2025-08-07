@@ -36,7 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";    
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/currency";
 /* ─── constants ──────────────────────────────────────────────── */
@@ -55,6 +55,7 @@ interface Product {
   image: string;
   stockData: Record<string, { [countryCode: string]: number }>;
   subtotal: number;
+  isAffiliate?: boolean;   // ← new
 }
 interface OrderItem {
   product: Product;
@@ -119,35 +120,35 @@ export default function OrderForm() {
   const [clientsLoading, setClientsLoading] = useState(true);
   const [selectedClient, setSelectedClient] = useState("");
   const [clientCountry, setClientCountry] = useState("");
-  const [searchTerm, setSearchTerm]   = useState("");
-  const [searching, setSearching]     = useState(false);
-  const [searchResults, setResults]   = useState<any[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setResults] = useState<any[]>([]);
 
   /* keep a memoised local filter so we see matches immediately while typing */
-const filteredClients = useMemo(() => {
-  if (searchTerm.trim().length < 3) return clients;
-  const t = searchTerm.toLowerCase();
-  return clients.filter(
-    (c) =>
-      c.username?.toLowerCase().includes(t) ||
-      c.email?.toLowerCase().includes(t) ||
-      `${c.firstName} ${c.lastName}`.toLowerCase().includes(t),
-  );
-}, [clients, searchTerm]);
+  const filteredClients = useMemo(() => {
+    if (searchTerm.trim().length < 3) return clients;
+    const t = searchTerm.toLowerCase();
+    return clients.filter(
+      (c) =>
+        c.username?.toLowerCase().includes(t) ||
+        c.email?.toLowerCase().includes(t) ||
+        `${c.firstName} ${c.lastName}`.toLowerCase().includes(t),
+    );
+  }, [clients, searchTerm]);
 
-/* ────────────────────────────────────────────────────────────────
-   Remote search (debounced)
-   – runs only when the user typed ≥3 chars
-   – hits GET /api/clients?search=…&pageSize=10
-───────────────────────────────────────────────────────────────── */
-useEffect(() => {
+  /* ────────────────────────────────────────────────────────────────
+     Remote search (debounced)
+     – runs only when the user typed ≥3 chars
+     – hits GET /api/clients?search=…&pageSize=10
+  ───────────────────────────────────────────────────────────────── */
+  useEffect(() => {
     const q = searchTerm.trim();
     if (q.length < 3) {              // short query → reset
       setResults([]);
       setSearching(false);
       return;
     }
-  
+
     const timer = setTimeout(async () => {
       try {
         setSearching(true);
@@ -166,7 +167,7 @@ useEffect(() => {
         setSearching(false);
       }
     }, DEBOUNCE_MS);                 // 400 ms debounce
-  
+
     return () => clearTimeout(timer); // cleanup on next keystroke/unmount
   }, [searchTerm]);
 
@@ -182,6 +183,8 @@ useEffect(() => {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
+
+
   const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
   const [quantity, setQuantity] = useState(1);
   const [productsLoading, setProductsLoading] = useState(true);
@@ -223,14 +226,14 @@ useEffect(() => {
     2. cache remote results so the rest of the form works normally  
     3. reset the search UI                                               
 ─────────────────────────────────────────────────────────────────*/
-const pickClient = (id: string, obj: any) => {
-  setSelectedClient(id);
-  if (!clients.some((c) => c.id === id)) {
-    setClients((prev) => [...prev, obj]);
-  }
-  setSearchTerm("");
-  setResults([]);
-};
+  const pickClient = (id: string, obj: any) => {
+    setSelectedClient(id);
+    if (!clients.some((c) => c.id === id)) {
+      setClients((prev) => [...prev, obj]);
+    }
+    setSearchTerm("");
+    setResults([]);
+  };
 
   // Added useEffect to recalculate subtotal whenever orderItems change
   useEffect(() => {
@@ -266,17 +269,17 @@ const pickClient = (id: string, obj: any) => {
   }
 
   const generateOrder = async () => {
-      if (!selectedClient) return;
-      // we already know the client – grab its country once
-      const clientInfo = clients.find((c) => c.id === selectedClient);
-      try {
-        const resC = await fetch("/api/cart", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            clientId: selectedClient,
-            country  : clientInfo?.country || "", // ← rename
-          }),
+    if (!selectedClient) return;
+    // we already know the client – grab its country once
+    const clientInfo = clients.find((c) => c.id === selectedClient);
+    try {
+      const resC = await fetch("/api/cart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: selectedClient,
+          country: clientInfo?.country || "", // ← rename
+        }),
       });
       if (!resC.ok) throw new Error("Failed to create cart");
       const dataC = await resC.json();
@@ -350,18 +353,18 @@ const pickClient = (id: string, obj: any) => {
     try {
       // fetch BOTH normal and affiliate catalogues in parallel
       const [normRes, affRes] = await Promise.all([
-        fetch("/api/products"),
-        fetch("/api/affiliate/products"),
+        fetch("/api/products?page=1&pageSize=1000"),
+        fetch("/api/affiliate/products?limit=1000"),
       ]);
       if (!normRes.ok || !affRes.ok) {
         throw new Error("Failed to fetch product lists");
       }
-  
+
       const { products: norm } = await normRes.json();   // regular shop products
       const { products: aff } = await affRes.json();     // affiliate catalogue
-  
+
       /* ---------- map everything into one uniform <Product> shape ---------- */
-  
+
       const all: Product[] = [
         // 1) normal products
         ...norm.map((p: any) => ({
@@ -373,18 +376,19 @@ const pickClient = (id: string, obj: any) => {
           regularPrice: p.regularPrice,
           price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
           stockData: p.stockData,
+          isAffiliate: false,
           subtotal: 0,
         })),
-  
+
         // 2) affiliate products
         ...aff.map((a: any) => {
           /* flat “€ price” → same trick as in edit form */
           const costFirstCountry = Object.values(a.cost)[0] ?? 0;
-  
+
           const regularPrice: Record<string, number> = Object.fromEntries(
             Object.entries(a.cost).map(([country, c]) => [country, c]),
           );
-  
+
           return {
             id: a.id,
             title: a.title,
@@ -394,11 +398,12 @@ const pickClient = (id: string, obj: any) => {
             regularPrice,
             price: costFirstCountry,
             stockData: a.stock ?? {},           // often empty → unlimited
+            isAffiliate: true,
             subtotal: 0,
           };
         }),
       ];
-  
+
       setProducts(all);
     } catch (e: any) {
       console.error(e);
@@ -407,12 +412,12 @@ const pickClient = (id: string, obj: any) => {
       setProductsLoading(false);
     }
   }
-  
+
 
   const countryProducts = products.filter((p) => {
     // if it’s an affiliate product, show it un-conditionally
     if (!Object.keys(p.stockData).length) return true;
-  
+
     // otherwise require stock in the client’s country
     const totalStock = Object.values(p.stockData).reduce(
       (sum, e) => sum + (e[clientCountry] || 0),
@@ -420,7 +425,75 @@ const pickClient = (id: string, obj: any) => {
     );
     return totalStock > 0;
   });
-  
+
+  const [prodTerm, setProdTerm] = useState("");
+  const [prodSearching, setProdSearching] = useState(false);
+  const [prodResults, setProdResults] = useState<Product[]>([]);
+  /* fast local filter so the list reacts as you type */
+  const filteredProducts = useMemo(() => {
+    if (prodTerm.trim().length < 3) return countryProducts;
+    const q = prodTerm.toLowerCase();
+    return countryProducts.filter(
+      p => p.title.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q),
+    );
+  }, [countryProducts, prodTerm]);
+
+  /* pick a product (works for both local + remote) */
+  const pickProduct = (id: string, obj: Product) => {
+    setSelectedProduct(id);
+    if (!products.some(p => p.id === id)) setProducts(prev => [...prev, obj]);
+    setProdTerm("");
+    setProdResults([]);
+  };
+
+  useEffect(() => {
+    const q = prodTerm.trim();
+    if (q.length < 3) {
+      setProdResults([]);
+      setProdSearching(false);
+      return;
+    }
+
+    const t = setTimeout(async () => {
+      try {
+        setProdSearching(true);
+
+        /* shop products */
+        const [shop, aff] = await Promise.all([
+          fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`)
+            .then(r => r.json())
+            .then(d => d.products as any[]),
+          fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`)
+            .then(r => r.json())
+            .then(d => d.products as any[]),
+        ]);
+
+        /* map ➜ our <Product> shape, tagging affiliates */
+        const mapShop = (p: any): Product => ({
+          ...p,
+          price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
+          stockData: p.stockData,
+          isAffiliate: false,
+        });
+        const mapAff = (a: any): Product => ({
+          ...a,
+          price: Object.values(a.pointsPrice)[0] ?? 0,
+          stockData: a.stock,
+          isAffiliate: true,
+        });
+
+        setProdResults([...shop.map(mapShop), ...aff.map(mapAff)]);
+      } catch {
+        setProdResults([]);
+      } finally {
+        setProdSearching(false);
+      }
+    }, DEBOUNCE_MS);
+
+    return () => clearTimeout(t);
+  }, [prodTerm]);
+
+
 
   useEffect(() => {
     if (!selectedClient) return;
@@ -525,65 +598,65 @@ const pickClient = (id: string, obj: any) => {
   }, [selectedPaymentMethod, paymentMethods]);
 
   // — Add product
-// — Add product  (CREATE form)
-const addProduct = async () => {
-  if (!selectedProduct || !cartId)
-    return toast.error("Cart hasn’t been created yet!");
+  // — Add product  (CREATE form)
+  const addProduct = async () => {
+    if (!selectedProduct || !cartId)
+      return toast.error("Cart hasn’t been created yet!");
 
-  const product = products.find((p) => p.id === selectedProduct);
-  if (!product) return;
-  const unitPrice = product.regularPrice[clientCountry] ?? product.price;
+    const product = products.find((p) => p.id === selectedProduct);
+    if (!product) return;
+    const unitPrice = product.regularPrice[clientCountry] ?? product.price;
 
-  try {
-    const res = await fetch(`/api/cart/${cartId}/add-product`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        productId: selectedProduct,
-        quantity,
-        unitPrice,
-        country: clientCountry,
-      }),
-    });
+    try {
+      const res = await fetch(`/api/cart/${cartId}/add-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: selectedProduct,
+          quantity,
+          unitPrice,
+          country: clientCountry,
+        }),
+      });
 
-    /* ▼▼ ——— patch starts here ——— ▼▼ */
-    if (!res.ok) {
-      // consume JSON safely; fall back to empty object on parse error
-      const body = await res.json().catch(() => ({}));
-      const msg =
-        (body.error as string) ??
-        (body.message as string) ??
-        "Failed to add product";
-      throw new Error(msg);        // the toast handler below will show it
-    }
-    /* ▲▲ ——— patch ends here ——— ▲▲ */
-
-    const { product: added, quantity: qty } = await res.json();
-    const subtotalRow = calcRowSubtotal(added, qty);
-
-    setOrderItems((prev) => {
-      if (prev.some((it) => it.product.id === added.id)) {
-        return prev.map((it) =>
-          it.product.id === added.id
-            ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
-            : it
-        );
+      /* ▼▼ ——— patch starts here ——— ▼▼ */
+      if (!res.ok) {
+        // consume JSON safely; fall back to empty object on parse error
+        const body = await res.json().catch(() => ({}));
+        const msg =
+          (body.error as string) ??
+          (body.message as string) ??
+          "Failed to add product";
+        throw new Error(msg);        // the toast handler below will show it
       }
-      return [
-        ...prev,
-        { product: { ...added, subtotal: subtotalRow }, quantity: qty },
-      ];
-    });
+      /* ▲▲ ——— patch ends here ——— ▲▲ */
 
-    setSelectedProduct("");
-    setQuantity(1);
-    toast.success("Product added to cart!");
-  } catch (err: any) {
-    console.error("addProduct error:", err);
-    // will now show the exact “required level” text or any other backend error
-    toast.error(err.message || "Could not add product");
-  }
-};
+      const { product: added, quantity: qty } = await res.json();
+      const subtotalRow = calcRowSubtotal(added, qty);
+
+      setOrderItems((prev) => {
+        if (prev.some((it) => it.product.id === added.id)) {
+          return prev.map((it) =>
+            it.product.id === added.id
+              ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
+              : it
+          );
+        }
+        return [
+          ...prev,
+          { product: { ...added, subtotal: subtotalRow }, quantity: qty },
+        ];
+      });
+
+      setSelectedProduct("");
+      setQuantity(1);
+      toast.success("Product added to cart!");
+    } catch (err: any) {
+      console.error("addProduct error:", err);
+      // will now show the exact “required level” text or any other backend error
+      toast.error(err.message || "Could not add product");
+    }
+  };
 
   // — Remove Product
   const removeProduct = async (productId: string, idx: number) => {
@@ -1076,7 +1149,10 @@ const addProduct = async () => {
                   <Label>Select Product</Label>
                   <Select
                     value={selectedProduct}
-                    onValueChange={setSelectedProduct}
+                    onValueChange={val => {
+                      const obj = [...products, ...prodResults].find(p => p.id === val);
+                      if (obj) pickProduct(val, obj);
+                    }}
                     disabled={productsLoading}
                   >
                     <SelectTrigger>
@@ -1086,20 +1162,60 @@ const addProduct = async () => {
                         }
                       />
                     </SelectTrigger>
-                    <SelectContent>
-                      {countryProducts.map((p) => {
-                        const price = p.regularPrice[clientCountry];
-                        const stockCount = Object.values(p.stockData).reduce(
-                          (sum, e) => sum + (e[clientCountry] || 0),
-                          0
-                        );
-                        return (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.title} — ${price} — Stock: {stockCount}
-                          </SelectItem>
-                        );
-                      })}
+                    <SelectContent className="w-[500px]">
+                      {/* search bar */}
+                      <div className="p-3 border-b flex items-center gap-2">
+                        <Search className="h-4 w-4 text-muted-foreground" />
+                        <Input
+                          value={prodTerm}
+                          onChange={e => setProdTerm(e.target.value)}
+                          placeholder="Search products (min 3 chars)"
+                          className="h-8"
+                        />
+                      </div>
+
+                      <ScrollArea className="max-h-72">
+                        {/* ─── Local shop products ─── */}
+                        {filteredProducts
+                          .filter(p => !p.isAffiliate)
+                          .map(p => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.title} — ${p.regularPrice[clientCountry] ?? p.price}
+                            </SelectItem>
+                          ))}
+
+                        {/* divider before affiliates (any local ones) */}
+                        {filteredProducts.some(p => p.isAffiliate) && <Separator className="my-2" />}
+
+                        {/* ─── Local affiliate products ─── */}
+                        {filteredProducts
+                          .filter(p => p.isAffiliate)
+                          .map(p => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.title} — {p.price} pts
+                            </SelectItem>
+                          ))}
+
+                        {/* remote results not yet listed */}
+                        {prodResults.length > 0 && <Separator className="my-2" />}
+                        {prodResults
+                          .filter(p => !products.some(lp => lp.id === p.id))
+                          .map(p => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.title} — {p.isAffiliate ? `${p.price} pts` : `$${p.price}`}
+                              <span className="ml-1 text-xs text-muted-foreground">(remote)</span>
+                            </SelectItem>
+                          ))}
+
+                        {prodSearching && (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
+                        )}
+                        {!prodSearching && prodTerm && prodResults.length === 0 && (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
+                        )}
+                      </ScrollArea>
                     </SelectContent>
+
                   </Select>
                 </div>
 
