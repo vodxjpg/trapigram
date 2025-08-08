@@ -19,9 +19,8 @@ export async function GET(req: NextRequest) {
     }
 
     const ctx = await getContext(req);
-    /* if (ctx instanceof NextResponse) return ctx;
-    const { organizationId } = ctx; */
-    const organizationId = "W0duzyHA23ezm9Mcvso1y32KPko4XjRn"
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId } = ctx;
 
     try {
         const revenueQuery = `SELECT

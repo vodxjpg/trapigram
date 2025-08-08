@@ -74,7 +74,6 @@ export async function GET(req: NextRequest) {
 
         const chartResult = await pool.query(chartQuery, values);
         const chart = chartResult.rows
-        console.log(chart)
 
         const byDay = chart.reduce((acc, o) => {
             const day = new Date(o.date).toISOString().split('T')[0];
@@ -105,7 +104,6 @@ export async function GET(req: NextRequest) {
                 revenue: byDay[key]?.revenue ?? 0,
             };
         });
-        console.log(chartData)
 
         return NextResponse.json({ orders: row, chartData: chartData }, { status: 200 });
     } catch (err) {

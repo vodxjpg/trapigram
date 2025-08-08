@@ -18,12 +18,13 @@ export async function GET(req: NextRequest) {
         const resultProducts = await pool.query(queryProducts);
         const products = resultProducts.rows
 
-        const queryCarts = `SELECT "cartId" FROM orders WHERE "organizationId" = '${organizationId}' AND status = 'completed'`
+        const queryCarts = `SELECT "cartId" FROM orders WHERE "organizationId" = '${organizationId}' AND (status = 'completed' OR status = 'paid')`
         const resultCarts = await pool.query(queryCarts);
         const carts = resultCarts.rows
 
         const calcData = products.map(async (pt) => {
             let qty = 0
+
             for (let i = 0; i < carts.length; i++) {
                 const queryCalc = `SELECT * FROM "cartProducts" WHERE "cartId" = '${carts[i].cartId}' AND "productId" = '${pt.id}' AND "createdAt" BETWEEN '${from}' AND '${to}'`
                 const resultCalc = await pool.query(queryCalc);

@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
         const from = searchParams.get('from')
         const to = searchParams.get('to')
 
-        const queryOrders = `SELECT * FROM orders WHERE "organizationId" = '${organizationId}' AND status = 'completed' AND "createdAt" BETWEEN '${from}' AND '${to}'`
+        const queryOrders = `SELECT * FROM orders WHERE "organizationId" = '${organizationId}' AND (status = 'completed' OR status = 'paid') AND "createdAt" BETWEEN '${from}' AND '${to}'`
         const resultorders = await pool.query(queryOrders);
         const orders = resultorders.rows.length
 
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
         const coupons = resultCoupon.rows
 
         const calcData = coupons.map(async (cp) => {
-            const queryCalc = `SELECT * FROM orders WHERE "organizationId" = '${organizationId}' AND "couponCode" = '${cp.code}' AND status = 'completed' AND "createdAt" BETWEEN '${from}' AND '${to}'`
+            const queryCalc = `SELECT * FROM orders WHERE "organizationId" = '${organizationId}' AND "couponCode" = '${cp.code}' AND (status = 'completed' OR status = 'paid') AND "createdAt" BETWEEN '${from}' AND '${to}'`
             const resultCalc = await pool.query(queryCalc);
             const result = resultCalc.rows
             let totalDiscount = 0
