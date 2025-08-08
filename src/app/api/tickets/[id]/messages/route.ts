@@ -109,10 +109,12 @@ export async function POST(
         `org-${organizationId}-client-${clientId}`,
         "admin-message",
         {
+          id:          saved.id,           // 👈 add this
           text:        saved.message,
           ticketId,
           ticketTitle,
-          attachments: saved.attachments,   // ← NEW: pass any files/photos
+          attachments: saved.attachments,
+          createdAt:   saved.createdAt,    // optional; nice to have
         },
       );
     }

@@ -109,6 +109,7 @@ export async function POST(
         text: message,
         orderId: id,
         orderKey: ordInfo?.orderKey,
+        createdAt:   saved.createdAt,
       };
 
       // Realtime ping to the bot’s Pusher channel
