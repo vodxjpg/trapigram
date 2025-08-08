@@ -99,13 +99,17 @@ const Header: React.FC = () => {
               className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full mt-4"
               onClick={toggleMenu}
             >
+               <a href="/sign-up" className="text-gray-700 hover:text-white py-2" onClick={toggleMenu}>
               Start now →
+              </a>
             </Button>
             <Button
               className="bg-black hover:bg-gray-800 text-white px-6 py-2 rounded-full mt-4"
               onClick={toggleMenu}
             >
+                <a href="/login" className="text-gray-700 hover:text-white py-2" onClick={toggleMenu}>
               Login
+              </a>
             </Button>
           </div>
         </div>
