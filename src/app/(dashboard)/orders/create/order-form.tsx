@@ -580,24 +580,36 @@ export default function OrderForm() {
       setSelectedNiftipay("");
       return;
     }
+  
     (async () => {
+      setNiftipayLoading(true);
       try {
-        setNiftipayLoading(true);
-        const res = await fetch(
-          `${NIFTIPAY_BASE}/api/niftipay/payment-methods`,
-          { headers: { "x-api-key": pm.apiKey } },
-        );
+        // Correct external endpoint
+        const endpoint = `${NIFTIPAY_BASE}/api/payment-methods`;
+        let res = await fetch(endpoint, {
+          headers: { "x-api-key": pm.apiKey },
+        });
+  
+        // Fallback to our own proxy route if Niftipay blocks CORS or returns !ok
+        if (!res.ok) {
+          res = await fetch(`/api/niftipay/payment-methods`, {
+            headers: { "x-api-key": pm.apiKey },
+          });
+        }
+  
         if (!res.ok) throw new Error("Failed to load Niftipay networks");
         const { methods } = await res.json();
+  
         setNiftipayNetworks(
-          methods.map((m: any) => ({
+          (methods || []).map((m: any) => ({
             chain: m.chain,
             asset: m.asset,
             label: m.label ?? `${m.asset} on ${m.chain}`,
           })),
         );
       } catch (err: any) {
-        toast.error(err.message);
+        toast.error(err.message || "Niftipay networks load error");
+        setNiftipayNetworks([]);
       } finally {
         setNiftipayLoading(false);
       }
