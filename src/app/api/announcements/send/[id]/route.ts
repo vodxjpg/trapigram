@@ -2,41 +2,50 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
+import { publish } from "@/lib/pubsub";    // ✅ add this
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  /* ① ── grab the route param before any await ─────────────────────── */
-  const { id } = params;           // ✅ no “await params.id” warning
-
-  /* ② ── now it’s safe to await anything else ──────────────────────── */
+  const { id } = params;
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
   try {
-    const query = `
-      UPDATE announcements
-      SET sent = TRUE, "updatedAt" = NOW()
-      WHERE id = $1 AND "organizationId" = $2
-      RETURNING *
-    `;
-    const values = [id, organizationId];
-    const result = await pool.query(query, values);
+    const { rows } = await pool.query(
+      `UPDATE announcements
+          SET sent = TRUE, "updatedAt" = NOW()
+        WHERE id = $1 AND "organizationId" = $2
+    RETURNING id, title, content, "deliveryDate", countries, sent, "updatedAt"`,
+      [id, organizationId],
+    );
 
-    if (result.rows.length === 0) {
-      return NextResponse.json(
-        { error: "Announcement not found" },
-        { status: 404 },
-      );
+    if (!rows.length) {
+      return NextResponse.json({ error: "Announcement not found" }, { status: 404 });
     }
-    return NextResponse.json(result.rows[0]);
+
+    const row = rows[0];
+    const countriesArr = (() => {
+      try { return JSON.parse(row.countries || "[]"); } catch { return []; }
+    })();
+
+    // ------- NEW: publish one event -------
+    await publish(`announcements:org:${organizationId}`, {
+      id: row.id,
+      orgId: organizationId,
+      title: row.title,
+      content: row.content,
+      countries: countriesArr,
+      deliveryDate: row.deliveryDate,
+      updatedAt: row.updatedAt,
+    });
+    // --------------------------------------
+
+    return NextResponse.json(row);
   } catch (error: any) {
     console.error("[PATCH /api/announcements/send/[id]] error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

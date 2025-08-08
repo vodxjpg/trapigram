@@ -1,12 +1,11 @@
 // /home/zodx/Desktop/Trapyfy/src/app/api/announcements/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import purify from "@/lib/dompurify";
 import { getContext } from "@/lib/context";
-
-// nothing
+import { publish } from "@/lib/pubsub";            // ✅ add this
 
 const announcementSchema = z.object({
   title: z.string().min(1, { message: "Title is required." }),
@@ -15,6 +14,7 @@ const announcementSchema = z.object({
   countries: z.string().min(1, { message: "Countries is required." }),
   sent: z.boolean().default(false),
 });
+
 
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
@@ -98,7 +98,30 @@ export async function POST(req: NextRequest) {
     ];
 
     const result = await pool.query(insertQuery, values);
-    return NextResponse.json(result.rows[0], { status: 201 });
+    const row = result.rows[0];
+
+    // ------- NEW: publish if it should go out now -------
+    const countriesArr = (() => {
+      try { return JSON.parse(row.countries || "[]"); } catch { return []; }
+    })();
+    const now = new Date();
+    const deliveryAt = row.deliverydate ? new Date(row.deliverydate) : null;
+    const shouldSendNow = row.sent === true || (deliveryAt && deliveryAt <= now);
+
+    if (shouldSendNow) {
+      await publish(`announcements:org:${organizationId}`, {
+        id: row.id,
+        orgId: organizationId,
+        title: row.title,
+        content: row.content,
+        countries: countriesArr,           // array of "ES","IT",...
+        deliveryDate: row.deliverydate,
+        updatedAt: row.updatedat,
+      });
+    }
+    // ----------------------------------------------------
+
+    return NextResponse.json(row, { status: 201 });
   } catch (error: any) {
     console.error("[POST /api/announcements] error:", error);
     if (error instanceof z.ZodError) {
