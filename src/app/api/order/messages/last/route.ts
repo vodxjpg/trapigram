@@ -1,58 +1,59 @@
-// src/app/api/tickets/messages/last/route.ts
+// src/app/api/order/messages/last/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
 type LastMsg = {
-  id:         string;
-  message:    string;
+  id: string;
+  message: string;          //  👈  add this line
   isInternal: boolean;
-  createdAt:  string;
+  createdAt: string;
 };
 
 /**
- * POST /api/tickets/messages/last?clientId=…
- * Body:  { ticketIds: string[] }
- * Reply: { last: { [ticketId]: LastMsg } }
+ * POST /api/order/messages/last?clientId=…
+ *
+ * Body: { orderIds: string[] }
+ * Returns: { last: { [orderId]: LastMsg } }
  */
 export async function POST(req: NextRequest) {
-  /* ① auth */
+  /* ① auth ------------------------------------------------------------ */
   const ctx = await getContext(req.clone());
   if (ctx instanceof NextResponse) return ctx;
 
-  /* ② inputs */
-  const { ticketIds = [] } = await req.json().catch(() => ({}));
+  /* ② inputs ---------------------------------------------------------- */
+  const { orderIds = [] } = await req.json().catch(() => ({}));
   const clientId = req.nextUrl.searchParams.get("clientId");
   if (!clientId)
     return NextResponse.json({ error: "clientId query-param required" }, { status: 400 });
-  if (!Array.isArray(ticketIds) || ticketIds.length === 0)
+  if (!Array.isArray(orderIds) || orderIds.length === 0)
     return NextResponse.json({ last: {} });
 
-  /* ③ query –- SAME idea as for orders, but ticket tables */
+  /* ③ query ----------------------------------------------------------- */
   const sql = `
-    SELECT DISTINCT ON (tm."ticketId")
-           tm."ticketId",
-           tm.id,
-           tm.message,
-           tm."isInternal",
-           tm."createdAt"
-      FROM "ticketMessages"            tm
- LEFT JOIN "ticketMessageReceipts"     r
-        ON  r."messageId" = tm.id
+    SELECT DISTINCT ON (om."orderId")
+           om."orderId",
+           om.id,
+           om.message,
+           om."isInternal",
+           om."createdAt"
+      FROM "orderMessages"        om
+ LEFT JOIN "orderMessageReceipts" r
+        ON  r."messageId" = om.id
         AND r."clientId"  = $2
-     WHERE tm."ticketId"  = ANY ($1::text[])
-       AND tm."isInternal"
+     WHERE om."orderId"   = ANY ($1::text[])
+       AND om."isInternal"
        AND r."messageId"  IS NULL
-  ORDER BY tm."ticketId", tm."createdAt" DESC
+  ORDER BY om."orderId", om."createdAt" DESC
   `;
-  const { rows } = await pool.query(sql, [ticketIds, clientId]);
+  const { rows } = await pool.query(sql, [orderIds, clientId]);
 
-  /* ④ shape → { last: { … } } */
+  /* ④ shape ----------------------------------------------------------- */
   const last: Record<string, LastMsg> = {};
   for (const r of rows) {
-    last[r.ticketId] = {
+    last[r.orderId] = {
       id:         r.id,
-      message:    r.message,
+      message:    r.message,   //  👈  now perfectly typed
       isInternal: r.isInternal,
       createdAt:  r.createdAt,
     };
