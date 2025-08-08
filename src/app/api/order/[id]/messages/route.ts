@@ -5,8 +5,8 @@ import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 import { sendNotification, NotificationChannel } from "@/lib/notifications";
-import { publish } from "@/lib/pubsub";
-import { pusher } from "@/lib/pusher-server";            // ★ NEW
+import { publish, lpushRecent } from "@/lib/pubsub";
+import { pusher } from "@/lib/pusher-server";
 
 const messagesSchema = z.object({
   message: z.string().min(1, { message: "Message is required." }),
@@ -20,9 +20,11 @@ export async function GET(
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
+
   try {
     const { id } = await params;
     const since = req.nextUrl.searchParams.get("since");
+
     const baseSQL = `
       SELECT om.id, om."orderId", om."clientId", om.message,
              om."isInternal", om."createdAt", c.email
@@ -32,11 +34,14 @@ export async function GET(
     `;
     const args: any[] = [id];
     if (since) args.push(since);
+
     const { rows } = await pool.query(
-      baseSQL + (since ? ` AND om."createdAt" > $2` : "") +
-      ` ORDER BY om."createdAt" ASC`,
+      baseSQL +
+        (since ? ` AND om."createdAt" > $2` : "") +
+        ` ORDER BY om."createdAt" ASC`,
       args,
     );
+
     return NextResponse.json({ messages: rows }, { status: 200 });
   } catch (err) {
     console.error("[GET /api/order/:id/messages]", err);
@@ -50,6 +55,7 @@ export async function POST(
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
+
   const { organizationId, userId } = ctx;
 
   try {
@@ -59,6 +65,8 @@ export async function POST(
     const { message, clientId } = messagesSchema.parse({ ...raw, isInternal });
 
     const msgId = uuidv4();
+
+    // Save the message
     const {
       rows: [saved],
     } = await pool.query(
@@ -67,30 +75,57 @@ export async function POST(
       [msgId, id, clientId, message, isInternal],
     );
 
-    /* ── realtime fan‑out ─────────────────────────────────────────── */
-       await publish(`order:${id}`, saved);                // Upstash (keep)
-       await pusher.trigger(`order-${id}`, "new-message", saved); // external UI
-    
-       /* Push INTERNAL admin replies straight to the Telegram bot */
-       if (isInternal) {
-        // lookup the human‑friendly orderKey once
-         const {
-           rows: [ordInfo],
-         } = await pool.query(
-           `SELECT "orderKey" FROM orders WHERE id = $1 LIMIT 1`,
-           [id],
-         );
-         await pusher.trigger(
-           `org-${organizationId}-client-${clientId}`,
-           "admin-message",
-           {                                      // new – everything the bot needs
-                id:       saved.id,
-                text:      message,
-                orderId:   id,
-                orderKey:  ordInfo.orderKey,
-              }
-         );
-       }
+    // Enrich with client email (handy for dashboards / notifications)
+    const {
+      rows: [cliInfo],
+    } = await pool.query(
+      `SELECT email FROM clients WHERE id = $1 LIMIT 1`,
+      [clientId],
+    );
+    const event = { ...saved, email: cliInfo?.email ?? null };
+
+    /* ── realtime fan-out ─────────────────────────────────────────── */
+    // Upstash pub/sub for order thread listeners (UI, etc.)
+    await publish(`order:${id}`, event);
+
+    // Keep a warm replay buffer (per order)
+    await lpushRecent(`order:${id}:recent`, event, 50, 7 * 24 * 3600);
+
+    // Mirror to your external UI via Pusher
+    await pusher.trigger(`order-${id}`, "new-message", event);
+
+    /* Push INTERNAL admin replies straight to the Telegram bot */
+    if (isInternal) {
+      // Lookup orderKey once (good for bot + replay lists)
+      const {
+        rows: [ordInfo],
+      } = await pool.query(
+        `SELECT "orderKey" FROM orders WHERE id = $1 LIMIT 1`,
+        [id],
+      );
+
+      const botPayload = {
+        id: saved.id,
+        text: message,
+        orderId: id,
+        orderKey: ordInfo?.orderKey,
+      };
+
+      // Realtime ping to the bot’s Pusher channel
+      await pusher.trigger(
+        `org-${organizationId}-client-${clientId}`,
+        "admin-message",
+        botPayload,
+      );
+
+      // Optional: also keep a per-client recent list (handy for future catch-up UIs)
+      await lpushRecent(
+        `orders:client:${clientId}:recent`,
+        { ...event, orderKey: ordInfo?.orderKey },
+        50,
+        7 * 24 * 3600,
+      );
+    }
 
     /* ── notifications (unchanged) ───────────────────────────────── */
     if (!isInternal) {
@@ -127,7 +162,7 @@ export async function POST(
       });
     }
 
-    return NextResponse.json({ messages: saved }, { status: 200 });
+    return NextResponse.json({ messages: event }, { status: 200 });
   } catch (err) {
     console.error("[POST /api/order/:id/messages]", err);
     if (err instanceof z.ZodError)
