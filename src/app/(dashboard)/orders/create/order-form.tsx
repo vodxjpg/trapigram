@@ -573,48 +573,41 @@ export default function OrderForm() {
   }, [selectedClient]);
 
   /* ─── Niftipay network fetch whenever the PM select changes ───── */
-  useEffect(() => {
-    const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
-    if (!pm || pm.name.toLowerCase() !== "niftipay" || !pm.apiKey) {
+/* ─── Niftipay network fetch whenever the PM select changes ───── */
+useEffect(() => {
+  const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+  if (!pm || pm.name.toLowerCase() !== "niftipay" || !pm.apiKey) {
+    setNiftipayNetworks([]);
+    setSelectedNiftipay("");
+    return;
+  }
+
+  (async () => {
+    setNiftipayLoading(true);
+    try {
+      // hit our own server (same-origin) → server calls Niftipay
+      const res = await fetch(`/api/niftipay/payment-methods`, {
+        headers: { "x-api-key": pm.apiKey },
+      });
+      if (!res.ok) throw new Error("Failed to load Niftipay networks");
+      const { methods } = await res.json();
+
+      setNiftipayNetworks(
+        (methods || []).map((m: any) => ({
+          chain: m.chain,
+          asset: m.asset,
+          label: m.label ?? `${m.asset} on ${m.chain}`,
+        })),
+      );
+    } catch (err: any) {
+      toast.error(err.message || "Niftipay networks load error");
       setNiftipayNetworks([]);
-      setSelectedNiftipay("");
-      return;
+    } finally {
+      setNiftipayLoading(false);
     }
-  
-    (async () => {
-      setNiftipayLoading(true);
-      try {
-        // Correct external endpoint
-        const endpoint = `${NIFTIPAY_BASE}/api/payment-methods`;
-        let res = await fetch(endpoint, {
-          headers: { "x-api-key": pm.apiKey },
-        });
-  
-        // Fallback to our own proxy route if Niftipay blocks CORS or returns !ok
-        if (!res.ok) {
-          res = await fetch(`/api/niftipay/payment-methods`, {
-            headers: { "x-api-key": pm.apiKey },
-          });
-        }
-  
-        if (!res.ok) throw new Error("Failed to load Niftipay networks");
-        const { methods } = await res.json();
-  
-        setNiftipayNetworks(
-          (methods || []).map((m: any) => ({
-            chain: m.chain,
-            asset: m.asset,
-            label: m.label ?? `${m.asset} on ${m.chain}`,
-          })),
-        );
-      } catch (err: any) {
-        toast.error(err.message || "Niftipay networks load error");
-        setNiftipayNetworks([]);
-      } finally {
-        setNiftipayLoading(false);
-      }
-    })();
-  }, [selectedPaymentMethod, paymentMethods]);
+  })();
+}, [selectedPaymentMethod, paymentMethods]);
+
 
   // — Add product
   // — Add product  (CREATE form)
