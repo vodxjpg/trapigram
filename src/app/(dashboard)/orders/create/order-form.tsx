@@ -586,9 +586,10 @@ useEffect(() => {
     setNiftipayLoading(true);
     try {
       // hit our own server (same-origin) → server calls Niftipay
-      const res = await fetch(`/api/niftipay/payment-methods`, {
-        headers: { "x-api-key": pm.apiKey },
-      });
+      const res = await fetch(
+             `${NIFTIPAY_BASE}/api/payment-methods`,
+             { credentials: "omit", headers: { "x-api-key": pm.apiKey } },
+           );
       if (!res.ok) throw new Error("Failed to load Niftipay networks");
       const { methods } = await res.json();
 
@@ -927,27 +928,25 @@ useEffect(() => {
         const fiat = countryToFiat(client.country);
         const totalF = total + shippingCost;
 
-        const nRes = await fetch(
-          `/api/niftipay/orders`,
-          {
-            method: "POST",
-            headers: {
-              "x-api-key": key,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              network: chain,
-              asset,
-              amount: totalF,
-              currency: fiat,
-              firstName: client.firstName,
-              lastName: client.lastName,
-              email: safeEmail,
-              merchantId: activeOrg?.id ?? "",
-              reference: data.orderKey,
-            }),
-          },
-        );
+           const nRes = await fetch(`${NIFTIPAY_BASE}/api/orders`, {
+               method: "POST",
+               credentials: "omit",
+               headers: {
+                 "x-api-key": key,
+                 "Content-Type": "application/json",
+               },
+               body: JSON.stringify({
+                 network: chain,
+                 asset,
+                 amount: totalF,
+                 currency: fiat,
+                 firstName: client.firstName,
+                 lastName: client.lastName,
+                 email: safeEmail,
+                 merchantId: activeOrg?.id ?? "",
+                 reference: data.orderKey,
+               }),
+             });
         if (!nRes.ok) {
           const msg = await nRes.text();          // or  nRes.json() if you prefer
           console.error("[Niftipay] ", msg);

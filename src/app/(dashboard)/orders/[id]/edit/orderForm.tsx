@@ -477,9 +477,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     (async () => {
       try {
         setNiftipayLoading(true);
-        const res = await fetch("/api/niftipay/payment-methods", {
-          headers: { "x-api-key": pm.apiKey },
-        });
+        const res = await fetch(
+                  `${NIFTIPAY_BASE}/api/payment-methods`,
+                  { credentials: "omit", headers: { "x-api-key": pm.apiKey } },
+                );
         const { methods } = await res.json();
         setNiftipayNetworks(
           methods.map((m: any) => ({
@@ -866,15 +867,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           url: `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
         });
 
-        const del = await fetchJsonVerbose(
-          `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-          {
-            credentials: "include",
-            method: "DELETE",
-            headers: { "x-api-key": key },
-          },
-          "DELETE Niftipay",
-        );
+            const del = await fetchJsonVerbose(
+                `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+                {
+                  credentials: "omit",
+                  method: "DELETE",
+                  headers: { "x-api-key": key },
+                },
+                "DELETE Niftipay",
+              );
 
 
         if (!(del.ok || del.status === 404)) {
@@ -939,15 +940,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
         const [chain, asset] = selectedNiftipay.split(":");
         // 2a) Always delete any existing invoice first to avoid duplicates
-        await fetchJsonVerbose(
-          `/api/niftipay/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-          {
-            credentials: "include",
-            method: "DELETE",
-            headers: { "x-api-key": key },
-          },
-          "DELETE OLD Niftipay",
-        );
+             await fetchJsonVerbose(
+                 `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+                 {
+                   credentials: "omit",
+                   method: "DELETE",
+                   headers: { "x-api-key": key },
+                 },
+                 "DELETE OLD Niftipay",
+               );
         console.log("[Trapigram] Old Niftipay invoice deleted (if existed)");
 
         // 2b) Now create the new one
@@ -972,8 +973,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         console.log("pmObj", pmObj);
 
 
-        const niftipayRes = await fetch("/api/niftipay/orders", {
+        const niftipayRes = await fetch(`${NIFTIPAY_BASE}/api/orders`, {
           method: "POST",
+          credentials: "omit",
           headers: {
             "Content-Type": "application/json",
             "x-api-key": pmObj!.apiKey!,   // ✅  always include when talking to Niftipay
