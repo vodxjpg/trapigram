@@ -573,10 +573,9 @@ export default function OrderForm() {
   }, [selectedClient]);
 
   /* ─── Niftipay network fetch whenever the PM select changes ───── */
-/* ─── Niftipay network fetch whenever the PM select changes ───── */
 useEffect(() => {
   const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
-  if (!pm || pm.name.toLowerCase() !== "niftipay" || !pm.apiKey) {
+  if (!pm || !/niftipay/i.test(pm.name || "")) {
     setNiftipayNetworks([]);
     setSelectedNiftipay("");
     return;
@@ -585,11 +584,21 @@ useEffect(() => {
   (async () => {
     setNiftipayLoading(true);
     try {
-      // hit our own server (same-origin) → server calls Niftipay
-      const res = await fetch(
-             `${NIFTIPAY_BASE}/api/payment-methods`,
-             { credentials: "omit", headers: { "x-api-key": pm.apiKey } },
-           );
+      // Prefer apiKey if the server returns it; if it doesn't, log a clear warning
+      const apiKey = pm.apiKey ?? null;
+      if (!apiKey) {
+        console.warn("[NIFTIPAY] Missing apiKey on payment method. " +
+          "Ensure /api/payment-methods includes `apiKey` for admins.");
+        setNiftipayNetworks([]); setSelectedNiftipay(""); setNiftipayLoading(false);
+        return;
+      }
+      
+      const url = `${NIFTIPAY_BASE}/api/payment-methods`;
+      console.debug("[NIFTIPAY] fetching networks:", url, { pm });
+      const res = await fetch(url, {
+        credentials: "omit",
+        headers: { "x-api-key": apiKey },
+      });
       if (!res.ok) throw new Error("Failed to load Niftipay networks");
       const { methods } = await res.json();
 
@@ -609,7 +618,13 @@ useEffect(() => {
   })();
 }, [selectedPaymentMethod, paymentMethods]);
 
-
+// Optional: auto-select Niftipay to actually trigger the effect in UIs
+useEffect(() => {
+    if (!selectedPaymentMethod) {
+      const n = paymentMethods.find(m => /niftipay/i.test(m.name || ""));
+      if (n) setSelectedPaymentMethod(n.id);
+    }
+  }, [paymentMethods, selectedPaymentMethod]);
   // — Add product
   // — Add product  (CREATE form)
   const addProduct = async () => {
