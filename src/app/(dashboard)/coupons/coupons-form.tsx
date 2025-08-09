@@ -62,6 +62,14 @@ const isoToLocalInput = (iso: string) => {
   );
 };
 
+// Ensure a datetime-local string has time; if only a date is provided, append a time.
+const withTime = (dateOrDateTime: string, hh = 0, mm = 0, ss = 0) => {
+  if (!dateOrDateTime) return dateOrDateTime;
+  if (dateOrDateTime.includes("T")) return dateOrDateTime; // already has time
+  const d = new Date(dateOrDateTime);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hh)}:${pad(mm)}:${pad(ss)}`;
+};
+
 /* -------------------------------------------------------------------------- */
 /* Zod schema                                                                 */
 /* -------------------------------------------------------------------------- */
@@ -72,6 +80,7 @@ const schema = z.object({
   discountType: z.enum(["fixed", "percentage"]),
   discountAmount: z.coerce.number().min(0.01, "Amount must be greater than 0"),
   usageLimit: z.coerce.number().int().min(0).default(0),
+  usagePerUser: z.coerce.number().int().min(0).default(0),
   expendingLimit: z.coerce.number().int().min(0).default(0),
   expendingMinimum: z.coerce.number().int().min(0).default(0),
   countries: z.array(z.string().length(2)).min(1, "At least one country is required"),
@@ -111,6 +120,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
       discountType: "fixed",
       discountAmount: 0,
       usageLimit: 0,
+      usagePerUser: 0,
       expendingLimit: 0,
       expendingMinimum: 0,
       countries: [],
@@ -156,6 +166,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
       form.reset({
         ...couponData,
         countries,
+        usagePerUser: (couponData as any).usagePerUser ?? 0,
         hasExpiration: Boolean(couponData.expirationDate),
         startDate: couponData.startDate
           ? isoToLocalInput(couponData.startDate)
@@ -314,9 +325,10 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
             </div>
 
             {/* Numeric Limits */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               {[
                 { name: "usageLimit", label: "Usage Limit" },
+                { name: "usagePerUser", label: "Usage Per User" },
                 { name: "expendingMinimum", label: "Expending Minimum" },
                 { name: "expendingLimit", label: "Expending Limit" },
                 { name: "limitPerUser", label: "Limit Per User" },
@@ -339,7 +351,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
             </div>
 
             {/* Has Expiration & Visibility */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">              
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <FormField
                 control={form.control}
                 name="visibility"
@@ -399,7 +411,18 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                         type="datetime-local"
                         step={1}
                         value={field.value}
-                        onChange={(e) => field.onChange(e.target.value)}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          // If user picked only a day, keep current local time
+                          if (raw && !raw.includes("T")) {
+                            const now = new Date();
+                            field.onChange(
+                              withTime(raw, now.getHours(), now.getMinutes(), now.getSeconds())
+                            );
+                          } else {
+                            field.onChange(raw);
+                          }
+                        }}
                       />
                     </FormControl>
                     <FormMessage />
@@ -421,9 +444,18 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                           step={1}
                           min={minExpireLocal}
                           value={field.value ? isoToLocalInput(field.value) : ""}
-                          onChange={(e) =>
-                            field.onChange(e.target.value ? new Date(e.target.value).toISOString() : null)
-                          }
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (!raw) {
+                              field.onChange(null);
+                              return;
+                            }
+                            // If user picked only a day, default to end-of-day local time
+                            const local = raw.includes("T")
+                              ? raw
+                              : withTime(raw, 23, 59, 59);
+                            field.onChange(new Date(local).toISOString());
+                          }}
                         />
                       </FormControl>
                       <FormMessage />
@@ -444,8 +476,8 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                     ? "Updating…"
                     : "Creating…"
                   : isEditing
-                  ? "Update Coupon"
-                  : "Create Coupon"}
+                    ? "Update Coupon"
+                    : "Create Coupon"}
               </Button>
             </div>
           </form>

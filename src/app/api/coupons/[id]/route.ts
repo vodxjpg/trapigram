@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
 // nothing
@@ -13,6 +13,14 @@ const couponUpdateSchema = z.object({
   discountAmount: z.coerce
     .number()
     .min(0.01, "Amount must be greater than 0"),
+  // PATCH should also accept usagePerUser optionally
+  usagePerUser: z
+    .coerce
+    .number()
+    .int()
+    .min(0, { message: "Usage per user must be at least 0." })
+    .optional()
+    .default(0),
   usageLimit: z.coerce.number().int().min(0, { message: "Usage limit must be at least 0." }),
   expendingLimit: z.coerce.number().int().min(0, { message: "Expending limit must be at least 0." }),
   // New field:

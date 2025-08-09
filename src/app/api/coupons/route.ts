@@ -15,7 +15,14 @@ const couponSchema = z.object({
     .number()
     .min(0.01, "Amount must be greater than 0"),
   usageLimit: z.coerce.number().int().min(0, { message: "Usage limit must be at least 0." }),
-  usagePerUser: z.coerce.number().int().min(0, { message: "Usage limit must be at least 0." }),
+  // Make optional with default to avoid NaN when omitted by the client
+  usagePerUser: z
+    .coerce
+    .number()
+    .int()
+    .min(0, { message: "Usage per user must be at least 0." })
+    .optional()
+    .default(0),
   expendingLimit: z.coerce.number().int().min(0, { message: "Expending limit must be at least 0." }),
   // New field:
   expendingMinimum: z.coerce.number().int().min(0, { message: "Expending minimum must be at least 0." }).default(0),
@@ -106,6 +113,7 @@ export async function POST(req: NextRequest) {
       expirationDate,
       limitPerUser,
       usageLimit,
+      usagePerUser,
       expendingLimit,
       expendingMinimum, // new field
       countries,
