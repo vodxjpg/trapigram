@@ -1,16 +1,17 @@
 /* -------------------------------------------------------------------------- */
-/*  /home/zodx/Desktop/Trapyfy/src/lib/auth-client.ts                       */
+/*  /home/zodx/Desktop/trapigram/src/lib/auth-client.ts                       */
 /* -------------------------------------------------------------------------- */
 
-import { createAuthClient }      from "better-auth/react";
-import { organizationClient }    from "better-auth/client/plugins";
-import { magicLinkClient }       from "better-auth/client/plugins";
+import { createAuthClient } from "better-auth/react";
+import { organizationClient } from "better-auth/client/plugins";
+import { magicLinkClient } from "better-auth/client/plugins";
 import { subscriptionClientPlugin } from "@/lib/plugins/subscription-client-plugin";
-import { apiKeyClient }          from "better-auth/client/plugins";
+import { apiKeyClient } from "better-auth/client/plugins";
 
-import { resolveRole }       from "@/lib/auth/role-resolver";
-import { ac } from "@/lib/permissions";
+import { ac, owner, admin, member } from "@/lib/permissions";
+
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
+
 /* ──────────────────────────────── TYPES ──────────────────────────────────── */
 declare module "better-auth/react" {
   interface AuthClient {
@@ -118,15 +119,18 @@ declare module "better-auth/react" {
 
 /* ─────────────────────────── CLIENT INSTANCE ───────────────────────────── */
 export const authClient = createAuthClient({
-  
   baseURL: APP_URL
-    ? `${APP_URL.replace(/\/$/, '')}/api/auth`
-    : 'https://www.trapyfy.com/api/auth',
+    ? `${APP_URL.replace(/\/$/, "")}/api/auth`
+    : "https://www.trapyfy.com/api/auth",
   plugins: [
     apiKeyClient(),
     organizationClient({
       ac,
-      roles: resolveRole,  // <── just the object
+      roles: {
+        owner,
+        admin,
+        member,
+      },
     }),
     subscriptionClientPlugin,
     magicLinkClient(),

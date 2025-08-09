@@ -11,8 +11,7 @@ import { sendEmail } from "@/lib/email";
 import { subscriptionPlugin } from "@/lib/plugins/subscription-plugin";
 import { v4 as uuidv4 } from "uuid";
 
-import { resolveRole } from "@/lib/auth/role-resolver";
-import { ac } from "@/lib/permissions";
+import { ac, owner, admin, member } from "@/lib/permissions";
 
 /*───────────────────────────────────────────────────────────────────
   MAIN CONFIG
@@ -258,7 +257,11 @@ export const auth = betterAuth({
     /* Organizations */
     organization({
       ac,
-      roles: resolveRole,
+      roles: {
+        owner,
+        admin,
+        member,
+      },
       /* Invitation email */
       async sendInvitationEmail({ id, email, role, organization, inviter }) {
         const inviteLink = `${process.env.NEXT_PUBLIC_APP_URL}/accept-invitation/${id}`;
