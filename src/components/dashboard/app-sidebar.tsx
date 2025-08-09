@@ -66,6 +66,7 @@ const data = {
         { title: "Product attributes", url: "/product-attributes" },
         { title: "Stock management", url: "/products/stock-management" },
         { title: "Tier pricing", url: "/discount-rules" },
+        { title: "Inventory count", url: "/inventory" },
         { title: "Warehouses", url: "/warehouses" },
       ],
     },

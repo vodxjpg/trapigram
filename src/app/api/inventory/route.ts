@@ -13,58 +13,20 @@ const inventorySchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
-    const session = await auth();
     const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
     const { organizationId } = ctx;
 
-    const { searchParams } = new URL(req.url);
-    const page = Number(searchParams.get("page")) || 1;
-    const pageSize = Number(searchParams.get("pageSize")) || 10;
-    const search = searchParams.get("search") || "";
-
-    let countQuery = `
-    SELECT COUNT(*) FROM coupons
-    WHERE "organizationId" = $1
-  `;
-    const countValues: any[] = [organizationId];
-    if (search) {
-        countQuery += ` AND (name ILIKE $2 OR code ILIKE $2 OR description ILIKE $2)`;
-        countValues.push(`%${search}%`);
-    }
-
-    // Updated SELECT query to include "expendingMinimum"
-    let query = `
-    SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "startDate", "expirationDate", 
-      "limitPerUser", "usageLimit","usagePerUser", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
-    FROM coupons
-    WHERE "organizationId" = $1
-  `;
-    const values: any[] = [organizationId];
-    if (search) {
-        query += ` AND (name ILIKE $2 OR code ILIKE $2 OR description ILIKE $2)`;
-        values.push(`%${search}%`);
-    }
-    query += ` ORDER BY "createdAt" DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`;
-    values.push(pageSize, (page - 1) * pageSize);
-
     try {
-        const countResult = await pool.query(countQuery, countValues);
-        const totalRows = Number(countResult.rows[0].count);
-        const totalPages = Math.ceil(totalRows / pageSize);
 
-        const result = await pool.query(query, values);
-        const coupons = result.rows;
-        coupons.forEach((coupon) => {
-            coupon.countries = JSON.parse(coupon.countries);
-        });
-
-        return NextResponse.json({
-            coupons,
-            totalPages,
-            currentPage: page,
-        });
-    } catch (error: any) {
+        const inventoryCountQuery = `SELECT ic.id, ic.reference, ic."countType", ic."createdAt" as "startedOn", wh.name FROM "inventoryCount" ic 
+        JOIN warehouse wh ON ic."warehouseId" = wh.id 
+        WHERE ic."organizationId" = '${organizationId}'
+        ORDER BY ic."createdAt" DESC`
+        const inventoryCountResult = await pool.query(inventoryCountQuery)
+        const inventoryCount = inventoryCountResult.rows
+        return NextResponse.json(inventoryCount, { status: 201 });
+    } catch (error) {
         console.error("[GET /api/inventory] error:", error);
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }

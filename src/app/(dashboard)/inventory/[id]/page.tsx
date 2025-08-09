@@ -51,6 +51,7 @@ interface Product {
   country: string; // important
   variationId: string;
   isCounted: boolean;
+  discrepancyReason: string;
 }
 
 /**
@@ -115,6 +116,8 @@ export default function InventoryDetailPage() {
           country: p.country,
           variationId: p.variationId,
           isCounted: p.isCounted,
+          // NEW: include discrepancyReason from API
+          discrepancyReason: p.discrepancyReason ?? "",
         })
       );
       setProducts(parsedProducts);
@@ -211,11 +214,13 @@ export default function InventoryDetailPage() {
       currentPage * itemsPerPage
     );
 
+    const isCountedView = status === "counted";
+
     return (
       <div className="space-y-4">
         <div className="text-sm text-gray-600 mb-4">
           Showing products for {country} -{" "}
-          {status === "to-be-counted" ? "To be counted" : "Counted"}
+          {isCountedView ? "Counted" : "To be counted"}
         </div>
 
         <Table>
@@ -225,7 +230,11 @@ export default function InventoryDetailPage() {
               <TableHead>SKU</TableHead>
               <TableHead>Expected Quantity</TableHead>
               <TableHead>Counted Quantity</TableHead>
-              <TableHead>Action</TableHead>
+              {isCountedView ? (
+                <TableHead>Discrepancy Reason</TableHead>
+              ) : (
+                <TableHead>Action</TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -235,7 +244,7 @@ export default function InventoryDetailPage() {
                 <TableCell>{product.sku}</TableCell>
                 <TableCell>{product.expectedQuantity}</TableCell>
                 <TableCell>
-                  {status === "counted" ? (
+                  {isCountedView ? (
                     <span className="text-gray-900">
                       {product.countedQuantity}
                     </span>
@@ -250,8 +259,15 @@ export default function InventoryDetailPage() {
                     />
                   )}
                 </TableCell>
-                <TableCell>
-                  {status === "to-be-counted" && (
+
+                {isCountedView ? (
+                  <TableCell>
+                    {product.discrepancyReason?.trim()
+                      ? product.discrepancyReason
+                      : "-"}
+                  </TableCell>
+                ) : (
+                  <TableCell>
                     <Button
                       size="sm"
                       onClick={() => handleSave(product.id)}
@@ -259,8 +275,8 @@ export default function InventoryDetailPage() {
                     >
                       Save
                     </Button>
-                  )}
-                </TableCell>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
@@ -357,19 +373,6 @@ export default function InventoryDetailPage() {
               </div>
             </div>
           </div>
-          <div className="mt-6 space-y-2">
-            <Label
-              htmlFor="notes"
-              className="text-sm font-medium text-gray-900"
-            >
-              Additional Notes
-            </Label>
-            <Textarea
-              id="notes"
-              placeholder="Enter additional notes..."
-              className="min-h-[100px] resize-none"
-            />
-          </div>
         </CardContent>
       </Card>
 
@@ -392,9 +395,7 @@ export default function InventoryDetailPage() {
                 defaultValue={countriesToBeCounted[0] || ""}
                 className="w-full"
               >
-                <TabsList
-                  className={`grid w-full grid-cols-${countriesToBeCounted.length}`}
-                >
+                <TabsList className="flex flex-wrap gap-2 w-full">
                   {countriesToBeCounted.map((country) => (
                     <TabsTrigger key={country} value={country}>
                       {country}
@@ -412,9 +413,7 @@ export default function InventoryDetailPage() {
 
             <TabsContent value="counted" className="mt-4">
               <Tabs defaultValue={countriesCounted[0] || ""} className="w-full">
-                <TabsList
-                  className={`grid w-full grid-cols-${countriesCounted.length}`}
-                >
+                <TabsList className="flex flex-wrap gap-2 w-full">
                   {countriesCounted.map((country) => (
                     <TabsTrigger key={country} value={country}>
                       {country}

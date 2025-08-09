@@ -25,7 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         const inventory = result.rows[0];
         const inventoryId = inventory.id
 
-        const countProductQuery = `SELECT ic.country, ic."expectedQuantity", ic."countedQuantity", ic."variationId", ic."isCounted", p.title, p.sku, p.id
+        const countProductQuery = `SELECT ic.country, ic."expectedQuantity", ic."countedQuantity", ic."variationId", ic."discrepancyReason", ic."isCounted", p.title, p.sku, p.id
             FROM "inventoryCountItems" ic
             JOIN products p ON ic."productId" = p."id"
             WHERE ic."inventoryCountId" = '${inventoryId}'`
@@ -93,6 +93,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
                 `;
             const updateCountResult = await pool.query(updateCountQuery)
             result = updateCountResult.rows[0]
+        }
+
+        const checkInventoryQuery = `SELECT * FROM "inventoryCountItems" WHERE "inventoryCountId" = '${id}' AND "isCounted" = FALSE`
+        const checkInventoryResult = await pool.query(checkInventoryQuery)
+        const checkInventory = checkInventoryResult.rows.length
+
+        if (checkInventory === 0) {
+            const completeInventoryQuery = `UPDATE "inventoryCount" SET "isCompleted" = TRUE WHERE id = '${id}'`
+            await pool.query(completeInventoryQuery)
         }
 
         return NextResponse.json(result, { status: 200 });
