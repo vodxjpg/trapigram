@@ -80,7 +80,6 @@ const schema = z.object({
   discountType: z.enum(["fixed", "percentage"]),
   discountAmount: z.coerce.number().min(0.01, "Amount must be greater than 0"),
   usageLimit: z.coerce.number().int().min(0).default(0),
-  usagePerUser: z.coerce.number().int().min(0).default(0),
   expendingLimit: z.coerce.number().int().min(0).default(0),
   expendingMinimum: z.coerce.number().int().min(0).default(0),
   countries: z.array(z.string().length(2)).min(1, "At least one country is required"),
@@ -120,7 +119,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
       discountType: "fixed",
       discountAmount: 0,
       usageLimit: 0,
-      usagePerUser: 0,
+   
       expendingLimit: 0,
       expendingMinimum: 0,
       countries: [],
@@ -166,7 +165,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
       form.reset({
         ...couponData,
         countries,
-        usagePerUser: (couponData as any).usagePerUser ?? 0,
+      
         hasExpiration: Boolean(couponData.expirationDate),
         startDate: couponData.startDate
           ? isoToLocalInput(couponData.startDate)
@@ -325,10 +324,9 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
             </div>
 
             {/* Numeric Limits */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {[
                 { name: "usageLimit", label: "Usage Limit" },
-                { name: "usagePerUser", label: "Usage Per User" },
                 { name: "expendingMinimum", label: "Expending Minimum" },
                 { name: "expendingLimit", label: "Expending Limit" },
                 { name: "limitPerUser", label: "Limit Per User" },

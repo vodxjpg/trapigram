@@ -13,14 +13,7 @@ const couponUpdateSchema = z.object({
   discountAmount: z.coerce
     .number()
     .min(0.01, "Amount must be greater than 0"),
-  // PATCH should also accept usagePerUser optionally
-  usagePerUser: z
-    .coerce
-    .number()
-    .int()
-    .min(0, { message: "Usage per user must be at least 0." })
-    .optional()
-    .default(0),
+
   usageLimit: z.coerce.number().int().min(0, { message: "Usage limit must be at least 0." }),
   expendingLimit: z.coerce.number().int().min(0, { message: "Expending limit must be at least 0." }),
   // New field:
@@ -45,7 +38,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const { id } = await params;
     const query = `
       SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "expirationDate", "startDate",
-      "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
+     "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
+       FROM coupons
       FROM coupons
       WHERE id = $1 AND "organizationId" = $2
     `;
