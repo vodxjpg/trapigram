@@ -29,17 +29,20 @@ const couponUpdateSchema = z.object({
     .default(0),
 });
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
   try {
-    const { id } = await params;
+    const { id } = params;
     const query = `
-      SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "expirationDate", "startDate",
-     "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
-       FROM coupons
+      SELECT
+        id, "organizationId", name, code, description,
+        "discountType", "discountAmount",
+        "expirationDate", "startDate",
+        "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum",
+        countries, visibility, "createdAt", "updatedAt"
       FROM coupons
       WHERE id = $1 AND "organizationId" = $2
     `;
@@ -47,8 +50,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Coupon not found" }, { status: 404 });
     }
-    const coupon = result.rows[0];
-    coupon.countries = JSON.parse(coupon.countries);
+      const coupon = result.rows[0];
+  if (typeof coupon.countries === "string") {
+    try { coupon.countries = JSON.parse(coupon.countries); } catch {}
+  }
     return NextResponse.json(coupon);
   } catch (error: any) {
     console.error("[GET /api/coupons/[id]] error:", error);
@@ -56,13 +61,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
   try {
-    const { id } = await params;
+    const { id } = params;
     const body = await req.json();
     // Parse the request body with the updated schema.
     const parsedCoupon = couponUpdateSchema.parse(body);
@@ -100,25 +105,37 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Coupon not found" }, { status: 404 });
     }
-    const coupon = result.rows[0];
-    coupon.countries = JSON.parse(coupon.countries);
+       const coupon = result.rows[0];
+       if (typeof coupon.countries === "string") {
+         try { coupon.countries = JSON.parse(coupon.countries); } catch {}
+       }
     return NextResponse.json(coupon);
   } catch (error: any) {
     console.error("[PATCH /api/coupons/[id]] error:", error);
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 });
     }
+
+    if (error?.code === "23505") {
+        const m = /Key \((.+)\)=\((.+)\)/.exec(error?.detail || "");
+        const field = m?.[1] || "code";
+        const val   = m?.[2] || "";
+        const msg   = field === "code" && val
+          ? `Coupon code "${val}" is already in use. Please choose a different code.`
+          : `This ${field} is already in use.`;
+        return NextResponse.json({ error: msg }, { status: 409 });
+      }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
   try {
-    const { id } = await params;
+    const { id } = params;
     const query = `
       DELETE FROM coupons
       WHERE id = $1 AND "organizationId" = $2

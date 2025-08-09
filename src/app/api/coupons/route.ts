@@ -111,6 +111,18 @@ export async function POST(req: NextRequest) {
       visibility,
     } = parsedCoupon;
 
+        // Early check (still keep the catch below for race-safety)
+    const dup = await pool.query(
+      `SELECT 1 FROM coupons WHERE code = $1 AND "organizationId" = $2 LIMIT 1`,
+      [code, organizationId],
+    );
+    if (dup.rowCount) {
+      return NextResponse.json(
+        { error: `Coupon code "${code}" is already in use. Please choose a different code.` },
+        { status: 409 }
+      );
+    }
+
     const couponId = uuidv4();
 
     const insertQuery = `
@@ -145,6 +157,17 @@ export async function POST(req: NextRequest) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 });
     }
+      // Unique violation (duplicate code)
+  if (error?.code === "23505") {
+    // PG detail looks like: Key (code)=(V2FTW) already exists.
+    const m = /Key \((.+)\)=\((.+)\)/.exec(error?.detail || "");
+    const field = m?.[1] || "code";
+    const val   = m?.[2] || "";
+    const msg   = field === "code" && val
+      ? `Coupon code "${val}" is already in use. Please choose a different code.`
+      : `This ${field} is already in use.`;
+    return NextResponse.json({ error: msg }, { status: 409 });
+  }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

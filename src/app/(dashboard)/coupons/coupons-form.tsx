@@ -108,7 +108,11 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const minStartLocal = useMemo(nowLocal, []);
   const minExpireLocal = useMemo(nowPlus1sLocal, []);
-
+  const toInputValue = (v?: string | null) => {
+    if (!v) return "";
+    return v.includes("Z") ? isoToLocalInput(v) : v; // ISO → local, else pass-through
+  };
+  
   /* ---------------------------- form setup -------------------------------- */
   const form = useForm<Values>({
     resolver: zodResolver(schema),
@@ -194,15 +198,25 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
       const payload = {
         ...vals,
         // ensure ISO strings
-        startDate: new Date(vals.startDate).toISOString(),
-        expirationDate: vals.expirationDate ? new Date(vals.expirationDate).toISOString() : null,
+        // keep the local strings; backend/DB will store literally
+        startDate: vals.startDate,
+        expirationDate: vals.expirationDate ?? null,
       };
       const res = await fetch(url, {
         method: isEditing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error((await res.json()).error || "Request failed");
+      if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const msg =
+            typeof data?.error === "string"
+              ? data.error
+              : Array.isArray(data?.error)
+                ? data.error.map((e: any) => e.message).join("\n")
+                : "Request failed";
+          throw new Error(msg);
+        }
       toast.success(isEditing ? "Coupon updated" : "Coupon created");
       router.push("/coupons");
       router.refresh();
@@ -441,7 +455,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                           type="datetime-local"
                           step={1}
                           min={minExpireLocal}
-                          value={field.value ? isoToLocalInput(field.value) : ""}
+                          alue={toInputValue(field.value)}
                           onChange={(e) => {
                             const raw = e.target.value;
                             if (!raw) {
@@ -452,7 +466,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                             const local = raw.includes("T")
                               ? raw
                               : withTime(raw, 23, 59, 59);
-                            field.onChange(new Date(local).toISOString());
+                              field.onChange(local);  // keep local string in state
                           }}
                         />
                       </FormControl>
