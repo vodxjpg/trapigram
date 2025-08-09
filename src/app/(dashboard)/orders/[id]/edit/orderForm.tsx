@@ -519,7 +519,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     );
   }, [countryProducts, prodTerm]);
 
-  /* ─── debounced remote search (/api/products & /api/affiliate/products) ─── */
+  /* ─── debounced remote search (/api/products & /api/affiliate/products) ── */
   useEffect(() => {
     const q = prodTerm.trim();
     if (q.length < 3) {
