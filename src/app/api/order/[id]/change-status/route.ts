@@ -14,7 +14,7 @@ import type { NotificationType } from "@/lib/notifications";
 // ── diagnostics ──────────────────────────────────────────────
 
 const apiKey = process.env.CURRENCY_LAYER_API_KEY
-const dbg  = (...a: any[]) => console.log("[orderRevenue]", ...a);
+const dbg = (...a: any[]) => console.log("[orderRevenue]", ...a);
 if (!apiKey) console.warn("[orderRevenue] ⚠️  CURRENCY_LAYER_API_KEY is not set");
 
 //------------- Order Revenue---------------------//
@@ -160,8 +160,8 @@ async function getRevenue(id: string, organizationId: string) {
           amount = paidEntry.order.amount
         }
 
-                const coinKey = coinRaw.toUpperCase();
-        const coinId  = coins[coinKey];
+        const coinKey = coinRaw.toUpperCase();
+        const coinId = coins[coinKey];
         if (!coinId) {
           dbg("⚠️ unsupported asset:", coinKey);
           throw new Error(`Unsupported crypto asset "${coinKey}"`);
@@ -676,6 +676,7 @@ export async function PATCH(
       rows: [ord],
     } = await client.query(
       `SELECT status,
+              "paymentMethod",
               country,
               "trackingNumber",
               "cartId",
@@ -811,52 +812,84 @@ export async function PATCH(
     WHERE id = $2`,
       [newStatus, id],
     );
-     console.log(`Order ${id} updated to ${newStatus}`);
-    
-     /* ── Affiliate / referral bonuses (runs once, on first transition to PAID) ── */
-     if (newStatus === "paid" && ord.status !== "paid") {
-       // … entire bonus block here …
-     }
-    
-     await client.query("COMMIT");
+    console.log(`Order ${id} updated to ${newStatus}`);
+
+    /* ── Affiliate / referral bonuses (runs once, on first transition to PAID) ── */
+    if (newStatus === "paid" && ord.status !== "paid") {
+      // … entire bonus block here …
+    }
+
+    await client.query("COMMIT");
     console.log(`Transaction committed for order ${id}`);
 
-    // ─── trigger revenue update for paid orders ───
-    // ─── trigger revenue update & platform‐fee capture for paid orders ───
-if (newStatus === "paid") {
-  try {
-    // 1) update revenue
-    await getRevenue(id, organizationId);
-    console.log(`Revenue updated for order ${id}`);
+    /* ──────────────────────────────────────────────────────────────
+    *  Niftipay sync: cancel matching crypto invoice
+    *  Triggers only when this order used Niftipay and is now cancelled
+    * ───────────────────────────────────────────────────────────── */
+    if (
+      newStatus === "cancelled" &&
+      (ord.paymentMethod?.toLowerCase?.() === "niftipay")
+    ) {
+      try {
+        const base = process.env.NIFTIPAY_API_URL || "https://www.niftipay.com";
+        const ts = Date.now().toString();
+        const sig = createHmac("sha256", process.env.SERVICE_API_KEY!)
+          .update(ts)
+          .digest("hex");
 
-    // 2) capture platform fee via internal API
-    const ts = Date.now().toString();
-    const sig = createHmac("sha256", process.env.SERVICE_API_KEY!)
-      .update(ts)
-      .digest("hex");
-
-    await fetch(
-      `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key":    process.env.SERVICE_API_KEY!,
-          "x-timestamp":  ts,
-          "x-signature":  sig,
-        },
-        body: JSON.stringify({ orderId: id }),
+        await fetch(`${base}/api/internal/cancel`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": process.env.SERVICE_API_KEY!, // shared secret
+            "x-timestamp": ts,
+            "x-signature": sig,
+          },
+          body: JSON.stringify({
+            reference: ord.orderKey,     // we used this as Niftipay 'reference'
+            merchantId: organizationId,   // scope to the org
+          }),
+        });
+      } catch (err) {
+        console.error(`[niftipay] cancel sync failed for ${ord.orderKey}`, err);
       }
-    );
-    console.log(`Platform fee captured for order ${id}`);
+    }
 
-  } catch (err) {
-    console.error(
-      `Failed to update revenue or capture fee for order ${id}:`,
-      err
-    );
-  }
-}
+    // ─── trigger revenue update & platform‐fee capture for paid orders ───
+    if (newStatus === "paid") {
+      try {
+        // 1) update revenue
+        await getRevenue(id, organizationId);
+        console.log(`Revenue updated for order ${id}`);
+
+        // 2) capture platform fee via internal API
+        const ts = Date.now().toString();
+        const sig = createHmac("sha256", process.env.SERVICE_API_KEY!)
+          .update(ts)
+          .digest("hex");
+
+        await fetch(
+          `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": process.env.SERVICE_API_KEY!,
+              "x-timestamp": ts,
+              "x-signature": sig,
+            },
+            body: JSON.stringify({ orderId: id }),
+          }
+        );
+        console.log(`Platform fee captured for order ${id}`);
+
+      } catch (err) {
+        console.error(
+          `Failed to update revenue or capture fee for order ${id}:`,
+          err
+        );
+      }
+    }
 
 
 
@@ -987,121 +1020,121 @@ if (newStatus === "paid") {
  *  Affiliate / referral bonuses
  *     – ONLY once, when the order first becomes PAID
  * ──────────────────────────────────────────────────────────── */
-if (newStatus === "paid" && ord.status !== "paid") {
-  /*  1) fetch affiliate-settings (points & steps) */
-    /* ── grab settings (use real column names, alias them to old variable names) ── */
-    const { rows: [affSet] } = await client.query(
-      `SELECT "pointsPerReferral",
+      if (newStatus === "paid" && ord.status !== "paid") {
+        /*  1) fetch affiliate-settings (points & steps) */
+        /* ── grab settings (use real column names, alias them to old variable names) ── */
+        const { rows: [affSet] } = await client.query(
+          `SELECT "pointsPerReferral",
               "spendingNeeded"      AS "spendingStep",
               "pointsPerSpending"   AS "pointsPerSpendingStep"
        FROM "affiliateSettings"
       WHERE "organizationId" = $1
       LIMIT 1`,
-    [organizationId],
-  );
-  const ptsPerReferral = Number(affSet?.pointsPerReferral        || 0);
-    const stepEur        = Number(affSet?.spendingStep             || 0);   // ← alias above
-    const ptsPerStep     = Number(affSet?.pointsPerSpendingStep    || 0);   // ← alias above
+          [organizationId],
+        );
+        const ptsPerReferral = Number(affSet?.pointsPerReferral || 0);
+        const stepEur = Number(affSet?.spendingStep || 0);   // ← alias above
+        const ptsPerStep = Number(affSet?.pointsPerSpendingStep || 0);   // ← alias above
 
-  /*  2) has this buyer been referred?  award referrer once   */
-  const { rows: [cli] } = await client.query(
-    `SELECT "referredBy" FROM clients WHERE id = $1`,
-    [ord.clientId],
-  );
+        /*  2) has this buyer been referred?  award referrer once   */
+        const { rows: [cli] } = await client.query(
+          `SELECT "referredBy" FROM clients WHERE id = $1`,
+          [ord.clientId],
+        );
 
-  if (!ord.referralAwarded && cli?.referredBy && ptsPerReferral > 0) {
-    const logId = uuidv4();
-    await client.query(
-      `INSERT INTO "affiliatePointLogs"
+        if (!ord.referralAwarded && cli?.referredBy && ptsPerReferral > 0) {
+          const logId = uuidv4();
+          await client.query(
+            `INSERT INTO "affiliatePointLogs"
          (id,"organizationId","clientId",points,action,description,
           "sourceClientId","createdAt","updatedAt")
        VALUES ($1,$2,$3,$4,'referral_bonus',
                'Bonus from referral order',$5,NOW(),NOW())`,
-      [logId, organizationId, cli.referredBy, ptsPerReferral, ord.clientId],
-    );
-    await client.query(
-      `INSERT INTO "affiliatePointBalances" AS b
+            [logId, organizationId, cli.referredBy, ptsPerReferral, ord.clientId],
+          );
+          await client.query(
+            `INSERT INTO "affiliatePointBalances" AS b
          ("clientId","organizationId","pointsCurrent","createdAt","updatedAt")
        VALUES ($1,$2,$3,NOW(),NOW())
        ON CONFLICT("clientId","organizationId") DO UPDATE
          SET "pointsCurrent" = b."pointsCurrent" + EXCLUDED."pointsCurrent",
              "updatedAt"     = NOW()`,
-      [cli.referredBy, organizationId, ptsPerReferral],
-    );
-    /* mark order so we never double-award this ref bonus */
-    await client.query(
-      `UPDATE orders
+            [cli.referredBy, organizationId, ptsPerReferral],
+          );
+          /* mark order so we never double-award this ref bonus */
+          await client.query(
+            `UPDATE orders
           SET "referralAwarded" = TRUE,
               "updatedAt"       = NOW()
         WHERE id = $1`,
-      [id],
-    );
-  }
+            [id],
+          );
+        }
 
-  /*  3) spending milestones for *buyer*  (step-based)        */
-  if (stepEur > 0 && ptsPerStep > 0) {
-    /* --------------------------------------------------------------
-     * Lifetime spend in **EUR** – we rely on orderRevenue which was
-     * (re)-generated a few lines above for this order.
-     * -------------------------------------------------------------- */
-    const { rows: [spent] } = await client.query(
-      `SELECT COALESCE(SUM(r."EURtotal"),0) AS sum
+        /*  3) spending milestones for *buyer*  (step-based)        */
+        if (stepEur > 0 && ptsPerStep > 0) {
+          /* --------------------------------------------------------------
+           * Lifetime spend in **EUR** – we rely on orderRevenue which was
+           * (re)-generated a few lines above for this order.
+           * -------------------------------------------------------------- */
+          const { rows: [spent] } = await client.query(
+            `SELECT COALESCE(SUM(r."EURtotal"),0) AS sum
          FROM "orderRevenue" r
          JOIN orders o ON o.id = r."orderId"
         WHERE o."clientId"       = $1
           AND o."organizationId" = $2
           AND o.status           = 'paid'`,
-      [ord.clientId, organizationId],
-    );
-    
-    const totalEur = Number(spent.sum);   // already a decimal string → number
-    /* how many spending-bonuses already written? */
-    const { rows: [prev] } = await client.query(
-      `SELECT COALESCE(SUM(points),0) AS pts
+            [ord.clientId, organizationId],
+          );
+
+          const totalEur = Number(spent.sum);   // already a decimal string → number
+          /* how many spending-bonuses already written? */
+          const { rows: [prev] } = await client.query(
+            `SELECT COALESCE(SUM(points),0) AS pts
          FROM "affiliatePointLogs"
         WHERE "organizationId" = $1
           AND "clientId"       = $2
          AND action           = 'spending_bonus'`,
-      [organizationId, ord.clientId],
-    );
+            [organizationId, ord.clientId],
+          );
 
-    const shouldHave = Math.floor(totalEur / stepEur) * ptsPerStep;
-    const delta      = shouldHave - Number(prev.pts);
+          const shouldHave = Math.floor(totalEur / stepEur) * ptsPerStep;
+          const delta = shouldHave - Number(prev.pts);
 
-    console.log(
-        `[affiliate] spending check – client %s: total %s EUR, step %d, ` +
-        `prev %d pts, delta %d`,
-        ord.clientId,
-        totalEur.toFixed(2),
-        stepEur,
-        Number(prev.pts),
-        delta,
-      );
+          console.log(
+            `[affiliate] spending check – client %s: total %s EUR, step %d, ` +
+            `prev %d pts, delta %d`,
+            ord.clientId,
+            totalEur.toFixed(2),
+            stepEur,
+            Number(prev.pts),
+            delta,
+          );
 
-    if (delta > 0) {
-      const logId = uuidv4();
-      await client.query(
-        `INSERT INTO "affiliatePointLogs"
+          if (delta > 0) {
+            const logId = uuidv4();
+            await client.query(
+              `INSERT INTO "affiliatePointLogs"
            (id,"organizationId","clientId",points,action,description,
             "createdAt","updatedAt")
          VALUES ($1,$2,$3,$4,'spending_bonus',
                  'Milestone spending bonus',NOW(),NOW())`,
-        [logId, organizationId, ord.clientId, delta],
-      );
-      await client.query(
-        `INSERT INTO "affiliatePointBalances" AS b
+              [logId, organizationId, ord.clientId, delta],
+            );
+            await client.query(
+              `INSERT INTO "affiliatePointBalances" AS b
            ("clientId","organizationId","pointsCurrent","createdAt","updatedAt")
          VALUES ($1,$2,$3,NOW(),NOW())
          ON CONFLICT("clientId","organizationId") DO UPDATE
            SET "pointsCurrent" = b."pointsCurrent" + EXCLUDED."pointsCurrent",
                "updatedAt"     = NOW()`,
-        [ord.clientId, organizationId, delta],
-      );
-    }
-  }
-}
+              [ord.clientId, organizationId, delta],
+            );
+          }
+        }
+      }
 
-     /* mark flag only for completed (NOT needed for paid anymore) */
+      /* mark flag only for completed (NOT needed for paid anymore) */
       if (newStatus === "completed") {
         await client.query(
           `UPDATE orders
