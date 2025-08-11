@@ -607,7 +607,6 @@ export default function OrderForm() {
   }, [selectedClient]);
 
   /* ─── Niftipay network fetch whenever the PM select changes ───── */
-useEffect(() => {
   useEffect(() => {
     const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
     if (!pm || !/niftipay/i.test(pm.name || "")) {
