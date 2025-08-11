@@ -4,29 +4,10 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
-import { requireOrgPermission } from "@/lib/perm-server";
 import {
   sendNotification,
   NotificationChannel,
 } from "@/lib/notifications";
-
-/* ────────────────────────────────────────────────────────────────── *
- * Helpers                                                            *
- * ────────────────────────────────────────────────────────────────── */
-
-/** Quick check whether the caller is an *owner* of the organisation. */
-async function isOwner(organizationId: string, userId: string) {
-  const { rowCount } = await pool.query(
-    `SELECT 1
-       FROM member
-      WHERE "organizationId" = $1
-        AND "userId"        = $2
-        AND role            = 'owner'
-      LIMIT 1`,
-    [organizationId, userId]
-  );
-  return rowCount > 0;
-}
 
 /* ────────────────────────────────────────────────────────────────── *
  * Zod schemas                                                        *
@@ -40,65 +21,50 @@ const ticketSchema = z.object({
 });
 
 /* ────────────────────────────────────────────────────────────────── *
- * GET /api/tickets                                                   *
- * Honours optional ?clientId=… query-param                           *
+ * GET /api/tickets
+ * Optional query: ?page=&pageSize=&search=&clientId=
+ * NO permission enforcement                                           *
  * ────────────────────────────────────────────────────────────────── */
 
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  const { organizationId, userId } = ctx;
+  const { organizationId } = ctx;
 
   try {
-    /* ── read & normalise query-params ───────────────────────────── */
     const { searchParams } = new URL(req.url);
-    const page      = Number(searchParams.get("page"))      || 1;
-    const pageSize  = Number(searchParams.get("pageSize"))  || 10;
-    const search    = searchParams.get("search")            || "";
-    const clientId  = searchParams.get("clientId")          || null;
+    const page = Math.max(1, Number(searchParams.get("page")) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize")) || 10));
+    const search = (searchParams.get("search") || "").trim();
+    const clientId = searchParams.get("clientId");
 
-    /* validate clientId (if present) */
-    if (clientId) {
-      const ok = z.string().uuid().safeParse(clientId);
-      if (!ok.success)
-        return NextResponse.json({ error: "Invalid clientId" }, { status: 400 });
+    // validate clientId if provided
+    if (clientId && !z.string().uuid().safeParse(clientId).success) {
+      return NextResponse.json({ error: "Invalid clientId" }, { status: 400 });
     }
 
-    /* owner can see everything; non-owners can **only** see          *
-     * their own tickets, even if clientId is not supplied            */
-    const callerIsOwner = await isOwner(organizationId, userId);
-    const effectiveClientId =
-      callerIsOwner ? clientId                           // honour filter or none
-                    : clientId ?? null;                  // non-owner: MUST supply
-
-    if (!callerIsOwner && !effectiveClientId) {
-      return NextResponse.json(
-        { error: "clientId is required for non-owner requests" },
-        { status: 403 },
-      );
-    }
-
-    /* ── dynamic SQL ─────────────────────────────────────────────── */
-    const where: string[]  = [`"organizationId" = $1`];
-    const values: any[]    = [organizationId];
+    // build WHERE
+    const where: string[] = [`"organizationId" = $1`];
+    const values: any[] = [organizationId];
 
     if (search) {
       values.push(`%${search}%`);
       where.push(`title ILIKE $${values.length}`);
     }
-    if (effectiveClientId) {
-      values.push(effectiveClientId);
+    if (clientId) {
+      values.push(clientId);
       where.push(`"clientId" = $${values.length}`);
     }
 
-    /* --- total count --- */
+    // count
     const countSQL = `SELECT COUNT(*) FROM tickets WHERE ${where.join(" AND ")}`;
-    const totalRows = Number((await pool.query(countSQL, values)).rows[0].count);
+    const countRows = await pool.query(countSQL, values);
+    const totalRows = Number(countRows.rows[0].count) || 0;
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
-    /* --- paginated list --- */
-    values.push(pageSize, (page - 1) * pageSize);            // $n+1  $n+2
+    // list
+    const listValues = [...values, pageSize, (page - 1) * pageSize];
     const listSQL = `
       SELECT id,
              "organizationId", "clientId",
@@ -107,15 +73,15 @@ export async function GET(req: NextRequest) {
         FROM tickets
        WHERE ${where.join(" AND ")}
        ORDER BY "createdAt" DESC
-       LIMIT $${values.length - 1} OFFSET $${values.length};
+       LIMIT $${listValues.length - 1} OFFSET $${listValues.length};
     `;
-    const tickets = (await pool.query(listSQL, values)).rows;
+    const tickets = (await pool.query(listSQL, listValues)).rows;
 
     return NextResponse.json({
       tickets,
       totalPages,
       currentPage: page,
-    });
+    }, { status: 200 });
   } catch (err) {
     console.error("[GET /api/tickets] error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -123,7 +89,8 @@ export async function GET(req: NextRequest) {
 }
 
 /* ────────────────────────────────────────────────────────────────── *
- * POST /api/tickets  (unchanged apart from small tidy-ups)           *
+ * POST /api/tickets
+ * NO permission enforcement                                          *
  * ────────────────────────────────────────────────────────────────── */
 
 export async function POST(req: NextRequest) {
@@ -134,7 +101,7 @@ export async function POST(req: NextRequest) {
   try {
     const data = ticketSchema.parse(await req.json());
 
-    /* create ticket ------------------------------------------------ */
+    // create ticket
     const ticketId = uuidv4();
     const insertSQL = `
       INSERT INTO tickets
@@ -153,7 +120,7 @@ export async function POST(req: NextRequest) {
       data.status,
     ])).rows[0];
 
-    /* notify client ------------------------------------------------ */
+    // notify client
     const { rows: [cli] } = await pool.query(
       `SELECT country FROM clients WHERE id = $1 LIMIT 1`,
       [data.clientId],
