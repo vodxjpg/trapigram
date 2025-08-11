@@ -127,6 +127,13 @@ function parseCrypto(metaArr: any[]) {
   };
 }
 
+const stripHtml = (html?: string) =>
+  (html ?? "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+
+const truncate = (text: string, max = 8) =>
+  text.length <= max ? text : text.slice(0, max) + "...";
+
+
 export default function OrderView() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -419,13 +426,17 @@ export default function OrderView() {
                           </TableCell>
                           <TableCell>{g.sku}</TableCell>
                           <TableCell className="hidden md:table-cell max-w-xs">
-                            <div
-                              className="prose max-w-none"
-                              dangerouslySetInnerHTML={{
-                                __html: g.description,
-                              }}
-                            />
+                            {(() => {
+                              const clean = stripHtml(g.description);
+                              const short = truncate(clean, 8);
+                              return (
+                                <span title={clean}>
+                                  {short}
+                                </span>
+                              );
+                            })()}
                           </TableCell>
+
                           <TableCell className="text-right">{qty}</TableCell>
                           {canViewPricing && (
                             <TableCell className="text-right">
@@ -584,41 +595,37 @@ export default function OrderView() {
                           messages.map((m) => (
                             <div
                               key={m.id}
-                              className={`flex ${
-                                m.isInternal ? "justify-end" : "justify-start"
-                              } mb-4`}
+                              className={`flex ${m.isInternal ? "justify-end" : "justify-start"
+                                } mb-4`}
                             >
                               <div className="max-w-[85%] flex flex-col">
                                 <div
-                                  className={`flex items-start gap-2 ${
-                                    m.isInternal
+                                  className={`flex items-start gap-2 ${m.isInternal
                                       ? "flex-row-reverse"
                                       : "flex-row"
-                                  }`}
+                                    }`}
                                 >
                                   <Avatar className="w-8 h-8 flex-shrink-0">
                                     <AvatarFallback className="text-xs">
                                       {m.isInternal
                                         ? "A"
                                         : order.clientEmail
-                                            .charAt(0)
-                                            .toUpperCase()}
+                                          .charAt(0)
+                                          .toUpperCase()}
                                     </AvatarFallback>
                                   </Avatar>
                                   <div
-                                    className={`rounded-lg p-3 break-words ${
-                                      m.isInternal
+                                    className={`rounded-lg p-3 break-words ${m.isInternal
                                         ? "bg-primary text-primary-foreground"
                                         : "bg-muted text-foreground"
-                                    }`}
+                                      }`}
                                   >
                                     <p className="text-sm">{m.message}</p>
                                   </div>
                                 </div>
                                 <div
-                                  className={`text-xs text-muted-foreground mt-1 ${
-                                    m.isInternal ? "text-right" : "text-left"
-                                  }`}
+                                  className={`text-xs text-muted-foreground mt-1 ${m.isInternal ? "text-right" : "text-left"
+                                    }`}
                                 >
                                   {fmtMsgTime(m.createdAt)}
                                 </div>
