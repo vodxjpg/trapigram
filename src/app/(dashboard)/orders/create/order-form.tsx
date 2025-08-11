@@ -46,34 +46,17 @@ const NIFTIPAY_BASE =
 
 type NiftipayNet = { chain: string; asset: string; label: string };
 
-async function fetchNiftipayNetworks(apiKey: string): Promise<NiftipayNet[]> {
-  const candidates = ["/api/payment-methods", "/api/payment-emthods"]; // typo fallback
-  for (const ep of candidates) {
-    try {
-      const r = await fetch(`${NIFTIPAY_BASE}${ep}`, {
-        credentials: "omit",
-        headers: { "x-api-key": apiKey },
-      });
-      if (r.ok) {
-        const { methods } = await r.json();
-        return (methods || []).map((m: any) => ({
-          chain: m.chain,
-          asset: m.asset,
-          label: m.label ?? `${m.asset} on ${m.chain}`,
-        }));
-      }
-      // if it isn't a 404, surface the error (then stop)
-      if (r.status !== 404) {
-        const body = await r.text().catch(() => "");
-        throw new Error(body || `Niftipay ${ep} failed (${r.status})`);
-      }
-      // 404 → try next endpoint
-    } catch {
-      // try next candidate
-    }
-  }
-  throw new Error("Unable to load Niftipay networks");
+async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
+  const r = await fetch("/api/niftipay/payment-methods");
+  if (!r.ok) throw new Error(await r.text().catch(() => "Niftipay methods failed"));
+  const { methods } = await r.json();
+  return (methods || []).map((m: any) => ({
+    chain: m.chain,
+    asset: m.asset,
+    label: m.label ?? `${m.asset} on ${m.chain}`,
+  }));
 }
+
 
 // Interfaces
 interface Product {
@@ -618,16 +601,8 @@ export default function OrderForm() {
     (async () => {
       setNiftipayLoading(true);
       try {
-        const apiKey = pm.apiKey ?? null;
-        if (!apiKey) {
-          console.warn("[Niftipay] Missing apiKey on payment method.");
-          setNiftipayNetworks([]);
-          setSelectedNiftipay("");
-          return;
-        }
-        const nets = await fetchNiftipayNetworks(apiKey);
+        const nets = await fetchNiftipayNetworks();
         setNiftipayNetworks(nets);
-        // auto-select first if nothing chosen yet
         if (!selectedNiftipay && nets[0]) {
           setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
         }
@@ -639,6 +614,7 @@ export default function OrderForm() {
       }
     })();
   }, [selectedPaymentMethod, paymentMethods, selectedNiftipay]);
+  
   
 
 // Optional: auto-select Niftipay to actually trigger the effect in UIs
@@ -952,58 +928,45 @@ useEffect(() => {
       }
       toast.success("Order created successfully!");
       /* ── extra: create Niftipay invoice & store meta ───────── */
-      if (isNiftipay) {
-        const key = pmObj?.apiKey;
-        if (!key) {
-          toast.error("Niftipay API-key missing");
-          return;
-        }
-        const [chain, asset] = selectedNiftipay.split(":");
+if (isNiftipay) {
+  const [chain, asset] = selectedNiftipay.split(":");
+  const client = clients.find((c) => c.id === selectedClient)!;
+  const safeEmail = client.email?.trim() || "user@trapyfy.com";
+  const fiat = countryToFiat(client.country);        // "GBP" | "EUR" | "USD"
+  const totalF = total + shippingCost;
 
-        const client = clients.find((c) => c.id === selectedClient)!;
-        const safeEmail = client.email?.trim() || "user@trapyfy.com";   // ✅ fallback
+  const nRes = await fetch(`/api/niftipay/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      network: chain,
+      asset,
+      amount: totalF,
+      currency: fiat,
+      firstName: client.firstName,
+      lastName: client.lastName,
+      email: safeEmail,
+      merchantId: activeOrg?.id ?? "",
+      reference: data.orderKey,
+    }),
+  });
 
-        const fiat = countryToFiat(client.country);
-        const totalF = total + shippingCost;
+  if (!nRes.ok) {
+    const msg = await nRes.text();
+    console.error("[Niftipay] ", msg);
+    toast.error(`Niftipay: ${msg}`);
+    return;
+  }
 
-           const nRes = await fetch(`${NIFTIPAY_BASE}/api/orders`, {
-               method: "POST",
-               credentials: "omit",
-               headers: {
-                 "x-api-key": key,
-                 "Content-Type": "application/json",
-               },
-               body: JSON.stringify({
-                 network: chain,
-                 asset,
-                 amount: totalF,
-                 currency: fiat,
-                 firstName: client.firstName,
-                 lastName: client.lastName,
-                 email: safeEmail,
-                 merchantId: activeOrg?.id ?? "",
-                 reference: data.orderKey,
-               }),
-             });
-        if (!nRes.ok) {
-          const msg = await nRes.text();          // or  nRes.json() if you prefer
-          console.error("[Niftipay] ", msg);
-          toast.error(`Niftipay: ${msg}`);
-          return;                                 // abort the happy-path
-        } else {
-          const meta = await nRes.json();
-          await fetch(`/api/order/${data.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ orderMeta: [meta] }),
-          });
-          toast.success(
-            `Niftipay invoice created: send ${fmt(
-              meta.order.amount,
-            )} ${asset}`,
-          );
-        }
-      }
+  const meta = await nRes.json();
+  await fetch(`/api/order/${data.id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ orderMeta: [meta] }),
+  });
+  toast.success(`Niftipay invoice created: send ${fmt(meta.order.amount)} ${asset}`);
+}
+
       cancelOrder();
       router.push(`/orders/${data.id}`);
     } catch (err: any) {
