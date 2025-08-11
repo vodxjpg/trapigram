@@ -395,6 +395,7 @@ export async function POST(req: Request) {
                         .split(",")
                         .map(s => safeTrim(s));
                     if (countryArray.length === 0) countryArray.push(countries)
+                    const warehouseId = product.warehouseId
 
                     const stocks = (product.stock).toString()
                     const stockArray = stocks
@@ -407,6 +408,7 @@ export async function POST(req: Request) {
                             .set({ quantity: stockArray[i] })
                             .where("country", "=", countryArray[i])
                             .where("productId", "=", productId)
+                            .where("warehouseId", "=", warehouseId)
                             .execute()
                     }
                 }

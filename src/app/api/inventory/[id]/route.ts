@@ -64,6 +64,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         const setClauses = [
             `"countedQuantity" = ${countedQuantity}`,
             `"isCounted" = TRUE`,
+            `"updatedAt" = NOW()`,
         ];
 
         if (typeof discrepancyReason === "string") {
@@ -71,6 +72,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
 
         if (typeof variationId === "string") {
+            console.log("A")
+            const warehouseQuery = `SELECT "warehouseId" FROM "inventoryCount" WHERE id='${id}'`
+            const warehouseResult = await pool.query(warehouseQuery)
+            const warehouseId = warehouseResult.rows[0].warehouseId
+
+            const updateStockQuery = `
+                UPDATE "warehouseStock"
+                SET quantity = ${countedQuantity}, "updatedAt" = NOW()
+                WHERE "warehouseId" = '${warehouseId}'
+                AND "productId" = '${productId}'
+                AND country = '${country}'
+                AND "variationId" = '${variationId}'
+                RETURNING *`
+            await pool.query(updateStockQuery)
+
             const updateCountQuery = `
                 UPDATE "inventoryCountItems"
                 SET ${setClauses.join(", ")}
@@ -83,6 +99,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             const updateCountResult = await pool.query(updateCountQuery)
             result = updateCountResult.rows[0]
         } else {
+            console.log("B")
+            const warehouseQuery = `SELECT "warehouseId" FROM "inventoryCount" WHERE id='${id}'`
+            const warehouseResult = await pool.query(warehouseQuery)
+            const warehouseId = warehouseResult.rows[0].warehouseId
+
+            const updateStockQuery = `
+                UPDATE "warehouseStock"
+                SET quantity = ${countedQuantity}, "updatedAt" = NOW()
+                WHERE "warehouseId" = '${warehouseId}'
+                AND "productId" = '${productId}'
+                AND country = '${country}'
+                RETURNING *`
+            await pool.query(updateStockQuery)
+
             const updateCountQuery = `
                 UPDATE "inventoryCountItems"
                 SET ${setClauses.join(", ")}
