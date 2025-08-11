@@ -42,8 +42,39 @@ import { formatCurrency } from "@/lib/currency";
 /* ─── constants ──────────────────────────────────────────────── */
 // If the env-var is set use it, otherwise fall back to the public endpoint.
 const NIFTIPAY_BASE =
-  (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com")
-    .replace(/\/+$/, "");          // strip trailing “/” just in case
+  (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com").replace(/\/+$/, "")
+
+type NiftipayNet = { chain: string; asset: string; label: string };
+
+async function fetchNiftipayNetworks(apiKey: string): Promise<NiftipayNet[]> {
+  const candidates = ["/api/payment-methods", "/api/payment-emthods"]; // typo fallback
+  for (const ep of candidates) {
+    try {
+      const r = await fetch(`${NIFTIPAY_BASE}${ep}`, {
+        credentials: "omit",
+        headers: { "x-api-key": apiKey },
+      });
+      if (r.ok) {
+        const { methods } = await r.json();
+        return (methods || []).map((m: any) => ({
+          chain: m.chain,
+          asset: m.asset,
+          label: m.label ?? `${m.asset} on ${m.chain}`,
+        }));
+      }
+      // if it isn't a 404, surface the error (then stop)
+      if (r.status !== 404) {
+        const body = await r.text().catch(() => "");
+        throw new Error(body || `Niftipay ${ep} failed (${r.status})`);
+      }
+      // 404 → try next endpoint
+    } catch {
+      // try next candidate
+    }
+  }
+  throw new Error("Unable to load Niftipay networks");
+}
+
 // Interfaces
 interface Product {
   id: string;
@@ -80,12 +111,15 @@ interface Address {
   clientId: string;
   address: string;
 }
+// add `active` so we can label it in the UI
 interface PaymentMethod {
   id: string;
   name: string;
-  details: string;
+  active?: boolean;           // <-- new
+  details?: string;
   apiKey?: string | null;
 }
+
 
 /* ─── helpers (new) ───────────────────────────────────────────── */
 
@@ -574,49 +608,39 @@ export default function OrderForm() {
 
   /* ─── Niftipay network fetch whenever the PM select changes ───── */
 useEffect(() => {
-  const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
-  if (!pm || !/niftipay/i.test(pm.name || "")) {
-    setNiftipayNetworks([]);
-    setSelectedNiftipay("");
-    return;
-  }
-
-  (async () => {
-    setNiftipayLoading(true);
-    try {
-      // Prefer apiKey if the server returns it; if it doesn't, log a clear warning
-      const apiKey = pm.apiKey ?? null;
-      if (!apiKey) {
-        console.warn("[NIFTIPAY] Missing apiKey on payment method. " +
-          "Ensure /api/payment-methods includes `apiKey` for admins.");
-        setNiftipayNetworks([]); setSelectedNiftipay(""); setNiftipayLoading(false);
-        return;
-      }
-      
-      const url = `${NIFTIPAY_BASE}/api/payment-methods`;
-      console.debug("[NIFTIPAY] fetching networks:", url, { pm });
-      const res = await fetch(url, {
-        credentials: "omit",
-        headers: { "x-api-key": apiKey },
-      });
-      if (!res.ok) throw new Error("Failed to load Niftipay networks");
-      const { methods } = await res.json();
-
-      setNiftipayNetworks(
-        (methods || []).map((m: any) => ({
-          chain: m.chain,
-          asset: m.asset,
-          label: m.label ?? `${m.asset} on ${m.chain}`,
-        })),
-      );
-    } catch (err: any) {
-      toast.error(err.message || "Niftipay networks load error");
+  useEffect(() => {
+    const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+    if (!pm || !/niftipay/i.test(pm.name || "")) {
       setNiftipayNetworks([]);
-    } finally {
-      setNiftipayLoading(false);
+      setSelectedNiftipay("");
+      return;
     }
-  })();
-}, [selectedPaymentMethod, paymentMethods]);
+  
+    (async () => {
+      setNiftipayLoading(true);
+      try {
+        const apiKey = pm.apiKey ?? null;
+        if (!apiKey) {
+          console.warn("[Niftipay] Missing apiKey on payment method.");
+          setNiftipayNetworks([]);
+          setSelectedNiftipay("");
+          return;
+        }
+        const nets = await fetchNiftipayNetworks(apiKey);
+        setNiftipayNetworks(nets);
+        // auto-select first if nothing chosen yet
+        if (!selectedNiftipay && nets[0]) {
+          setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
+        }
+      } catch (err: any) {
+        toast.error(err.message || "Niftipay networks load error");
+        setNiftipayNetworks([]);
+      } finally {
+        setNiftipayLoading(false);
+      }
+    })();
+  }, [selectedPaymentMethod, paymentMethods, selectedNiftipay]);
+  
 
 // Optional: auto-select Niftipay to actually trigger the effect in UIs
 useEffect(() => {
@@ -1450,12 +1474,13 @@ useEffect(() => {
                   <SelectValue placeholder="Select a payment method" />
                 </SelectTrigger>
                 <SelectContent>
-                  {paymentMethods.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
+  {paymentMethods.map((m) => (
+    <SelectItem key={m.id} value={m.id}>
+      {m.name}{m.active === false ? " (inactive)" : ""}
+    </SelectItem>
+  ))}
+</SelectContent>
+
               </Select>
               {/* ▼ Niftipay network selector */}
               {paymentMethods.find(
