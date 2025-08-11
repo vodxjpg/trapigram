@@ -1,6 +1,7 @@
 // src/app/api/order/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { URLSearchParams } from "url";
 import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
@@ -59,11 +60,27 @@ type OrderPayload = z.infer<typeof orderSchema>;
 /* ================================================================== */
 /* GET – single / list                                                */
 /* ================================================================== */
+/* --------------------------------------------------------------- */
+/* Optional response field projection via ?fields=a,b,c            */
+/* – Backward compatible: if not provided, return current shape.   */
+/* – Does NOT change SQL selection; it trims the JSON we return.   */
+/* --------------------------------------------------------------- */
+function parseFields(sp: URLSearchParams): string[] | null {
+    const raw = sp.get("fields");
+    if (!raw) return null;
+    return raw.split(",").map(s => s.trim()).filter(Boolean);
+  }
+  function pickFields<T extends Record<string, any>>(obj: T, fields: string[] | null) {
+    if (!fields) return obj;
+    return fields.reduce<Record<string, any>>((acc, k) => (k in obj ? (acc[k] = (obj as any)[k], acc) : acc), {});
+  }
+
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
   const { searchParams } = new URL(req.url);
+  const fields = parseFields(searchParams);
 
   /* Accept both ?orderKey=123 and ?reference=123 -------------------- */
   const filterOrderKey =
@@ -87,7 +104,8 @@ export async function GET(req: NextRequest) {
       const r = await pool.query(sql, [organizationId, filterOrderKey]);
       if (!r.rowCount)
         return NextResponse.json({ error: "Order not found" }, { status: 404 });
-      return NextResponse.json(r.rows[0], { status: 200 });
+      const row = r.rows[0];
+      return NextResponse.json(pickFields(row, fields), { status: 200 });
     }
 
     /* 2) Orders by client – newest first ------------------------------ */
@@ -137,7 +155,10 @@ export async function GET(req: NextRequest) {
         email: o.email,
         referralAwarded: !!o.referralAwarded,
       }));
-      return NextResponse.json(orders, { status: 200 });
+      const projected = fields
+  ? orders.map(o => pickFields(o, fields))
+  : orders;
+return NextResponse.json(projected, { status: 200 });
     }
 
     /* 3) Full list ---------------------------------------------------- */
@@ -182,7 +203,10 @@ export async function GET(req: NextRequest) {
       shippingCompany: o.shippingService ?? o.shippingService ?? null,
       referralAwarded: !!o.referralAwarded
     }));
-    return NextResponse.json(orders, { status: 200 });
+        const projected = fields
+      ? orders.map(o => pickFields(o, fields))
+      : orders;
+    return NextResponse.json(projected, { status: 200 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
