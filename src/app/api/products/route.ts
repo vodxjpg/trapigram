@@ -126,30 +126,41 @@ export async function GET(req: NextRequest) {
     if (status)
       idQuery = idQuery.where("status", "=", status);  // status is now the right type
 
-    // IMPORTANT: filter by attribute term ONLY (do not filter just by attribute)
+    let idRows: Array<{ id: string }>;
+    
     if (attributeTermId) {
-      idQuery = idQuery.where(
-        "id",
-        "in",
-        db
-          .selectFrom("productAttributeValues")
-          .select("productId")
-          .where("termId", "=", attributeTermId)
-      );
+      // ⭐ JOIN path so filtering happens BEFORE LIMIT/OFFSET
+      const jq = db
+        .selectFrom("productAttributeValues as pav")
+        .innerJoin("products as p", "p.id", "pav.productId")
+        .select("p.id")
+        .where("p.organizationId", "=", organizationId)
+        .where("p.tenantId", "=", tenantId)
+        .where("pav.termId", "=", attributeTermId)
+        .$if(Boolean(search), q => q.where("p.title", "ilike", `%${search}%`))
+        .$if(Boolean(categoryId), q =>
+          q.where(
+            "p.id",
+            "in",
+            db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+          )
+        )
+        .$if(!!status, q => q.where("p.status", "=", status!))
+        // Avoid duplicates when a product has multiple rows pointing to the same term
+        .groupBy("p.id")
+        .orderBy(("p." + orderBy) as any, orderDir)
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
+    
+      idRows = await jq.execute();
+    } else {
+      // No term filter → use the original simple products query
+      idRows = await idQuery
+        .orderBy(orderBy as any, orderDir)
+        .limit(pageSize)
+        .offset((page - 1) * pageSize)
+        .execute();
     }
-    else if (attributeId) {
-      idQuery = idQuery.where(
-        "id",
-        "in",
-        db.selectFrom("productAttributeValues").select("productId").where("attributeId", "=", attributeId),
-      );
-    }
-
-    const idRows = await idQuery
-      .orderBy(orderBy as any, orderDir)   // ↞ cast is safe after whitelist
-      .limit(pageSize)
-      .offset((page - 1) * pageSize)
-      .execute();
     const productIds = idRows.map((r) => r.id);
 
     /* return early if empty page */
@@ -312,21 +323,34 @@ export async function GET(req: NextRequest) {
         ),
       )
       .$if(!!status, q => q.where("status", "=", status!))   // `status!` is safe here
-      // total count must mirror ID query logic
-      // Totals must mirror the ID query: filter ONLY when a term is selected
-      .$if(Boolean(attributeTermId), q =>
-        q.where(
-          "id",
-          "in",
-          db
-            .selectFrom("productAttributeValues")
-            .select("productId")
-            .where("termId", "=", attributeTermId)
-        )
-      )
+       // Totals must mirror ID query logic exactly
+       .$if(Boolean(attributeTermId), _q => {
+         // Build a distinct count over the join to avoid duplicate product IDs
+         return db
+           .selectFrom("productAttributeValues as pav")
+           .innerJoin("products as p", "p.id", "pav.productId")
+           .select(db.fn.count<number>("distinct p.id").as("total"))
+           .where("p.organizationId", "=", organizationId)
+           .where("p.tenantId", "=", tenantId)
+           .where("pav.termId", "=", attributeTermId)
+           .$if(Boolean(search), q => q.where("p.title", "ilike", `%${search}%`))
+           .$if(Boolean(categoryId), q =>
+             q.where(
+               "p.id",
+               "in",
+               db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+             )
+           )
+           .$if(!!status, q => q.where("p.status", "=", status!))
+           .executeTakeFirst();
+       })
 
       .executeTakeFirst();
-    const total = Number(totalRes?.total || 0);
+        // When we used the join branch above, `totalRes` is that result.
+        // Otherwise, it’s the simple products count.
+        const total = Number((Array.isArray(totalRes) ? totalRes[0]?.total : totalRes?.total) || 0);
+      
+      
 
     return NextResponse.json({
       products,
