@@ -1,11 +1,7 @@
 // src/app/(dashboard)/products/components/stock-management-data-table.ts
 "use client";
 
-import {
-  useState,
-  useEffect,
-  startTransition,
-} from "react";
+import { useState, useEffect, startTransition } from "react";
 import { ArrowUpDown, Edit } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -32,7 +28,11 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -47,11 +47,12 @@ import { useProducts } from "@/hooks/use-products";
 import type { Product } from "../../components/products-data-table";
 import { useDebounce } from "@/hooks/use-debounce";
 
-const fetcher = (url: string) => fetch(url, {
-  headers: {
-    "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-  },
-}).then((res) => res.json());
+const fetcher = (url: string) =>
+  fetch(url, {
+    headers: {
+      "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+    },
+  }).then((res) => res.json());
 
 interface Warehouse {
   id: string;
@@ -65,29 +66,40 @@ export function StockManagementDataTable() {
   // 1) Active org & permissions
   const { data: activeOrg } = authClient.useActiveOrganization();
   const orgId = activeOrg?.id ?? null;
-  const { hasPermission: canView, isLoading: viewLoading } =
-    useHasPermission(orgId, { stockManagement: ["view"] });
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { stockManagement: ["view"] }
+  );
   const { hasPermission: canUpdate, isLoading: updateLoading } =
     useHasPermission(orgId, { stockManagement: ["update"] });
 
   // 2) Table state
-  const [sorting, setSorting] = useState<SortingState>([{ id: "stock", desc: false }]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "stock", desc: false },
+  ]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // Search & filters (debounced search, plus category/attribute to match products table UX)
+  // Search & filters (debounced search, plus category/attribute/term to match products table UX)
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 300);
 
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [attributeFilter, setAttributeFilter] = useState<string>("");
+  const [attributeTermFilter, setAttributeTermFilter] = useState<string>("");
 
-  // 3) Ancillary data (categories & attributes) — same endpoints/headers as products table
-  const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string }>>([]);
-  const [attributeOptions, setAttributeOptions] = useState<Array<{ id: string; name: string }>>([]);
-  const [termOptions, setTermOptions] = useState<Array<{ id: string; name: string }>>([]);
+  // 3) Ancillary data (categories & attributes)
+  const [categoryOptions, setCategoryOptions] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [attributeOptions, setAttributeOptions] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [termOptions, setTermOptions] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
 
   useEffect(() => {
     let mounted = true;
@@ -102,7 +114,9 @@ export function StockManagementDataTable() {
         if (!mounted) return;
         setCategoryOptions(categories ?? []);
       })
-      .catch(() => { /* silent */ });
+      .catch(() => {
+        /* silent */
+      });
 
     fetch("/api/product-attributes?page=1&pageSize=1000", {
       headers: {
@@ -114,7 +128,9 @@ export function StockManagementDataTable() {
         if (!mounted) return;
         setAttributeOptions(attributes ?? []);
       })
-      .catch(() => { /* silent */ });
+      .catch(() => {
+        /* silent */
+      });
 
     return () => {
       mounted = false;
@@ -122,47 +138,51 @@ export function StockManagementDataTable() {
   }, []);
 
   // Load terms whenever attribute changes
-useEffect(() => {
-  if (!attributeFilter) {
-    setTermOptions([]);
-    setAttributeTermFilter("");
-    return;
-  }
-  const controller = new AbortController();
-  (async () => {
-    try {
-      const res = await fetch(
-        `/api/product-attributes/${attributeFilter}/terms?page=1&pageSize=1000`,
-        {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
-          signal: controller.signal,
-        }
-      );
-      if (!res.ok) throw new Error("Failed to load attribute terms");
-      const { terms } = await res.json();
-      setTermOptions(terms ?? []);
+  useEffect(() => {
+    // Clear terms when attribute is cleared
+    if (!attributeFilter) {
+      setTermOptions([]);
       setAttributeTermFilter("");
-      startTransition(() => setPage(1));
-    } catch {
-      /* ignore */
+      return;
     }
-  })();
-  return () => controller.abort();
-}, [attributeFilter]);
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/product-attributes/${attributeFilter}/terms?page=1&pageSize=1000`,
+          {
+            headers: {
+              "x-internal-secret":
+                process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+            },
+            signal: controller.signal,
+          }
+        );
+        if (!res.ok) throw new Error("Failed to load attribute terms");
+        const { terms } = await res.json();
+        setTermOptions(terms ?? []);
+        // reset selected term when attribute changes; do NOT trigger filtering yet
+        setAttributeTermFilter("");
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => controller.abort();
+  }, [attributeFilter]);
 
-  // 4) Data
+  // 4) Data — IMPORTANT: only filter when a term is chosen
   const { products, isLoading, totalPages, mutate } = useProducts({
     page,
     pageSize,
     search: debouncedSearch,
     categoryId: categoryFilter || undefined,
-    attributeId: attributeFilter || undefined,
     attributeTermId: attributeTermFilter || undefined,
   });
 
-  const { data: whData } = useSWR<{ warehouses: Warehouse[] }>("/api/warehouses", fetcher);
+  const { data: whData } = useSWR<{ warehouses: Warehouse[] }>(
+    "/api/warehouses",
+    fetcher
+  );
   const warehouses = whData?.warehouses || [];
 
   // 5) Columns
@@ -250,8 +270,11 @@ useEffect(() => {
 
   // Stock popover component
   function StockPopover({ product }: { product: Product }) {
-    const [editable, setEditable] = useState<Record<string, Record<string, number>>>({});
+    const [editable, setEditable] = useState<
+      Record<string, Record<string, number>>
+    >({});
     const [saving, setSaving] = useState(false);
+    const [open, setOpen] = useState(false); // control popover so we can close on save
 
     useEffect(() => {
       const norm: Record<string, Record<string, number>> = {};
@@ -290,6 +313,7 @@ useEffect(() => {
       });
       await mutate();
       setSaving(false);
+      setOpen(false); // close after successful save
     };
 
     const editableSum = Object.values(editable).reduce(
@@ -301,7 +325,7 @@ useEffect(() => {
     // Non-editable view
     if (!canUpdate) {
       return (
-        <Popover>
+        <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button variant="outline" size="sm">
               {editableSum}
@@ -313,7 +337,7 @@ useEffect(() => {
 
     // Editable view
     return (
-      <Popover>
+      <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
@@ -325,47 +349,52 @@ useEffect(() => {
             <Edit className="h-4 w-4 text-gray-500" />
           </Button>
         </PopoverTrigger>
-         <PopoverContent className="w-64">
-   {/* Wrap inputs in a form so Enter submits/saves */}
-   <form
-     onSubmit={(e) => {
-       e.preventDefault();
-       if (!saving) {
-         void handleSave();
-       }
-     }}
-   >
-     {warehouses.map((w) => (
-       <div key={w.id} className="mb-4">
-         <div className="mb-1 font-medium">{w.name}</div>
-         {w.countries.map((c) => (
-           <div
-             key={c}
-             className="mb-1 flex items-center justify-between"
-           >
-             <span className="text-sm">{c}</span>
-             <Input
-               type="number"
-               min={0}
-               className="w-20"
-               value={editable[w.id]?.[c] ?? 0}
-               onChange={(e) =>
-                 handleChange(
-                   w.id,
-                   c,
-                   parseInt(e.target.value, 10) || 0
-                 )
-               }
-             />
-           </div>
-         ))}
-       </div>
-     ))}
-     <Button className="w-full" type="submit" disabled={saving}>
-       {saving ? "Saving…" : "Save"}
-     </Button>
-   </form>
- </PopoverContent>
+        <PopoverContent className="w-64">
+          {/* Wrap inputs in a form so Enter submits/saves */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!saving) void handleSave();
+            }}
+          >
+            {warehouses.map((w) => (
+              <div key={w.id} className="mb-4">
+                <div className="mb-1 font-medium">{w.name}</div>
+                {w.countries.map((c) => (
+                  <div
+                    key={c}
+                    className="mb-1 flex items-center justify-between"
+                  >
+                    <span className="text-sm">{c}</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      className="w-20"
+                      value={editable[w.id]?.[c] ?? 0}
+                      onChange={(e) =>
+                        handleChange(
+                          w.id,
+                          c,
+                          parseInt(e.target.value, 10) || 0
+                        )
+                      }
+                      // Hitting Enter saves the form
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          e.currentTarget.form?.requestSubmit();
+                        }
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            ))}
+            <Button className="w-full" type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </form>
+        </PopoverContent>
       </Popover>
     );
   }
@@ -416,8 +445,11 @@ useEffect(() => {
           value={attributeFilter || "all"}
           onValueChange={(v) => {
             startTransition(() => {
-              setAttributeFilter(v === "all" ? "" : v);
-              setPage(1);
+              const next = v === "all" ? "" : v;
+              setAttributeFilter(next);
+              // Reset terms when attribute changes. Do NOT trigger filtering or pagination here.
+              setTermOptions([]);
+              setAttributeTermFilter("");
             });
           }}
         >
@@ -434,7 +466,7 @@ useEffect(() => {
           </SelectContent>
         </Select>
 
-                {/* Attribute Term filter (enabled only when an attribute is selected) */}
+        {/* Attribute Term filter (enabled only when an attribute is selected) */}
         <Select
           value={attributeTermFilter || "all"}
           onValueChange={(v) => {
@@ -504,39 +536,39 @@ useEffect(() => {
             ))}
           </TableHeader>
           <TableBody>
-            {isLoading
-              ? Array.from({ length: pageSize }).map((_, i) => (
-                  <TableRow key={i}>
-                    {table.getVisibleLeafColumns().map((_, j) => (
-                      <TableCell key={j}>
-                        <Skeleton className="h-6 w-full" />
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : table.getRowModel().rows.length
-              ? table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id}>
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : (
-                <TableRow>
-                  <TableCell
-                    colSpan={table.getVisibleLeafColumns().length}
-                    className="py-6 text-center"
-                  >
-                    No products found.
-                  </TableCell>
+            {isLoading ? (
+              Array.from({ length: pageSize }).map((_, i) => (
+                <TableRow key={i}>
+                  {table.getVisibleLeafColumns().map((_, j) => (
+                    <TableCell key={j}>
+                      <Skeleton className="h-6 w-full" />
+                    </TableCell>
+                  ))}
                 </TableRow>
-              )}
+              ))
+            ) : table.getRowModel().rows.length ? (
+              table.getRowModel().rows.map((row) => (
+                <TableRow key={row.id}>
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id}>
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext()
+                      )}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell
+                  colSpan={table.getVisibleLeafColumns().length}
+                  className="py-6 text-center"
+                >
+                  No products found.
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </div>
