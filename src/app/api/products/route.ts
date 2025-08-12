@@ -89,13 +89,13 @@ export async function GET(req: NextRequest) {
 
   try {
     const { searchParams } = new URL(req.url);
-        const page     = parseInt(searchParams.get("page") || "1");
-        const pageSize = parseInt(searchParams.get("pageSize") || "10");
+    const page = parseInt(searchParams.get("page") || "1");
+    const pageSize = parseInt(searchParams.get("pageSize") || "10");
     const search = searchParams.get("search") || "";
     /* ---------- validated ordering ------------------------------ */
     const allowedCols = new Set(["createdAt", "updatedAt", "title", "sku"]);
-    const rawOrderBy  = searchParams.get("orderBy")  || "createdAt";
-    const orderBy     = allowedCols.has(rawOrderBy) ? rawOrderBy : "createdAt";
+    const rawOrderBy = searchParams.get("orderBy") || "createdAt";
+    const orderBy = allowedCols.has(rawOrderBy) ? rawOrderBy : "createdAt";
     const orderDir = searchParams.get("orderDir") === "asc" ? "asc" : "desc";
     const categoryId = searchParams.get("categoryId") || "";
     const rawStatus = searchParams.get("status");            // string | null
@@ -125,29 +125,28 @@ export async function GET(req: NextRequest) {
       );
     if (status)
       idQuery = idQuery.where("status", "=", status);  // status is now the right type
-   // Attribute filters:
-   // - when a term is chosen, filter by that term (and optionally by attribute for safety)
-   // - otherwise, filter by the attribute (any term under it)
-   if (attributeTermId) {
-     idQuery = idQuery.where(
-       "id",
-       "in",
-       db
-         .selectFrom("productAttributeValues")
-         .select("productId")
-         .where("termId", "=", attributeTermId)
-         .$if(Boolean(attributeId), (q) => q.where("attributeId", "=", attributeId)),
-     );
-   } else if (attributeId) {
-     idQuery = idQuery.where(
-       "id",
-       "in",
-       db.selectFrom("productAttributeValues").select("productId").where("attributeId", "=", attributeId),
-     );
-   }
 
-        const idRows = await idQuery
-          .orderBy(orderBy as any, orderDir)   // ↞ cast is safe after whitelist
+    // IMPORTANT: filter by attribute term ONLY (do not filter just by attribute)
+    if (attributeTermId) {
+      idQuery = idQuery.where(
+        "id",
+        "in",
+        db
+          .selectFrom("productAttributeValues")
+          .select("productId")
+          .where("termId", "=", attributeTermId)
+      );
+    }
+    else if (attributeId) {
+      idQuery = idQuery.where(
+        "id",
+        "in",
+        db.selectFrom("productAttributeValues").select("productId").where("attributeId", "=", attributeId),
+      );
+    }
+
+    const idRows = await idQuery
+      .orderBy(orderBy as any, orderDir)   // ↞ cast is safe after whitelist
       .limit(pageSize)
       .offset((page - 1) * pageSize)
       .execute();
@@ -181,8 +180,8 @@ export async function GET(req: NextRequest) {
         "createdAt",
         "updatedAt",
       ])
-          .where("id", "in", productIds)
-          .orderBy(orderBy as any, orderDir)
+      .where("id", "in", productIds)
+      .orderBy(orderBy as any, orderDir)
       .execute();
 
     /* -------- STEP 3 – related data in bulk --------------------- */
@@ -313,25 +312,19 @@ export async function GET(req: NextRequest) {
         ),
       )
       .$if(!!status, q => q.where("status", "=", status!))   // `status!` is safe here
-         // total count must mirror ID query logic
-         .$if(Boolean(attributeTermId), q =>
-           q.where(
-             "id",
-             "in",
-             db
-               .selectFrom("productAttributeValues")
-               .select("productId")
-               .where("termId", "=", attributeTermId)
-               .$if(Boolean(attributeId), (qq) => qq.where("attributeId", "=", attributeId)),
-           )
-         )
-         .$if(Boolean(attributeId) && !Boolean(attributeTermId), q =>
-           q.where(
-             "id",
-             "in",
-             db.selectFrom("productAttributeValues").select("productId").where("attributeId", "=", attributeId),
-           )
-         )
+      // total count must mirror ID query logic
+      // Totals must mirror the ID query: filter ONLY when a term is selected
+      .$if(Boolean(attributeTermId), q =>
+        q.where(
+          "id",
+          "in",
+          db
+            .selectFrom("productAttributeValues")
+            .select("productId")
+            .where("termId", "=", attributeTermId)
+        )
+      )
+
       .executeTakeFirst();
     const total = Number(totalRes?.total || 0);
 

@@ -180,7 +180,6 @@ export function ProductsDataTable({
     search: debounced,
     status: statusFilter || undefined,
     categoryId: categoryFilter || undefined,
-    attributeId: attributeFilter || undefined,
     attributeTermId: attributeTermFilter || undefined,
     orderBy: serverSort.field,
     orderDir: serverSort.dir,
@@ -263,7 +262,6 @@ export function ProductsDataTable({
         setTermOptions(terms ?? []);
         // reset selected term when attribute changes
         setAttributeTermFilter("");
-        startTransition(() => onPageChange(1));
       } catch {
         /* ignore */
       }
@@ -785,12 +783,11 @@ export function ProductsDataTable({
             value={attributeFilter || "all"}
             onValueChange={(v) => {
               startTransition(() => {
-               const next = v === "all" ? "" : v;
-               setAttributeFilter(next);
-               // Immediately reset terms when attribute changes so the terms select updates
-               setTermOptions([]);
-               setAttributeTermFilter("");
-                onPageChange(1);
+                const next = v === "all" ? "" : v;
+                setAttributeFilter(next);
+                // Reset terms when attribute changes. Do NOT trigger filtering or pagination here.
+                setTermOptions([]);
+                setAttributeTermFilter("");
               });
             }}
           >
