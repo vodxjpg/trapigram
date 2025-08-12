@@ -306,49 +306,50 @@ export async function GET(req: NextRequest) {
     });
 
     /* -------- STEP 5 – total count ------------------------------ */
-    const totalRes = await db
-      .selectFrom("products")
-      .select(db.fn.count("id").as("total"))
-      .where("organizationId", "=", organizationId)
-      .where("tenantId", "=", tenantId)
-      .$if(Boolean(search), q => q.where("title", "ilike", `%${search}%`))
-      .$if(Boolean(categoryId), q =>
-        q.where(
-          "id",
-          "in",
-          db
-            .selectFrom("productCategory")
-            .select("productId")
-            .where("categoryId", "=", categoryId),
-        ),
-      )
-      .$if(!!status, q => q.where("status", "=", status!))   // `status!` is safe here
-       // Totals must mirror ID query logic exactly
-       .$if(Boolean(attributeTermId), _q => {
-         // Build a distinct count over the join to avoid duplicate product IDs
-         return db
-           .selectFrom("productAttributeValues as pav")
-           .innerJoin("products as p", "p.id", "pav.productId")
-           .select(db.fn.count<number>("distinct p.id").as("total"))
-           .where("p.organizationId", "=", organizationId)
-           .where("p.tenantId", "=", tenantId)
-           .where("pav.termId", "=", attributeTermId)
-           .$if(Boolean(search), q => q.where("p.title", "ilike", `%${search}%`))
-           .$if(Boolean(categoryId), q =>
-             q.where(
-               "p.id",
-               "in",
-               db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
-             )
-           )
-           .$if(!!status, q => q.where("p.status", "=", status!))
-           .executeTakeFirst();
-       })
+let total = 0;
 
-      .executeTakeFirst();
-        // When we used the join branch above, `totalRes` is that result.
-        // Otherwise, it’s the simple products count.
-        const total = Number((Array.isArray(totalRes) ? totalRes[0]?.total : totalRes?.total) || 0);
+if (attributeTermId) {
+  // Count over the JOIN, distinct product IDs (mirrors the ID JOIN branch)
+  const totalJoin = await db
+    .selectFrom("productAttributeValues as pav")
+    .innerJoin("products as p", "p.id", "pav.productId")
+    .select(db.fn.count<number>("distinct p.id").as("total"))
+    .where("p.organizationId", "=", organizationId)
+    .where("p.tenantId", "=", tenantId)
+    .where("pav.termId", "=", attributeTermId)
+    .$if(Boolean(search), q => q.where("p.title", "ilike", `%${search}%`))
+    .$if(Boolean(categoryId), q =>
+      q.where(
+        "p.id",
+        "in",
+        db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+      )
+    )
+    .$if(!!status, q => q.where("p.status", "=", status!))
+    .executeTakeFirst();
+
+  total = Number(totalJoin?.total ?? 0);
+} else {
+  // Simple count on products (no term filter)
+  const totalPlain = await db
+    .selectFrom("products")
+    .select(db.fn.count<number>("id").as("total"))
+    .where("organizationId", "=", organizationId)
+    .where("tenantId", "=", tenantId)
+    .$if(Boolean(search), q => q.where("title", "ilike", `%${search}%`))
+    .$if(Boolean(categoryId), q =>
+      q.where(
+        "id",
+        "in",
+        db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+      )
+    )
+    .$if(!!status, q => q.where("status", "=", status!))
+    .executeTakeFirst();
+
+  total = Number(totalPlain?.total ?? 0);
+}
+
       
       
 
