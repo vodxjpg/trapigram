@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Filter } from "lucide-react";
+import { Filter, ChevronsUpDown, Check } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,11 +16,29 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandInput,
+  CommandList,
+  CommandGroup,
+  CommandItem,
+  CommandEmpty,
+} from "@/components/ui/command";
 
 type Warehouse = {
   id: string;
   name: string;
   countries: string;
+};
+
+type ProductCategory = {
+  id: string;
+  name: string;
 };
 
 type FormData = {
@@ -29,9 +47,16 @@ type FormData = {
 };
 
 export default function InventoryCount() {
-  const router = useRouter(); // ✅ add router for navigation
+  const router = useRouter();
   const [countType, setCountType] = useState<"all" | "specific">("all");
   const [warehouseOptions, setWarehouseOptions] = useState<Warehouse[]>([]);
+  const [productCategories, setProductCategories] = useState<ProductCategory[]>(
+    []
+  );
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(false);
+  const [categoriesError, setCategoriesError] = useState<string | null>(null);
+  const [categoryPopoverOpen, setCategoryPopoverOpen] = useState(false);
 
   const {
     register,
@@ -63,28 +88,72 @@ export default function InventoryCount() {
     fetchWarehouses();
   }, []);
 
+  // Fetch product categories when switching to "specific" (Partial)
+  useEffect(() => {
+    if (countType !== "specific" || productCategories.length > 0) return;
+
+    let isMounted = true;
+    (async () => {
+      try {
+        setLoadingCategories(true);
+        setCategoriesError(null);
+        const resp = await fetch("/api/product-categories?pageSize=200");
+        if (!resp.ok)
+          throw new Error(`Failed to fetch categories: ${resp.status}`);
+        const data = await resp.json();
+        console.log(data);
+
+        const list: any[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.categories)
+            ? data.categories
+            : [];
+
+        const normalized: ProductCategory[] = list.map((c: any, i: number) => ({
+          id: String(c?.id ?? c?._id ?? i),
+          name: String(c?.name ?? c?.title ?? `Category ${i + 1}`),
+        }));
+
+        if (isMounted) setProductCategories(normalized);
+      } catch (e: any) {
+        if (isMounted) setCategoriesError(e?.message ?? "Unknown error");
+      } finally {
+        if (isMounted) setLoadingCategories(false);
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [countType, productCategories.length]);
+
   const onSubmit = async (data: FormData) => {
     if (!data.warehouse) return;
 
-    // ✅ Find selected warehouse object to extract countries
+    // Find selected warehouse object to extract countries
     const selected = warehouseOptions.find((wh) => wh.id === data.warehouse);
-
     const countries = selected?.countries ?? null;
 
     try {
-      const payload = {
+      // Build payload, adding `categories` only for "specific"
+      const basePayload = {
         reference: data.reference,
         warehouseId: data.warehouse,
         countType,
-        countries, // ✅ include countries in payload
-      };
+        countries,
+      } as Record<string, unknown>;
+
+      if (countType === "specific") {
+        // Use the exact key name provided: `categories`
+        basePayload.categories = selectedCategoryIds; // <-- intentionally spelled as requested
+      }
 
       const response = await fetch("/api/inventory", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(basePayload),
       });
 
       if (!response.ok) {
@@ -102,6 +171,20 @@ export default function InventoryCount() {
       console.error("Error submitting form:", error);
     }
   };
+
+  const toggleCategory = (id: string) => {
+    setSelectedCategoryIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const selectedSummary =
+    selectedCategoryIds.length === 0
+      ? "Select categories"
+      : selectedCategoryIds.length === 1
+        ? (productCategories.find((c) => c.id === selectedCategoryIds[0])
+            ?.name ?? "1 selected")
+        : `${selectedCategoryIds.length} selected`;
 
   return (
     <form
@@ -207,13 +290,93 @@ export default function InventoryCount() {
 
       {countType === "specific" && (
         <Card>
-          <CardContent className="pt-6">
-            <div className="relative">
-              <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-              <Input
-                placeholder="Filter by product name, brand, product type, supplier, season, tag..."
-                className="pl-10 w-full"
-              />
+          <CardContent className="pt-6 space-y-4">
+            <div className="flex items-center gap-2">
+              <Filter className="text-gray-400 h-4 w-4" />
+              <Label className="text-sm font-medium text-gray-700">
+                Product categories
+              </Label>
+            </div>
+
+            {/* Multi-select dropdown (Popover + Command) */}
+            <div className="w-full">
+              <Popover
+                open={categoryPopoverOpen}
+                onOpenChange={setCategoryPopoverOpen}
+              >
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={categoryPopoverOpen}
+                    className="w-full justify-between"
+                  >
+                    <span className="truncate">{selectedSummary}</span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-[--radix-popover-trigger-width] p-0"
+                  align="start"
+                >
+                  {loadingCategories ? (
+                    <div className="p-3 text-sm text-gray-600">
+                      Loading categories…
+                    </div>
+                  ) : categoriesError ? (
+                    <div className="p-3 text-sm text-red-600">
+                      {categoriesError}
+                    </div>
+                  ) : (
+                    <Command shouldFilter>
+                      <CommandInput placeholder="Search categories..." />
+                      <CommandEmpty>No categories found.</CommandEmpty>
+                      <CommandList>
+                        <CommandGroup>
+                          {productCategories.map((cat) => {
+                            const checked = selectedCategoryIds.includes(
+                              cat.id
+                            );
+                            return (
+                              <CommandItem
+                                key={cat.id}
+                                onSelect={() => toggleCategory(cat.id)}
+                                className="cursor-pointer"
+                              >
+                                <div className="mr-2 flex h-4 w-4 items-center justify-center border rounded">
+                                  {checked ? (
+                                    <Check className="h-3 w-3" />
+                                  ) : null}
+                                </div>
+                                <span>{cat.name}</span>
+                              </CommandItem>
+                            );
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  )}
+                </PopoverContent>
+              </Popover>
+
+              {/* Optional: show badges for selected */}
+              {selectedCategoryIds.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selectedCategoryIds.map((id) => {
+                    const name =
+                      productCategories.find((c) => c.id === id)?.name ?? id;
+                    return (
+                      <span
+                        key={id}
+                        className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs"
+                      >
+                        {name}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

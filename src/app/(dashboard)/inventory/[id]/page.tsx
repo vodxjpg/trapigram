@@ -36,6 +36,8 @@ type InventoryData = {
   name: string;
   countType: "all" | "specific";
   createdAt: string;
+  username: string;
+  email: string;
 };
 
 /**
@@ -103,6 +105,7 @@ export default function InventoryDetailPage() {
       if (!response.ok) throw new Error("Inventory not found");
       const data = await response.json();
       const { inventory, countProduct } = data;
+      console.log(inventory);
       setInventory(inventory);
 
       const parsedProducts: Product[] = countProduct.map(
@@ -339,6 +342,14 @@ export default function InventoryDetailPage() {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-8">
             <div className="space-y-4">
+              <div className="flex justify-between items-center py-2">
+                <span className="text-sm font-medium text-gray-900">
+                  Created by
+                </span>
+                <span className="text-sm text-gray-600">
+                  {inventory.username} - {inventory.email}
+                </span>
+              </div>
               <div className="flex justify-between items-center py-2">
                 <span className="text-sm font-medium text-gray-900">
                   Warehouse

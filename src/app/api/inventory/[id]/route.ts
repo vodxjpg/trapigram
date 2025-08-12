@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
 // nothing
@@ -12,10 +12,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     try {
         const { id } = await params;
         const query = `
-            SELECT i.id, i.reference, i."countType", i.countries, i."createdAt", w.name
+            SELECT 
+                i.id, 
+                i.reference, 
+                i."countType", 
+                i.countries, 
+                i."createdAt", 
+                w.name, 
+                u.name AS username, 
+                u.email
             FROM "inventoryCount" i
-            JOIN warehouse w
-            ON i."warehouseId" = w.id
+            JOIN warehouse w ON i."warehouseId" = w.id
+            JOIN "user" u ON i."userId" = u.id
             WHERE i.id = '${id}' AND i."organizationId" = '${organizationId}'
             `;
         const result = await pool.query(query);
@@ -72,7 +80,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
 
         if (typeof variationId === "string") {
-            console.log("A")
             const warehouseQuery = `SELECT "warehouseId" FROM "inventoryCount" WHERE id='${id}'`
             const warehouseResult = await pool.query(warehouseQuery)
             const warehouseId = warehouseResult.rows[0].warehouseId
@@ -99,7 +106,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             const updateCountResult = await pool.query(updateCountQuery)
             result = updateCountResult.rows[0]
         } else {
-            console.log("B")
             const warehouseQuery = `SELECT "warehouseId" FROM "inventoryCount" WHERE id='${id}'`
             const warehouseResult = await pool.query(warehouseQuery)
             const warehouseId = warehouseResult.rows[0].warehouseId

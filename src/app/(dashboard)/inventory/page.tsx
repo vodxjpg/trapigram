@@ -121,7 +121,7 @@ export default function Component() {
 
   const handleExportExcel = async (row: InventoryCountRow) => {
     try {
-      const res = await fetch(`/api/inventory/${row.id}/export`, {
+      const res = await fetch(`/api/inventory/${row.id}/export-xlsx`, {
         method: "GET",
       });
       if (!res.ok) {
@@ -137,8 +137,30 @@ export default function Component() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e) {
-      // Surface a basic alert without changing your UI structure
       alert(e instanceof Error ? e.message : "Failed to export file");
+    }
+  };
+
+  // NEW: export to PDF via /api/inventory/[id]/export-pdf/
+  const handleExportPDF = async (row: InventoryCountRow) => {
+    try {
+      const res = await fetch(`/api/inventory/${row.id}/export-pdf/`, {
+        method: "GET",
+      });
+      if (!res.ok) {
+        throw new Error(`PDF export failed: ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `inventory-${row.reference}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to export PDF");
     }
   };
 
@@ -232,6 +254,13 @@ export default function Component() {
                             >
                               <FileDown className="h-4 w-4" />
                               Export to Excel
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleExportPDF(item)}
+                              className="flex items-center gap-2"
+                            >
+                              <FileDown className="h-4 w-4" />
+                              Export to PDF
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>

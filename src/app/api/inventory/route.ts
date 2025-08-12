@@ -5,13 +5,6 @@ import { v4 as uuidv4 } from "uuid";
 import { auth } from "@/lib/auth";
 import { getContext } from "@/lib/context";
 
-const inventorySchema = z.object({
-    reference: z.string().min(1),
-    warehouseId: z.string().min(1),
-    countType: z.string().min(1),
-    countries: z.array(z.string()).min(1),
-});
-
 export async function GET(req: NextRequest) {
     const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
@@ -41,15 +34,14 @@ export async function POST(req: NextRequest) {
     try {
         const userId = session.user.id
         const body = await req.json();
-        const parsedInventory = inventorySchema.parse(body);
-
 
         const {
             reference,
             warehouseId,
             countType,
-            countries
-        } = parsedInventory;
+            countries,
+            categories
+        } = body;
 
         const inventoryId = uuidv4();
 
@@ -74,33 +66,78 @@ export async function POST(req: NextRequest) {
         const inventory = result.rows[0];
 
         const productQuery = `SELECT ws."productId", ws.country, ws.quantity, ws."variationId", p.sku, p.title
-            FROM "warehouseStock" ws
-            JOIN products p ON ws."productId" = p.id
-            WHERE ws."warehouseId" = '${warehouseId}' AND ws."organizationId" = '${organizationId}'`
+                FROM "warehouseStock" ws
+                JOIN products p ON ws."productId" = p.id
+                WHERE ws."warehouseId" = '${warehouseId}' AND ws."organizationId" = '${organizationId}'`
 
         const productResult = await pool.query(productQuery)
         const products = productResult.rows
 
-        for (const product of products) {
-            const inventoryItemId = uuidv4()
+        if (countType === "specific") {
 
-            const insertQuery = `
-            INSERT INTO "inventoryCountItems"(id, "inventoryCountId", "productId", country, "expectedQuantity", "variationId", "isCounted", "createdAt", "updatedAt")
-            VALUES($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-            RETURNING *
-            `;
+            const categoriesIds: [] = []
 
-            const values = [
-                inventoryItemId,
-                inventoryId,
-                product.productId,
-                product.country,
-                product.quantity,
-                product.variationId,
-                false,
-            ];
+            for (const category of categories) {
+                for (let i = 0; i < products.length; i++) {
+                    const productCatQuery = `SELECT * FROM "productCategory" WHERE "productId" = '${products[i].productId}' AND "categoryId" = '${category}'`
+                    const productCatResult = await pool.query(productCatQuery)
+                    const productCat = productCatResult.rows[0]
 
-            await pool.query(insertQuery, values);
+                    if (productCat)
+                        categoriesIds.push(productCat)
+                }
+            }
+
+            const allowedProductIds = new Set(categoriesIds.map(obj => obj.productId));
+            const inventory = products.filter(item => allowedProductIds.has(item.productId));
+
+            for (const product of inventory) {
+                const inventoryItemId = uuidv4()
+
+                const insertQuery = `
+                INSERT INTO "inventoryCountItems"(id, "inventoryCountId", "productId", country, "expectedQuantity", "variationId", "isCounted", "createdAt", "updatedAt")
+                VALUES($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+                RETURNING *
+                `;
+
+                const values = [
+                    inventoryItemId,
+                    inventoryId,
+                    product.productId,
+                    product.country,
+                    product.quantity,
+                    product.variationId,
+                    false,
+                ];
+
+                await pool.query(insertQuery, values);
+            }
+        }
+
+        if (countType === "all") {
+
+            for (const product of products) {
+                const inventoryItemId = uuidv4()
+
+                const insertQuery = `
+                INSERT INTO "inventoryCountItems"(id, "inventoryCountId", "productId", country, "expectedQuantity", "variationId", "isCounted", "createdAt", "updatedAt")
+                VALUES($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+                RETURNING *
+                `;
+
+                const values = [
+                    inventoryItemId,
+                    inventoryId,
+                    product.productId,
+                    product.country,
+                    product.quantity,
+                    product.variationId,
+                    false,
+                ];
+
+                await pool.query(insertQuery, values);
+            }
+
         }
 
         return NextResponse.json(inventory, { status: 201 });
