@@ -253,7 +253,7 @@ export function ProductsDataTable({
           `/api/product-attributes/${attributeFilter}/terms?page=1&pageSize=1000`,
           {
             headers: {
-              "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+              "x-internal-secret": process.env.INTERNAL_API_SECRET!,
             },
             signal: controller.signal,
           }
@@ -785,7 +785,11 @@ export function ProductsDataTable({
             value={attributeFilter || "all"}
             onValueChange={(v) => {
               startTransition(() => {
-                setAttributeFilter(v === "all" ? "" : v);
+               const next = v === "all" ? "" : v;
+               setAttributeFilter(next);
+               // Immediately reset terms when attribute changes so the terms select updates
+               setTermOptions([]);
+               setAttributeTermFilter("");
                 onPageChange(1);
               });
             }}
