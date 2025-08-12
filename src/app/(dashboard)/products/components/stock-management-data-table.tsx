@@ -87,6 +87,7 @@ export function StockManagementDataTable() {
   // 3) Ancillary data (categories & attributes) — same endpoints/headers as products table
   const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [attributeOptions, setAttributeOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [termOptions, setTermOptions] = useState<Array<{ id: string; name: string }>>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -120,6 +121,37 @@ export function StockManagementDataTable() {
     };
   }, []);
 
+  // Load terms whenever attribute changes
+useEffect(() => {
+  if (!attributeFilter) {
+    setTermOptions([]);
+    setAttributeTermFilter("");
+    return;
+  }
+  const controller = new AbortController();
+  (async () => {
+    try {
+      const res = await fetch(
+        `/api/product-attributes/${attributeFilter}/terms?page=1&pageSize=1000`,
+        {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
+          signal: controller.signal,
+        }
+      );
+      if (!res.ok) throw new Error("Failed to load attribute terms");
+      const { terms } = await res.json();
+      setTermOptions(terms ?? []);
+      setAttributeTermFilter("");
+      startTransition(() => setPage(1));
+    } catch {
+      /* ignore */
+    }
+  })();
+  return () => controller.abort();
+}, [attributeFilter]);
+
   // 4) Data
   const { products, isLoading, totalPages, mutate } = useProducts({
     page,
@@ -127,6 +159,7 @@ export function StockManagementDataTable() {
     search: debouncedSearch,
     categoryId: categoryFilter || undefined,
     attributeId: attributeFilter || undefined,
+    attributeTermId: attributeTermFilter || undefined,
   });
 
   const { data: whData } = useSWR<{ warehouses: Warehouse[] }>("/api/warehouses", fetcher);
@@ -292,37 +325,47 @@ export function StockManagementDataTable() {
             <Edit className="h-4 w-4 text-gray-500" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-64">
-          {warehouses.map((w) => (
-            <div key={w.id} className="mb-4">
-              <div className="mb-1 font-medium">{w.name}</div>
-              {w.countries.map((c) => (
-                <div
-                  key={c}
-                  className="mb-1 flex items-center justify-between"
-                >
-                  <span className="text-sm">{c}</span>
-                  <Input
-                    type="number"
-                    min={0}
-                    className="w-20"
-                    value={editable[w.id]?.[c] ?? 0}
-                    onChange={(e) =>
-                      handleChange(w.id, c, parseInt(e.target.value, 10) || 0)
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-          ))}
-          <Button
-            className="w-full"
-            onClick={handleSave}
-            disabled={saving}
-          >
-            {saving ? "Saving…" : "Save"}
-          </Button>
-        </PopoverContent>
+         <PopoverContent className="w-64">
+   {/* Wrap inputs in a form so Enter submits/saves */}
+   <form
+     onSubmit={(e) => {
+       e.preventDefault();
+       if (!saving) {
+         void handleSave();
+       }
+     }}
+   >
+     {warehouses.map((w) => (
+       <div key={w.id} className="mb-4">
+         <div className="mb-1 font-medium">{w.name}</div>
+         {w.countries.map((c) => (
+           <div
+             key={c}
+             className="mb-1 flex items-center justify-between"
+           >
+             <span className="text-sm">{c}</span>
+             <Input
+               type="number"
+               min={0}
+               className="w-20"
+               value={editable[w.id]?.[c] ?? 0}
+               onChange={(e) =>
+                 handleChange(
+                   w.id,
+                   c,
+                   parseInt(e.target.value, 10) || 0
+                 )
+               }
+             />
+           </div>
+         ))}
+       </div>
+     ))}
+     <Button className="w-full" type="submit" disabled={saving}>
+       {saving ? "Saving…" : "Save"}
+     </Button>
+   </form>
+ </PopoverContent>
       </Popover>
     );
   }
@@ -388,6 +431,39 @@ export function StockManagementDataTable() {
                 {a.name}
               </SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+
+                {/* Attribute Term filter (enabled only when an attribute is selected) */}
+        <Select
+          value={attributeTermFilter || "all"}
+          onValueChange={(v) => {
+            startTransition(() => {
+              setAttributeTermFilter(v === "all" ? "" : v);
+              setPage(1);
+            });
+          }}
+          disabled={!attributeFilter}
+        >
+          <SelectTrigger className="w-full sm:w-[200px]">
+            <SelectValue
+              placeholder={
+                attributeFilter ? "Filter by term" : "Select attribute first"
+              }
+            />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Terms</SelectItem>
+            {termOptions.map((t) => (
+              <SelectItem key={t.id} value={t.id}>
+                {t.name}
+              </SelectItem>
+            ))}
+            {!termOptions.length && attributeFilter && (
+              <SelectItem value="__no_terms__" disabled>
+                No terms found
+              </SelectItem>
+            )}
           </SelectContent>
         </Select>
 

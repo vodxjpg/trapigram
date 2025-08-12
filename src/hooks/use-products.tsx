@@ -10,6 +10,7 @@ interface UseProductsProps {
    status?: "published" | "draft"
    categoryId?: string
    attributeId?: string
+   attributeTermId?: string
  orderBy?: "createdAt" | "updatedAt" | "title" | "sku"
  orderDir?: "asc" | "desc"
  }
@@ -31,6 +32,7 @@ export function useProducts({
     status,
     categoryId,
     attributeId,
+    attributeTermId,
     orderBy,
     orderDir,
   }: UseProductsProps) {
@@ -41,6 +43,7 @@ export function useProducts({
      ...(status      ? { status }      : {}),
      ...(categoryId  ? { categoryId }  : {}),
      ...(attributeId ? { attributeId } : {}),
+     ...(attributeTermId ? { attributeTermId } : {}),
        ...(orderBy     ? { orderBy }     : {}),
   ...(orderDir    ? { orderDir }    : {}),
    })
