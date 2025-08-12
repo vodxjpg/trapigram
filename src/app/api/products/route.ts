@@ -306,50 +306,56 @@ export async function GET(req: NextRequest) {
     });
 
     /* -------- STEP 5 – total count ------------------------------ */
-let total = 0;
-
-if (attributeTermId) {
-  // Count over the JOIN, distinct product IDs (mirrors the ID JOIN branch)
-  const totalJoin = await db
-    .selectFrom("productAttributeValues as pav")
-    .innerJoin("products as p", "p.id", "pav.productId")
-    .select(db.fn.count<number>("distinct p.id").as("total"))
-    .where("p.organizationId", "=", organizationId)
-    .where("p.tenantId", "=", tenantId)
-    .where("pav.termId", "=", attributeTermId)
-    .$if(Boolean(search), q => q.where("p.title", "ilike", `%${search}%`))
-    .$if(Boolean(categoryId), q =>
-      q.where(
-        "p.id",
-        "in",
-        db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
-      )
-    )
-    .$if(!!status, q => q.where("p.status", "=", status!))
-    .executeTakeFirst();
-
-  total = Number(totalJoin?.total ?? 0);
-} else {
-  // Simple count on products (no term filter)
-  const totalPlain = await db
-    .selectFrom("products")
-    .select(db.fn.count<number>("id").as("total"))
-    .where("organizationId", "=", organizationId)
-    .where("tenantId", "=", tenantId)
-    .$if(Boolean(search), q => q.where("title", "ilike", `%${search}%`))
-    .$if(Boolean(categoryId), q =>
-      q.where(
-        "id",
-        "in",
-        db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
-      )
-    )
-    .$if(!!status, q => q.where("status", "=", status!))
-    .executeTakeFirst();
-
-  total = Number(totalPlain?.total ?? 0);
-}
-
+    let total = 0;
+    
+    if (attributeTermId) {
+      // Count DISTINCT product IDs using a subquery (mirrors the ID JOIN branch)
+      const sub = db
+        .selectFrom("productAttributeValues as pav")
+        .innerJoin("products as p", "p.id", "pav.productId")
+        .select("p.id")
+        .where("p.organizationId", "=", organizationId)
+        .where("p.tenantId", "=", tenantId)
+        .where("pav.termId", "=", attributeTermId)
+        .$if(Boolean(search), q => q.where("p.title", "ilike", `%${search}%`))
+        .$if(Boolean(categoryId), q =>
+          q.where(
+            "p.id",
+            "in",
+            db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+          )
+        )
+        .$if(!!status, q => q.where("p.status", "=", status!))
+        .groupBy("p.id")
+        .as("t");
+    
+      const totalJoin = await db
+        .selectFrom(sub)
+        .select(db.fn.countAll<number>().as("total"))
+        .executeTakeFirst();
+    
+      total = Number(totalJoin?.total ?? 0);
+    } else {
+      // Simple count on products (no term filter)
+      const totalPlain = await db
+        .selectFrom("products")
+        .select(db.fn.countAll<number>().as("total"))
+        .where("organizationId", "=", organizationId)
+        .where("tenantId", "=", tenantId)
+        .$if(Boolean(search), q => q.where("title", "ilike", `%${search}%`))
+        .$if(Boolean(categoryId), q =>
+          q.where(
+            "id",
+            "in",
+            db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+          )
+        )
+        .$if(!!status, q => q.where("status", "=", status!))
+        .executeTakeFirst();
+    
+      total = Number(totalPlain?.total ?? 0);
+    }
+    
       
       
 
