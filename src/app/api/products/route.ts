@@ -104,6 +104,7 @@ export async function GET(req: NextRequest) {
         ? rawStatus
         : undefined;
     const attributeId = searchParams.get("attributeId") || "";
+    const attributeTermId = searchParams.get("attributeTermId") || "";
 
     /* -------- STEP 1 – product IDs with proper limit/offset ----- */
     let idQuery = db
@@ -124,15 +125,26 @@ export async function GET(req: NextRequest) {
       );
     if (status)
       idQuery = idQuery.where("status", "=", status);  // status is now the right type
-    if (attributeId)
-      idQuery = idQuery.where(
-        "id",
-        "in",
-        db
-          .selectFrom("productAttributeValues")
-          .select("productId")
-          .where("attributeId", "=", attributeId),
-      );
+   // Attribute filters:
+   // - when a term is chosen, filter by that term (and optionally by attribute for safety)
+   // - otherwise, filter by the attribute (any term under it)
+   if (attributeTermId) {
+     idQuery = idQuery.where(
+       "id",
+       "in",
+       db
+         .selectFrom("productAttributeValues")
+         .select("productId")
+         .where("termId", "=", attributeTermId)
+         .$if(Boolean(attributeId), (q) => q.where("attributeId", "=", attributeId)),
+     );
+   } else if (attributeId) {
+     idQuery = idQuery.where(
+       "id",
+       "in",
+       db.selectFrom("productAttributeValues").select("productId").where("attributeId", "=", attributeId),
+     );
+   }
 
         const idRows = await idQuery
           .orderBy(orderBy as any, orderDir)   // ↞ cast is safe after whitelist
@@ -301,17 +313,25 @@ export async function GET(req: NextRequest) {
         ),
       )
       .$if(!!status, q => q.where("status", "=", status!))   // `status!` is safe here
-
-      .$if(Boolean(attributeId), q =>
-        q.where(
-          "id",
-          "in",
-          db
-            .selectFrom("productAttributeValues")
-            .select("productId")
-            .where("attributeId", "=", attributeId),
-        ),
-      )
+         // total count must mirror ID query logic
+         .$if(Boolean(attributeTermId), q =>
+           q.where(
+             "id",
+             "in",
+             db
+               .selectFrom("productAttributeValues")
+               .select("productId")
+               .where("termId", "=", attributeTermId)
+               .$if(Boolean(attributeId), (qq) => qq.where("attributeId", "=", attributeId)),
+           )
+         )
+         .$if(Boolean(attributeId) && !Boolean(attributeTermId), q =>
+           q.where(
+             "id",
+             "in",
+             db.selectFrom("productAttributeValues").select("productId").where("attributeId", "=", attributeId),
+           )
+         )
       .executeTakeFirst();
     const total = Number(totalRes?.total || 0);
 
