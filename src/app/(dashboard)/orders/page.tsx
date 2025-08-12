@@ -302,11 +302,19 @@ export default function OrdersPage() {
         }),
       });
       if (!res.ok) throw new Error("Failed to save tracking number");
-      setOrders((prev) =>
-        prev.map((o) =>
-          o.id === selectedOrderId ? { ...o, trackingNumber: draftTracking } : o
-        )
-      );
+       // Reflect API behavior locally: tracking, company, and status → completed
+       setOrders((prev) =>
+         prev.map((o) =>
+           o.id === selectedOrderId
+             ? {
+                 ...o,
+                 trackingNumber: draftTracking,
+                 shippingCompany: company.name,
+                 status: "completed",
+               }
+             : o
+         )
+       );
       toast.success("Tracking number saved");
       setDialogOpen(false);
     } catch (err) {
