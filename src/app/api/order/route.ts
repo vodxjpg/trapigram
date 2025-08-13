@@ -90,6 +90,13 @@ export async function GET(req: NextRequest) {
   const filterStatus = searchParams.get("status");
   const filterReferral = searchParams.get("referralAwarded");
 
+  const limitParam = searchParams.get("limit");
+  const limit =
+    limitParam != null
+      ? Math.max(1, Math.min(100, Number(limitParam) || 10))
+      : null;
+
+
   try {
     /* 1) Single order ------------------------------------------------- */
     if (filterOrderKey) {
@@ -119,19 +126,25 @@ export async function GET(req: NextRequest) {
       if (filterStatus) {
         const statuses = filterStatus.split(",");
         if (statuses.length > 1) {
-          clauses.push(`o.status IN (${statuses.map((_, i) => `$${vals.length + i + 1}`).join(",")})`);
+          clauses.push(
+            `o.status IN (${statuses
+              .map((_, i) => `$${vals.length + i + 1}`)
+              .join(",")})`
+          );
           vals.push(...statuses);
         } else {
           clauses.push(`o.status = $${vals.length + 1}`);
           vals.push(filterStatus);
         }
-  }
-      /* ─── referralAwarded filter – NULL = not-awarded ─── */
-      if (filterReferral === "false") {
-        clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
       }
-      if (filterReferral === "true") {
-        clauses.push(`o."referralAwarded" = TRUE`);
+      if (filterReferral === "false") clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
+      if (filterReferral === "true")  clauses.push(`o."referralAwarded" = TRUE`);
+
+      // NEW: optional LIMIT
+      let limitClause = "";
+      if (limit) {
+        limitClause = ` LIMIT $${vals.length + 1}`;
+        vals.push(limit);
       }
 
       const sql = `
@@ -140,6 +153,7 @@ export async function GET(req: NextRequest) {
           JOIN clients c ON c.id = o."clientId"
          WHERE ${clauses.join(" AND ")}
          ORDER BY o."dateCreated" DESC
+         ${limitClause}
       `;
       const r = await pool.query(sql, vals);
       const orders = r.rows.map(o => ({
@@ -153,12 +167,12 @@ export async function GET(req: NextRequest) {
         lastName: o.lastName,
         username: o.username,
         email: o.email,
+        // NEW:
+        shippingCompany: o.shippingService ?? null,
         referralAwarded: !!o.referralAwarded,
       }));
-      const projected = fields
-  ? orders.map(o => pickFields(o, fields))
-  : orders;
-return NextResponse.json(projected, { status: 200 });
+      const projected = fields ? orders.map(o => pickFields(o, fields)) : orders;
+      return NextResponse.json(projected, { status: 200 });
     }
 
     /* 3) Full list ---------------------------------------------------- */
