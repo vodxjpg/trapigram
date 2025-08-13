@@ -68,13 +68,13 @@ export default function ClientDetailView({ clientId }: Props) {
 
   useEffect(() => {
     if (!canView) return;
-
+  
     (async () => {
       try {
         const [clientRes, ordersRes] = await Promise.all([
           fetch(`/api/clients/${clientId}`, {
             headers: {
-              "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+              "x-internal-secret": process.env.INTERNAL_API_SECRET || "",
             },
           }),
           fetch(
@@ -83,9 +83,12 @@ export default function ClientDetailView({ clientId }: Props) {
         ]);
         if (!clientRes.ok) throw new Error("Failed to fetch client");
         if (!ordersRes.ok) throw new Error("Failed to fetch recent orders");
-
-        setClient(await clientRes.json());
-        setOrders(await ordersRes.json());
+  
+        const clientJson = await clientRes.json();
+        setClient(clientJson.client ?? clientJson);   // ← THE FIX
+  
+        const ordersJson = await ordersRes.json();
+        setOrders(ordersJson);
       } catch (err: any) {
         toast.error(err.message || "Error loading client");
         router.replace("/clients");
@@ -94,6 +97,7 @@ export default function ClientDetailView({ clientId }: Props) {
       }
     })();
   }, [canView, clientId, router]);
+  
 
   if (viewLoading || !canView) return null;
   if (loading) return <p className="p-6">Loading…</p>;
