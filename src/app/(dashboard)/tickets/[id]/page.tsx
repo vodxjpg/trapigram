@@ -45,6 +45,8 @@ type TicketHeader = {
   status: "open" | "in-progress" | "closed";
   userId: string;
   firstName: string;
+  lastName?: string | null;
+  username?: string | null;
   createdAt: Date;
 };
 
@@ -353,6 +355,12 @@ export default function TicketDetail() {
   if (loading)          return <p className="p-6">Loading…</p>;
   if (!header)          return <p className="p-6">Ticket not found.</p>;
 
+  // —— Display helpers for client identity ————————————————————————
+  const displayName = [header.firstName, header.lastName].filter(Boolean).join(" ").trim();
+  const hasUsername = Boolean(header.username && header.username.trim());
+  const clientInitial = (displayName || header.username || "U").slice(0, 1).toUpperCase();
+
+
   /* ---------------- JSX -------------------------------------------------- */
   return (
     <div className="container mx-auto py-10 px-3">
@@ -366,7 +374,7 @@ export default function TicketDetail() {
 
       <Card>
         {/* -------- header ------------------------------------------------- */}
-        <CardHeader className="flex items-start justify-between sm:flex-wrap">
+        <CardHeader className="flex items-start justify-between sm:flex-wrap gap-3">
           <div>
             <CardTitle className="text-lg font-semibold">
               {header.title}{" "}
@@ -376,12 +384,23 @@ export default function TicketDetail() {
                 </Badge>
               ))}
             </CardTitle>
-            <CardDescription>
-              Created on {fmtLocal(header.createdAt)} by {header.firstName}. ID:{" "}
-              <Link href={`/clients/${header.clientId}/info/`}>
-                {header.clientId}
-              </Link>
-            </CardDescription>
+            <CardDescription className="flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-1 sm:gap-2">
+  <span className="shrink-0">Created on {fmtLocal(header.createdAt)} by</span>
+  {/* Big, easy tap target that includes both name and username */}
+  <Link
+    href={`/clients/${header.clientId}/info/`}
+    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-w-full"
+  >
+    <span className="font-medium truncate max-w-[70vw] sm:max-w-[320px]">
+      {displayName || (hasUsername ? `@${header.username}` : "Unknown user")}
+    </span>
+    {hasUsername && displayName && (
+      <span className="text-muted-foreground truncate max-w-[40vw] sm:max-w-[200px]">
+        @{header.username}
+      </span>
+    )}
+  </Link>
+</CardDescription>
           </div>
 
           <div className="flex items-center gap-4 sm:mt-2">
@@ -474,9 +493,9 @@ export default function TicketDetail() {
                   className={`flex gap-3 max-w-[80%] ${message.isInternal ? "flex-row-reverse" : "flex-row"}`}
                 >
                   <Avatar className="mt-1">
-                    <AvatarFallback>
-                      {message.isInternal ? "A" : header.firstName.charAt(0).toUpperCase()}
-                    </AvatarFallback>
+                                <AvatarFallback>
+                {message.isInternal ? "A" : clientInitial}
+              </AvatarFallback>
                   </Avatar>
                   <div>
                     <div
