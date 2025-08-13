@@ -122,6 +122,8 @@ export default function DashboardPage() {
   const [totalActive, setTotalActive] = React.useState<number | null>(null);
   const [orderList, setOrderList] = React.useState<number | null>(null);
   const [growthRate, setGrowthRate] = React.useState<number | null>(null);
+  const [clientGrowth, setClientGrowth] = React.useState<number | null>(null);
+  const [activeGrowth, setActiveGrowth] = React.useState<number | null>(null);
   const [chartData, setChartData] = React.useState<
     {
       date: string;
@@ -165,6 +167,8 @@ export default function DashboardPage() {
           orderList,
           chartData,
           growthRate,
+          clientGrowth,
+          activeGrowth,
         } = await resp.json();
         console.log(chartData);
         setTotalOrders(orderAmount);
@@ -174,6 +178,8 @@ export default function DashboardPage() {
         setOrderList(orderList);
         setChartData(chartData);
         setGrowthRate(growthRate);
+        setClientGrowth(clientGrowth);
+        setActiveGrowth(activeGrowth);
       } catch (error) {
         console.error("Failed to fetch dashboard:", error);
       }
@@ -409,7 +415,7 @@ export default function DashboardPage() {
                   <Badge variant="outline">
                     <IconTrendingUp />
                     {growthRate !== null
-                      ? `+${growthRate.toFixed(2)}%`
+                      ? `${growthRate.toFixed(2)}%`
                       : "Loading..."}
                   </Badge>
                 </CardAction>
@@ -423,8 +429,10 @@ export default function DashboardPage() {
                 </CardTitle>
                 <CardAction>
                   <Badge variant="outline">
-                    <IconTrendingDown />
-                    -20%
+                    <IconTrendingUp />
+                    {clientGrowth !== null
+                      ? `${clientGrowth.toFixed(2)}%`
+                      : "Loading..."}
                   </Badge>
                 </CardAction>
               </CardHeader>
@@ -438,7 +446,9 @@ export default function DashboardPage() {
                 <CardAction>
                   <Badge variant="outline">
                     <IconTrendingUp />
-                    +12.5%
+                    {activeGrowth !== null
+                      ? `${activeGrowth.toFixed(2)}%`
+                      : "Loading..."}
                   </Badge>
                 </CardAction>
               </CardHeader>

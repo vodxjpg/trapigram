@@ -80,20 +80,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
 
         if (typeof variationId === "string") {
-            const warehouseQuery = `SELECT "warehouseId" FROM "inventoryCount" WHERE id='${id}'`
-            const warehouseResult = await pool.query(warehouseQuery)
-            const warehouseId = warehouseResult.rows[0].warehouseId
-
-            const updateStockQuery = `
-                UPDATE "warehouseStock"
-                SET quantity = ${countedQuantity}, "updatedAt" = NOW()
-                WHERE "warehouseId" = '${warehouseId}'
-                AND "productId" = '${productId}'
-                AND country = '${country}'
-                AND "variationId" = '${variationId}'
-                RETURNING *`
-            await pool.query(updateStockQuery)
-
             const updateCountQuery = `
                 UPDATE "inventoryCountItems"
                 SET ${setClauses.join(", ")}
@@ -106,19 +92,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             const updateCountResult = await pool.query(updateCountQuery)
             result = updateCountResult.rows[0]
         } else {
-            const warehouseQuery = `SELECT "warehouseId" FROM "inventoryCount" WHERE id='${id}'`
-            const warehouseResult = await pool.query(warehouseQuery)
-            const warehouseId = warehouseResult.rows[0].warehouseId
-
-            const updateStockQuery = `
-                UPDATE "warehouseStock"
-                SET quantity = ${countedQuantity}, "updatedAt" = NOW()
-                WHERE "warehouseId" = '${warehouseId}'
-                AND "productId" = '${productId}'
-                AND country = '${country}'
-                RETURNING *`
-            await pool.query(updateStockQuery)
-
             const updateCountQuery = `
                 UPDATE "inventoryCountItems"
                 SET ${setClauses.join(", ")}
@@ -138,12 +111,61 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         if (checkInventory === 0) {
             const completeInventoryQuery = `UPDATE "inventoryCount" SET "isCompleted" = TRUE WHERE id = '${id}'`
             await pool.query(completeInventoryQuery)
+
+            const checkInventoryQuery = `SELECT * FROM "inventoryCountItems" WHERE "inventoryCountId" = '${id}'`
+            const checkInventoryResult = await pool.query(checkInventoryQuery)
+            const checkInventory = checkInventoryResult.rows
+
+            const warehouseQuery = `SELECT "warehouseId" FROM "inventoryCount" WHERE id='${id}'`
+            const warehouseResult = await pool.query(warehouseQuery)
+            const warehouseId = warehouseResult.rows[0].warehouseId
+
+            for (const product of checkInventory) {
+                if (typeof product.discrepancyReason === "string") {
+                    if (typeof product.variationId === "string") {
+                        const updateStockQuery = `
+                            UPDATE "warehouseStock"
+                            SET quantity = ${product.countedQuantity}, "updatedAt" = NOW()
+                            WHERE "warehouseId" = '${warehouseId}'
+                            AND "productId" = '${product.productId}'
+                            AND country = '${product.country}'
+                            AND "variationId" = '${product.variationId}'
+                            RETURNING *`
+                        await pool.query(updateStockQuery)
+                    } else {
+                        const updateStockQuery = `
+                            UPDATE "warehouseStock"
+                            SET quantity = ${product.countedQuantity}, "updatedAt" = NOW()
+                            WHERE "warehouseId" = '${warehouseId}'
+                            AND "productId" = '${product.productId}'
+                            AND country = '${product.country}'
+                            RETURNING *`
+                        await pool.query(updateStockQuery)
+                    }
+                }
+            }
         }
+        return NextResponse.json(result, { status: 200 });
+    } catch (error) {
+        return NextResponse.json({ error: String(error) }, { status: 500 });
+    }
+}
+
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    const { organizationId } = ctx;
+    try {
+        const { id } = await params;
+        const deleteInventoryQuery = `DELETE FROM "inventoryCount" WHERE id='${id}' AND "organizationId"='${organizationId}' RETURNING *`
+        const deleteInventoryResult = await pool.query(deleteInventoryQuery)
+        const result = deleteInventoryResult.rows[0]
+
+        const deleteInventoryCountQuery = `DELETE FROM "inventoryCountItems" WHERE "inventoryCountId"='${id}'`
+        await pool.query(deleteInventoryCountQuery)
 
         return NextResponse.json(result, { status: 200 });
     } catch (error) {
         return NextResponse.json({ error: String(error) }, { status: 500 });
     }
-
-
 }

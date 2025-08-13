@@ -17,6 +17,7 @@ import {
   FileDown,
   ExternalLink,
   MoreHorizontal,
+  Trash2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -26,13 +27,24 @@ import {
 } from "@/components/ui/dropdown-menu";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type InventoryCountRow = {
   id: string | number;
   reference: string;
   warehouse: string;
   countType: string;
-  startedOn: string; // ISO or human-readable
+  startedOn: string;
+  isCompleted: boolean; // ISO or human-readable
 };
 
 export default function Component() {
@@ -47,6 +59,13 @@ export default function Component() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // delete dialog state
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [rowToDelete, setRowToDelete] = useState<InventoryCountRow | null>(
+    null
+  );
+  const [deleting, setDeleting] = useState(false);
+
   // Fetch list from /api/inventory and normalize to table shape
   useEffect(() => {
     let isMounted = true;
@@ -59,6 +78,7 @@ export default function Component() {
           throw new Error(`Failed to fetch inventories: ${res.status}`);
         }
         const data = await res.json();
+        console.log(data);
 
         const list: any[] = Array.isArray(data)
           ? data
@@ -81,7 +101,15 @@ export default function Component() {
           const startedOn = startedRaw
             ? new Date(startedRaw).toLocaleDateString()
             : "—";
-          return { id, reference, warehouse, countType, startedOn };
+          const isCompleted = Boolean(inv?.isCompleted);
+          return {
+            id,
+            reference,
+            warehouse,
+            countType,
+            startedOn,
+            isCompleted,
+          };
         });
 
         if (isMounted) setInventoryCounts(rows);
@@ -121,6 +149,7 @@ export default function Component() {
 
   const handleExportExcel = async (row: InventoryCountRow) => {
     try {
+      if (!row.isCompleted) return; // guard
       const res = await fetch(`/api/inventory/${row.id}/export-xlsx`, {
         method: "GET",
       });
@@ -141,9 +170,10 @@ export default function Component() {
     }
   };
 
-  // NEW: export to PDF via /api/inventory/[id]/export-pdf/
+  // export to PDF via /api/inventory/[id]/export-pdf/
   const handleExportPDF = async (row: InventoryCountRow) => {
     try {
+      if (!row.isCompleted) return; // guard
       const res = await fetch(`/api/inventory/${row.id}/export-pdf/`, {
         method: "GET",
       });
@@ -162,6 +192,48 @@ export default function Component() {
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to export PDF");
     }
+  };
+
+  // DELETE /api/inventory/[ID] (triggered from AlertDialog)
+  const handleDelete = async (row: InventoryCountRow) => {
+    try {
+      setDeleting(true);
+      const res = await fetch(`/api/inventory/${row.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(
+          msg || `Failed to delete inventory ${row.id} (status ${res.status})`
+        );
+      }
+      // remove from UI
+      setInventoryCounts((prev) => prev.filter((r) => r.id !== row.id));
+      setDeleteOpen(false);
+      setRowToDelete(null);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to delete inventory");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // --- helper to render status badge ---
+  const renderStatusBadge = (completed: boolean) => {
+    if (completed) {
+      return (
+        <span className="inline-flex items-center gap-2 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">
+          <span className="h-2 w-2 rounded-full bg-green-500" aria-hidden />
+          Completed
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-2 rounded-full border border-yellow-200 bg-yellow-50 px-2 py-0.5 text-xs font-medium text-yellow-700">
+        <span className="h-2 w-2 rounded-full bg-yellow-500" aria-hidden />
+        Pending
+      </span>
+    );
   };
 
   return (
@@ -202,6 +274,7 @@ export default function Component() {
                   <TableHead>Warehouse</TableHead>
                   <TableHead>Count Type</TableHead>
                   <TableHead>Started On</TableHead>
+                  <TableHead>Status</TableHead>
                   {/* NEW column */}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -209,14 +282,14 @@ export default function Component() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8">
+                    <TableCell colSpan={6} className="text-center py-8">
                       Loading…
                     </TableCell>
                   </TableRow>
                 ) : error ? (
                   <TableRow>
                     <TableCell
-                      colSpan={5}
+                      colSpan={6}
                       className="text-center py-8 text-red-600"
                     >
                       {error}
@@ -231,6 +304,9 @@ export default function Component() {
                       <TableCell>{item.warehouse}</TableCell>
                       <TableCell>{item.countType}</TableCell>
                       <TableCell>{item.startedOn}</TableCell>
+                      <TableCell>
+                        {renderStatusBadge(item.isCompleted)}
+                      </TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -249,18 +325,43 @@ export default function Component() {
                               </Link>
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              onClick={() => handleExportExcel(item)}
-                              className="flex items-center gap-2"
+                              onClick={() =>
+                                item.isCompleted && handleExportExcel(item)
+                              }
+                              className={`flex items-center gap-2 ${
+                                !item.isCompleted
+                                  ? "cursor-not-allowed opacity-60"
+                                  : ""
+                              }`}
+                              disabled={!item.isCompleted}
                             >
                               <FileDown className="h-4 w-4" />
                               Export to Excel
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              onClick={() => handleExportPDF(item)}
-                              className="flex items-center gap-2"
+                              onClick={() =>
+                                item.isCompleted && handleExportPDF(item)
+                              }
+                              className={`flex items-center gap-2 ${
+                                !item.isCompleted
+                                  ? "cursor-not-allowed opacity-60"
+                                  : ""
+                              }`}
+                              disabled={!item.isCompleted}
                             >
                               <FileDown className="h-4 w-4" />
                               Export to PDF
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setRowToDelete(item);
+                                setDeleteOpen(true);
+                              }}
+                              className="flex items-center gap-2 text-red-600 focus:text-red-700"
+                              disabled={item.isCompleted}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -270,7 +371,7 @@ export default function Component() {
                 ) : (
                   <TableRow>
                     <TableCell
-                      colSpan={5}
+                      colSpan={6}
                       className="text-center py-8 text-muted-foreground"
                     >
                       No inventory counts found
@@ -330,6 +431,32 @@ export default function Component() {
           )}
         </CardContent>
       </Card>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete inventory</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete{" "}
+              <span className="font-medium">
+                {rowToDelete?.reference ?? "this inventory"}
+              </span>
+              ? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => rowToDelete && handleDelete(rowToDelete)}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={deleting}
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

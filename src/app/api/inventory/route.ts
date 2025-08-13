@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
 
     try {
 
-        const inventoryCountQuery = `SELECT ic.id, ic.reference, ic."countType", ic."createdAt" as "startedOn", wh.name FROM "inventoryCount" ic 
+        const inventoryCountQuery = `SELECT ic.id, ic.reference, ic."countType", ic."createdAt" as "startedOn", ic."isCompleted", wh.name FROM "inventoryCount" ic 
         JOIN warehouse wh ON ic."warehouseId" = wh.id 
         WHERE ic."organizationId" = '${organizationId}'
         ORDER BY ic."createdAt" DESC`

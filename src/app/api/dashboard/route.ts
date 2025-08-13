@@ -62,13 +62,17 @@ export async function GET(req: NextRequest) {
         `;
         const values = [organizationId, from, to];
 
+        const fromDate = new Date(from)
+        const toDate = new Date(to)
+        const { current, previous } = splitIntoCurrentAndPrevious(fromDate, toDate);
+        const growthValues = [organizationId, previous.from, previous.to]
+
         const orderResult = await pool.query(orderQuery, values);
         const orders = orderResult.rows
         const orderAmount = orders.length
 
         const revenueQuery = `SELECT "${currency}total" AS total, "${currency}discount" AS discount, "${currency}shipping" AS shipping, "${currency}cost" AS cost FROM "orderRevenue"
         WHERE "organizationId" = '${organizationId}' AND "createdAt"::date BETWEEN '${from}' AND '${to}'`;
-        console.log(revenueQuery)
 
         const revenueResult = await pool.query(revenueQuery);
         const revenues = revenueResult.rows
@@ -91,12 +95,28 @@ export async function GET(req: NextRequest) {
         const clients = clientResult.rows
         const clientAmount = clients.length
 
+        const clientGrowthQuery = `SELECT * FROM "clients"
+        WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz`;
+
+        const clientGrowthResult = await pool.query(clientGrowthQuery, growthValues);
+        const clientsGrowth = clientGrowthResult.rows.length
+
+        const clientGrowth = clientsGrowth > 0 ? ((clientAmount - clientsGrowth) / clientsGrowth) * 100 : 100
+
         const activeQuery = `SELECT * FROM "clients"
         WHERE "organizationId" = $1 AND "updatedAt" BETWEEN $2::timestamptz AND $3::timestamptz`;
 
         const activeResult = await pool.query(activeQuery, values);
         const actives = activeResult.rows
         const activeAmount = actives.length
+
+        const activeGrowthQuery = `SELECT * FROM "clients"
+        WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz`;
+
+        const activeGrowthResult = await pool.query(activeGrowthQuery, growthValues);
+        const activesGrowth = activeGrowthResult.rows.length
+
+        const activeGrowth = activesGrowth > 0 ? ((activeAmount - activesGrowth) / activesGrowth) * 100 : 100
 
         const orderListQuery = `SELECT o.*, c."firstName", c."lastName", c."username", c.email
         FROM   orders o
@@ -136,7 +156,6 @@ export async function GET(req: NextRequest) {
 
         const chartResult = await pool.query(chartQuery, values);
         const chart = chartResult.rows
-        console.log(chart)
 
         const byDay = chart.reduce((acc, o) => {
             const day = new Date(o.date).toISOString().split('T')[0];
@@ -154,8 +173,7 @@ export async function GET(req: NextRequest) {
             return acc;
         }, {});
 
-        const fromDate = new Date(from)
-        const toDate = new Date(to)
+
 
         const days = eachDay(fromDate, toDate)
 
@@ -168,12 +186,8 @@ export async function GET(req: NextRequest) {
             };
         });
 
-        const { current, previous } = splitIntoCurrentAndPrevious(fromDate, toDate);
-
         const revenueGrowthQuery = `SELECT * FROM "orderRevenue"
         WHERE "organizationId" = $1 AND "createdAt" BETWEEN $2::timestamptz AND $3::timestamptz`;
-
-        const growthValues = [organizationId, previous.from, previous.to]
 
         const revenueGrowthResult = await pool.query(revenueGrowthQuery, growthValues);
         const revenuesGrowth = revenueGrowthResult.rows
@@ -193,7 +207,7 @@ export async function GET(req: NextRequest) {
             ? ((revenue - revenueGrowth) / revenueGrowth) * 100
             : 100;
 
-        return NextResponse.json({ orderAmount, revenue, clientAmount, activeAmount, orderList: orderSorted, chartData, growthRate }, { status: 200 });
+        return NextResponse.json({ orderAmount, revenue, clientAmount, clientGrowth, activeAmount, activeGrowth, orderList: orderSorted, chartData, growthRate }, { status: 200 });
     } catch (err) {
         console.error("Error fetching revenue:", err);
         return NextResponse.json(
