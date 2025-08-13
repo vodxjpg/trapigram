@@ -37,7 +37,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-
+import { PageHeader } from "@/components/page-header";
 type InventoryCountRow = {
   id: string | number;
   reference: string;
@@ -241,14 +241,24 @@ export default function Component() {
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Inventory Counts</h1>
 
-        {/* NEW: Link to /inventory/new */}
+       
+      </div>
+
+      <PageHeader
+              title="Inventory count"
+              description="Count your inventory and get a detailed report"
+              actions={
+                <div className="flex items-center gap-2">
+                   {/* NEW: Link to /inventory/new */}
         <Button asChild className="flex items-center gap-2">
           <Link href="/inventory/new">
             <Plus className="h-4 w-4" />
             Add New Count
           </Link>
         </Button>
-      </div>
+                </div>
+              }
+            />
 
       <Card>
         <CardHeader>
