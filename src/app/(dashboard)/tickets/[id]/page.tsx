@@ -2,22 +2,22 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { useParams, useRouter }               from "next/navigation";
-import Link                                   from "next/link";
-import { ArrowLeft, Paperclip, Send, Tag }    from "lucide-react";
-import CreatableSelect                        from "react-select/creatable";
-import { toast }                              from "sonner";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft, Paperclip, Send, Tag } from "lucide-react";
+import CreatableSelect from "react-select/creatable";
+import { toast } from "sonner";
 
-import { authClient }                         from "@/lib/auth-client";
-import { useHasPermission }                   from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
-import { Badge }                              from "@/components/ui/badge";
-import { Button }                             from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card, CardContent, CardDescription, CardFooter,
   CardHeader, CardTitle
 } from "@/components/ui/card";
-import { Textarea }                           from "@/components/ui/textarea";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem,
   SelectTrigger, SelectValue
@@ -26,7 +26,7 @@ import {
   Dialog, DialogTrigger, DialogContent,
   DialogHeader, DialogTitle, DialogFooter, DialogClose
 } from "@/components/ui/dialog";
-import { Avatar, AvatarFallback }             from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader,
   AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
@@ -65,9 +65,9 @@ type TicketMessage = {
 const fmtLocal = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      })
+      dateStyle: "medium",
+      timeStyle: "short",
+    })
     : "—";
 
 /* -------------------------------------------------------------------------- */
@@ -76,33 +76,33 @@ const fmtLocal = (iso: string | null) =>
 
 export default function TicketDetail() {
   /* ---------------- params / routing ------------------------------------ */
-  const { id }  = useParams<{ id: string }>();
-  const router  = useRouter();
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   /* ---------------- state ------------------------------------------------ */
-  const [header,       setHeader]        = useState<TicketHeader | null>(null);
-  const [messages,     setMessages]      = useState<TicketMessage[]>([]);
-  const [loading,      setLoading]       = useState(true);
-  const [status,       setStatus]        = useState<TicketHeader["status"]>("open");
-  const [priority,     setPriority]      = useState<TicketHeader["priority"]>("medium");
-  const [newMessage,   setNewMessage]    = useState("");
-  const [attachments,  setAttachments]   = useState<File[]>([]);
-  const [tagsOptions,  setTagsOptions]   = useState<{value:string;label:string}[]>([]);
-  const [selectedTags, setSelectedTags]  = useState<typeof tagsOptions>([]);
+  const [header, setHeader] = useState<TicketHeader | null>(null);
+  const [messages, setMessages] = useState<TicketMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<TicketHeader["status"]>("open");
+  const [priority, setPriority] = useState<TicketHeader["priority"]>("medium");
+  const [newMessage, setNewMessage] = useState("");
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [tagsOptions, setTagsOptions] = useState<{ value: string; label: string }[]>([]);
+  const [selectedTags, setSelectedTags] = useState<typeof tagsOptions>([]);
   const [tagsDialogOpen, setTagsDialogOpen] = useState(false);
-  const [tags,         setTags]           = useState<{description:string}[]>([]);
+  const [tags, setTags] = useState<{ description: string }[]>([]);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
 
   // ── Permission hooks ─────────────────────────────────────────────────────
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
-  const { hasPermission: canViewRaw,   isLoading: viewLoading   } =
+  const organizationId = activeOrg?.id ?? null;
+  const { hasPermission: canViewRaw, isLoading: viewLoading } =
     useHasPermission(organizationId, { ticket: ["view"] });
   const { hasPermission: canUpdateRaw, isLoading: updateLoading } =
     useHasPermission(organizationId, { ticket: ["update"] });
 
-  const canView   = useMemo(() => !viewLoading   && canViewRaw,   [viewLoading,   canViewRaw]);
-  const canUpdate = useMemo(() => !updateLoading && canUpdateRaw,[updateLoading, canUpdateRaw]);
+  const canView = useMemo(() => !viewLoading && canViewRaw, [viewLoading, canViewRaw]);
+  const canUpdate = useMemo(() => !updateLoading && canUpdateRaw, [updateLoading, canUpdateRaw]);
 
   // ── Redirect if no view right ────────────────────────────────────────────
   useEffect(() => {
@@ -123,28 +123,28 @@ export default function TicketDetail() {
         ]);
         if (!tRes.ok) throw new Error();
         const { ticket, messages } = await tRes.json();
-        const { tagList, tags }    = await tagsRes.json();
+        const { tagList, tags } = await tagsRes.json();
 
         setHeader(ticket);
         setMessages(messages);
         setStatus(ticket.status);
         setPriority(ticket.priority);
 
-        setTagsOptions(tagList.map((t:any) => ({ value:t.description, label:t.description })));
+        setTagsOptions(tagList.map((t: any) => ({ value: t.description, label: t.description })));
         setTags(tags);
-        setSelectedTags(tags.map((t:any) => ({ value:t.description, label:t.description })));
+        setSelectedTags(tags.map((t: any) => ({ value: t.description, label: t.description })));
       } catch {
         // toast.error("Failed to load ticket or tags");
       } finally {
         setLoading(false);
       }
     })();
-    
+
   }, [id, canView]);
 
-   /* ────────────────────────── LIVE UPDATES (POLLING) ─────────────────────── */
-   /* ───────────────────────── real‑time via SSE ───────────────────────── */
-   useEffect(() => {
+  /* ────────────────────────── LIVE UPDATES (POLLING) ─────────────────────── */
+  /* ───────────────────────── real‑time via SSE ───────────────────────── */
+  useEffect(() => {
     if (!id || !canView) return;
 
     /* replace old SSE */
@@ -231,7 +231,7 @@ export default function TicketDetail() {
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
     if (!e.target.files) return;
-  
+
     /* ---------- allowed types & limits ---------- */
     const imgTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     const vidTypes = [
@@ -244,59 +244,59 @@ export default function TicketDetail() {
     ];
     const maxImg = 5 * 2 ** 20;      // 5 MB
     const maxVid = 150 * 2 ** 20;    // 150 MB
-  
+
     const accepted: File[] = [];
-  
+
     Array.from(e.target.files).forEach((file) => {
       const isImg = imgTypes.includes(file.type);
       const isVid = vidTypes.includes(file.type);
-  
+
       /* — Type guard — */
       if (!isImg && !isVid) {
         toast.warning(`“${file.name}” – unsupported file type`);
         return;
       }
-  
+
       /* — Size guard — */
       if ((isImg && file.size > maxImg) || (isVid && file.size > maxVid)) {
         const limitLabel = isImg ? "5 MB" : "150 MB";
         toast.warning(`“${file.name}” is too large (max ${limitLabel})`);
         return;
       }
-  
+
       accepted.push(file);
     });
-  
+
     setAttachments(accepted);
   };
-  
+
 
   /** upload one file and return {name, url, size} */
   const uploadFile = async (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
     const up = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!up.ok) {
-          let reason = "Upload failed";
-      
-          /* 400 with JSON from our route ----------------------------------- */
-          if (up.headers.get("content-type")?.includes("application/json")) {
-            try {
-              const { error } = await up.json();
-              reason = error || reason;
-            } catch {/* ignore */}
-      
-          /* 413 returned by the Vercel platform ----------------------------- */
-          } else if (up.status === 413) {
-            reason = "File too large for the platform (max ≈ 4 MB per request)";
-          }
-      
-          throw new Error(reason);
-        }
+    if (!up.ok) {
+      let reason = "Upload failed";
+
+      /* 400 with JSON from our route ----------------------------------- */
+      if (up.headers.get("content-type")?.includes("application/json")) {
+        try {
+          const { error } = await up.json();
+          reason = error || reason;
+        } catch {/* ignore */ }
+
+        /* 413 returned by the Vercel platform ----------------------------- */
+      } else if (up.status === 413) {
+        reason = "File too large for the platform (max ≈ 4 MB per request)";
+      }
+
+      throw new Error(reason);
+    }
     const { filePath } = await up.json();
     return { name: file.name, url: filePath, size: file.size };
   };
-  
+
   const handleSendMessage = async () => {
     if (!canUpdate) return;
     if (!newMessage.trim()) {
@@ -309,7 +309,7 @@ export default function TicketDetail() {
       if (attachments.length) {
         uploaded = await Promise.all(attachments.map(uploadFile));
       }
-  
+
       /* 2️⃣ post the message with the real URLs */
       const res = await fetch(`/api/tickets/${id}/messages`, {
         method: "POST",
@@ -323,19 +323,19 @@ export default function TicketDetail() {
         }),
       });
       if (!res.ok) throw new Error();
-      
+
       const created: TicketMessage = await res.json();
-      
+
       /* ── ⬇︎ insert ONLY if not already there (race‑safe) ─────────────── */
       setMessages(prev =>
         prev.some(m => m.id === created.id)
           ? prev
           : [
-              ...prev,
-              { ...created, createdAt: new Date(created.createdAt) }, // keep type parity
-            ]
+            ...prev,
+            { ...created, createdAt: new Date(created.createdAt) }, // keep type parity
+          ]
       );
-      
+
       setNewMessage("");
       setAttachments([]);
     } catch (err: unknown) {
@@ -344,16 +344,16 @@ export default function TicketDetail() {
         err instanceof Error && err.message
           ? err.message
           : "Failed to send message";
-    
+
       console.error(err);
       toast.error(msg);
     }
   };
-  
+
 
   /* ---------------- render guards --------------------------------------- */
-  if (loading)          return <p className="p-6">Loading…</p>;
-  if (!header)          return <p className="p-6">Ticket not found.</p>;
+  if (loading) return <p className="p-6">Loading…</p>;
+  if (!header) return <p className="p-6">Ticket not found.</p>;
 
   // —— Display helpers for client identity ————————————————————————
   const displayName = [header.firstName, header.lastName].filter(Boolean).join(" ").trim();
@@ -374,111 +374,124 @@ export default function TicketDetail() {
 
       <Card>
         {/* -------- header ------------------------------------------------- */}
-        <CardHeader className="flex items-start justify-between sm:flex-wrap gap-3">
-          <div>
-            <CardTitle className="text-lg font-semibold">
-              {header.title}{" "}
+        <CardHeader className="space-y-3">
+          {/* Row 1 — Title (single line) */}
+          <div className="flex items-start justify-between gap-3">
+            <CardTitle
+              className="text-lg font-semibold truncate whitespace-nowrap"
+              title={header.title}
+            >
+              {header.title}
+            </CardTitle>
+          </div>
+
+          {/* Row 2 — Created by + date (own line, underlined name/username) */}
+          <CardDescription className="flex flex-wrap items-center gap-2">
+            <span className="shrink-0">Created on {fmtLocal(header.createdAt)} by</span>
+            <Link
+              href={`/clients/${header.clientId}/info/`}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span className="font-medium truncate underline underline-offset-2 max-w-[70vw] sm:max-w-[320px]">
+                {displayName || (hasUsername ? `@${header.username}` : "Unknown user")}
+              </span>
+              {hasUsername && displayName && (
+                <span className="text-muted-foreground truncate underline underline-offset-2 max-w-[40vw] sm:max-w-[200px]">
+                  @{header.username}
+                </span>
+              )}
+            </Link>
+          </CardDescription>
+
+          {/* Row 3 — Tags (left) + Controls (right) */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            {/* tags */}
+            <div className="flex flex-wrap gap-2">
               {tags.map((t) => (
                 <Badge key={t.description} variant="outline">
                   {t.description}
                 </Badge>
               ))}
-            </CardTitle>
-            <CardDescription className="flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-1 sm:gap-2">
-  <span className="shrink-0">Created on {fmtLocal(header.createdAt)} by</span>
-  {/* Big, easy tap target that includes both name and username */}
-  <Link
-    href={`/clients/${header.clientId}/info/`}
-    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-w-full"
-  >
-    <span className="font-medium truncate max-w-[70vw] sm:max-w-[320px]">
-      {displayName || (hasUsername ? `@${header.username}` : "Unknown user")}
-    </span>
-    {hasUsername && displayName && (
-      <span className="text-muted-foreground truncate max-w-[40vw] sm:max-w-[200px]">
-        @{header.username}
-      </span>
-    )}
-  </Link>
-</CardDescription>
-          </div>
+            </div>
 
-          <div className="flex items-center gap-4 sm:mt-2">
-            {/* ---- TAGS dialog (disabled if !canUpdate) ------------------ */}
-            <Dialog
-              open={tagsDialogOpen}
-              onOpenChange={(open) => canUpdate && setTagsDialogOpen(open)}
-            >
-              <DialogTrigger asChild>
-                <Button variant="outline" size="icon" disabled={!canUpdate}>
-                  <Tag className="h-4 w-4" />
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Tags</DialogTitle>
-                </DialogHeader>
-                <CreatableSelect
-                  isMulti
-                  options={tagsOptions}
-                  value={selectedTags}
-                  onChange={(v) => setSelectedTags(v as any)}
-                  placeholder="Select or type tags…"
-                  formatCreateLabel={(input) => `Add "${input}"`}
-                  isDisabled={!canUpdate}
-                />
-                <DialogFooter className="mt-4 flex justify-end space-x-2">
-                  <DialogClose asChild>
-                    <Button variant="ghost">Cancel</Button>
-                  </DialogClose>
-                  <Button onClick={handleSaveTags} disabled={!canUpdate}>
-                    Save
+            {/* controls */}
+            <div className="flex items-center gap-2">
+              {/* ---- TAGS dialog (disabled if !canUpdate) ------------------ */}
+              <Dialog
+                open={tagsDialogOpen}
+                onOpenChange={(open) => canUpdate && setTagsDialogOpen(open)}
+              >
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="icon" disabled={!canUpdate}>
+                    <Tag className="h-4 w-4" />
                   </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Tags</DialogTitle>
+                  </DialogHeader>
+                  <CreatableSelect
+                    isMulti
+                    options={tagsOptions}
+                    value={selectedTags}
+                    onChange={(v) => setSelectedTags(v as any)}
+                    placeholder="Select or type tags…"
+                    formatCreateLabel={(input) => `Add "${input}"`}
+                    isDisabled={!canUpdate}
+                  />
+                  <DialogFooter className="mt-4 flex justify-end space-x-2">
+                    <DialogClose asChild>
+                      <Button variant="ghost">Cancel</Button>
+                    </DialogClose>
+                    <Button onClick={handleSaveTags} disabled={!canUpdate}>
+                      Save
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
-            {/* ---- priority ------------------------------------------------ */}
-            <Select
-              value={priority}
-              onValueChange={handlePriorityChange}
-              disabled={!canUpdate || status === "closed"}
-            >
-              <SelectTrigger className="w-[120px]">
-                <Badge
-                  className={{
-                    low:    "bg-green-100 text-green-800",
-                    medium: "bg-yellow-100 text-yellow-800",
-                    high:   "bg-red-100 text-red-800",
-                  }[priority]}
-                  variant="outline"
-                >
-                  {priority.charAt(0).toUpperCase() + priority.slice(1)}
-                </Badge>
-              </SelectTrigger>
-              <SelectContent side="bottom">
-                <SelectItem value="low">Low</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-              </SelectContent>
-            </Select>
+              {/* ---- priority ------------------------------------------------ */}
+              <Select
+                value={priority}
+                onValueChange={handlePriorityChange}
+                disabled={!canUpdate || status === "closed"}
+              >
+                <SelectTrigger className="w-[120px]">
+                  <Badge
+                    className={{
+                      low: "bg-green-100 text-green-800",
+                      medium: "bg-yellow-100 text-yellow-800",
+                      high: "bg-red-100 text-red-800",
+                    }[priority]}
+                    variant="outline"
+                  >
+                    {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                  </Badge>
+                </SelectTrigger>
+                <SelectContent side="bottom">
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                </SelectContent>
+              </Select>
 
-            {/* ---- status -------------------------------------------------- */}
-            <Select
-              value={status}
-              onValueChange={handleStatusChange}
-              disabled={!canUpdate || status === "closed"}
-            >
-              <SelectTrigger className="w-[150px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent side="bottom">
-                <SelectItem value="open">Open</SelectItem>
-                <SelectItem value="in-progress">In Progress</SelectItem>
-                <SelectItem value="closed">Closed</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+              {/* ---- status -------------------------------------------------- */}
+              <Select
+                value={status}
+                onValueChange={handleStatusChange}
+                disabled={!canUpdate || status === "closed"}
+              >
+                <SelectTrigger className="w-[150px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent side="bottom">
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="in-progress">In Progress</SelectItem>
+                  <SelectItem value="closed">Closed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            </div> 
         </CardHeader>
 
         {/* -------- messages --------------------------------------------- */}
@@ -493,17 +506,16 @@ export default function TicketDetail() {
                   className={`flex gap-3 max-w-[80%] ${message.isInternal ? "flex-row-reverse" : "flex-row"}`}
                 >
                   <Avatar className="mt-1">
-                                <AvatarFallback>
-                {message.isInternal ? "A" : clientInitial}
-              </AvatarFallback>
+                    <AvatarFallback>
+                      {message.isInternal ? "A" : clientInitial}
+                    </AvatarFallback>
                   </Avatar>
                   <div>
                     <div
-                      className={`rounded-lg p-3 ${
-                        message.isInternal
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-foreground"
-                      }`}
+                      className={`rounded-lg p-3 ${message.isInternal
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-foreground"
+                        }`}
                     >
                       <p>{message.message}</p>
                       {message.attachments?.length > 0 && (
