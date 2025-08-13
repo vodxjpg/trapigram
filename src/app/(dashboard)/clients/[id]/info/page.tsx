@@ -49,18 +49,19 @@ export default function ReadOnlyClientPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Client</h1>
           <p className="text-muted-foreground">Client information</p>
+          <div className="max-w-3xl mx-auto py-10">
+            <Button variant="outline" onClick={() => router.back()}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Ticket
+            </Button>
+          </div>
         </div>
       </div>
 
       {/* read-only client view – self-fetching */}
       <ClientDetailView clientId={id} />
 
-      <div className="max-w-3xl mx-auto py-10">
-        <Button variant="outline" onClick={() => router.back()}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Ticket
-        </Button>
-      </div>
+   
     </div>
   );
 }
