@@ -505,7 +505,7 @@ export default function OrderView() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <h3 className="font-semibold">Shipping Address</h3>
-                  <p>{order.shippingInfo.address}</p>
+                  <p className="whitespace-pre-line break-words">{order.shippingInfo.address}</p>
                   <h3 className="font-semibold mt-4">Shipping Company</h3>
                   <p>{order.shippingInfo.company}</p>
                 </div>

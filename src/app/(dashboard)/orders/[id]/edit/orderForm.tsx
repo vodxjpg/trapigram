@@ -36,6 +36,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/currency";
@@ -1333,18 +1334,18 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                       onChange={() => setSelectedAddressId(addr.id)}
                       className="h-4 w-4"
                     />
-                    <span className="text-sm">{addr.address}</span>
+                   <span className="text-sm whitespace-pre-line break-words">{addr.address}</span>
                   </label>
                 ))}
               </div>
               <Separator className="my-3" />
               <div className="flex gap-4">
-                <Input
-                  className="flex-1"
-                  placeholder="New address"
-                  value={newAddress}
-                  onChange={(e) => setNewAddress(e.target.value)}
-                />
+                          <Textarea
+              className="flex-1 min-h-[140px] whitespace-pre-line"
+              placeholder="New address (multi-line)"
+              value={newAddress}
+              onChange={(e) => setNewAddress(e.target.value)}
+            />
                 <Button onClick={handleAddAddress} disabled={!newAddress}>
                   Add Address
                 </Button>
