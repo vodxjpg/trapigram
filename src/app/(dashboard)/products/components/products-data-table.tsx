@@ -132,15 +132,15 @@ export function ProductsDataTable({
   });
 
   const [sorting, setSorting] = useState<SortingState>([]);
-   /* NEW – server-side sort (field dir) ------------------------- */
-   const [serverSort, setServerSort] = useState<{
-      field: OrderField;
-      dir: "asc" | "desc";
-    }>({
-      field: "createdAt",
-      dir  : "desc",
-    });
-    
+  /* NEW – server-side sort (field dir) ------------------------- */
+  const [serverSort, setServerSort] = useState<{
+    field: OrderField;
+    dir: "asc" | "desc";
+  }>({
+    field: "createdAt",
+    dir: "desc",
+  });
+
 
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -156,12 +156,15 @@ export function ProductsDataTable({
   );
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [attributeFilter, setAttributeFilter] = useState<string>("");
+  const [attributeTermFilter, setAttributeTermFilter] = useState<string>("");
   const [deleteProductId, setDeleteProductId] = useState<string | null>(null);
 
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
   const [categoryOptions, setCategoryOptions] = useState<
     { id: string; name: string }[]
   >([]);
+  const [termOptions, setTermOptions] = useState<{ id: string; name: string }[]>(
+    []);
   const [attributeOptions, setAttributeOptions] = useState<
     { id: string; name: string }[]
   >([]);
@@ -177,8 +180,8 @@ export function ProductsDataTable({
     search: debounced,
     status: statusFilter || undefined,
     categoryId: categoryFilter || undefined,
-    attributeId: attributeFilter || undefined,
-    orderBy : serverSort.field,
+    attributeTermId: attributeTermFilter || undefined,
+    orderBy: serverSort.field,
     orderDir: serverSort.dir,
   });
   const products = productsRaw ?? [];
@@ -220,7 +223,7 @@ export function ProductsDataTable({
         setCategoryMap(map);
         setCategoryOptions(categories);
       })
-      .catch(() => {});
+      .catch(() => { });
 
     fetch("/api/product-attributes?page=1&pageSize=1000", {
       headers: {
@@ -229,8 +232,42 @@ export function ProductsDataTable({
     })
       .then((r) => r.json())
       .then(({ attributes }) => setAttributeOptions(attributes))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
+
+  /* ---------------------------------------------------------- */
+  /*  2b) Load terms when attribute changes                      */
+  /* ---------------------------------------------------------- */
+  useEffect(() => {
+    // Clear terms when attribute is cleared
+    if (!attributeFilter) {
+      setTermOptions([]);
+      setAttributeTermFilter("");
+      return;
+    }
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/product-attributes/${attributeFilter}/terms?page=1&pageSize=1000`,
+          {
+            headers: {
+              "x-internal-secret": process.env.INTERNAL_API_SECRET!,
+            },
+            signal: controller.signal,
+          }
+        );
+        if (!res.ok) throw new Error("Failed to load attribute terms");
+        const { terms } = await res.json();
+        setTermOptions(terms ?? []);
+        // reset selected term when attribute changes
+        setAttributeTermFilter("");
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => controller.abort();
+  }, [attributeFilter, onPageChange]);
 
   /* ---------------------------------------------------------- */
   /*  3) Stable callbacks (needed by columns)                   */
@@ -592,20 +629,20 @@ export function ProductsDataTable({
   });
 
   /* ————————————————— react-table ⇆ server sort sync ———————————— */
-useEffect(() => {
+  useEffect(() => {
     if (!sorting.length) return;
     const { id, desc } = sorting[0];
-     // allow only columns we’ve whitelisted
-     const isOrderField = (col: string): col is OrderField =>
-       ["createdAt", "updatedAt", "title", "sku"].includes(col);
-     if (!isOrderField(id)) return;
+    // allow only columns we’ve whitelisted
+    const isOrderField = (col: string): col is OrderField =>
+      ["createdAt", "updatedAt", "title", "sku"].includes(col);
+    if (!isOrderField(id)) return;
     startTransition(() => {
       setServerSort({ field: id, dir: desc ? "desc" : "asc" });
       onPageChange(1);                     // reset to first page
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sorting]);
-  
+
 
   // Sync react-table page size with our prop
   useEffect(() => {
@@ -746,8 +783,11 @@ useEffect(() => {
             value={attributeFilter || "all"}
             onValueChange={(v) => {
               startTransition(() => {
-                setAttributeFilter(v === "all" ? "" : v);
-                onPageChange(1);
+                const next = v === "all" ? "" : v;
+                setAttributeFilter(next);
+                // Reset terms when attribute changes. Do NOT trigger filtering or pagination here.
+                setTermOptions([]);
+                setAttributeTermFilter("");
               });
             }}
           >
@@ -761,6 +801,40 @@ useEffect(() => {
                   {a.name}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+
+          {/* Attribute Term filter (shown only when attribute selected) */}
+          <Select
+            value={attributeTermFilter || "all"}
+            onValueChange={(v) => {
+              startTransition(() => {
+                setAttributeTermFilter(v === "all" ? "" : v);
+                onPageChange(1);
+              });
+            }}
+            disabled={!attributeFilter}
+          >
+            <SelectTrigger className="w-full sm:w-[200px]">
+              <SelectValue
+                placeholder={
+                  attributeFilter ? "Filter by term" : "Select attribute first"
+                }
+              />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Terms</SelectItem>
+              {termOptions.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.name}
+                </SelectItem>
+              ))}
+              {!termOptions.length && attributeFilter && (
+                /* Keep menu height consistent even if empty */
+                <SelectItem value="__no_terms__" disabled>
+                  No terms found
+                </SelectItem>
+              )}
             </SelectContent>
           </Select>
 

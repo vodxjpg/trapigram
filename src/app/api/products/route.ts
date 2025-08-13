@@ -89,13 +89,13 @@ export async function GET(req: NextRequest) {
 
   try {
     const { searchParams } = new URL(req.url);
-        const page     = parseInt(searchParams.get("page") || "1");
-        const pageSize = parseInt(searchParams.get("pageSize") || "10");
+    const page = parseInt(searchParams.get("page") || "1");
+    const pageSize = parseInt(searchParams.get("pageSize") || "10");
     const search = searchParams.get("search") || "";
     /* ---------- validated ordering ------------------------------ */
     const allowedCols = new Set(["createdAt", "updatedAt", "title", "sku"]);
-    const rawOrderBy  = searchParams.get("orderBy")  || "createdAt";
-    const orderBy     = allowedCols.has(rawOrderBy) ? rawOrderBy : "createdAt";
+    const rawOrderBy = searchParams.get("orderBy") || "createdAt";
+    const orderBy = allowedCols.has(rawOrderBy) ? rawOrderBy : "createdAt";
     const orderDir = searchParams.get("orderDir") === "asc" ? "asc" : "desc";
     const categoryId = searchParams.get("categoryId") || "";
     const rawStatus = searchParams.get("status");            // string | null
@@ -104,6 +104,7 @@ export async function GET(req: NextRequest) {
         ? rawStatus
         : undefined;
     const attributeId = searchParams.get("attributeId") || "";
+    const attributeTermId = searchParams.get("attributeTermId") || "";
 
     /* -------- STEP 1 – product IDs with proper limit/offset ----- */
     let idQuery = db
@@ -124,21 +125,42 @@ export async function GET(req: NextRequest) {
       );
     if (status)
       idQuery = idQuery.where("status", "=", status);  // status is now the right type
-    if (attributeId)
-      idQuery = idQuery.where(
-        "id",
-        "in",
-        db
-          .selectFrom("productAttributeValues")
-          .select("productId")
-          .where("attributeId", "=", attributeId),
-      );
 
-        const idRows = await idQuery
-          .orderBy(orderBy as any, orderDir)   // ↞ cast is safe after whitelist
-      .limit(pageSize)
-      .offset((page - 1) * pageSize)
-      .execute();
+    let idRows: Array<{ id: string }>;
+    
+    if (attributeTermId) {
+      // ⭐ JOIN path so filtering happens BEFORE LIMIT/OFFSET
+      const jq = db
+        .selectFrom("productAttributeValues as pav")
+        .innerJoin("products as p", "p.id", "pav.productId")
+        .select("p.id")
+        .where("p.organizationId", "=", organizationId)
+        .where("p.tenantId", "=", tenantId)
+        .where("pav.termId", "=", attributeTermId)
+        .$if(Boolean(search), q => q.where("p.title", "ilike", `%${search}%`))
+        .$if(Boolean(categoryId), q =>
+          q.where(
+            "p.id",
+            "in",
+            db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+          )
+        )
+        .$if(!!status, q => q.where("p.status", "=", status!))
+        // Avoid duplicates when a product has multiple rows pointing to the same term
+        .groupBy("p.id")
+        .orderBy(("p." + orderBy) as any, orderDir)
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
+    
+      idRows = await jq.execute();
+    } else {
+      // No term filter → use the original simple products query
+      idRows = await idQuery
+        .orderBy(orderBy as any, orderDir)
+        .limit(pageSize)
+        .offset((page - 1) * pageSize)
+        .execute();
+    }
     const productIds = idRows.map((r) => r.id);
 
     /* return early if empty page */
@@ -169,8 +191,8 @@ export async function GET(req: NextRequest) {
         "createdAt",
         "updatedAt",
       ])
-          .where("id", "in", productIds)
-          .orderBy(orderBy as any, orderDir)
+      .where("id", "in", productIds)
+      .orderBy(orderBy as any, orderDir)
       .execute();
 
     /* -------- STEP 3 – related data in bulk --------------------- */
@@ -284,36 +306,58 @@ export async function GET(req: NextRequest) {
     });
 
     /* -------- STEP 5 – total count ------------------------------ */
-    const totalRes = await db
-      .selectFrom("products")
-      .select(db.fn.count("id").as("total"))
-      .where("organizationId", "=", organizationId)
-      .where("tenantId", "=", tenantId)
-      .$if(Boolean(search), q => q.where("title", "ilike", `%${search}%`))
-      .$if(Boolean(categoryId), q =>
-        q.where(
-          "id",
-          "in",
-          db
-            .selectFrom("productCategory")
-            .select("productId")
-            .where("categoryId", "=", categoryId),
-        ),
-      )
-      .$if(!!status, q => q.where("status", "=", status!))   // `status!` is safe here
-
-      .$if(Boolean(attributeId), q =>
-        q.where(
-          "id",
-          "in",
-          db
-            .selectFrom("productAttributeValues")
-            .select("productId")
-            .where("attributeId", "=", attributeId),
-        ),
-      )
-      .executeTakeFirst();
-    const total = Number(totalRes?.total || 0);
+    let total = 0;
+    
+    if (attributeTermId) {
+      // Count DISTINCT product IDs using a subquery (mirrors the ID JOIN branch)
+      const sub = db
+        .selectFrom("productAttributeValues as pav")
+        .innerJoin("products as p", "p.id", "pav.productId")
+        .select("p.id")
+        .where("p.organizationId", "=", organizationId)
+        .where("p.tenantId", "=", tenantId)
+        .where("pav.termId", "=", attributeTermId)
+        .$if(Boolean(search), q => q.where("p.title", "ilike", `%${search}%`))
+        .$if(Boolean(categoryId), q =>
+          q.where(
+            "p.id",
+            "in",
+            db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+          )
+        )
+        .$if(!!status, q => q.where("p.status", "=", status!))
+        .groupBy("p.id")
+        .as("t");
+    
+      const totalJoin = await db
+        .selectFrom(sub)
+        .select(db.fn.countAll<number>().as("total"))
+        .executeTakeFirst();
+    
+      total = Number(totalJoin?.total ?? 0);
+    } else {
+      // Simple count on products (no term filter)
+      const totalPlain = await db
+        .selectFrom("products")
+        .select(db.fn.countAll<number>().as("total"))
+        .where("organizationId", "=", organizationId)
+        .where("tenantId", "=", tenantId)
+        .$if(Boolean(search), q => q.where("title", "ilike", `%${search}%`))
+        .$if(Boolean(categoryId), q =>
+          q.where(
+            "id",
+            "in",
+            db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+          )
+        )
+        .$if(!!status, q => q.where("status", "=", status!))
+        .executeTakeFirst();
+    
+      total = Number(totalPlain?.total ?? 0);
+    }
+    
+      
+      
 
     return NextResponse.json({
       products,

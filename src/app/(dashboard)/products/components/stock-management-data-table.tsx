@@ -1,7 +1,7 @@
 // src/app/(dashboard)/products/components/stock-management-data-table.ts
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, startTransition } from "react";
 import { ArrowUpDown, Edit } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -28,14 +28,31 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+  SelectValue,
+} from "@/components/ui/select";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { useProducts } from "@/hooks/use-products";
 import type { Product } from "../../components/products-data-table";
+import { useDebounce } from "@/hooks/use-debounce";
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
+const fetcher = (url: string) =>
+  fetch(url, {
+    headers: {
+      "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+    },
+  }).then((res) => res.json());
 
 interface Warehouse {
   id: string;
@@ -49,82 +66,186 @@ export function StockManagementDataTable() {
   // 1) Active org & permissions
   const { data: activeOrg } = authClient.useActiveOrganization();
   const orgId = activeOrg?.id ?? null;
-  const { hasPermission: canView, isLoading: viewLoading } =
-    useHasPermission(orgId, { stockManagement: ["view"] });
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { stockManagement: ["view"] }
+  );
   const { hasPermission: canUpdate, isLoading: updateLoading } =
     useHasPermission(orgId, { stockManagement: ["update"] });
 
   // 2) Table state
-  const [sorting, setSorting] = useState<SortingState>([{ id: "stock", desc: false }]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "stock", desc: false },
+  ]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [search, setSearch] = useState("");
 
-  // 3) Data
-  const { products, isLoading, totalPages, mutate } = useProducts({ page, pageSize, search });
-  const { data: whData } = useSWR<{ warehouses: Warehouse[] }>("/api/warehouses", fetcher);
+  // Search & filters (debounced search, plus category/attribute/term to match products table UX)
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search, 300);
+
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [attributeFilter, setAttributeFilter] = useState<string>("");
+  const [attributeTermFilter, setAttributeTermFilter] = useState<string>("");
+
+  // 3) Ancillary data (categories & attributes)
+  const [categoryOptions, setCategoryOptions] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [attributeOptions, setAttributeOptions] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [termOptions, setTermOptions] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    fetch("/api/product-categories?page=1&pageSize=1000", {
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+      },
+    })
+      .then((r) => r.json())
+      .then(({ categories }) => {
+        if (!mounted) return;
+        setCategoryOptions(categories ?? []);
+      })
+      .catch(() => {
+        /* silent */
+      });
+
+    fetch("/api/product-attributes?page=1&pageSize=1000", {
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+      },
+    })
+      .then((r) => r.json())
+      .then(({ attributes }) => {
+        if (!mounted) return;
+        setAttributeOptions(attributes ?? []);
+      })
+      .catch(() => {
+        /* silent */
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Load terms whenever attribute changes
+  useEffect(() => {
+    // Clear terms when attribute is cleared
+    if (!attributeFilter) {
+      setTermOptions([]);
+      setAttributeTermFilter("");
+      return;
+    }
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/product-attributes/${attributeFilter}/terms?page=1&pageSize=1000`,
+          {
+            headers: {
+              "x-internal-secret":
+                process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+            },
+            signal: controller.signal,
+          }
+        );
+        if (!res.ok) throw new Error("Failed to load attribute terms");
+        const { terms } = await res.json();
+        setTermOptions(terms ?? []);
+        // reset selected term when attribute changes; do NOT trigger filtering yet
+        setAttributeTermFilter("");
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => controller.abort();
+  }, [attributeFilter]);
+
+  // 4) Data — IMPORTANT: only filter when a term is chosen
+  const { products, isLoading, totalPages, mutate } = useProducts({
+    page,
+    pageSize,
+    search: debouncedSearch,
+    categoryId: categoryFilter || undefined,
+    attributeTermId: attributeTermFilter || undefined,
+  });
+
+  const { data: whData } = useSWR<{ warehouses: Warehouse[] }>(
+    "/api/warehouses",
+    fetcher
+  );
   const warehouses = whData?.warehouses || [];
 
-  // 4) Table setup
+  // 5) Columns
+  const columns: ColumnDef<Product>[] = [
+    {
+      id: "image",
+      header: "Image",
+      cell: ({ row }) => {
+        const { image, title } = row.original;
+        const initials = title
+          .split(" ")
+          .slice(0, 2)
+          .map((w) => w.charAt(0).toUpperCase())
+          .join("")
+          .slice(0, 2);
+        return (
+          <div className="relative h-10 w-10">
+            {image ? (
+              <Image
+                src={image}
+                alt={title}
+                fill
+                className="object-cover rounded-md"
+              />
+            ) : (
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-200 font-medium text-gray-600">
+                {initials}
+              </div>
+            )}
+          </div>
+        );
+      },
+    },
+    { accessorKey: "title", header: "Product Title" },
+    { accessorKey: "sku", header: "SKU" },
+    {
+      id: "stock",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          className="px-0 hover:bg-transparent"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Stock
+          <ArrowUpDown className="ml-1 h-3 w-3" />
+        </Button>
+      ),
+      accessorFn: (row) =>
+        Object.values(row.stockData || {}).reduce(
+          (sum, byCountry) =>
+            sum + Object.values(byCountry).reduce((s, q) => s + Number(q), 0),
+          0
+        ),
+      cell: ({ row }) => <StockPopover product={row.original} />,
+      enableSorting: true,
+      sortingFn: "basic",
+    },
+  ];
+
+  // 6) Table setup
   const table = useReactTable({
     data: products || [],
-    columns: [
-      {
-        id: "image",
-        header: "Image",
-        cell: ({ row }) => {
-          const { image, title } = row.original;
-          const initials = title
-            .split(" ")
-            .slice(0, 2)
-            .map((w) => w.charAt(0).toUpperCase())
-            .join("")
-            .slice(0, 2);
-          return (
-            <div className="relative h-10 w-10">
-              {image ? (
-                <Image
-                  src={image}
-                  alt={title}
-                  fill
-                  className="object-cover rounded-md"
-                />
-              ) : (
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-200 font-medium text-gray-600">
-                  {initials}
-                </div>
-              )}
-            </div>
-          );
-        },
-      },
-      { accessorKey: "title", header: "Product Title" },
-      { accessorKey: "sku", header: "SKU" },
-      {
-        id: "stock",
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            className="px-0 hover:bg-transparent"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            Stock
-            <ArrowUpDown className="ml-1 h-3 w-3" />
-          </Button>
-        ),
-        accessorFn: (row) =>
-          Object.values(row.stockData || {}).reduce(
-            (sum, byCountry) =>
-              sum + Object.values(byCountry).reduce((s, q) => s + Number(q), 0),
-            0
-          ),
-        cell: ({ row }) => <StockPopover product={row.original} />,
-        enableSorting: true,
-        sortingFn: "basic",
-      },
-    ],
+    columns,
     state: { sorting, columnFilters, columnVisibility },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
@@ -134,7 +255,13 @@ export function StockManagementDataTable() {
     getPaginationRowModel: getPaginationRowModel(),
   });
 
-  // 5) Redirect if no view permission
+  // 7) Keep react-table page size in sync with our state
+  useEffect(() => {
+    table.setPageSize(pageSize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageSize]);
+
+  // 8) Redirect if no view permission
   useEffect(() => {
     if (!viewLoading && !canView) router.replace("/products");
   }, [viewLoading, canView, router]);
@@ -143,8 +270,11 @@ export function StockManagementDataTable() {
 
   // Stock popover component
   function StockPopover({ product }: { product: Product }) {
-    const [editable, setEditable] = useState<Record<string, Record<string, number>>>({});
+    const [editable, setEditable] = useState<
+      Record<string, Record<string, number>>
+    >({});
     const [saving, setSaving] = useState(false);
+    const [open, setOpen] = useState(false); // control popover so we can close on save
 
     useEffect(() => {
       const norm: Record<string, Record<string, number>> = {};
@@ -183,6 +313,7 @@ export function StockManagementDataTable() {
       });
       await mutate();
       setSaving(false);
+      setOpen(false); // close after successful save
     };
 
     const editableSum = Object.values(editable).reduce(
@@ -194,7 +325,7 @@ export function StockManagementDataTable() {
     // Non-editable view
     if (!canUpdate) {
       return (
-        <Popover>
+        <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button variant="outline" size="sm">
               {editableSum}
@@ -206,7 +337,7 @@ export function StockManagementDataTable() {
 
     // Editable view
     return (
-      <Popover>
+      <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
@@ -219,35 +350,50 @@ export function StockManagementDataTable() {
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-64">
-          {warehouses.map((w) => (
-            <div key={w.id} className="mb-4">
-              <div className="mb-1 font-medium">{w.name}</div>
-              {w.countries.map((c) => (
-                <div
-                  key={c}
-                  className="mb-1 flex items-center justify-between"
-                >
-                  <span className="text-sm">{c}</span>
-                  <Input
-                    type="number"
-                    min={0}
-                    className="w-20"
-                    value={editable[w.id]?.[c] ?? 0}
-                    onChange={(e) =>
-                      handleChange(w.id, c, parseInt(e.target.value) || 0)
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-          ))}
-          <Button
-            className="w-full"
-            onClick={handleSave}
-            disabled={saving}
+          {/* Wrap inputs in a form so Enter submits/saves */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!saving) void handleSave();
+            }}
           >
-            {saving ? "Saving…" : "Save"}
-          </Button>
+            {warehouses.map((w) => (
+              <div key={w.id} className="mb-4">
+                <div className="mb-1 font-medium">{w.name}</div>
+                {w.countries.map((c) => (
+                  <div
+                    key={c}
+                    className="mb-1 flex items-center justify-between"
+                  >
+                    <span className="text-sm">{c}</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      className="w-20"
+                      value={editable[w.id]?.[c] ?? 0}
+                      onChange={(e) =>
+                        handleChange(
+                          w.id,
+                          c,
+                          parseInt(e.target.value, 10) || 0
+                        )
+                      }
+                      // Hitting Enter saves the form
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          e.currentTarget.form?.requestSubmit();
+                        }
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            ))}
+            <Button className="w-full" type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </form>
         </PopoverContent>
       </Popover>
     );
@@ -256,13 +402,125 @@ export function StockManagementDataTable() {
   // Render
   return (
     <div className="space-y-4">
-      <Input
-        placeholder="Search products..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="max-w-sm"
-      />
-      <div className="rounded-md border">
+      {/* Toolbar — search + filters + page-size */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <Input
+          placeholder="Search products..."
+          value={search}
+          onChange={(e) => {
+            const txt = e.target.value;
+            startTransition(() => {
+              setSearch(txt);
+              setPage(1);
+            });
+          }}
+          className="w-full sm:max-w-sm"
+        />
+
+        {/* Category filter */}
+        <Select
+          value={categoryFilter || "all"}
+          onValueChange={(v) => {
+            startTransition(() => {
+              setCategoryFilter(v === "all" ? "" : v);
+              setPage(1);
+            });
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectValue placeholder="Filter by category" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Categories</SelectItem>
+            {categoryOptions.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Attribute filter */}
+        <Select
+          value={attributeFilter || "all"}
+          onValueChange={(v) => {
+            startTransition(() => {
+              const next = v === "all" ? "" : v;
+              setAttributeFilter(next);
+              // Reset terms when attribute changes. Do NOT trigger filtering or pagination here.
+              setTermOptions([]);
+              setAttributeTermFilter("");
+            });
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectValue placeholder="Filter by attribute" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Attributes</SelectItem>
+            {attributeOptions.map((a) => (
+              <SelectItem key={a.id} value={a.id}>
+                {a.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Attribute Term filter (enabled only when an attribute is selected) */}
+        <Select
+          value={attributeTermFilter || "all"}
+          onValueChange={(v) => {
+            startTransition(() => {
+              setAttributeTermFilter(v === "all" ? "" : v);
+              setPage(1);
+            });
+          }}
+          disabled={!attributeFilter}
+        >
+          <SelectTrigger className="w-full sm:w-[200px]">
+            <SelectValue
+              placeholder={
+                attributeFilter ? "Filter by term" : "Select attribute first"
+              }
+            />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Terms</SelectItem>
+            {termOptions.map((t) => (
+              <SelectItem key={t.id} value={t.id}>
+                {t.name}
+              </SelectItem>
+            ))}
+            {!termOptions.length && attributeFilter && (
+              <SelectItem value="__no_terms__" disabled>
+                No terms found
+              </SelectItem>
+            )}
+          </SelectContent>
+        </Select>
+
+        {/* Page-size selector */}
+        <Select
+          value={pageSize.toString()}
+          onValueChange={(v) => {
+            startTransition(() => {
+              setPageSize(Number(v));
+              setPage(1);
+            });
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-[100px]">
+            <SelectValue placeholder="Page size" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="10">10</SelectItem>
+            <SelectItem value="20">20</SelectItem>
+            <SelectItem value="50">50</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="rounded-md border overflow-x-auto">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((hg) => (
@@ -278,57 +536,71 @@ export function StockManagementDataTable() {
             ))}
           </TableHeader>
           <TableBody>
-            {isLoading
-              ? Array.from({ length: pageSize }).map((_, i) => (
-                  <TableRow key={i}>
-                    {table.getVisibleLeafColumns().map((_, j) => (
-                      <TableCell key={j}>
-                        <Skeleton className="h-6 w-full" />
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : table.getRowModel().rows.length
-              ? table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id}>
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : (
-                <TableRow>
-                  <TableCell
-                    colSpan={table.getVisibleLeafColumns().length}
-                    className="py-6 text-center"
-                  >
-                    No products found.
-                  </TableCell>
+            {isLoading ? (
+              Array.from({ length: pageSize }).map((_, i) => (
+                <TableRow key={i}>
+                  {table.getVisibleLeafColumns().map((_, j) => (
+                    <TableCell key={j}>
+                      <Skeleton className="h-6 w-full" />
+                    </TableCell>
+                  ))}
                 </TableRow>
-              )}
+              ))
+            ) : table.getRowModel().rows.length ? (
+              table.getRowModel().rows.map((row) => (
+                <TableRow key={row.id}>
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id}>
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext()
+                      )}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell
+                  colSpan={table.getVisibleLeafColumns().length}
+                  className="py-6 text-center"
+                >
+                  No products found.
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </div>
-      <div className="flex justify-between py-4">
-        <Button
-          variant="outline"
-          onClick={() => setPage((p) => p - 1)}
-          disabled={page === 1 || isLoading}
-        >
-          Previous
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setPage((p) => p + 1)}
-          disabled={page === totalPages || isLoading}
-        >
-          Next
-        </Button>
+
+      {/* Pagination */}
+      <div className="flex items-center justify-between space-x-2 py-4">
+        <div className="text-sm text-muted-foreground">
+          Showing {(page - 1) * pageSize + 1} to{" "}
+          {Math.min(
+            page * pageSize,
+            (products?.length ?? 0) + (page - 1) * pageSize
+          )}{" "}
+          of many entries
+        </div>
+        <div className="flex items-center space-x-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage(Math.max(1, page - 1))}
+            disabled={page <= 1 || isLoading}
+          >
+            Previous
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage(Math.min(totalPages, page + 1))}
+            disabled={page >= totalPages || isLoading}
+          >
+            Next
+          </Button>
+        </div>
       </div>
     </div>
   );

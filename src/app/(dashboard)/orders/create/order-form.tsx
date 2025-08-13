@@ -932,7 +932,7 @@ if (isNiftipay) {
   const [chain, asset] = selectedNiftipay.split(":");
   const client = clients.find((c) => c.id === selectedClient)!;
   const safeEmail = client.email?.trim() || "user@trapyfy.com";
-  const fiat = countryToFiat(client.country);        // "GBP" | "EUR" | "USD"
+  const fiat = countryToFiat(client.country);        // "GBP" | "EUR" | "USD" | More coming
   const totalF = total + shippingCost;
 
   const nRes = await fetch(`/api/niftipay/orders`, {
