@@ -64,8 +64,8 @@ const data = {
         { title: "Add new product", url: "/products/new" },
         { title: "Product categories", url: "/product-categories" },
         { title: "Product attributes", url: "/product-attributes" },
-        { title: "Stock management", url: "/products/stock-management" },
         { title: "Tier pricing", url: "/discount-rules" },
+        { title: "Stock management", url: "/products/stock-management" },
         { title: "Inventory count", url: "/inventory" },
         { title: "Warehouses", url: "/warehouses" },
       ],
@@ -94,7 +94,7 @@ const data = {
       url: "/orders",
       icon: IconReport,
       items: [
-        { title: "Create orders", url: "/orders/create" },
+        { title: "New order", url: "/orders/create" },
         { title: "View orders", url: "/orders" },
         { title: "View reviews", url: "/reviews/" },
       ],
