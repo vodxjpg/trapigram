@@ -59,7 +59,7 @@ function isPlatformBot(req: NextRequest) {
   const botHdr = req.headers.get("x-bot-service");
   return (
     !!platform &&
-    platform === process.env.PLATFORM_API_KEY &&
+    platform === process.env.SERVICE_API_KEY &&
     (botHdr === "1" || /bot_service/i.test(ua))
   );
 }
