@@ -1,7 +1,7 @@
 // src/app/api/clients/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";      // ← one line, done ✅
+import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
 
@@ -24,26 +24,23 @@ export async function GET(req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  /* pagination & search */
   const params = new URL(req.url).searchParams;
   const page = Number(params.get("page") || 1);
   const pageSize = Number(params.get("pageSize") || 10);
   const search = params.get("search") || "";
 
-  /* total count */
   const countRes = await pool.query(
     `
     SELECT COUNT(*) FROM clients
     WHERE "organizationId" = $1
       AND ($2 = '' OR username ILIKE $3 OR "firstName" ILIKE $3
            OR "lastName" ILIKE $3 OR email ILIKE $3)
-  `,
+    `,
     [organizationId, search, `%${search}%`],
   );
   const totalRows = Number(countRes.rows[0].count);
   const totalPages = Math.ceil(totalRows / pageSize);
 
-  /* data with balance */
   const dataRes = await pool.query(
     `
     SELECT c.*,
@@ -59,19 +56,19 @@ export async function GET(req: NextRequest) {
            OR "lastName" ILIKE $3 OR email ILIKE $3)
     ORDER BY c."createdAt" DESC
     LIMIT $4 OFFSET $5
-  `,
+    `,
     [organizationId, search, `%${search}%`, pageSize, (page - 1) * pageSize],
   );
 
   return NextResponse.json({ clients: dataRes.rows, totalPages, currentPage: page });
 }
 
-/* ---------------------- POST /api/clients ---------------------- */
+/* ---------------------- POST /api/clients (enhanced upsert) ---------------------- */
 export async function POST(req: NextRequest) {
-
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
+
   const body = await req.json();
   const parsed = clientSchema.safeParse(body);
   if (!parsed.success) {
@@ -94,72 +91,107 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "organizationId is required" }, { status: 400 });
   }
 
-  // Check if client exists
-  const existingRes = await pool.query(
-    `SELECT id FROM clients WHERE "organizationId" = $1 AND "userId" = $2`,
-    [organizationId, userId]
-  );
+  // must have at least one stable key to match safely
+  const hasStableKey = (userId && userId !== "") || (username && username !== "") || (email && email !== "");
+  if (!hasStableKey) {
+    return NextResponse.json(
+      { error: "Provide at least one of userId, username, or email for safe upsert." },
+      { status: 400 },
+    );
+  }
 
-  if (existingRes.rowCount > 0) {
+  // Build exact-match lookup by precedence: userId → username → email
+  const clauses: string[] = [];
+  const values: any[] = [organizationId];
+  let i = 2;
+
+  if (userId && userId !== "") {
+    clauses.push(`"userId" = $${i++}`);
+    values.push(userId);
+  }
+  if (username && username !== "") {
+    clauses.push(`LOWER(username) = LOWER($${i++})`);
+    values.push(username);
+  }
+  if (email && email !== "") {
+    clauses.push(`LOWER(email) = LOWER($${i++})`);
+    values.push(email);
+  }
+
+  const where =
+    clauses.length > 0
+      ? `"organizationId" = $1 AND (${clauses.join(" OR ")})`
+      : `"organizationId" = $1`;
+
+  const existingRes = await pool.query(`SELECT id FROM clients WHERE ${where}`, values);
+
+  if (existingRes.rowCount > 1) {
+    return NextResponse.json(
+      { error: "Ambiguous match (multiple clients share username/email). Resolve manually.", matches: existingRes.rows },
+      { status: 409 },
+    );
+  }
+
+  if (existingRes.rowCount === 1) {
     // Update existing client
     const { id } = existingRes.rows[0];
     const updateRes = await pool.query(
       `
       UPDATE clients
       SET
-        username          = $2,
-        "firstName"      = $3,
-        "lastName"       = COALESCE($4, "lastName"),
-        email             = $5,
-        "phoneNumber"    = $6,
-        country           = $7,
-        "levelId"        = COALESCE($8, "levelId"),
-        "referredBy"     = CASE WHEN "referredBy" IS NULL THEN $9 ELSE "referredBy" END,
-        "lastInteraction"= NOW(),
-        "updatedAt"      = NOW()
+        username          = COALESCE($2, username),
+        "firstName"       = COALESCE($3, "firstName"),
+        "lastName"        = COALESCE($4, "lastName"),
+        email             = COALESCE($5, email),
+        "phoneNumber"     = COALESCE($6, "phoneNumber"),
+        country           = COALESCE($7, country),
+        "levelId"         = COALESCE($8, "levelId"),
+        "referredBy"      = CASE WHEN "referredBy" IS NULL THEN $9 ELSE "referredBy" END,
+        "lastInteraction" = NOW(),
+        "updatedAt"       = NOW()
       WHERE id = $1
       RETURNING *
       `,
       [
         id,
-        username,
-        firstName,
+        username ?? null,
+        firstName ?? null,
         lastName,
         email,
         phoneNumber,
         country,
         levelId,
         referredBy,
-      ]
+      ],
     );
     return NextResponse.json(updateRes.rows[0], { status: 200 });
-  } else {
-    // Insert new clients
-    const id = crypto.randomUUID();
-    const insertRes = await pool.query(
-      `
-      INSERT INTO clients
-        ("id", "organizationId", "userId", username, "firstName", "lastName",
-         email, "phoneNumber", country, "levelId", "referredBy",
-         "lastInteraction", "createdAt", "updatedAt")
-      VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW())
-      RETURNING *
-      `,
-      [
-        id,
-        organizationId,
-        userId,
-        username,
-        firstName,
-        lastName,
-        email,
-        phoneNumber,
-        country,
-        levelId,
-        referredBy,
-      ]
-    );
-    return NextResponse.json(insertRes.rows[0], { status: 201 });
   }
+
+  // Insert new client
+  const id = crypto.randomUUID();
+  const insertRes = await pool.query(
+    `
+    INSERT INTO clients
+      ("id", "organizationId", "userId", username, "firstName", "lastName",
+       email, "phoneNumber", country, "levelId", "referredBy",
+       "lastInteraction", "createdAt", "updatedAt")
+    VALUES
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW())
+    RETURNING *
+    `,
+    [
+      id,
+      organizationId,
+      userId ?? null,
+      username ?? null,
+      firstName ?? null,
+      lastName,
+      email,
+      phoneNumber,
+      country,
+      levelId,
+      referredBy,
+    ],
+  );
+  return NextResponse.json(insertRes.rows[0], { status: 201 });
 }
