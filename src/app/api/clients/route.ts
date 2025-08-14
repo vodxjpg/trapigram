@@ -100,38 +100,44 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Build exact-match lookup by precedence: userId → username → email
-  const clauses: string[] = [];
-  const values: any[] = [organizationId];
-  let i = 2;
-
-  if (userId && userId !== "") {
-    clauses.push(`"userId" = $${i++}`);
-    values.push(userId);
+  // Build exact-match lookup by strict precedence (no ORs):
+  // 1) userId  →  2) username  →  3) email
+  let where = `"organizationId" = $1 AND "userId" = $2`;
+  let selector: "userId" | "username" | "email" = "userId";
+  let values: any[] = [organizationId, userId];
+  
+  if (!userId || userId === "") {
+    if (username && username !== "") {
+      where = `"organizationId" = $1 AND LOWER(username) = LOWER($2)`;
+      selector = "username";
+      values = [organizationId, username];
+    } else if (email && email !== "") {
+      where = `"organizationId" = $1 AND LOWER(email) = LOWER($2)`;
+      selector = "email";
+      values = [organizationId, email];
+    } else {
+      // should not happen because of hasStableKey guard above
+      return NextResponse.json(
+        { error: "Provide one of userId, username or email." },
+        { status: 400 },
+      );
+    }
   }
-  if (username && username !== "") {
-    clauses.push(`LOWER(username) = LOWER($${i++})`);
-    values.push(username);
-  }
-  if (email && email !== "") {
-    clauses.push(`LOWER(email) = LOWER($${i++})`);
-    values.push(email);
-  }
-
-  const where =
-    clauses.length > 0
-      ? `"organizationId" = $1 AND (${clauses.join(" OR ")})`
-      : `"organizationId" = $1`;
-
-  const existingRes = await pool.query(`SELECT id FROM clients WHERE ${where}`, values);
-
+  
+  const existingRes = await pool.query(
+    `SELECT id FROM clients WHERE ${where}`,
+    values,
+  );
+  
   if (existingRes.rowCount > 1) {
     return NextResponse.json(
-      { error: "Ambiguous match (multiple clients share username/email). Resolve manually.", matches: existingRes.rows },
+      {
+        error: `Ambiguous match: multiple clients share the same ${selector} within this organization.`,
+        matches: existingRes.rows,
+      },
       { status: 409 },
     );
   }
-
   if (existingRes.rowCount === 1) {
     // Update existing client
     const { id } = existingRes.rows[0];
