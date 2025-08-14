@@ -3,12 +3,12 @@ import { RateLimiterMemory } from "rate-limiter-flexible";
 import { NextRequest, NextResponse } from "next/server";
 
 /* ─────────── Tunables via env (safe defaults) ─────────── */
-const GLOBAL_POINTS   = Number(process.env.RATE_LIMIT_GLOBAL_POINTS   ?? 600);  // normal
-const GLOBAL_DURATION = Number(process.env.RATE_LIMIT_GLOBAL_DURATION ?? 60);
-const HEAVY_POINTS    = Number(process.env.RATE_LIMIT_HEAVY_POINTS    ?? 60);   // writes/heavy
-const HEAVY_DURATION  = Number(process.env.RATE_LIMIT_HEAVY_DURATION  ?? 60);
+const GLOBAL_POINTS   = Number(process.env.RATE_LIMIT_GLOBAL_POINTS   ?? 12000);  // normal
+const GLOBAL_DURATION = Number(process.env.RATE_LIMIT_GLOBAL_DURATION ?? 400);
+const HEAVY_POINTS    = Number(process.env.RATE_LIMIT_HEAVY_POINTS    ?? 400);   // writes/heavy
+const HEAVY_DURATION  = Number(process.env.RATE_LIMIT_HEAVY_DURATION  ?? 400);
 const BOT_POINTS      = Number(process.env.RATE_LIMIT_BOT_POINTS      ?? 1800); // internal bot
-const BOT_DURATION    = Number(process.env.RATE_LIMIT_BOT_DURATION    ?? 60);
+const BOT_DURATION    = Number(process.env.RATE_LIMIT_BOT_DURATION    ?? 400);
 
 /* ─────────── Buckets ─────────── */
 export const globalLimiter = new RateLimiterMemory({
