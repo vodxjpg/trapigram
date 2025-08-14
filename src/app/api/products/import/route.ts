@@ -187,8 +187,8 @@ export async function POST(req: Request) {
                     updatePayload.status = product.published === 1 ? "published" : "draft";
                 }
 
-                if (columnExists("managedStock") && product.managedStock !== "" && (product.managedStock === 1 || product.managedStock === 0)) {
-                    updatePayload.managedStock = product.managedStock === 1 ? true : false;
+                if (columnExists("manageStock") && product.manageStock !== "" && (product.manageStock === 1 || product.manageStock === 0)) {
+                    updatePayload.manageStock = product.manageStock === 1 ? true : false;
                 }
 
                 if (columnExists("backorder") && product.backorder !== "" && (product.backorder === 1 || product.backorder === 0)) {
