@@ -10,18 +10,23 @@ export async function GET(req: NextRequest) {
 
   try {
     const sql = `
-      SELECT o.id,
-             o."clientId",
-             o."orderKey",
-             o.status,
-             o."referredBy",
-             COALESCE(o."referralAwarded", FALSE) AS "referralAwarded"
-        FROM orders o
-       WHERE o."organizationId" = $1
-         AND COALESCE(o."referralAwarded", FALSE) = FALSE
-         AND o.status IN ('paid','completed')
-       ORDER BY o."updatedAt" DESC NULLS LAST, o."dateCreated" DESC
-       LIMIT 500
+      SELECT
+    o.id,
+    o."clientId",
+    o."orderKey",
+    o.status,
+    COALESCE(o."referralAwarded", FALSE) AS "referralAwarded",
+    c."referredBy" AS "referredBy"
+  FROM orders o
+  JOIN clients c
+    ON c.id = o."clientId"
+  WHERE
+    o."organizationId" = $1
+    AND COALESCE(o."referralAwarded", FALSE) = FALSE
+    AND o.status IN ('paid','completed')
+    AND c."referredBy" IS NOT NULL
+  ORDER BY o."updatedAt" DESC NULLS LAST, o."dateCreated" DESC
+  LIMIT 500
     `;
     const { rows } = await pool.query(sql, [organizationId]);
     return NextResponse.json({ pending: rows }, { status: 200 });

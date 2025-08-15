@@ -141,6 +141,7 @@ export async function GET(
     referredBy: order.referredBy,
     referralAwarded: order.referralAwarded === true,
     trackingNumber: order.trackingNumber,
+    referredBy: client?.referredBy ?? null,
     shippingInfo: {
       address: decryptSecretNode(order.address),
       company: order.shippingService,
