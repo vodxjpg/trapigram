@@ -530,7 +530,10 @@ export async function PATCH(
         message = ` Note: the following field${skipped.length > 1 ? "s were" : " was"} skipped because shared products cannot be edited: ${skipped.join(", ")}.`;
       }
 
-      return NextResponse.json({ message }, { status: 200 });
+       return NextResponse.json({
+           product: { id, ...parsedUpdate, updatedAt: new Date().toISOString() },
+           message
+         }, { status: 200 });
     }
 
 
@@ -680,7 +683,7 @@ export async function PATCH(
           .values({
             id: uuidv4(),
             warehouseId: entry.warehouseId,
-            productId: entry.productId,
+            productId: id,                 // always use the URL param
             variationId: entry.variationId,
             country: entry.country,
             quantity: entry.quantity,

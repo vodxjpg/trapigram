@@ -129,6 +129,16 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
   )
   const isShared = raw?.shared === true
 
+  const submitSafely = () => {
+      // blur the currently focused element (often the Quill editor)
+      if (typeof document !== "undefined") {
+        const el = document.activeElement as HTMLElement | null
+        el?.blur?.()
+      }
+      // trigger RHF submission explicitly (don’t rely on native submit)
+      form.handleSubmit(onSubmit)()
+    }
+
   // --------------------------------------------------
   //  parse initial stock for simple products
   // --------------------------------------------------
@@ -429,8 +439,9 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
   }
 
   return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+      <Form {...form}>
+        {/* noValidate to avoid mobile native validation from silently blocking */}
+        <form onSubmit={form.handleSubmit(onSubmit)} noValidate className="space-y-8">
         <Tabs defaultValue="general" className="w-full">
           <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="general">General</TabsTrigger>
@@ -831,7 +842,13 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
           <Button type="button" variant="outline" onClick={() => router.push("/products")}>
             Cancel
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
+          {/* Use an explicit click handler instead of native submit to avoid iOS Safari issues */}
+<Button
+  type="button"
+  onClick={submitSafely}
+  disabled={isSubmitting}
+  aria-busy={isSubmitting}
+>
             {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {productId ? "Update Product" : "Create Product"}
           </Button>

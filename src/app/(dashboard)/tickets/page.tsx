@@ -45,7 +45,8 @@ export default function TicketsPage() {
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-bold tracking-tight">Tickets</h1>
-        <p className="text-muted-foreground">Manage your tickets</p>
+        <p className="text-muted-foreground">Manage your customer support tickets<br></br>
+        use /ticketing_group COUNTRY_CODE (e.g IT) to make the bot send you notifications for tickets of that country in a telegram group</p>
       </div>
 
       <Suspense fallback={<div>Loading ticket table…</div>}>
