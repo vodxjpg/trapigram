@@ -291,11 +291,15 @@ export async function sendNotification(params: SendNotificationParams) {
 
   /* — TELEGRAM — */
   if (channels.includes("telegram")) {
+    // Fallback: if there's no admin template, use the user body (or raw message) for groups
+    const adminTextForGroups =
+      (hasAdminTpl ? bodyAdminGeneric : (hasUserTpl ? bodyUserGeneric : message)) || message;
+  
     await dispatchTelegram({
       organizationId,
       type,
       country,
-      bodyAdmin: hasAdminTpl ? bodyAdminGeneric : "",
+      bodyAdmin: adminTextForGroups,            // ← always non-empty now
       bodyUser: hasUserTpl ? bodyUserGeneric : "",
       adminUserIds: [],
       clientUserId: clientRow?.userId || null,
@@ -379,7 +383,13 @@ async function dispatchTelegram(opts: {
     type,
   } = opts;
 
-
+  const norm = (s: string | null | undefined) => (s ?? "").toUpperCase();
+const parseCountries = (raw: string): string[] => {
+  const arr: string[] = Array.isArray(raw)
+    ? (raw as unknown as string[])
+    : JSON.parse(raw || "[]");
+  return arr.map(norm);
+};
   const row = await db
     .selectFrom("organizationPlatformKey")
     .select(["apiKey"])
@@ -396,17 +406,13 @@ async function dispatchTelegram(opts: {
     .where("organizationId", "=", organizationId)
     .execute();
 
-  const orderGroupIds = groupRows
+    const orderGroupIds = groupRows
     .filter((g) => {
-      const arr: string[] = Array.isArray(g.countries)
-        ? (g.countries as unknown as string[])
-        : JSON.parse(g.countries || "[]");
-      return country ? arr.includes(country) : true;
+      const arr = parseCountries(g.countries);
+      return country ? arr.includes(norm(country)) : true;
     })
     .map((g) => g.groupId);
-
-
-  /* 2️⃣ NEW – ticket-support groups (same filter) */
+  
   let ticketGroupIds: string[] = [];
   if (type === "ticket_created" || type === "ticket_replied") {
     const supRows = await db
@@ -414,41 +420,57 @@ async function dispatchTelegram(opts: {
       .select(["groupId", "countries"])
       .where("organizationId", "=", organizationId)
       .execute();
-
+  
     ticketGroupIds = supRows
       .filter((g) => {
-        const arr: string[] = Array.isArray(g.countries)
-          ? (g.countries as unknown as string[])
-          : JSON.parse(g.countries || "[]");
-        return country ? arr.includes(country) : true;
+        const arr = parseCountries(g.countries);
+        return country ? arr.includes(norm(country)) : true;
       })
       .map((g) => g.groupId);
   }
+  
 
   const targets: { chatId: string; text: string; markup?: string }[] = [];
+  const seenChatIds = new Set<string>();                         // ← de-dupe across everything
+  const ticketSet   = new Set(ticketGroupIds);                   // ← for selective Reply button
+  const uniqueGroupIds = Array.from(new Set([...orderGroupIds, ...ticketGroupIds]));
+  const adminText = (bodyAdmin && bodyAdmin.trim()) ? bodyAdmin : bodyUser;
+ 
 
-  if (bodyAdmin.trim()) {
-    const safeAdmin = toTelegramHtml(bodyAdmin);
-    targets.push(
-      ...adminUserIds.map((id) => ({ chatId: id, text: safeAdmin })),
-      ...orderGroupIds.map((id) => ({ chatId: id, text: safeAdmin })),
-      ...ticketGroupIds.map((id) => ({
-        chatId: id,
-        text: safeAdmin,
-        /** attach the 💬 Reply button *only* on ticket groups */
-        markup: ticketId
+  if (adminText && adminText.trim()) {
+    const safeAdmin = toTelegramHtml(adminText);
+  
+    // admins (user IDs)
+    for (const id of adminUserIds) {
+      if (id && !seenChatIds.has(id)) {
+        seenChatIds.add(id);
+        targets.push({ chatId: id, text: safeAdmin });
+      }
+    }
+  
+    // groups (orders + tickets) – de-duplicated
+    for (const id of uniqueGroupIds) {
+      if (!id || seenChatIds.has(id)) continue;
+      seenChatIds.add(id);
+      const markup =
+        ticketId && ticketSet.has(id)
           ? JSON.stringify({
-            inline_keyboard: [
-              [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
-            ],
-          })
-          : undefined,
-      })),
-    );
+              inline_keyboard: [
+                [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
+              ],
+            })
+          : undefined;
+      targets.push({ chatId: id, text: safeAdmin, ...(markup ? { markup } : {}) });
+    }
   }
+  
 
   if (clientUserId && bodyUser.trim()) {
-    targets.push({ chatId: clientUserId, text: toTelegramHtml(bodyUser) });
+    // client DM – also respect de-dupe (paranoia)
+    if (!seenChatIds.has(clientUserId)) {
+      seenChatIds.add(clientUserId);
+      targets.push({ chatId: clientUserId, text: toTelegramHtml(bodyUser) });
+    }
   }
 
   await Promise.all(
