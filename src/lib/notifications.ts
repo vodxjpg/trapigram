@@ -426,29 +426,42 @@ async function dispatchTelegram(opts: {
   }
 
   const targets: { chatId: string; text: string; markup?: string }[] = [];
+  const seenChatIds = new Set<string>();                         // ← de-dupe across everything
+  const ticketSet   = new Set(ticketGroupIds);                   // ← for selective Reply button
+  const uniqueGroupIds = Array.from(new Set([...orderGroupIds, ...ticketGroupIds]));
+ 
 
   if (bodyAdmin.trim()) {
     const safeAdmin = toTelegramHtml(bodyAdmin);
-    targets.push(
-      ...adminUserIds.map((id) => ({ chatId: id, text: safeAdmin })),
-      ...orderGroupIds.map((id) => ({ chatId: id, text: safeAdmin })),
-      ...ticketGroupIds.map((id) => ({
-        chatId: id,
-        text: safeAdmin,
-        /** attach the 💬 Reply button *only* on ticket groups */
-        markup: ticketId
+        // admins (user IDs)
+    for (const id of adminUserIds) {
+      if (id && !seenChatIds.has(id)) {
+        seenChatIds.add(id);
+        targets.push({ chatId: id, text: safeAdmin });
+      }
+    }
+    // groups (orders + tickets) – de-duplicated
+    for (const id of uniqueGroupIds) {
+      if (!id || seenChatIds.has(id)) continue;
+      seenChatIds.add(id);
+      const markup =
+        ticketId && ticketSet.has(id)
           ? JSON.stringify({
-            inline_keyboard: [
-              [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
-            ],
-          })
-          : undefined,
-      })),
-    );
+              inline_keyboard: [
+                [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
+              ],
+            })
+          : undefined;
+      targets.push({ chatId: id, text: safeAdmin, ...(markup ? { markup } : {}) });
+    }
   }
 
   if (clientUserId && bodyUser.trim()) {
-    targets.push({ chatId: clientUserId, text: toTelegramHtml(bodyUser) });
+    // client DM – also respect de-dupe (paranoia)
+    if (!seenChatIds.has(clientUserId)) {
+      seenChatIds.add(clientUserId);
+      targets.push({ chatId: clientUserId, text: toTelegramHtml(bodyUser) });
+    }
   }
 
   await Promise.all(

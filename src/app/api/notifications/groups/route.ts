@@ -45,6 +45,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
 
+  // If this chat is already registered for this org, update instead of inserting a duplicate
+  const existing = await db
+    .selectFrom("notificationGroups")
+    .select(["id"])
+    .where("organizationId", "=", ctx.organizationId)
+    .where("groupId", "=", data.groupId)
+    .executeTakeFirst();
+  
+  if (existing) {
+    await db
+      .updateTable("notificationGroups")
+      .set({
+        name: data.name,
+        countries: JSON.stringify(data.countries),
+        updatedAt: new Date(),
+      })
+      .where("id", "=", existing.id)
+      .execute();
+    return NextResponse.json({ id: existing.id, ...data, updated: true }, { status: 200 });
+  }
+  
   const id = uuidv4();
   await db
     .insertInto("notificationGroups")
@@ -58,6 +79,5 @@ export async function POST(req: NextRequest) {
       updatedAt: new Date(),
     })
     .execute();
-
-  return NextResponse.json({ id, ...data }, { status: 201 });
+  return NextResponse.json({ id, ...data, created: true }, { status: 201 });
 }
