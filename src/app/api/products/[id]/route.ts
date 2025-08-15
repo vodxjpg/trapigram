@@ -556,7 +556,18 @@ export async function PATCH(
       const bad = parsedUpdate.categories.filter((cid) => !validIds.includes(cid));
       if (bad.length)
         return NextResponse.json({ error: `Invalid category IDs: ${bad.join(", ")}` }, { status: 400 });
-    }
+      }
+
+      // Fetch current productType so we can decide variation logic even if client omits it
+const current = await db
+  .selectFrom("products")
+  .select(["productType"])
+  .where("id", "=", id)
+  .executeTakeFirst();
+const isVariableAfter =
+  (parsedUpdate.productType ?? current?.productType) === "variable";
+
+
 
     /* -------- build products update payload -------------------- */
     const updateCols: Record<string, any> = {
@@ -581,6 +592,28 @@ export async function PATCH(
 
     await db.updateTable("products").set(updateCols).where("id", "=", id).execute();
 
+        /* If switching to simple, drop variations (block if any are shared) */
+    if (parsedUpdate.productType === "simple") {
+      const existingVarRows = await db
+        .selectFrom("productVariations")
+        .select("id")
+        .where("productId", "=", id)
+        .execute();
+      const toDelete = existingVarRows.map((v) => v.id);
+      if (toDelete.length) {
+        const stillReferenced = await db
+          .selectFrom("sharedProduct")
+          .select("variationId")
+          .where("variationId", "in", toDelete)
+          .execute();
+        const blockedIds = new Set(stillReferenced.map((r) => r.variationId));
+        if (blockedIds.size) {
+          return NextResponse.json({ error: "Cannot convert to simple: some variations are included in active warehouse share links. Remove them from those links first." }, { status: 409 });
+        }
+        await db.deleteFrom("productVariations").where("id", "in", toDelete).execute();
+      }
+    }
+
     /* -------- categories (unchanged) ---------------------------- */
     if (parsedUpdate.categories) {
       await db.deleteFrom("productCategory").where("productId", "=", id).execute();
@@ -599,8 +632,8 @@ export async function PATCH(
     /* ============================================================== */
     /*  **NEW** safe upsert for variations (variable products)        */
     /* ============================================================== */
-    if (parsedUpdate.productType === "variable" && parsedUpdate.variations) {
-      /* current variations in DB */
+    if (parsedUpdate.variations && isVariableAfter) {
+        /* current variations in DB (after-change view) */
       const existingVarRows = await db
         .selectFrom("productVariations")
         .select("id")
