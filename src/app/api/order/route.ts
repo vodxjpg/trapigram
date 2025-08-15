@@ -163,6 +163,7 @@ export async function GET(req: NextRequest) {
         createdAt: o.createdAt,
         total: Number(o.totalAmount),
         trackingNumber: o.trackingNumber,
+        clientId: o.clientId,
         firstName: o.firstName,
         lastName: o.lastName,
         username: o.username,
@@ -170,6 +171,7 @@ export async function GET(req: NextRequest) {
         // NEW:
         shippingCompany: o.shippingService ?? null,
         referralAwarded: !!o.referralAwarded,
+        referredBy: o.referredBy ?? null,
       }));
       const projected = fields ? orders.map(o => pickFields(o, fields)) : orders;
       return NextResponse.json(projected, { status: 200 });
@@ -210,12 +212,14 @@ export async function GET(req: NextRequest) {
       createdAt: o.createdAt,
       total: Number(o.totalAmount),
       trackingNumber: o.trackingNumber,
+      clientId: o.clientId,
       firstName: o.firstName,
       lastName: o.lastName,
       username: o.username,
       email: o.email,
-      shippingCompany: o.shippingService ?? o.shippingService ?? null,
-      referralAwarded: !!o.referralAwarded
+      shippingCompany: o.shippingService ?? null,
+      referralAwarded: !!o.referralAwarded,
+      referredBy: o.referredBy ?? null,
     }));
         const projected = fields
       ? orders.map(o => pickFields(o, fields))
