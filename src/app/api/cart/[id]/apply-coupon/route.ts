@@ -88,26 +88,38 @@ export async function PATCH(
 
     /* ─── country restriction ───────────────────────────────────────── */
     const allowed = JSON.parse(cup.countries || "[]");
-    if (!allowed.includes(cartCountry))
-      return NextResponse.json(
-        { error: "This coupon cannot be used in your country." },
-        { status: 400 },
-      );
+     if (!allowed.includes(cartCountry))
+         return NextResponse.json(
+           {
+             error: "This coupon cannot be used in your country.",
+             errorCode: "COUPON_COUNTRY_FORBIDDEN",
+             countries: allowed,
+           },
+           { status: 400 },
+         );
 
     /* ─── date window ───────────────────────────────────────────────── */
     const now = new Date();
     const start = new Date(cup.startDate);
     const end = cup.expirationDate ? new Date(cup.expirationDate) : null;
     if (now < start)
-      return NextResponse.json(
-        { error: "Coupon is not valid yet" },
-        { status: 400 },
-      );
-    if (end && now > end)
-      return NextResponse.json(
-        { error: "Coupon is expired" },
-        { status: 400 },
-      );
+        return NextResponse.json(
+          {
+            error: "Coupon is not valid yet",
+            errorCode: "COUPON_NOT_YET_VALID",
+            startDate: cup.startDate,
+          },
+          { status: 400 },
+        );
+      if (end && now > end)
+        return NextResponse.json(
+          {
+            error: "Coupon is expired",
+            errorCode: "COUPON_EXPIRED",
+            expirationDate: cup.expirationDate,
+          },
+          { status: 400 },
+        );
 
     /* ─── per-user limit (0 ⇒ unlimited) ────────────────────────────── */
     const { rows: perUser } = await pool.query(
@@ -115,11 +127,15 @@ export async function PATCH(
        WHERE "clientId" = $1 AND "couponCode" = $2`,
       [cart.clientId, cup.code],
     );
-    if (cup.limitPerUser > 0 && perUser.length >= cup.limitPerUser)
-      return NextResponse.json(
-        { error: "Coupon limit per user reached" },
-        { status: 400 },
-      );
+     if (cup.limitPerUser > 0 && perUser.length >= cup.limitPerUser)
+         return NextResponse.json(
+           {
+             error: "Coupon limit per user reached",
+             errorCode: "COUPON_LIMIT_PER_USER",
+             limitPerUser: cup.limitPerUser,
+           },
+           { status: 400 },
+         );
 
     /* ─── global usage limit (0 ⇒ unlimited) ────────────────────────── */
     const { rows: usageRows } = await pool.query(
@@ -127,21 +143,30 @@ export async function PATCH(
        WHERE "organizationId" = $1 AND "couponCode" = $2`,
       [organizationId, cup.code],
     );
-    if (cup.usageLimit > 0 && usageRows.length >= cup.usageLimit)
-      return NextResponse.json(
-        { error: "Coupon usage limit reached" },
-        { status: 400 },
-      );
+     if (cup.usageLimit > 0 && usageRows.length >= cup.usageLimit)
+         return NextResponse.json(
+           {
+             error: "Coupon usage limit reached",
+             errorCode: "COUPON_USAGE_LIMIT",
+             usageLimit: cup.usageLimit,
+           },
+           { status: 400 },
+         );
 
     /* ─── spending window ───────────────────────────────────────────── */
     const subtotal = data.total;
     const minSpend = Number(cup.expendingMinimum) || 0;
     const maxCap = Number(cup.expendingLimit) || 0;
-    if (minSpend > 0 && subtotal < minSpend)
-      return NextResponse.json(
-        { error: `Order total must be at least ${minSpend.toFixed(2)} €` },
-        { status: 400 },
-      );
+     if (minSpend > 0 && subtotal < minSpend)
+         return NextResponse.json(
+           {
+             error: `Order total must be at least ${minSpend.toFixed(2)} €`,
+             errorCode: "COUPON_MIN_SPEND",
+             minSpend,
+             subtotal,
+           },
+           { status: 400 },
+         );
 
     /* ─── discount calculation ──────────────────────────────────────── */
     const base = maxCap > 0 ? Math.min(subtotal, maxCap) : subtotal;
@@ -163,10 +188,13 @@ export async function PATCH(
     );
 
     const discount = {
-      discountType: cup.discountType,            // "percentage" | "fixed"
-      discountValue: Number(cup.discountAmount),  // rate (%) or fixed €
-      discountAmount,
-    };
+        discountType: cup.discountType,             // "percentage" | "fixed"
+        discountValue: Number(cup.discountAmount),  // rate (%) or fixed €
+        discountAmount,                             // € off (already capped)
+        calculationBase: base,                      // € used in % calc (after cap)
+        minSpend,                                   // for UI hints
+        maxCap,                                     // for UI hints
+      };
 
     /* ─── encrypted integrity blob ─────────────────────────────────── */
     const encrypted = encryptSecretNode(JSON.stringify(discount));
