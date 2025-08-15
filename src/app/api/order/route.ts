@@ -66,14 +66,14 @@ type OrderPayload = z.infer<typeof orderSchema>;
 /* – Does NOT change SQL selection; it trims the JSON we return.   */
 /* --------------------------------------------------------------- */
 function parseFields(sp: URLSearchParams): string[] | null {
-    const raw = sp.get("fields");
-    if (!raw) return null;
-    return raw.split(",").map(s => s.trim()).filter(Boolean);
-  }
-  function pickFields<T extends Record<string, any>>(obj: T, fields: string[] | null) {
-    if (!fields) return obj;
-    return fields.reduce<Record<string, any>>((acc, k) => (k in obj ? (acc[k] = (obj as any)[k], acc) : acc), {});
-  }
+  const raw = sp.get("fields");
+  if (!raw) return null;
+  return raw.split(",").map(s => s.trim()).filter(Boolean);
+}
+function pickFields<T extends Record<string, any>>(obj: T, fields: string[] | null) {
+  if (!fields) return obj;
+  return fields.reduce<Record<string, any>>((acc, k) => (k in obj ? (acc[k] = (obj as any)[k], acc) : acc), {});
+}
 
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
@@ -138,7 +138,7 @@ export async function GET(req: NextRequest) {
         }
       }
       if (filterReferral === "false") clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
-      if (filterReferral === "true")  clauses.push(`o."referralAwarded" = TRUE`);
+      if (filterReferral === "true") clauses.push(`o."referralAwarded" = TRUE`);
 
       // NEW: optional LIMIT
       let limitClause = "";
@@ -181,22 +181,22 @@ export async function GET(req: NextRequest) {
     const clauses: string[] = [`o."organizationId" = $1`];
     const vals: unknown[] = [organizationId];
 
-      if (filterStatus) {
-            const statuses = filterStatus.split(",");
-            if (statuses.length > 1) {
-              clauses.push(`o.status IN (${statuses.map((_, i) => `$${vals.length + i + 1}`).join(",")})`);
-              vals.push(...statuses);
-            } else {
-              clauses.push(`o.status = $${vals.length + 1}`);
-              vals.push(filterStatus);
-            }
+    if (filterStatus) {
+      const statuses = filterStatus.split(",");
+      if (statuses.length > 1) {
+        clauses.push(`o.status IN (${statuses.map((_, i) => `$${vals.length + i + 1}`).join(",")})`);
+        vals.push(...statuses);
+      } else {
+        clauses.push(`o.status = $${vals.length + 1}`);
+        vals.push(filterStatus);
       }
-     if (filterReferral === "false") {
-         clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
-       }
-       if (filterReferral === "true") {
-         clauses.push(`o."referralAwarded" = TRUE`);
-       }
+    }
+    if (filterReferral === "false") {
+      clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
+    }
+    if (filterReferral === "true") {
+      clauses.push(`o."referralAwarded" = TRUE`);
+    }
     const listSql = `
       SELECT o.*, c."firstName", c."lastName", c."username", c.email
         FROM orders o
@@ -221,7 +221,7 @@ export async function GET(req: NextRequest) {
       referralAwarded: !!o.referralAwarded,
       referredBy: o.referredBy ?? null,
     }));
-        const projected = fields
+    const projected = fields
       ? orders.map(o => pickFields(o, fields))
       : orders;
     return NextResponse.json(projected, { status: 200 });
@@ -298,6 +298,15 @@ export async function POST(req: NextRequest) {
   } = payload;
   const couponTypeResolved = couponType ?? counponType ?? null;
 
+  // Look up the referrer for this client so every order carries it
+  // (used by the referral-award job). Null when not referred.
+  // ──────────────────────────────────────────────────────────────
+  const refRow = await pool.query(
+    `SELECT "referredBy" FROM clients WHERE id = $1 AND "organizationId" = $2`,
+    [clientId, organizationId],
+  );
+  const referredBy: string | null = refRow.rows?.[0]?.referredBy ?? null;
+
   const orderId = uuidv4();
   await pool.query(
     `CREATE SEQUENCE IF NOT EXISTS order_key_seq START 1 INCREMENT 1 OWNED BY NONE`
@@ -329,15 +338,17 @@ export async function POST(req: NextRequest) {
        "couponCode","couponType","shippingService","shippingMethod",
        "trackingNumber",address,status,subtotal,"discountValue",
        "pointsRedeemed","pointsRedeemedAmount","cartHash",
-       "orderMeta","dateCreated","createdAt","updatedAt","orderKey")
+       "orderMeta","dateCreated","createdAt","updatedAt","orderKey",
+      "referredBy","referralAwarded")
     VALUES
       ($1, $2, $3, $4,$5, $6,
        $7, $8, $9,
        $10, $11, $12, $13,
        $14,$15,$16, $17, $18,
-       $19,$20,$21,
-       '[]'::jsonb,
-       NOW(),NOW(),NOW(),$22)
+         $19,$20,$21,
+     '[]'::jsonb,
+     NOW(),NOW(),NOW(),$22,
+     $23, $24)
     RETURNING *
   `;
 
@@ -349,6 +360,9 @@ export async function POST(req: NextRequest) {
   try {
     await pool.query("BEGIN");
     await pool.query(updCartSQL, updCartVals);
+    // push new trailing values that match the updated INSERT signature
+    // NOTE: cartHash stays as-is; referral flags don't affect its integrity
+    insertValues.push(referredBy, false);
 
     /* ── RESERVE STOCK (unchanged) ───────────────────────────── */
     const lineSql = `
@@ -494,13 +508,15 @@ export async function POST(req: NextRequest) {
             (id, "organizationId","clientId","cartId",country,"paymentMethod",
             "shippingTotal", "totalAmount","shippingService","shippingMethod",
             address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
-            "dateCreated","createdAt","updatedAt","orderKey", "discountTotal")
+            "dateCreated","createdAt","updatedAt","orderKey", "discountTotal",
+            "referredBy","referralAwarded")
           VALUES
             ($1, $2, $3, $4,$5, $6,
             $7, $8, $9,
-            $10, $11, $12, $13,
-            $14,$15,
-            NOW(),NOW(),NOW(),$16, $17)
+                 $10, $11, $12, $13,
+      $14,$15,
+      NOW(),NOW(),NOW(),$16, $17,
+      $18, $19)
           RETURNING *
         `;
 
@@ -521,7 +537,9 @@ export async function POST(req: NextRequest) {
           oldOrder.rows[0].pointsRedeemed,
           oldOrder.rows[0].pointsRedeemedAmount,
           orderKey,
-          0
+          0,
+          referredBy,
+          false
         ]
 
         const newOrderResult = await pool.query(newOrder, newOrderValues)
