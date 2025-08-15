@@ -814,7 +814,10 @@ export async function PATCH(
     );
     console.log(`Order ${id} updated to ${newStatus}`);
 
-
+    /* ── Affiliate / referral bonuses (runs once, on first transition to PAID) ── */
+    if (newStatus === "paid" && ord.status !== "paid") {
+      // … entire bonus block here …
+    }
 
     await client.query("COMMIT");
     console.log(`Transaction committed for order ${id}`);
@@ -1029,10 +1032,9 @@ export async function PATCH(
       LIMIT 1`,
           [organizationId],
         );
-
         const ptsPerReferral = Number(affSet?.pointsPerReferral || 0);
-        /*  const stepEur = Number(affSet?.spendingStep || 0);   // ← alias above
-         const ptsPerStep = Number(affSet?.pointsPerSpendingStep || 0);   // ← alias above */
+        const stepEur = Number(affSet?.spendingStep || 0);   // ← alias above
+        const ptsPerStep = Number(affSet?.pointsPerSpendingStep || 0);   // ← alias above
 
         /*  2) has this buyer been referred?  award referrer once   */
         const { rows: [cli] } = await client.query(
@@ -1067,6 +1069,68 @@ export async function PATCH(
         WHERE id = $1`,
             [id],
           );
+        }
+
+        /*  3) spending milestones for *buyer*  (step-based)        */
+        if (stepEur > 0 && ptsPerStep > 0) {
+          /* --------------------------------------------------------------
+           * Lifetime spend in **EUR** – we rely on orderRevenue which was
+           * (re)-generated a few lines above for this order.
+           * -------------------------------------------------------------- */
+          const { rows: [spent] } = await client.query(
+            `SELECT COALESCE(SUM(r."EURtotal"),0) AS sum
+         FROM "orderRevenue" r
+         JOIN orders o ON o.id = r."orderId"
+        WHERE o."clientId"       = $1
+          AND o."organizationId" = $2
+          AND o.status           = 'paid'`,
+            [ord.clientId, organizationId],
+          );
+
+          const totalEur = Number(spent.sum);   // already a decimal string → number
+          /* how many spending-bonuses already written? */
+          const { rows: [prev] } = await client.query(
+            `SELECT COALESCE(SUM(points),0) AS pts
+         FROM "affiliatePointLogs"
+        WHERE "organizationId" = $1
+          AND "clientId"       = $2
+         AND action           = 'spending_bonus'`,
+            [organizationId, ord.clientId],
+          );
+
+          const shouldHave = Math.floor(totalEur / stepEur) * ptsPerStep;
+          const delta = shouldHave - Number(prev.pts);
+
+          console.log(
+            `[affiliate] spending check – client %s: total %s EUR, step %d, ` +
+            `prev %d pts, delta %d`,
+            ord.clientId,
+            totalEur.toFixed(2),
+            stepEur,
+            Number(prev.pts),
+            delta,
+          );
+
+          if (delta > 0) {
+            const logId = uuidv4();
+            await client.query(
+              `INSERT INTO "affiliatePointLogs"
+           (id,"organizationId","clientId",points,action,description,
+            "createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,'spending_bonus',
+                 'Milestone spending bonus',NOW(),NOW())`,
+              [logId, organizationId, ord.clientId, delta],
+            );
+            await client.query(
+              `INSERT INTO "affiliatePointBalances" AS b
+           ("clientId","organizationId","pointsCurrent","createdAt","updatedAt")
+         VALUES ($1,$2,$3,NOW(),NOW())
+         ON CONFLICT("clientId","organizationId") DO UPDATE
+           SET "pointsCurrent" = b."pointsCurrent" + EXCLUDED."pointsCurrent",
+               "updatedAt"     = NOW()`,
+              [ord.clientId, organizationId, delta],
+            );
+          }
         }
       }
 
