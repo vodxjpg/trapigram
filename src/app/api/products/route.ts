@@ -399,16 +399,14 @@ function mergePriceMaps(
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, tenantId } = ctx;
 
   /* ----------  main logic  --------------------------------------- */
   try {
     const body = await req.json()
     let parsedProduct = productSchema.parse(body)
 
-    const tenant = await db.selectFrom("tenant").select("id").where("ownerUserId", "=", userId).executeTakeFirst()
-    if (!tenant) return NextResponse.json({ error: "No tenant found for user" }, { status: 404 })
-    const tenantId = tenant.id
+    
 
     /* SKU handling */
     let finalSku = parsedProduct.sku

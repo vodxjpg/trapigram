@@ -111,7 +111,7 @@ export async function GET(
 
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, tenantId } = ctx;
   const isServiceAccount = userId === "service-account";
 
   /* ---------- product row (exists?) -------------------------------- */
@@ -226,17 +226,12 @@ export async function GET(
 
   /* ---------- normal user flow (unchanged) ------------------------ */
   /* ---------- fetch tenantId for user ----------------------------- */
-  const tenant = await db
-    .selectFrom("tenant")
-    .select("id")
-    .where("ownerUserId", "=", userId)
-    .executeTakeFirst();
-  if (!tenant)
+  const userTenantId = tenantId;
+  if (!userTenantId)
     return NextResponse.json(
       { error: "No tenant found for user" },
       { status: 404 },
     );
-  const userTenantId = tenant.id;
 
   /* ---------- detect “shared copy” purely via mapping -------- */
   const mapping = await db
@@ -417,17 +412,12 @@ export async function PATCH(
 
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { organizationId, userId } = ctx;
+  const { organizationId, userId, tenantId } = ctx;
 
   try {
-    const tenant = await db
-      .selectFrom("tenant")
-      .select(["id"])
-      .where("ownerUserId", "=", userId)
-      .executeTakeFirst();
-    if (!tenant)
+    const userTenantId = tenantId;
+    if (!userTenantId)
       return NextResponse.json({ error: "No tenant found for user" }, { status: 404 });
-    const tenantId = tenant.id;
 
     const { id } = await params;
 
@@ -983,7 +973,7 @@ export async function DELETE(
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
+  const { organizationId, userId, tenantId } = ctx;
   try {
     const { id } = await params;
 
