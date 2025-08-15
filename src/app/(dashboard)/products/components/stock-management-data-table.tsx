@@ -1,8 +1,8 @@
 // src/app/(dashboard)/products/components/stock-management-data-table.ts
 "use client";
 
-import { useState, useEffect, startTransition } from "react";
-import { ArrowUpDown, Edit } from "lucide-react";
+import { useState, useEffect, useMemo, startTransition } from "react";
+import { ArrowUpDown, Edit, X } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
@@ -28,11 +28,6 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -41,6 +36,17 @@ import {
   SelectItem,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Drawer,
+  DrawerTrigger,
+  DrawerContent,
+  DrawerHeader,
+  DrawerFooter,
+  DrawerTitle,
+  DrawerDescription,
+  DrawerClose,
+} from "@/components/ui/drawer";
+import { Separator } from "@/components/ui/separator";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { useProducts } from "@/hooks/use-products";
@@ -82,7 +88,7 @@ export function StockManagementDataTable() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // Search & filters (debounced search, plus category/attribute/term to match products table UX)
+  // Search & filters
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 300);
 
@@ -114,9 +120,7 @@ export function StockManagementDataTable() {
         if (!mounted) return;
         setCategoryOptions(categories ?? []);
       })
-      .catch(() => {
-        /* silent */
-      });
+      .catch(() => {});
 
     fetch("/api/product-attributes?page=1&pageSize=1000", {
       headers: {
@@ -128,9 +132,7 @@ export function StockManagementDataTable() {
         if (!mounted) return;
         setAttributeOptions(attributes ?? []);
       })
-      .catch(() => {
-        /* silent */
-      });
+      .catch(() => {});
 
     return () => {
       mounted = false;
@@ -139,7 +141,6 @@ export function StockManagementDataTable() {
 
   // Load terms whenever attribute changes
   useEffect(() => {
-    // Clear terms when attribute is cleared
     if (!attributeFilter) {
       setTermOptions([]);
       setAttributeTermFilter("");
@@ -161,11 +162,8 @@ export function StockManagementDataTable() {
         if (!res.ok) throw new Error("Failed to load attribute terms");
         const { terms } = await res.json();
         setTermOptions(terms ?? []);
-        // reset selected term when attribute changes; do NOT trigger filtering yet
         setAttributeTermFilter("");
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     })();
     return () => controller.abort();
   }, [attributeFilter]);
@@ -236,7 +234,16 @@ export function StockManagementDataTable() {
             sum + Object.values(byCountry).reduce((s, q) => s + Number(q), 0),
           0
         ),
-      cell: ({ row }) => <StockPopover product={row.original} />,
+      cell: ({ row }) => (
+        <StockDrawer
+          product={row.original}
+          warehouses={warehouses}
+          canUpdate={canUpdate}
+          onSaved={async () => {
+            await mutate();
+          }}
+        />
+      ),
       enableSorting: true,
       sortingFn: "basic",
     },
@@ -267,137 +274,6 @@ export function StockManagementDataTable() {
   }, [viewLoading, canView, router]);
 
   if (viewLoading || updateLoading || !canView) return null;
-
-  // Stock popover component
-  function StockPopover({ product }: { product: Product }) {
-    const [editable, setEditable] = useState<
-      Record<string, Record<string, number>>
-    >({});
-    const [saving, setSaving] = useState(false);
-    const [open, setOpen] = useState(false); // control popover so we can close on save
-
-    useEffect(() => {
-      const norm: Record<string, Record<string, number>> = {};
-      for (const [wid, countries] of Object.entries(product.stockData || {})) {
-        norm[wid] = {};
-        for (const [c, q] of Object.entries(countries)) {
-          norm[wid][c] = Number(q ?? 0);
-        }
-      }
-      setEditable(norm);
-    }, [product.stockData]);
-
-    const handleChange = (wid: string, country: string, qty: number) => {
-      setEditable((prev) => ({
-        ...prev,
-        [wid]: { ...(prev[wid] || {}), [country]: qty },
-      }));
-    };
-
-    const handleSave = async () => {
-      setSaving(true);
-      const warehouseStock = Object.entries(editable).flatMap(
-        ([warehouseId, countries]) =>
-          Object.entries(countries).map(([country, quantity]) => ({
-            warehouseId,
-            productId: product.id,
-            variationId: null,
-            country,
-            quantity,
-          }))
-      );
-      await fetch(`/api/products/${product.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ warehouseStock }),
-      });
-      await mutate();
-      setSaving(false);
-      setOpen(false); // close after successful save
-    };
-
-    const editableSum = Object.values(editable).reduce(
-      (sum, byCountry) =>
-        sum + Object.values(byCountry).reduce((s, q) => s + q, 0),
-      0
-    );
-
-    // Non-editable view
-    if (!canUpdate) {
-      return (
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm">
-              {editableSum}
-            </Button>
-          </PopoverTrigger>
-        </Popover>
-      );
-    }
-
-    // Editable view
-    return (
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            title="Click to update stock"
-            className="flex items-center space-x-1"
-          >
-            <span>{editableSum}</span>
-            <Edit className="h-4 w-4 text-gray-500" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-64">
-          {/* Wrap inputs in a form so Enter submits/saves */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!saving) void handleSave();
-            }}
-          >
-            {warehouses.map((w) => (
-              <div key={w.id} className="mb-4">
-                <div className="mb-1 font-medium">{w.name}</div>
-                {w.countries.map((c) => (
-                  <div
-                    key={c}
-                    className="mb-1 flex items-center justify-between"
-                  >
-                    <span className="text-sm">{c}</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      className="w-20"
-                      value={editable[w.id]?.[c] ?? 0}
-                      onChange={(e) =>
-                        handleChange(
-                          w.id,
-                          c,
-                          parseInt(e.target.value, 10) || 0
-                        )
-                      }
-                      // Hitting Enter saves the form
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          e.currentTarget.form?.requestSubmit();
-                        }
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-            ))}
-            <Button className="w-full" type="submit" disabled={saving}>
-              {saving ? "Saving…" : "Save"}
-            </Button>
-          </form>
-        </PopoverContent>
-      </Popover>
-    );
-  }
 
   // Render
   return (
@@ -447,7 +323,6 @@ export function StockManagementDataTable() {
             startTransition(() => {
               const next = v === "all" ? "" : v;
               setAttributeFilter(next);
-              // Reset terms when attribute changes. Do NOT trigger filtering or pagination here.
               setTermOptions([]);
               setAttributeTermFilter("");
             });
@@ -466,7 +341,7 @@ export function StockManagementDataTable() {
           </SelectContent>
         </Select>
 
-        {/* Attribute Term filter (enabled only when an attribute is selected) */}
+        {/* Attribute Term filter */}
         <Select
           value={attributeTermFilter || "all"}
           onValueChange={(v) => {
@@ -603,5 +478,232 @@ export function StockManagementDataTable() {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Drawer used for editing stock                                      */
+/* ------------------------------------------------------------------ */
+function StockDrawer({
+  product,
+  warehouses,
+  canUpdate,
+  onSaved,
+}: {
+  product: Product;
+  warehouses: Warehouse[];
+  canUpdate: boolean;
+  onSaved: () => Promise<void> | void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editable, setEditable] = useState<
+    Record<string, Record<string, number>>
+  >({});
+
+  // Initialize editable map from product.stockData
+  useEffect(() => {
+    const norm: Record<string, Record<string, number>> = {};
+    for (const [wid, countries] of Object.entries(product.stockData || {})) {
+      norm[wid] = {};
+      for (const [c, q] of Object.entries(countries)) {
+        norm[wid][c] = Number(q ?? 0);
+      }
+    }
+    // Ensure every warehouse/country combo is present so inputs always show
+    for (const w of warehouses) {
+      if (!norm[w.id]) norm[w.id] = {};
+      for (const c of w.countries) {
+        if (norm[w.id][c] === undefined) norm[w.id][c] = 0;
+      }
+    }
+    setEditable(norm);
+  }, [product.stockData, warehouses]);
+
+  const totalQty = useMemo(
+    () =>
+      Object.values(editable).reduce(
+        (sum, byCountry) =>
+          sum + Object.values(byCountry).reduce((s, q) => s + q, 0),
+        0
+      ),
+    [editable]
+  );
+
+  const handleChange = (wid: string, country: string, qty: number) => {
+    setEditable((prev) => ({
+      ...prev,
+      [wid]: { ...(prev[wid] || {}), [country]: qty },
+    }));
+  };
+
+  const blurActiveElement = () => {
+    if (typeof document !== "undefined") {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+    }
+  };
+
+  const handleSave = async () => {
+    blurActiveElement(); // iOS/Safari focus quirk
+    if (!canUpdate || saving) return;
+    setSaving(true);
+
+    const warehouseStock = Object.entries(editable).flatMap(
+      ([warehouseId, countries]) =>
+        Object.entries(countries).map(([country, quantity]) => ({
+          warehouseId,
+          productId: product.id,
+          variationId: null,
+          country,
+          quantity,
+        }))
+    );
+
+    try {
+      await fetch(`/api/products/${product.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ warehouseStock }),
+      });
+      await onSaved();
+      setOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Read-only trigger if cannot update
+  if (!canUpdate) {
+    return (
+      <Button variant="outline" size="sm" disabled>
+        {totalQty}
+      </Button>
+    );
+  }
+
+  return (
+    <Drawer open={open} onOpenChange={setOpen}>
+      <DrawerTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          title="Click to update stock"
+          className="flex items-center space-x-1"
+        >
+          <span>{totalQty}</span>
+          <Edit className="h-4 w-4 text-gray-500" />
+        </Button>
+      </DrawerTrigger>
+
+      {/* Force bottom-sheet on ALL breakpoints with height & rounded top */}
+      <DrawerContent
+        className="
+          fixed inset-x-0 bottom-0 top-auto w-full
+          rounded-t-2xl border-t bg-background p-0
+          data-[state=open]:animate-in data-[state=open]:slide-in-from-bottom-10
+          data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom-10
+          h-[85vh] sm:h-[85vh]
+        "
+      >
+        <DrawerHeader className="px-6 py-4">
+          <div className="flex items-center justify-between">
+            <DrawerTitle className="text-base sm:text-lg">
+              Edit Stock — <span className="font-normal">{product.title}</span>
+            </DrawerTitle>
+            <DrawerClose asChild>
+              <Button variant="ghost" size="icon" aria-label="Close">
+                <X className="h-5 w-5" />
+              </Button>
+            </DrawerClose>
+          </div>
+          <DrawerDescription className="mt-1">
+            Update quantities per warehouse and country. Total:{" "}
+            <span className="font-medium">{totalQty}</span>
+          </DrawerDescription>
+        </DrawerHeader>
+
+        <Separator />
+
+        {/* Scrollable content area */}
+        <div className="overflow-y-auto px-6 py-4 h-[calc(85vh-9rem)] sm:h-[calc(85vh-9rem)]">
+          {warehouses.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No warehouses found.
+            </p>
+          ) : (
+            <div className="space-y-6">
+              {warehouses.map((w) => (
+                <div key={w.id} className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-medium">{w.name}</h3>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setEditable((prev) => {
+                            const next = { ...prev };
+                            const block = { ...(next[w.id] || {}) };
+                            w.countries.forEach((c) => (block[c] = 0));
+                            next[w.id] = block;
+                            return next;
+                          })
+                        }
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {w.countries.map((c) => (
+                      <div
+                        key={`${w.id}-${c}`}
+                        className="flex items-center justify-between rounded-md border p-3"
+                      >
+                        <span className="text-sm">{c}</span>
+                        <Input
+                          inputMode="numeric"
+                          type="number"
+                          min={0}
+                          className="ml-3 w-24"
+                          value={editable[w.id]?.[c] ?? 0}
+                          onChange={(e) =>
+                            handleChange(
+                              w.id,
+                              c,
+                              Number.parseInt(e.target.value, 10) || 0
+                            )
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleSave();
+                            }
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <Separator />
+
+        <DrawerFooter className="px-6 py-4">
+          <div className="flex items-center justify-end gap-2">
+            <DrawerClose asChild>
+              <Button variant="outline">Cancel</Button>
+            </DrawerClose>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
   );
 }
