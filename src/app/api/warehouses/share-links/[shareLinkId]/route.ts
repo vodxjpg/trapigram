@@ -21,12 +21,10 @@ const updateSchema = z.object({
   products: z.array(productSchema).min(1, "At least one product is required"),
 });
 
-// Helper to generate string-based IDs
 function generateId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).substring(2, 10)}`;
 }
 
-/* ▶ helper: safely parse columns that may already be JSON objects */
 function safeParseJSON<T = any>(value: unknown): T {
   if (value == null) return {} as T;
   if (typeof value === "string") {
@@ -39,9 +37,7 @@ function safeParseJSON<T = any>(value: unknown): T {
   return value as T;
 }
 
-/* ──────────────────────────────────────────────────────────────────────── */
-/*  GET                                                                    */
-/* ──────────────────────────────────────────────────────────────────────── */
+/* GET */
 export async function GET(
   req: NextRequest,
   context: { params: Promise<{ shareLinkId: string }> },
@@ -54,7 +50,6 @@ export async function GET(
 
     const { shareLinkId } = await context.params;
 
-    // Fetch share link
     const shareLink = await db
       .selectFrom("warehouseShareLink")
       .innerJoin("warehouse", "warehouse.id", "warehouseShareLink.warehouseId")
@@ -78,7 +73,6 @@ export async function GET(
         { status: 404 },
       );
 
-    // Fetch recipients
     const recipients = await db
       .selectFrom("warehouseShareRecipient")
       .innerJoin("user", "user.id", "warehouseShareRecipient.recipientUserId")
@@ -86,7 +80,6 @@ export async function GET(
       .where("warehouseShareRecipient.shareLinkId", "=", shareLinkId)
       .execute();
 
-    // Fetch products
     const products = await db
       .selectFrom("sharedProduct")
       .innerJoin("products", "products.id", "sharedProduct.productId")
@@ -103,7 +96,6 @@ export async function GET(
       .where("sharedProduct.shareLinkId", "=", shareLinkId)
       .execute();
 
-    /* Build term-id → term-name map */
     const vAttrIds = new Set<string>();
     products.forEach((p) => {
       const attrs = safeParseJSON<Record<string, string>>(p.variationAttributes);
@@ -112,14 +104,14 @@ export async function GET(
     const termMap =
       vAttrIds.size > 0
         ? new Map(
-          (
-            await db
-              .selectFrom("productAttributeTerms")
-              .select(["id", "name"])
-              .where("id", "in", [...vAttrIds])
-              .execute()
-          ).map((t) => [t.id, t.name]),
-        )
+            (
+              await db
+                .selectFrom("productAttributeTerms")
+                .select(["id", "name"])
+                .where("id", "in", [...vAttrIds])
+                .execute()
+            ).map((t) => [t.id, t.name]),
+          )
         : new Map();
 
     const formattedProducts = products.map((p) => {
@@ -164,8 +156,7 @@ export async function GET(
   }
 }
 
-/* ──────────────────────────────────────────────────────────────────────── */
-// src/app/api/warehouses/share-links/[shareLinkId]/route.ts
+/* PUT */
 export async function PUT(
   req: NextRequest,
   context: { params: Promise<{ shareLinkId: string }> },
@@ -183,7 +174,6 @@ export async function PUT(
       return NextResponse.json({ error: parsed.error.errors }, { status: 400 });
     const { recipientUserIds, products } = parsed.data;
 
-    /* ---------- verify link & warehouse ---------- */
     const shareLink = await db
       .selectFrom("warehouseShareLink")
       .innerJoin("warehouse", "warehouse.id", "warehouseShareLink.warehouseId")
@@ -197,25 +187,19 @@ export async function PUT(
         { error: "Share link not found, inactive, or you are not the creator" },
         { status: 404 },
       );
+
     const warehouseId = shareLink.warehouseId;
     const warehouseCountries = JSON.parse(shareLink.countries) as string[];
 
-    /* ── entire original logic preserved ─────────────────────────────── */
-
-    // Validate recipient users
     const validUsers = await db
       .selectFrom("user")
       .select("id")
       .where("id", "in", recipientUserIds)
       .execute();
     if (validUsers.length !== recipientUserIds.length) {
-      return NextResponse.json(
-        { error: "One or more recipient user IDs are invalid" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "One or more recipient user IDs are invalid" }, { status: 400 });
     }
 
-    // Validate products, variations, stock, and costs
     for (const { productId, variationId, cost } of products) {
       const product = await db
         .selectFrom("products")
@@ -223,24 +207,15 @@ export async function PUT(
         .where("id", "=", productId)
         .executeTakeFirst();
       if (!product) {
-        return NextResponse.json(
-          { error: `Product ${productId} not found` },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: `Product ${productId} not found` }, { status: 400 });
       }
 
-      const productCost =
-        typeof product.cost === "string"
-          ? JSON.parse(product.cost)
-          : product.cost;
+      const productCost = typeof product.cost === "string" ? JSON.parse(product.cost) : product.cost;
 
       let baseCost: Record<string, number> = productCost;
       if (variationId) {
         if (product.productType !== "variable") {
-          return NextResponse.json(
-            { error: `Product ${productId} is not variable` },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: `Product ${productId} is not variable` }, { status: 400 });
         }
         const variation = await db
           .selectFrom("productVariations")
@@ -249,15 +224,9 @@ export async function PUT(
           .where("productId", "=", productId)
           .executeTakeFirst();
         if (!variation) {
-          return NextResponse.json(
-            { error: `Variation ${variationId} not found` },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: `Variation ${variationId} not found` }, { status: 400 });
         }
-        baseCost =
-          typeof variation.cost === "string"
-            ? JSON.parse(variation.cost)
-            : variation.cost;
+        baseCost = typeof variation.cost === "string" ? JSON.parse(variation.cost) : variation.cost;
       }
 
       const stockQuery = db
@@ -265,19 +234,16 @@ export async function PUT(
         .select(["country", "quantity"])
         .where("warehouseId", "=", warehouseId)
         .where("productId", "=", productId);
-      if (variationId) {
-        stockQuery.where("variationId", "=", variationId);
-      } else {
-        stockQuery.where("variationId", "is", null);
-      }
+      variationId
+        ? stockQuery.where("variationId", "=", variationId)
+        : stockQuery.where("variationId", "is", null);
       const stock = await stockQuery.execute();
       if (!stock.some((s) => s.quantity > 0)) {
         return NextResponse.json(
           {
-            error: `No stock available for product ${productId}${variationId ? ` variation ${variationId}` : ""
-              }`,
+            error: `No stock available for product ${productId}${variationId ? ` variation ${variationId}` : ""}`,
           },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
@@ -286,71 +252,52 @@ export async function PUT(
           if (!warehouseCountries.includes(country)) {
             return NextResponse.json(
               { error: `Country ${country} not supported by warehouse` },
-              { status: 400 }
+              { status: 400 },
             );
           }
           if (!(country in baseCost)) {
             return NextResponse.json(
               { error: `Base cost not defined for country ${country}` },
-              { status: 400 }
+              { status: 400 },
             );
           }
           if (sharedCost <= baseCost[country]) {
             return NextResponse.json(
-              {
-                error: `Shared cost for ${country} must be higher than base cost (${baseCost[country]})`,
-              },
-              { status: 400 }
+              { error: `Shared cost for ${country} must be higher than base cost (${baseCost[country]})` },
+              { status: 400 },
             );
           }
           if (!stock.some((s) => s.country === country && s.quantity > 0)) {
             return NextResponse.json(
               {
-                error: `No stock available for ${country} for product ${productId}${variationId ? ` variation ${variationId}` : ""
-                  }`,
+                error: `No stock available for ${country} for product ${productId}${
+                  variationId ? ` variation ${variationId}` : ""
+                }`,
               },
-              { status: 400 }
+              { status: 400 },
             );
           }
         }
       }
     }
 
-    // Fetch current recipients before updating
     const currentRecipients = await db
       .selectFrom("warehouseShareRecipient")
       .select("recipientUserId")
       .where("shareLinkId", "=", shareLinkId)
       .execute();
     const currentRecipientUserIds = currentRecipients.map((r) => r.recipientUserId);
+    const removedRecipientUserIds = currentRecipientUserIds.filter((id) => !recipientUserIds.includes(id));
 
-    // Identify removed recipients
-    const removedRecipientUserIds = currentRecipientUserIds.filter(
-      (id) => !recipientUserIds.includes(id)
-    );
-
-    // Clean up products and stock for removed recipients
     if (removedRecipientUserIds.length > 0) {
-      console.log(
-        `[CLEANUP] Identified ${removedRecipientUserIds.length} removed recipients: ${removedRecipientUserIds.join(", ")}`
-      );
-
       for (const removedUserId of removedRecipientUserIds) {
-        console.log(`[CLEANUP] Processing removed recipient: ${removedUserId}`);
-
-        // Find the tenant of the removed recipient
         const removedTenant = await db
           .selectFrom("tenant")
           .select("id")
           .where("ownerUserId", "=", removedUserId)
           .executeTakeFirst();
+        if (!removedTenant) continue;
 
-        if (!removedTenant) {
-          console.log(`[CLEANUP] No tenant found for removed recipientUserId: ${removedUserId}, skipping`);
-          continue;
-        }
-        /* all target copies that belong to *this* recipient
-           (= the tenant we just looked up)                            */
         const targetProductIds = (
           await db
             .selectFrom("sharedProductMapping as spm")
@@ -359,96 +306,66 @@ export async function PUT(
             .where("spm.shareLinkId", "=", shareLinkId)
             .where("products.tenantId", "=", removedTenant.id)
             .execute()
-        ).map(r => r.targetProductId);
+        ).map((r) => r.targetProductId);
 
-        if (targetProductIds.length === 0) {
-          console.log(`[CLEANUP] No synced products found for shareLinkId: ${shareLinkId} for recipient: ${removedUserId}`);
-          continue;
-        }
+        if (!targetProductIds.length) continue;
 
-        console.log(
-          `[CLEANUP] Found ${targetProductIds.length} synced products for recipient: ${removedUserId}: ${targetProductIds.join(", ")}`
-        );
-
-        /* break the FK from THIS link → those copies (B-level rows)    */
         await db
           .deleteFrom("sharedProductMapping")
           .where("shareLinkId", "=", shareLinkId)
           .where("targetProductId", "in", targetProductIds)
           .execute();
 
-        console.log(`[CLEANUP] Deleted sharedProductMapping entries for shareLinkId: ${shareLinkId}`);
-
-        // Delete sharedVariationMapping entries
         await db
           .deleteFrom("sharedVariationMapping")
           .where("shareLinkId", "=", shareLinkId)
           .where("targetProductId", "in", targetProductIds)
           .execute();
-        console.log(`[CLEANUP] Deleted sharedVariationMapping entries for shareLinkId: ${shareLinkId}`);
 
-        /* one call wipes stock, variations, products and any deeper   */
-        /* copies (B → C → …) in FK-safe order                         */
         await propagateDeleteDeep(db, targetProductIds);
-        console.log(`[CLEANUP] Deep-deleted subtree for products: ${targetProductIds.join(", ")}`);
       }
     }
 
-    //
-    // ── BEGIN CLEANUP FOR PRODUCTS NO LONGER SHARED ──
-    //
-    // 1) figure out all warehouses that B has already synced into:
+    // Cleanup products no longer shared
     const linkWarehouseRows = await db
       .selectFrom("warehouseShareRecipient")
       .innerJoin("warehouseShareLink", "warehouseShareRecipient.shareLinkId", "warehouseShareLink.id")
       .select("warehouseShareLink.warehouseId")
       .where("warehouseShareRecipient.shareLinkId", "=", shareLinkId)
       .execute();
-    const linkedWarehouseIds = linkWarehouseRows.map(r => r.warehouseId);
+    const linkedWarehouseIds = linkWarehouseRows.map((r) => r.warehouseId);
 
-    // 2) load every existing mapping for this link:
     const previousMaps = await db
       .selectFrom("sharedProductMapping")
       .select(["id", "sourceProductId", "targetProductId"])
       .where("shareLinkId", "=", shareLinkId)
       .execute();
 
-    // 3) determine which sourceProductIds were removed:
-    const stillShared = new Set(products.map(p => p.productId));
-    const toRemove = previousMaps.filter(m => !stillShared.has(m.sourceProductId));
-    // let the helper clear entire descendant trees in one call
+    const stillShared = new Set(products.map((p) => p.productId));
+    const toRemove = previousMaps.filter((m) => !stillShared.has(m.sourceProductId));
+
     if (toRemove.length) {
-      /* break the FK edge that points _at_ the copies we are removing */
       await db
         .deleteFrom("sharedProductMapping")
-        .where("id", "in", toRemove.map(m => m.id))
+        .where("id", "in", toRemove.map((m) => m.id))
         .execute();
 
       await db
         .deleteFrom("sharedVariationMapping")
-        .where("sourceProductId", "in", toRemove.map(m => m.sourceProductId))
+        .where("sourceProductId", "in", toRemove.map((m) => m.sourceProductId))
         .execute();
 
-      /* now wipe B → C → D … chains */
-      await propagateDeleteDeep(db, toRemove.map(m => m.targetProductId));
+      await propagateDeleteDeep(db, toRemove.map((m) => m.targetProductId));
     }
 
-    // let the helper clear entire descendant trees in one call
-    if (toRemove.length) {
-      await propagateDeleteDeep(db, toRemove.map(m => m.targetProductId));
-    }
-    //
-    // ── END CLEANUP BLOCK ──
-
-    // ── PRESERVE EXISTING targetWarehouseId ──
+    // Preserve existing targetWarehouseId
     const existing = await db
       .selectFrom("warehouseShareRecipient")
       .select(["recipientUserId", "targetWarehouseId"])
       .where("shareLinkId", "=", shareLinkId)
       .execute();
-    const targetMap = new Map(existing.map(r => [r.recipientUserId, r.targetWarehouseId]));
+    const targetMap = new Map(existing.map((r) => [r.recipientUserId, r.targetWarehouseId]));
 
-    // Update share link (recipients and products)
     await db.deleteFrom("warehouseShareRecipient").where("shareLinkId", "=", shareLinkId).execute();
     const recipientRows = recipientUserIds.map((uid) => ({
       id: generateId("WSR"),
@@ -478,10 +395,7 @@ export async function PUT(
       .where("id", "=", shareLinkId)
       .execute();
 
-    /* ------------------------------------------------------------------ */
-    /*  PROPAGATE CUSTOM COSTS                                            */
-    /* ------------------------------------------------------------------ */
-    /* product-level overrides */
+    // Propagate costs to already-synced copies
     const prodOverrides = sharedRows.filter((r) => !r.variationId && Object.keys(r.cost).length);
     if (prodOverrides.length) {
       const prodMaps = await db
@@ -509,7 +423,6 @@ export async function PUT(
       }
     }
 
-    /* variation-level overrides */
     const varOverrides = sharedRows.filter((r) => r.variationId && Object.keys(r.cost).length);
     for (const src of varOverrides) {
       const vMap = await db
@@ -536,16 +449,14 @@ export async function PUT(
         .execute();
     }
 
-    // ── BEGIN PROPAGATION FOR NEWLY ADDED PRODUCTS ──
+    // Propagate new products via sync endpoint (kept as in original)
     const oldMappings = await db
       .selectFrom("sharedProductMapping")
       .select("sourceProductId")
       .where("shareLinkId", "=", shareLinkId)
       .execute();
-    const previouslyShared = new Set(oldMappings.map(m => m.sourceProductId));
-
-    const toAdd = products.map(p => p.productId).filter(pid => !previouslyShared.has(pid));
-    console.log("[PROPAGATION] toAdd =", toAdd);
+    const previouslyShared = new Set(oldMappings.map((m) => m.sourceProductId));
+    const toAdd = products.map((p) => p.productId).filter((pid) => !previouslyShared.has(pid));
 
     if (toAdd.length) {
       const whRows = await db
@@ -554,30 +465,25 @@ export async function PUT(
         .where("shareLinkId", "=", shareLinkId)
         .where("targetWarehouseId", "is not", null)
         .execute();
-      const targetWarehouseIds = whRows.map(r => r.targetWarehouseId!);
-      console.log("[PROPAGATION] will sync into warehouses", targetWarehouseIds);
+      const targetWarehouseIds = whRows.map((r) => r.targetWarehouseId!);
 
       for (const targetWarehouseId of targetWarehouseIds) {
         try {
-          const res = await fetch(
-            `${req.nextUrl.origin}/api/warehouses/sync`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                // forward your own cookie so sync sees *you* as the recipient (not ideal)
-                "cookie": req.headers.get("cookie")!,
-              },
-              body: JSON.stringify({ shareLinkId, warehouseId: targetWarehouseId }),
-            }
-          );
-          console.log(`[PROPAGATION] sync(${targetWarehouseId}) →`, res.status, await res.text());
+          const res = await fetch(`${req.nextUrl.origin}/api/warehouses/sync`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              cookie: req.headers.get("cookie") || "",
+            },
+            body: JSON.stringify({ shareLinkId, warehouseId: targetWarehouseId }),
+          });
+          // Optional: log but do not block
+          await res.text();
         } catch (e) {
           console.error("[PROPAGATION] sync error:", e);
         }
       }
     }
-    // ── END PROPAGATION BLOCK ──
 
     const row = await db
       .selectFrom("warehouseShareLink")
@@ -586,11 +492,8 @@ export async function PUT(
       .executeTakeFirst();
 
     return NextResponse.json(
-      {
-        message: "Share link updated successfully",
-        token: row?.token
-      },
-      { status: 200 }
+      { message: "Share link updated successfully", token: row?.token },
+      { status: 200 },
     );
   } catch (error) {
     console.error("[PUT /api/warehouses/share-links/[shareLinkId]] error:", error);
@@ -598,23 +501,18 @@ export async function PUT(
   }
 }
 
-
+/* DELETE */
 export async function DELETE(
   req: NextRequest,
   context: { params: Promise<{ shareLinkId: string }> },
 ) {
   try {
-    /* ----------------------------- auth ------------------------------ */
     const session = await auth.api.getSession({ headers: req.headers });
     if (!session)
-      return NextResponse.json(
-        { error: "Unauthorized: No session found" },
-        { status: 401 },
-      );
+      return NextResponse.json({ error: "Unauthorized: No session found" }, { status: 401 });
     const userId = session.user.id;
     const { shareLinkId } = await context.params;
 
-    /* ----------------------------- verify link ----------------------- */
     const shareLink = await db
       .selectFrom("warehouseShareLink")
       .select(["id"])
@@ -625,16 +523,10 @@ export async function DELETE(
 
     if (!shareLink)
       return NextResponse.json(
-        {
-          error:
-            "Share link not found, inactive, or you are not the creator",
-        },
+        { error: "Share link not found, inactive, or you are not the creator" },
         { status: 404 },
       );
 
-    /* ---------------------------------------------------------------- */
-    /*  1. Collect mappings & target products                           */
-    /* ---------------------------------------------------------------- */
     const mappings = await db
       .selectFrom("sharedProductMapping")
       .select(["sourceProductId", "targetProductId"])
@@ -642,14 +534,10 @@ export async function DELETE(
       .execute();
     const targetProductIds = mappings.map((m) => m.targetProductId);
 
-    /* wipe all descendants (B, C, D…) in one go */
     if (targetProductIds.length) {
       await propagateDeleteDeep(db, targetProductIds);
     }
 
-    /* ---------------------------------------------------------------- */
-    /*  2. Collect all recipients                                       */
-    /* ---------------------------------------------------------------- */
     const recipients = await db
       .selectFrom("warehouseShareRecipient")
       .select("recipientUserId")
@@ -657,9 +545,6 @@ export async function DELETE(
       .execute();
     const recipientUserIds = recipients.map((r) => r.recipientUserId);
 
-    /* ---------------------------------------------------------------- */
-    /*  3. Per-recipient deep cleanup (stock ▸ variations ▸ products)   */
-    /* ---------------------------------------------------------------- */
     if (recipientUserIds.length && targetProductIds.length) {
       for (const recipientUserId of recipientUserIds) {
         const tenant = await db
@@ -669,20 +554,17 @@ export async function DELETE(
           .executeTakeFirst();
         if (!tenant) continue;
 
-        /* wipe stock */
         await db
           .deleteFrom("warehouseStock")
           .where("productId", "in", targetProductIds)
           .where("tenantId", "=", tenant.id)
           .execute();
 
-        /* wipe variations */
         await db
           .deleteFrom("productVariations")
           .where("productId", "in", targetProductIds)
           .execute();
 
-        /* wipe products */
         await db
           .deleteFrom("products")
           .where("id", "in", targetProductIds)
@@ -691,46 +573,15 @@ export async function DELETE(
       }
     }
 
-    /* ---------------------------------------------------------------- */
-    /*  4. Remove mapping rows FIRST to keep FK constraints happy       */
-    /* ---------------------------------------------------------------- */
-    await db
-      .deleteFrom("sharedVariationMapping")
-      .where("shareLinkId", "=", shareLinkId)
-      .execute();
-    await db
-      .deleteFrom("sharedProductMapping")
-      .where("shareLinkId", "=", shareLinkId)
-      .execute();
+    await db.deleteFrom("sharedVariationMapping").where("shareLinkId", "=", shareLinkId).execute();
+    await db.deleteFrom("sharedProductMapping").where("shareLinkId", "=", shareLinkId).execute();
+    await db.deleteFrom("sharedProduct").where("shareLinkId", "=", shareLinkId).execute();
+    await db.deleteFrom("warehouseShareRecipient").where("shareLinkId", "=", shareLinkId).execute();
+    await db.deleteFrom("warehouseShareLink").where("id", "=", shareLinkId).execute();
 
-    /* ---------------------------------------------------------------- */
-    /*  5. Remove sharedProduct + recipient rows + the link itself      */
-    /* ---------------------------------------------------------------- */
-    await db
-      .deleteFrom("sharedProduct")
-      .where("shareLinkId", "=", shareLinkId)
-      .execute();
-    await db
-      .deleteFrom("warehouseShareRecipient")
-      .where("shareLinkId", "=", shareLinkId)
-      .execute();
-    await db
-      .deleteFrom("warehouseShareLink")
-      .where("id", "=", shareLinkId)
-      .execute();
-
-    return NextResponse.json(
-      { message: "Share link deleted successfully" },
-      { status: 200 },
-    );
+    return NextResponse.json({ message: "Share link deleted successfully" }, { status: 200 });
   } catch (err) {
-    console.error(
-      "[DELETE /api/warehouses/share-links/[shareLinkId]]",
-      err,
-    );
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    console.error("[DELETE /api/warehouses/share-links/[shareLinkId]]", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
