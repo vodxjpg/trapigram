@@ -4,8 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { sql } from "kysely";
-import { auth } from "@/lib/auth";
 import { propagateStockDeep } from "@/lib/propagate-stock";
+import { getContext } from "@/lib/context";
 
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET as string;
 
@@ -52,14 +52,17 @@ function attrLabel(
 /* ────────────────────────────────────────────────────────────── */
 export async function GET(
   req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
+  ctx: { params: Promise<{ id: string }> },
 ) {
   try {
-    /* ── authentication ───────────────────────────────────────── */
-    const session = await auth.api.getSession({ headers: req.headers });
     const internalSecret = req.headers.get("x-internal-secret");
-    if (!session && internalSecret !== INTERNAL_API_SECRET) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    // Require context unless internal secret is provided
+    let tenantCtx: { tenantId: string } | null = null;
+    if (internalSecret !== INTERNAL_API_SECRET) {
+      const maybe = await getContext(req);
+      if (maybe instanceof NextResponse) return maybe;
+      tenantCtx = { tenantId: maybe.tenantId };
     }
 
     const { id: warehouseId } = await ctx.params;
@@ -75,21 +78,14 @@ export async function GET(
       return NextResponse.json({ error: "Warehouse not found" }, { status: 404 });
     }
 
-    if (session) {
-      const tenant = await db
-        .selectFrom("tenant")
-        .select("id")
-        .where("ownerUserId", "=", session.user.id)
-        .executeTakeFirst();
-      if (!tenant || tenant.id !== warehouse.tenantId) {
-        return NextResponse.json(
-          { error: "Unauthorized: You do not own this warehouse" },
-          { status: 403 },
-        );
-      }
+    if (tenantCtx && tenantCtx.tenantId !== warehouse.tenantId) {
+      return NextResponse.json(
+        { error: "Unauthorized: You do not own this warehouse" },
+        { status: 403 },
+      );
     }
 
-    /* ── 1. money-products query (unchanged) ──────────────────── */
+    /* ── 1. money-products query ─────────────────────────────── */
     const moneyRows = await db
       .selectFrom("warehouseStock")
       .innerJoin("products", "products.id", "warehouseStock.productId")
@@ -114,7 +110,7 @@ export async function GET(
       .where("warehouseStock.quantity", ">", 0)
       .execute();
 
-    /* ── 2. affiliate-products query (uses sql for NULL) ─────── */
+    /* ── 2. affiliate-products query ─────────────────────────── */
     const affRows = await db
       .selectFrom("warehouseStock")
       .innerJoin("affiliateProducts", "affiliateProducts.id", "warehouseStock.productId")
@@ -139,29 +135,29 @@ export async function GET(
 
     const rows = [...moneyRows, ...affRows];
 
-    /* ── 3. build term-id → name map ──────────────────────────── */
+    /* ── 3. build term-id → name map ─────────────────────────── */
     const termIds = new Set<string>();
-    rows.forEach(r => {
+    rows.forEach((r) => {
       if (r.vAttrs) {
         const attrs = safeParseJSON<Record<string, string>>(r.vAttrs);
-        Object.values(attrs).forEach(tid => termIds.add(tid));
+        Object.values(attrs).forEach((tid) => termIds.add(tid));
       }
     });
 
     const termMap = termIds.size
       ? new Map(
-        (
-          await db
-            .selectFrom("productAttributeTerms")
-            .select(["id", "name"])
-            .where("id", "in", [...termIds])
-            .execute()
-        ).map(t => [t.id, t.name]),
-      )
+          (
+            await db
+              .selectFrom("productAttributeTerms")
+              .select(["id", "name"])
+              .where("id", "in", [...termIds])
+              .execute()
+          ).map((t) => [t.id, t.name]),
+        )
       : new Map<string, string>();
 
     /* ── 4. transform rows into final payload ─────────────────── */
-    const stock = rows.map(r => {
+    const stock = rows.map((r) => {
       const vLabel = r.vAttrs
         ? attrLabel(safeParseJSON<Record<string, string>>(r.vAttrs), termMap)
         : "";
@@ -193,26 +189,23 @@ export async function GET(
   }
 }
 
-
-
+/* ────────────────────────────────────────────────────────────── */
+/*  PATCH  – upsert/propagate stock                               */
+/* ────────────────────────────────────────────────────────────── */
 export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    /* ──────────────────────────────────────────────────────────── */
-    /* 1. Authentication                                            */
-    /* ──────────────────────────────────────────────────────────── */
-    const session = await auth.api.getSession({ headers: req.headers });
     const internalSecret = req.headers.get("x-internal-secret");
+    let ctxOrNull: { tenantId: string } | null = null;
 
-    if (!session && internalSecret !== INTERNAL_API_SECRET) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (internalSecret !== INTERNAL_API_SECRET) {
+      const maybe = await getContext(req);
+      if (maybe instanceof NextResponse) return maybe;
+      ctxOrNull = { tenantId: maybe.tenantId };
     }
 
-    /* ──────────────────────────────────────────────────────────── */
-    /* 2. Params / Body                                             */
-    /* ──────────────────────────────────────────────────────────── */
     const params = await context.params;
     const warehouseId = params.id;
 
@@ -221,11 +214,9 @@ export async function PATCH(
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error.errors }, { status: 400 });
     }
-    const stockUpdates = parsed.data;            // <– still an array
+    const stockUpdates = parsed.data;
 
-    /* ──────────────────────────────────────────────────────────── */
-    /* 3. Warehouse + ownership                                     */
-    /* ──────────────────────────────────────────────────────────── */
+    /* ── ownership ─────────────────────────────────────────────── */
     const warehouse = await db
       .selectFrom("warehouse")
       .select(["id", "tenantId", "countries", "organizationId"])
@@ -234,30 +225,19 @@ export async function PATCH(
     if (!warehouse) {
       return NextResponse.json({ error: "Warehouse not found" }, { status: 404 });
     }
-
-    if (session) {
-      const tenant = await db
-        .selectFrom("tenant")
-        .select("id")
-        .where("ownerUserId", "=", session.user.id)
-        .executeTakeFirst();
-      if (!tenant || tenant.id !== warehouse.tenantId) {
-        return NextResponse.json(
-          { error: "Unauthorized: You do not own this warehouse" },
-          { status: 403 },
-        );
-      }
+    if (ctxOrNull && ctxOrNull.tenantId !== warehouse.tenantId) {
+      return NextResponse.json(
+        { error: "Unauthorized: You do not own this warehouse" },
+        { status: 403 },
+      );
     }
 
     const warehouseCountries = JSON.parse(warehouse.countries) as string[];
 
-    /* ──────────────────────────────────────────────────────────── */
-    /* 4. Loop through each stock update                            */
-    /* ──────────────────────────────────────────────────────────── */
+    /* ── updates loop ──────────────────────────────────────────── */
     for (const update of stockUpdates) {
       const { productId, variationId, country, quantity } = update;
 
-      /* ---- country validation ---------------------------------- */
       if (!warehouseCountries.includes(country)) {
         return NextResponse.json(
           { error: `Country ${country} not supported by warehouse` },
@@ -265,7 +245,6 @@ export async function PATCH(
         );
       }
 
-      /* ---- find product in either table ------------------------ */
       const moneyProduct = await db
         .selectFrom("products")
         .select(["id", "productType", "tenantId"])
@@ -276,10 +255,10 @@ export async function PATCH(
 
       const affiliateProduct = isAffiliate
         ? await db
-          .selectFrom("affiliateProducts")
-          .select(["id", "productType", "tenantId"])
-          .where("id", "=", productId)
-          .executeTakeFirst()
+            .selectFrom("affiliateProducts")
+            .select(["id", "productType", "tenantId"])
+            .where("id", "=", productId)
+            .executeTakeFirst()
         : null;
 
       if (!moneyProduct && !affiliateProduct) {
@@ -302,7 +281,6 @@ export async function PATCH(
         );
       }
 
-      /* ---- variation validation, if supplied ------------------- */
       if (variationId) {
         if (productType !== "variable") {
           return NextResponse.json(
@@ -313,17 +291,17 @@ export async function PATCH(
 
         const variationExists = isAffiliate
           ? await db
-            .selectFrom("affiliateProductVariations")
-            .select("id")
-            .where("id", "=", variationId)
-            .where("productId", "=", productId)
-            .executeTakeFirst()
+              .selectFrom("affiliateProductVariations")
+              .select("id")
+              .where("id", "=", variationId)
+              .where("productId", "=", productId)
+              .executeTakeFirst()
           : await db
-            .selectFrom("productVariations")
-            .select("id")
-            .where("id", "=", variationId)
-            .where("productId", "=", productId)
-            .executeTakeFirst();
+              .selectFrom("productVariations")
+              .select("id")
+              .where("id", "=", variationId)
+              .where("productId", "=", productId)
+              .executeTakeFirst();
 
         if (!variationExists) {
           return NextResponse.json(
@@ -333,7 +311,7 @@ export async function PATCH(
         }
       }
 
-      /* ---- upsert into warehouseStock --------------------------- */
+      /* upsert */
       let stockQuery = db
         .selectFrom("warehouseStock")
         .select("id")
@@ -372,91 +350,53 @@ export async function PATCH(
       }
     }
 
-    /* ──────────────────────────────────────────────────────────── */
-    /* 5. Propagation – only for normal money products              */
-    /*    (affiliate products are skipped)                          */
-    /* ──────────────────────────────────────────────────────────── */
-    const updatesByProduct: Record<
-      string,
-      { productId: string; variationId: string | null; country: string; quantity: number }[]
-    > = {};
-    for (const u of stockUpdates) {
-      (updatesByProduct[u.productId] ??= []).push(u);
-    }
+    /* ── propagation (unchanged semantics; money products only) ── */
+    const updatesByProduct: Record<string, StockUpdate[]> = {};
+    for (const u of stockUpdates) (updatesByProduct[u.productId] ??= []).push(u);
 
-    const nextProductIds = new Set<string>();   // collect for deep pass
+    const nextProductIds = new Set<string>();
 
     for (const [productKey, updates] of Object.entries(updatesByProduct)) {
-      /* if the product is an affiliate product, continue; propagation is
-         **NOT** required nor wanted                                       */
       const normalProductRow = await db
         .selectFrom("products")
         .select("id")
         .where("id", "=", productKey)
         .executeTakeFirst();
-      if (!normalProductRow) continue;   // skip affiliate product
+      if (!normalProductRow) continue;
 
-      /* ------------------------------------------------------------------
-         ↓↓↓  THE ENTIRE ORIGINAL MONEY‑PRODUCT PROPAGATION BLOCK
-              IS REPRODUCED *UNMODIFIED* BELOW, so behaviour is 1‑for‑1.
-         ------------------------------------------------------------------ */
-
-      // Step 3: Find all share links that include this product
-      let sharedProductQuery = db
+      const sharedProducts = await db
         .selectFrom("sharedProduct")
         .select(["id", "shareLinkId"])
-        .where("productId", "=", productKey);
+        .where("productId", "=", productKey)
+        .execute();
 
-      const sharedProducts = await sharedProductQuery.execute();
+      if (!sharedProducts.length) continue;
 
-      if (sharedProducts.length === 0) {
-        console.log(`[PROPAGATE] No sharedProduct entries found for productId: ${productKey}`);
-        continue;
-      }
-
-      console.log(`[PROPAGATE] Found ${sharedProducts.length} sharedProduct entries for productId: ${productKey}`);
-
-      // Step 4: Find all mappings for this product across all share links
       const mappings = await db
         .selectFrom("sharedProductMapping")
         .select(["id", "sourceProductId", "targetProductId", "shareLinkId"])
         .where("sourceProductId", "=", productKey)
-        .where("shareLinkId", "in", sharedProducts.map(sp => sp.shareLinkId))
+        .where("shareLinkId", "in", sharedProducts.map((sp) => sp.shareLinkId))
         .execute();
 
-      if (mappings.length === 0) {
-        console.log(`[PROPAGATE] No mappings found for sourceProductId: ${productKey}`);
-        continue;
-      }
+      if (!mappings.length) continue;
 
-      const mappingsByTarget: Record<
-        string,
-        { sourceProductId: string; shareLinkId: string }[]
-      > = {};
+      const mappingsByTarget: Record<string, { sourceProductId: string; shareLinkId: string }[]> = {};
       for (const m of mappings) {
-        if (!mappingsByTarget[m.targetProductId]) {
-          mappingsByTarget[m.targetProductId] = [];
-        }
-        mappingsByTarget[m.targetProductId].push({
+        (mappingsByTarget[m.targetProductId] ??= []).push({
           sourceProductId: m.sourceProductId,
           shareLinkId: m.shareLinkId,
         });
       }
 
-      /* --------------- unchanged propagation inner loops --------------- */
       for (const [targetProductId, targetMappings] of Object.entries(mappingsByTarget)) {
-        console.log(`[PROPAGATE] Processing targetProductId: ${targetProductId}`);
-
         const shareLinkRecipient = await db
           .selectFrom("warehouseShareRecipient")
           .select("recipientUserId")
-          .where("shareLinkId", "in", targetMappings.map(m => m.shareLinkId))
+          .where("shareLinkId", "in", targetMappings.map((m) => m.shareLinkId))
           .executeTakeFirst();
 
-        if (!shareLinkRecipient) {
-          console.log(`[PROPAGATE] No recipient found for shareLinkIds: ${targetMappings.map(m => m.shareLinkId).join(", ")}`);
-          continue;
-        }
+        if (!shareLinkRecipient) continue;
 
         const recipientUserId = shareLinkRecipient.recipientUserId;
 
@@ -466,10 +406,7 @@ export async function PATCH(
           .where("ownerUserId", "=", recipientUserId)
           .executeTakeFirst();
 
-        if (!recipientTenant) {
-          console.log(`[PROPAGATE] No tenant found for recipientUserId: ${recipientUserId}`);
-          continue;
-        }
+        if (!recipientTenant) continue;
 
         const recipientTenantId = recipientTenant.id;
 
@@ -479,12 +416,7 @@ export async function PATCH(
           .where("tenantId", "=", recipientTenantId)
           .execute();
 
-        if (targetWarehouses.length === 0) {
-          console.log(`[PROPAGATE] No target warehouses found for targetProductId: ${targetProductId} in tenant ${recipientTenantId}`);
-          continue;
-        }
-
-        console.log(`[PROPAGATE] Found ${targetWarehouses.length} target warehouses for targetProductId: ${targetProductId} in tenant ${recipientTenantId}`);
+        if (!targetWarehouses.length) continue;
 
         for (const targetWarehouse of targetWarehouses) {
           const recipientMembership = await db
@@ -493,14 +425,9 @@ export async function PATCH(
             .where("userId", "=", recipientUserId)
             .executeTakeFirst();
 
-          if (!recipientMembership) {
-            console.log(`[PROPAGATE] No membership found for recipientUserId: ${recipientUserId}, skipping`);
-            continue;
-          }
+          if (!recipientMembership) continue;
 
           const recipientOrganizationId = recipientMembership.organizationId;
-
-          console.log(`[PROPAGATE] Target warehouse found - warehouseId: ${targetWarehouse.id}, tenantId: ${targetWarehouse.tenantId}`);
 
           const stockUpdatesByKey: Record<
             string,
@@ -525,20 +452,15 @@ export async function PATCH(
               .innerJoin("warehouseShareRecipient", "warehouseShareRecipient.shareLinkId", "warehouseShareLink.id")
               .select(["warehouseShareLink.warehouseId"])
               .where("sharedProductMapping.targetProductId", "=", targetProductId)
-              .where("warehouseShareLink.warehouseId", "in", (await db
-                .selectFrom("warehouseShareLink")
-                .innerJoin("warehouseShareRecipient", "warehouseShareRecipient.shareLinkId", "warehouseShareLink.id")
-                .select("warehouseShareLink.warehouseId")
-                .where("warehouseShareRecipient.shareLinkId", "in", targetMappings.map(m => m.shareLinkId))
-                .execute()).map(w => w.warehouseId))
+              .where(
+                "warehouseShareRecipient.shareLinkId",
+                "in",
+                targetMappings.map((m) => m.shareLinkId),
+              )
               .execute();
 
-            const sourceWarehouseIds = allSourceMappings.map(m => m.warehouseId);
-
-            if (sourceWarehouseIds.length === 0) {
-              console.log(`[PROPAGATE] No source warehouses linked to target warehouseId: ${targetWarehouse.id} for targetProductId: ${targetProductId}`);
-              continue;
-            }
+            const sourceWarehouseIds = allSourceMappings.map((m) => m.warehouseId);
+            if (!sourceWarehouseIds.length) continue;
 
             let sourceStockQuery = db
               .selectFrom("warehouseStock")
@@ -559,7 +481,7 @@ export async function PATCH(
               const variationMapping = await db
                 .selectFrom("sharedVariationMapping")
                 .select("targetVariationId")
-                .where("shareLinkId", "in", targetMappings.map(m => m.shareLinkId))
+                .where("shareLinkId", "in", targetMappings.map((m) => m.shareLinkId))
                 .where("sourceProductId", "=", productKey)
                 .where("targetProductId", "=", targetProductId)
                 .where("sourceVariationId", "=", actualVariationId)
@@ -604,24 +526,17 @@ export async function PATCH(
                 })
                 .execute();
             }
-
-            console.log(`[PROPAGATE] Successfully updated stock for targetProductId: ${targetProductId}`);
-          } /* end inner‑for */
+          }
         }
-        nextProductIds.add(targetProductId);   /* end loop targetWarehouses */
-      }     /* end loop mappingsByTarget */
-    }       /* end loop updatesByProduct */
+        nextProductIds.add(targetProductId);
+      }
+    }
 
-    /* ──────────────────────────────────────────────────────────── */
-    /* 6. Done                                                     */
-    /* ──────────────────────────────────────────────────────────── */
     if (nextProductIds.size) {
       await propagateStockDeep(db, [...nextProductIds], generateId);
     }
-    return NextResponse.json(
-      { message: "Stock updated successfully" },
-      { status: 200 },
-    );
+
+    return NextResponse.json({ message: "Stock updated successfully" }, { status: 200 });
   } catch (error) {
     console.error("[PATCH /api/warehouses/[id]/stock] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
