@@ -1,53 +1,38 @@
 // src/lib/stock.ts — centralised inventory helper
 
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 
-/**
- * Reserve or release stock for one product in a single country.
- *
- * @param db        – any pg client/Pool with a `query` method
- * @param productId – UUID of the product we’re moving stock for
- * @param country   – 2‑letter country code (same key used in warehouseStock)
- * @param delta     – integers only
- *                    • negative → reserve  (take from available stock)
- *                    • positive → release (put back into available stock)
- *                    •   zero   → no‑op
- *
- * Throws when trying to reserve more than what’s available **and** the
- * product does **not** allow back‑orders.
- */
+// NOTE: if you have a Pool type elsewhere, import it;
+// the code only needs an object with a `query` method.
 export async function adjustStock(
-  db: Pick<Pool, "query">,
+  db: { query: (sql: string, params?: any[]) => Promise<{ rows: any[] }> },
   productId: string,
   country: string,
   delta: number,
 ): Promise<void> {
-  if (!delta) return; // nothing to do
+  if (!delta) return;
 
-  /* ------------------------------------------------------------------ */
-  /* 1) product‑level stock rules                                        */
-  /* ------------------------------------------------------------------ */
+  /* 1) figure out product kind + stock rules */
   const { rows: metaRows } = await db.query(
-    `SELECT "manageStock","allowBackorders"
-       FROM products            WHERE id = $1
-    UNION ALL
-     SELECT "manageStock","allowBackorders"
+    `SELECT 'product'::text AS kind, "manageStock","allowBackorders"
+       FROM products WHERE id = $1
+     UNION ALL
+     SELECT 'affiliate'::text AS kind, "manageStock","allowBackorders"
        FROM "affiliateProducts" WHERE id = $1
-    LIMIT 1`,
+     LIMIT 1`,
     [productId],
   );
-
   const meta = metaRows[0];
-  if (!meta || !meta.manageStock) return; // stock isn’t tracked
+  if (!meta || !meta.manageStock) return;
 
-  /* ------------------------------------------------------------------ */
-  /* 2) locate (any) warehouse line matching product + country          */
-  /* ------------------------------------------------------------------ */
+  const isAffiliate = meta.kind === "affiliate";
+  const col = isAffiliate ? `"affiliateProductId"` : `"productId"`;
+
+  /* 2) locate the warehouseStock row for THIS kind+country */
   const { rows: wsRows } = await db.query(
     `SELECT id, quantity
        FROM "warehouseStock"
-      WHERE (  "productId"          = $1
-            OR "affiliateProductId" = $1 )
+      WHERE ${col} = $1
         AND country = $2
       ORDER BY "createdAt" ASC
       LIMIT 1`,
@@ -55,47 +40,40 @@ export async function adjustStock(
   );
 
   const current = wsRows[0];
-  let newQty = (current?.quantity ?? 0) + delta;   // may go below 0
+  let newQty = (current?.quantity ?? 0) + delta;
 
-  /* ------------------------------------------------------------------ */
-  /* 3) over‑sell guard                                                 */
-  /* ------------------------------------------------------------------ */
+  /* 3) oversell guard */
   if (delta < 0 && !meta.allowBackorders && newQty < 0) {
-    throw new Error("Insufficient stock and back‑orders are disabled");
+    throw new Error("Insufficient stock and back-orders are disabled");
   }
+  if (newQty < 0) newQty = 0; // clamp; store backorders elsewhere if needed
 
-  /* back-order handling – never store negative numbers  */
-  if (newQty < 0) {
-    // we *could* store the back-ordered amount elsewhere; for now
-    // just clamp to zero so the CHECK constraint is satisfied.
-    newQty = 0;
-  }
-
-  /* ------------------------------------------------------------------ */
-  /* 4) write back                                                      */
-  /* ------------------------------------------------------------------ */
+  /* 4) write back using the correct FK column */
   if (current) {
     await db.query(
       `UPDATE "warehouseStock"
-          SET quantity   = $1,
+          SET quantity = $1,
               "updatedAt" = NOW()
         WHERE id = $2`,
       [newQty, current.id],
     );
   } else {
+    // If you have NOT NULL org/tenant columns, pass real values here.
     await db.query(
       `INSERT INTO "warehouseStock"
-       (id,"warehouseId","productId","affiliateProductId",
-        country,quantity,"organizationId","tenantId",
-        "createdAt","updatedAt")
-       VALUES (gen_random_uuid(),NULL,
-               $1,                       -- productId  OR
-               $3,                       -- affiliateProductId
-               $2,$4,'','',NOW(),NOW())`,
+       (id, "warehouseId", "productId", "affiliateProductId",
+        country, quantity, "organizationId", "tenantId",
+        "createdAt", "updatedAt")
+       VALUES (gen_random_uuid(), NULL,
+               $1,  -- productId
+               $2,  -- affiliateProductId
+               $3,  -- country
+               $4,  -- quantity
+               '', '', NOW(), NOW())`,
       [
-        meta ? productId : null,            // if metaRows came from products
+        isAffiliate ? null : productId,
+        isAffiliate ? productId : null,
         country,
-        meta ? null : productId,      // if metaRows came from affiliateProducts
         Math.max(0, newQty),
       ],
     );
