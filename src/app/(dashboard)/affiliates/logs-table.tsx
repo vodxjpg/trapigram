@@ -26,10 +26,13 @@ type Log = {
   description: string | null;
   sourceClientId: string | null;
   createdAt: string;
+  clientLabel?: string;
+  sourceClientLabel?: string;
 };
 
 type ClientBrief = {
   id: string;
+  userId?: string | null;
   username: string | null;
   firstName: string | null;
   lastName: string | null;
@@ -43,8 +46,7 @@ export function LogsTable() {
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
-  /* cache of clientId ➜ display label */
-  const [labels, setLabels] = useState<Record<string, string>>({});
+
 
   /* fetch logs */
   const loadLogs = async () => {
@@ -65,36 +67,8 @@ export function LogsTable() {
       setTotalPages(totalPages);
       setPage(currentPage);
 
-      /* for any unseen clientIds, fetch label */
-      const unseen = logs
-        .map((l: Log) => l.clientId)
-        .filter((id, i, arr) => !labels[id] && arr.indexOf(id) === i);
 
-      if (unseen.length) {
-        const fetched: Record<string, string> = {};
-        await Promise.all(
-          unseen.map(async (id) => {
-            try {
-              const res = await fetch(`/api/clients/${id}`, {
-                headers: {
-                  "x-internal-secret":
-                    process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
-                },
-              });
-              if (!res.ok) throw new Error();
-              const client: ClientBrief = await res.json();
-              fetched[id] =
-                client.username ||
-                `${client.firstName ?? ""} ${client.lastName ?? ""}`
-                  .trim() ||
-                id;
-            } catch {
-              fetched[id] = id; // fallback
-            }
-          })
-        );
-        setLabels((prev) => ({ ...prev, ...fetched }));
-      }
+
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -104,8 +78,8 @@ export function LogsTable() {
   useEffect(() => void loadLogs(), [page]);
 
   /* helper */
-  const labelFor = (id: string | null) =>
-    id ? labels[id] ?? id.slice(0, 8) + "…" : "-";
+  const fallbackId = (id: string | null | undefined) =>
+    id ? id.slice(0, 8) + "…" : "-";
 
   /* ───────────── JSX ───────────── */
   return (
@@ -148,9 +122,9 @@ export function LogsTable() {
                       {new Date(l.createdAt).toLocaleString()}
                     </div>
                   </TableCell>
-                  <TableCell className="font-mono text-xs">
+                  <TableCell>
                     <Link href={`/clients/${l.clientId}`}>
-                      {l.clientId.slice(0, 8)}…
+                      {l.clientLabel || fallbackId(l.clientId)}
                     </Link>
                   </TableCell>
                   <TableCell
@@ -166,7 +140,7 @@ export function LogsTable() {
                   <TableCell>
                     {l.sourceClientId ? (
                       <Link href={`/clients/${l.sourceClientId}`}>
-                        {labelFor(l.sourceClientId)}
+                        {l.sourceClientLabel || fallbackId(l.sourceClientId)}
                       </Link>
                     ) : (
                       "-"

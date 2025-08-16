@@ -75,13 +75,39 @@ export async function GET(req: NextRequest) {
 
   const { rows } = await pool.query(
     `
-    SELECT id,"clientId","organizationId",points,action,description,
-           "sourceClientId","createdAt","updatedAt"
-      FROM "affiliatePointLogs"
-     WHERE ${where.join(" AND ")}
-     ORDER BY "createdAt" DESC
-     LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}
-    `,
+ SELECT
+   apl.id,
+   apl."clientId",
+   apl."organizationId",
+   apl.points,
+   apl.action,
+   apl.description,
+   apl."sourceClientId",
+   apl."createdAt",
+   apl."updatedAt",
+   /* human label for clientId */
+   COALESCE(
+     NULLIF(c.username, ''),
+     NULLIF(TRIM(COALESCE(c."firstName",'') || ' ' || COALESCE(c."lastName",'')), ''),
+     NULLIF(c."userId", ''),
+     apl."clientId"
+   ) AS "clientLabel",
+   /* human label for sourceClientId */
+   COALESCE(
+     NULLIF(sc.username, ''),
+     NULLIF(TRIM(COALESCE(sc."firstName",'') || ' ' || COALESCE(sc."lastName",'')), ''),
+     NULLIF(sc."userId", ''),
+     apl."sourceClientId"
+   ) AS "sourceClientLabel"
+ FROM "affiliatePointLogs" apl
+ LEFT JOIN clients c
+   ON c.id = apl."clientId" AND c."organizationId" = apl."organizationId"
+ LEFT JOIN clients sc
+   ON sc.id = apl."sourceClientId" AND sc."organizationId" = apl."organizationId"
+ WHERE ${where.join(" AND ")}
+ ORDER BY apl."createdAt" DESC
+ LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}
+ `,
     [...vals, pageSize, (page - 1) * pageSize],
   );
 
