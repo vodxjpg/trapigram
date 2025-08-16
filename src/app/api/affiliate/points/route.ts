@@ -61,13 +61,20 @@ export async function GET(req: NextRequest) {
   );
   const { id, page, pageSize } = qp;
 
-  const where: string[] = [`"organizationId" = $1`];
+  // separate WHEREs: one for the count (no alias),
+  // one for the joined select (qualify with apl.)
+  const whereCount: string[] = [`"organizationId" = $1`];
+  const whereJoined: string[] = [`apl."organizationId" = $1`];
   const vals: any[] = [organizationId];
-  if (id) { where.push(`"clientId" = $2`); vals.push(id); }
+  if (id) {
+    whereCount.push(`"clientId" = $2`);
+    whereJoined.push(`apl."clientId" = $2`);
+    vals.push(id);
+  }
 
   const [{ count }] = (
     await pool.query(
-      `SELECT COUNT(*) FROM "affiliatePointLogs" WHERE ${where.join(" AND ")}`,
+       `SELECT COUNT(*) FROM "affiliatePointLogs" WHERE ${whereCount.join(" AND ")}`,
       vals,
     )
   ).rows;
@@ -104,7 +111,7 @@ export async function GET(req: NextRequest) {
    ON c.id = apl."clientId" AND c."organizationId" = apl."organizationId"
  LEFT JOIN clients sc
    ON sc.id = apl."sourceClientId" AND sc."organizationId" = apl."organizationId"
- WHERE ${where.join(" AND ")}
+WHERE ${whereJoined.join(" AND ")}
  ORDER BY apl."createdAt" DESC
  LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}
  `,
