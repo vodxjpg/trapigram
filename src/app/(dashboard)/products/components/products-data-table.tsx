@@ -420,7 +420,12 @@ export function ProductsDataTable({
       },
       {
         accessorKey: "price",
-        accessorFn: (p) => p.maxSalePrice ?? p.maxRegularPrice, // highest across countries
+        accessorFn: (p) => {
+  const r = Number(p.maxRegularPrice ?? 0);
+  const s = Number(p.maxSalePrice ?? NaN);
+  const isSaleActive = Number.isFinite(s) && s > 0 && s < r;
+  return isSaleActive ? s : r;
+},
         header: ({ column }) => (
           <Button
             variant="ghost"
@@ -434,13 +439,14 @@ export function ProductsDataTable({
         cell: ({ row }) => {
           const p = row.original;
 
-          const sale = p.maxSalePrice;
-          const reg = p.maxRegularPrice;
-          const display = sale ?? reg ?? 0;
+         const reg = Number(p.maxRegularPrice ?? 0);
+  const sale = Number(p.maxSalePrice ?? NaN);
+  const isSaleActive = Number.isFinite(sale) && sale > 0 && sale < reg;
+  const display = isSaleActive ? sale : reg;
           return (
             <div className="text-left">
               {display ? `$${display.toFixed(2)}` : "-"}
-              {sale != null && (
+             {isSaleActive && (
                 <span className="ml-2 text-sm text-gray-500 line-through">
                   ${reg.toFixed(2)}
                 </span>
