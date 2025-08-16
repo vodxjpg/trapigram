@@ -217,6 +217,10 @@ export async function GET(req: NextRequest) {
 
     /* -------- STEP 4 – assemble final products ------------------ */
     const products = productRows.map((p) => {
+      // tiny helpers
+      const maxNum = (arr: number[]) => (arr.length ? Math.max(...arr.map(Number)) : 0);
+      const maxOrNull = (arr: number[]) => (arr.length ? Math.max(...arr.map(Number)) : null);
+
       const stockData = stockRows
         .filter((s) => s.productId === p.id && !s.variationId)
         .reduce((acc, s) => {
@@ -273,6 +277,39 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      // ---- price maxima (highest across all countries) ----------
+// product-level price maps (simple products)
+const prodRegular =
+  typeof p.regularPrice === "string"
+    ? JSON.parse(p.regularPrice || "{}")
+    : (p.regularPrice || {});
+const prodSale =
+  typeof p.salePrice === "string"
+    ? JSON.parse(p.salePrice || "null")
+    : (p.salePrice ?? null);
+
+let maxRegularPrice = 0;
+let maxSalePrice: number | null = null;
+
+if (p.productType === "simple") {
+  maxRegularPrice = maxNum(Object.values(prodRegular || {}));
+  maxSalePrice = prodSale ? maxOrNull(Object.values(prodSale)) : null;
+} else {
+  // variable → compute per-variation maxima and then the product max
+  const varMaxRegs: number[] = [];
+  const varMaxSales: number[] = [];
+  for (const v of variations) {
+    const regs = Object.values(v.prices || {}).map((pr) => pr.regular ?? 0);
+    const sales = Object.values(v.prices || {})
+      .map((pr) => pr.sale)
+      .filter((x): x is number => x != null);
+    if (regs.length) varMaxRegs.push(Math.max(...regs));
+    if (sales.length) varMaxSales.push(Math.max(...sales));
+  }
+  maxRegularPrice = varMaxRegs.length ? Math.max(...varMaxRegs) : 0;
+  maxSalePrice = varMaxSales.length ? Math.max(...varMaxSales) : null;
+}
+
       return {
         id: p.id,
         title: p.title,
@@ -281,14 +318,10 @@ export async function GET(req: NextRequest) {
         sku: p.sku,
         status: p.status,
         productType: p.productType,
-        regularPrice:
-          typeof p.regularPrice === "string"
-            ? JSON.parse(p.regularPrice)
-            : p.regularPrice,
-        salePrice:
-          typeof p.salePrice === "string"
-            ? JSON.parse(p.salePrice)
-            : p.salePrice,
+             regularPrice: prodRegular,
+      salePrice: prodSale,
+      maxRegularPrice,          // ← NEW
+      maxSalePrice,             // ← NEW (null when no sale anywhere)
         cost:
           typeof p.cost === "string" ? JSON.parse(p.cost) : p.cost,
         allowBackorders: p.allowBackorders,

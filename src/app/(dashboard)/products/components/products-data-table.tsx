@@ -81,6 +81,8 @@ export type Product = {
   status: "published" | "draft";
   regularPrice: Record<string, number>;
   salePrice: Record<string, number> | null;
+  maxRegularPrice: number;         // ← NEW
+  maxSalePrice: number | null;     // ← NEW
   stockStatus: "managed" | "unmanaged";
   stockData: Record<string, Record<string, number>> | null;
   categories: string[];
@@ -418,19 +420,7 @@ export function ProductsDataTable({
       },
       {
         accessorKey: "price",
-        accessorFn: (p) => {
-          const country = Object.keys(p.regularPrice)[0] || "US";
-          if (p.productType === "simple") {
-            const sale = p.salePrice?.[country] ?? null;
-            return sale ?? p.regularPrice[country] ?? 0;
-          }
-          const prices = p.variations.map((v) => {
-            const sale = v.prices[country]?.sale ?? null;
-            const reg = v.prices[country]?.regular ?? 0;
-            return sale ?? reg;
-          });
-          return prices.length ? Math.max(...prices) : 0;
-        },
+        accessorFn: (p) => p.maxSalePrice ?? p.maxRegularPrice, // highest across countries
         header: ({ column }) => (
           <Button
             variant="ghost"
@@ -443,27 +433,18 @@ export function ProductsDataTable({
         ),
         cell: ({ row }) => {
           const p = row.original;
-          const country = Object.keys(p.regularPrice)[0] || "US";
-          const display = (() => {
-            if (p.productType === "simple") {
-              return p.salePrice?.[country] ?? p.regularPrice[country] ?? 0;
-            }
-            const mx = p.variations.map((v) => {
-              const sale = v.prices[country]?.sale ?? null;
-              const reg = v.prices[country]?.regular ?? 0;
-              return sale ?? reg;
-            });
-            return mx.length ? Math.max(...mx) : 0;
-          })();
+
+          const sale = p.maxSalePrice;
+          const reg = p.maxRegularPrice;
+          const display = sale ?? reg ?? 0;
           return (
             <div className="text-left">
               {display ? `$${display.toFixed(2)}` : "-"}
-              {p.productType === "simple" &&
-                p.salePrice?.[country] !== null && (
-                  <span className="ml-2 text-sm text-gray-500 line-through">
-                    ${p.regularPrice[country]?.toFixed(2)}
-                  </span>
-                )}
+              {sale != null && (
+                <span className="ml-2 text-sm text-gray-500 line-through">
+                  ${reg.toFixed(2)}
+                </span>
+              )}
             </div>
           );
         },
