@@ -668,6 +668,7 @@ export async function PATCH(
   const { status: newStatus } = orderStatusSchema.parse(await req.json());
 
   const client = await pool.connect();
+  const toastWarnings: string[] = [];
   try {
     await client.query("BEGIN");
 
@@ -819,36 +820,82 @@ export async function PATCH(
     await client.query("COMMIT");
     console.log(`Transaction committed for order ${id}`);
 
-    /* ──────────────────────────────────────────────────────────────
-    *  Niftipay sync: cancel matching crypto invoice
-    *  Triggers only when this order used Niftipay and is now cancelled
-    * ───────────────────────────────────────────────────────────── */
-    if (
-      newStatus === "cancelled" &&
-      (ord.paymentMethod?.toLowerCase?.() === "niftipay")
-    ) {
+      /* ──────────────────────────────────────────────────────────────
+     *  Niftipay (Coinx) sync via merchant API key
+     *  – use the merchant's own key saved in paymentMethods
+     *  – mirrors Trapigram status → Coinx order status
+     *    supported here: cancelled, paid
+     * ───────────────────────────────────────────────────────────── */
+    if (ord.paymentMethod?.toLowerCase?.() === "niftipay" &&
+        (newStatus === "cancelled" || newStatus === "paid")) {
       try {
-        const base = process.env.NIFTIPAY_API_URL || "https://www.niftipay.com";
-        const ts = Date.now().toString();
-        const sig = createHmac("sha256", process.env.SERVICE_API_KEY!)
-          .update(ts)
-          .digest("hex");
+        // 1) load the merchant's Niftipay key for this org
+        const { rows: [pm] } = await pool.query(
+          `SELECT "apiKey"
+             FROM "paymentMethods"
+            WHERE "organizationId" = $1
+              AND lower(name) = 'niftipay'
+              AND "active" = TRUE
+            LIMIT 1`,
+          [organizationId],
+        );
+        const merchantApiKey: string | null = pm?.apiKey ?? null;
+        if (!merchantApiKey) {
+          console.warn("[niftipay] No merchant API key configured for org", organizationId);
+                   toastWarnings.push(
+          "Niftipay not configured for this organisation (missing API key). Crypto invoice was not updated."
+        );
+        } else {
+          const base = process.env.NIFTIPAY_API_URL || "https://www.niftipay.com";
 
-        await fetch(`${base}/api/internal/cancel`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": process.env.SERVICE_API_KEY!, // shared secret
-            "x-timestamp": ts,
-            "x-signature": sig,
-          },
-          body: JSON.stringify({
-            reference: ord.orderKey,     // we used this as Niftipay 'reference'
-            merchantId: organizationId,   // scope to the org
-          }),
-        });
+          // 2) find Coinx order by our orderKey (stored as 'reference' on Coinx)
+          const findRes = await fetch(
+            `${base}/api/orders?reference=${encodeURIComponent(ord.orderKey)}`,
+            { headers: { "x-api-key": merchantApiKey } }
+          );
+              if (!findRes.ok) {
+      const t = await findRes.text().catch(() => "");
+      console.error("[niftipay] GET /api/orders failed:", t);
+      toastWarnings.push(
+        "Could not look up Coinx invoice for this order (network/API error)."
+      );
+          } else {
+            const data = await findRes.json().catch(() => ({}));
+            const coinxOrder = (data?.orders || []).find((o: any) => o.reference === ord.orderKey);
+            if (!coinxOrder) {
+                          toastWarnings.push(
+               `No matching Coinx invoice found for reference ${ord.orderKey}. Check that your order key matches the invoice reference.`
+             );
+            } else {
+              const targetStatus = newStatus === "cancelled" ? "cancelled" : "paid";
+              const patchRes = await fetch(`${base}/api/orders/${coinxOrder.id}`, {
+                method: "PATCH",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-api-key": merchantApiKey,
+                },
+                body: JSON.stringify({ status: targetStatus }),
+              });
+                        const body = await patchRes.json().catch(() => ({}));
+           if (!patchRes.ok) {
+             console.error("[niftipay] PATCH /api/orders/:id failed:", body || (await patchRes.text().catch(()=> "")));
+             toastWarnings.push(
+               "Coinx refused the status update. The invoice may not exist or the API key is invalid."
+             );
+           } else if (Array.isArray(body?.warnings) && body.warnings.length) {
+             for (const w of body.warnings) {
+               // surface Coinx forwarding/dust/XRP notes to the UI
+               toastWarnings.push(typeof w === "string" ? w : w?.message || "Coinx reported a warning.");
+             }
+           }
+
+            }
+          }
+        }
       } catch (err) {
-        console.error(`[niftipay] cancel sync failed for ${ord.orderKey}`, err);
+        console.error("[niftipay] sync error:", err);
+        toastWarnings.push("Unexpected error while syncing with Coinx.");
+
       }
     }
 
@@ -863,7 +910,7 @@ export async function PATCH(
         const ts = Date.now().toString();
         const sig = createHmac("sha256", process.env.SERVICE_API_KEY!)
           .update(ts)
-          .digest("hex");
+          .digest("hex"); // internal service call remains unchanged
 
         await fetch(
           `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`,
@@ -1083,7 +1130,7 @@ export async function PATCH(
     }
 
     await client.query("COMMIT");
-    return NextResponse.json({ id, status: newStatus });
+    return NextResponse.json({ id, status: newStatus, warnings: toastWarnings });
   } catch (e) {
     await client.query("ROLLBACK");
     console.error("[PATCH /api/order/:id/change-status]", e);
