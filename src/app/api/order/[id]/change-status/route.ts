@@ -77,8 +77,8 @@ type TransformedCategoryRevenue = {
 
 async function getRevenue(id: string, organizationId: string) {
   try {
-    const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`
-    const resultCheck = await pool.query(checkQuery);
+    const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = $1`;
+    const resultCheck = await pool.query(checkQuery, [id]);
     const check = resultCheck.rows
     console.log(check)
 
@@ -91,13 +91,13 @@ async function getRevenue(id: string, organizationId: string) {
     }
 
     if (check.length === 0) {
-      const orderQuery = `SELECT * FROM orders WHERE id = '${id}' AND "organizationId" = '${organizationId}'`
-      const resultOrders = await pool.query(orderQuery);
+      const orderQuery = `SELECT * FROM orders WHERE id = $1 AND "organizationId" = $2`;
+      const resultOrders = await pool.query(orderQuery, [id, organizationId]);
       const order = resultOrders.rows[0]
       console.log(order)
 
       const cartId = order.cartId
-      const paymentType = order.paymentMethod
+      const paymentType = (order.paymentMethod ?? "").toLowerCase();
       const country = order.country
 
       // --- after you've fetched `order` from the DB ---
@@ -115,17 +115,18 @@ async function getRevenue(id: string, organizationId: string) {
       console.log(from)
 
       const productQuery = `SELECT p.*, cp.quantity
-                    FROM "cartProducts" cp
-                    JOIN products p ON cp."productId" = p.id
-                    WHERE cp."cartId" = '${cartId}'`
-      const productResult = await pool.query(productQuery)
+                              FROM "cartProducts" cp
+                              JOIN products p ON cp."productId" = p.id
+                             WHERE cp."cartId" = $1`;
+      const productResult = await pool.query(productQuery, [cartId]);
       const products = productResult.rows
 
-      const categoryQuery = `SELECT cp.*, p.*, pc."categoryId" FROM "cartProducts" AS cp
-                JOIN "products" AS p ON cp."productId" = p."id"
-                LEFT JOIN "productCategory" AS pc ON pc."productId" = p."id"
-                WHERE cp."cartId" = '${cartId}'`
-      const categoryResult = await pool.query(categoryQuery)
+      const categoryQuery = `SELECT cp.*, p.*, pc."categoryId"
+                               FROM "cartProducts" AS cp
+                               JOIN "products" AS p ON cp."productId" = p."id"
+                          LEFT JOIN "productCategory" AS pc ON pc."productId" = p."id"
+                              WHERE cp."cartId" = $1`;
+      const categoryResult = await pool.query(categoryQuery, [cartId]);
       const categoryData = categoryResult.rows
 
       const categories: CategoryRevenue[] = [];
@@ -150,11 +151,12 @@ async function getRevenue(id: string, organizationId: string) {
       }, 0);
 
       let total = 0
-      console.log(paymentType.toLowerCase())
-      if (paymentType.toLowerCase() == 'niftipay') {
+        console.log(paymentType)
+        if (paymentType === 'niftipay') {
         let coinRaw = ""
         let amount = 0
-        const paidEntry = order.orderMeta.find(item => item.event === "paid");
+        const meta = Array.isArray(order.orderMeta) ? order.orderMeta : JSON.parse(order.orderMeta ?? "[]");
+        const paidEntry = meta.find((item: any) => (item.event ?? "").toLowerCase() === "paid");
         if (paidEntry) {
           coinRaw = paidEntry.order.asset ?? ""
           amount = paidEntry.order.amount
@@ -176,12 +178,18 @@ async function getRevenue(id: string, organizationId: string) {
           throw new Error(`HTTP ${res.status} – ${res.statusText}`);
         }
 
-        const result = await res.json()
-        const price = result.prices[0][1]
+        const result = await res.json();
+        const prices = Array.isArray(result?.prices) ? result.prices : [];
+        const price = prices.length ? prices[prices.length - 1][1] : null; // use latest data point
+        if (price == null) {
+          throw new Error("No price data from CoinGecko");
+        }
         total = amount * price
 
-        const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from}) AND to_timestamp(${to})`
-        const exchangeResult = await pool.query(exchangeQuery)
+        const exchangeQuery = `
+          SELECT "EUR","GBP" FROM "exchangeRate"
+           WHERE date <= to_timestamp($1) ORDER BY date DESC LIMIT 1`;
+        const exchangeResult = await pool.query(exchangeQuery, [to])
         console.log(exchangeResult.rows)
 
         let USDEUR = 0
@@ -232,10 +240,10 @@ async function getRevenue(id: string, organizationId: string) {
           const costEUR = costGBP * (USDEUR / USDGBP)
           let totalEUR = totalGBP * (USDEUR / USDGBP)
 
-          if (paymentType.toLowerCase() == 'niftipay') {
+          if (paymentType === 'niftipay') {
             totalUSD = total
             totalEUR = total * USDEUR
-            totalGBP = total * USDEUR
+            totalGBP = total * USDGBP
           }
 
           const query = `INSERT INTO "orderRevenue" (id, "orderId", 
@@ -288,7 +296,7 @@ async function getRevenue(id: string, organizationId: string) {
           const costGBP = costEUR * (USDGBP / USDEUR)
           let totalGBP = totalEUR * (USDGBP / USDEUR)
 
-          if (paymentType.toLowerCase() == 'niftipay') {
+          if (paymentType === 'niftipay') {
             totalUSD = total
             totalEUR = total * USDEUR
             totalGBP = total * USDGBP
@@ -344,7 +352,7 @@ async function getRevenue(id: string, organizationId: string) {
           const costGBP = costUSD * USDGBP
           let totalGBP = totalUSD * USDGBP
 
-          if (paymentType.toLowerCase() == 'niftipay') {
+          if (paymentType === 'niftipay') {
             totalUSD = total
             totalEUR = total * USDEUR
             totalGBP = total * USDGBP
@@ -386,8 +394,12 @@ async function getRevenue(id: string, organizationId: string) {
           return revenue
         }
       } else { //some changes
-        const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from}) AND to_timestamp(${to})`
-        const exchangeResult = await pool.query(exchangeQuery)
+        // NOTE: exchange rate lookup narrowed to the single nearest row at/just before paid date
+// and parameterized to avoid SQL injection.
+        const exchangeQuery = `
+          SELECT "EUR","GBP" FROM "exchangeRate"
+           WHERE date <= to_timestamp($1) ORDER BY date DESC LIMIT 1`;
+        const exchangeResult = await pool.query(exchangeQuery, [to])
 
         let USDEUR = 0
         let USDGBP = 0
@@ -659,18 +671,19 @@ async function applyItemEffects(
 /* ────────────────────────────────────────────────────────────── */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: { id: string } },
 ) {
   // 1) context + permission guard
   const ctx = await getContext(req) as { organizationId: string };
   const { organizationId } = ctx;
-  const { id } = await params;
+  const { id } = params;
   const { status: newStatus } = orderStatusSchema.parse(await req.json());
 
   const client = await pool.connect();
   const toastWarnings: string[] = [];
+  let txOpen = false, released = false;
   try {
-    await client.query("BEGIN");
+   await client.query("BEGIN"); txOpen = true;
 
     /* 1️⃣ lock order row */
     const {
@@ -817,8 +830,10 @@ export async function PATCH(
 
 
 
-    await client.query("COMMIT");
+    await client.query("COMMIT"); txOpen = false;
     console.log(`Transaction committed for order ${id}`);
+    // release the transactional connection ASAP; do side-effects with pool
+    client.release(); released = true;
 
       /* ──────────────────────────────────────────────────────────────
      *  Niftipay (Coinx) sync via merchant API key
@@ -957,7 +972,7 @@ export async function PATCH(
 
     if (shouldNotify) {
       /* build product list (normal and  affiliate) */
-      const { rows: prodRows } = await client.query(
+      const { rows: prodRows } = await pool.query(
         `
       SELECT
         cp.quantity,
@@ -1067,7 +1082,7 @@ export async function PATCH(
       if (newStatus === "paid" && ord.status !== "paid") {
         /*  1) fetch affiliate-settings (points & steps) */
         /* ── grab settings (use real column names, alias them to old variable names) ── */
-        const { rows: [affSet] } = await client.query(
+        const { rows: [affSet] } = await pool.query(
           `SELECT "pointsPerReferral",
               "spendingNeeded"      AS "spendingStep",
               "pointsPerSpending"   AS "pointsPerSpendingStep"
@@ -1078,18 +1093,19 @@ export async function PATCH(
         );
 
         const ptsPerReferral = Number(affSet?.pointsPerReferral || 0);
-        /*  const stepEur = Number(affSet?.spendingStep || 0);   // ← alias above
-         const ptsPerStep = Number(affSet?.pointsPerSpendingStep || 0);   // ← alias above */
+        const stepEur = Number(affSet?.spendingStep || 0);   // ← alias above
+        const ptsPerStep = Number(affSet?.pointsPerSpendingStep || 0);   // ← alias above */
 
         /*  2) has this buyer been referred?  award referrer once   */
-        const { rows: [cli] } = await client.query(
+        const { rows: [cli] } = await pool.query(
+
           `SELECT "referredBy" FROM clients WHERE id = $1`,
           [ord.clientId],
         );
 
         if (!ord.referralAwarded && cli?.referredBy && ptsPerReferral > 0) {
           const logId = uuidv4();
-          await client.query(
+          await pool.query(
             `INSERT INTO "affiliatePointLogs"
          (id,"organizationId","clientId",points,action,description,
           "sourceClientId","createdAt","updatedAt")
@@ -1097,7 +1113,7 @@ export async function PATCH(
                'Bonus from referral order',$5,NOW(),NOW())`,
             [logId, organizationId, cli.referredBy, ptsPerReferral, ord.clientId],
           );
-          await client.query(
+          await pool.query(
             `INSERT INTO "affiliatePointBalances" AS b
          ("clientId","organizationId","pointsCurrent","createdAt","updatedAt")
        VALUES ($1,$2,$3,NOW(),NOW())
@@ -1107,7 +1123,7 @@ export async function PATCH(
             [cli.referredBy, organizationId, ptsPerReferral],
           );
           /* mark order so we never double-award this ref bonus */
-          await client.query(
+          await pool.query(
             `UPDATE orders
           SET "referralAwarded" = TRUE,
               "updatedAt"       = NOW()
@@ -1115,11 +1131,72 @@ export async function PATCH(
             [id],
           );
         }
+        /*  3) spending milestones for *buyer*  (step-based)        */
+        if (stepEur > 0 && ptsPerStep > 0) {
+          /* --------------------------------------------------------------
+           * Lifetime spend in **EUR** – we rely on orderRevenue which was
+           * (re)-generated a few lines above for this order.
+           * -------------------------------------------------------------- */
+          const { rows: [spent] } = await pool.query(
+            `SELECT COALESCE(SUM(r."EURtotal"),0) AS sum
+         FROM "orderRevenue" r
+         JOIN orders o ON o.id = r."orderId"
+        WHERE o."clientId"       = $1
+          AND o."organizationId" = $2
+          AND o.status           = 'paid'`,
+            [ord.clientId, organizationId],
+          );
+
+          const totalEur = Number(spent.sum);   // already a decimal string → number
+          /* how many spending-bonuses already written? */
+          const { rows: [prev] } = await pool.query(
+            `SELECT COALESCE(SUM(points),0) AS pts
+         FROM "affiliatePointLogs"
+        WHERE "organizationId" = $1
+          AND "clientId"       = $2
+         AND action           = 'spending_bonus'`,
+            [organizationId, ord.clientId],
+          );
+
+          const shouldHave = Math.floor(totalEur / stepEur) * ptsPerStep;
+          const delta = shouldHave - Number(prev.pts);
+
+          console.log(
+            `[affiliate] spending check – client %s: total %s EUR, step %d, ` +
+            `prev %d pts, delta %d`,
+            ord.clientId,
+            totalEur.toFixed(2),
+            stepEur,
+            Number(prev.pts),
+            delta,
+          );
+
+          if (delta > 0) {
+            const logId = uuidv4();
+            await pool.query(
+              `INSERT INTO "affiliatePointLogs"
+           (id,"organizationId","clientId",points,action,description,
+            "createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,'spending_bonus',
+                 'Milestone spending bonus',NOW(),NOW())`,
+              [logId, organizationId, ord.clientId, delta],
+            );
+             await pool.query(
+              `INSERT INTO "affiliatePointBalances" AS b
+           ("clientId","organizationId","pointsCurrent","createdAt","updatedAt")
+         VALUES ($1,$2,$3,NOW(),NOW())
+         ON CONFLICT("clientId","organizationId") DO UPDATE
+           SET "pointsCurrent" = b."pointsCurrent" + EXCLUDED."pointsCurrent",
+               "updatedAt"     = NOW()`,
+              [ord.clientId, organizationId, delta],
+            );
+          }
+        }
       }
 
       /* mark flag only for completed (NOT needed for paid anymore) */
       if (newStatus === "completed") {
-        await client.query(
+        await pool.query(
           `UPDATE orders
               SET "notifiedPaidOrCompleted" = true,
                   "updatedAt" = NOW()
@@ -1129,13 +1206,12 @@ export async function PATCH(
       }
     }
 
-    await client.query("COMMIT");
     return NextResponse.json({ id, status: newStatus, warnings: toastWarnings });
   } catch (e) {
-    await client.query("ROLLBACK");
+    if (txOpen) await client.query("ROLLBACK");
     console.error("[PATCH /api/order/:id/change-status]", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   } finally {
-    client.release();
+   if (!released) client.release();
   }
 }
