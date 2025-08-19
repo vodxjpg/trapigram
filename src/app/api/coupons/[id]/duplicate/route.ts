@@ -51,7 +51,7 @@ export async function POST(
         "startDate", "expirationDate",
         "limitPerUser", "usageLimit",
         "expendingLimit", "expendingMinimum",
-        countries, visibility,
+        countries, visibility, stackable,
         "createdAt", "updatedAt"
       )
       VALUES(
@@ -60,7 +60,7 @@ export async function POST(
         $8,$9,
         $10,$11,
         $12,$13,
-        $14,$15,
+        $14,$15,$16,
         NOW(),NOW()
       )
       RETURNING *
@@ -81,6 +81,7 @@ export async function POST(
       c.expendingMinimum,// $13
       c.countries,      // $14
       c.visibility,     // $15
+      c.stackable       // $16
     ];
 
     const { rows: newRows } = await pool.query(insert, vals);

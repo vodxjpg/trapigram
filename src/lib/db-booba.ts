@@ -1,7 +1,6 @@
+
 // src/lib/db.ts
-import fs from "fs";
-import path from "path";
-import { Pool } from "pg";                   // ✅ real Pool
+import { Pool } from "pg";
 import { Kysely, PostgresDialect } from "kysely";
 
 interface DB {
@@ -629,7 +628,6 @@ interface DB {
     id: string
     organizationId: string
     name: string
-    active: boolean
     countries: string          // JSON array
     createdAt: Date
     updatedAt: Date
@@ -700,23 +698,12 @@ interface DB {
     title: string;
     message: string;
     country: string | null;
-    url: string | null;
     read: boolean;
     createdAt: Date;
     updatedAt: Date;
   };
 
   notificationGroups: {
-    id: string;
-    groupId: string;
-    organizationId: string;
-    name: string;
-    countries: string;          // JSON-stringified array ["ES","IT",…]
-    createdAt: Date;
-    updatedAt: Date;
-  };
-
-  ticketSupportGroups: {
     id: string;
     groupId: string;
     organizationId: string;
@@ -767,113 +754,60 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
-  /** Platform fee rates */
-  userFeeRates: {
-    id: string;
-    userId: string;
-    percent: string;       // numeric
-    startsAt: Date;
-    endsAt: Date | null;
-    createdAt: Date;
-  };
-
-  /** Captured fees per order */
-  orderFees: {
-    id: string;
-    orderId: string;
-    userId: string;
-    feeAmount: string;     // numeric
-    percentApplied: string;// numeric
-    capturedAt: Date;
-  };
-
-  /** Monthly invoices */
-  userInvoices: {
-    id: string;
-    userId: string;
-    periodStart: string;   // DATE
-    periodEnd: string;     // DATE
-    totalAmount: number;   // numeric
-    paidAmount: number;
-    status: string;        // pending|sent|paid
-    dueDate: string;       // DATE
-    createdAt: Date;
-    niftipayOrderId: string | null;
-    niftipayReference: string | null;
-    niftipayNetwork: string;
-    niftipayAsset: string;
-    niftipayAddress: string | null;
-    niftipayQrUrl: string | null;
-  };
-
-  /** Line items for invoices */
-  invoiceItems: {
-    id: string;
-    invoiceId: string;
-    orderFeeId: string;
-    amount: string;        // numeric
-  };
 }
 
-/* ──────────────────────────────────────────────────────────────── *
- *  Runtime safety checks                                          *
- * ──────────────────────────────────────────────────────────────── */
-// Block accidental client-side bundling.
+/* ▸ 2.  Runtime safety checks
+   -------------------------------------------------- */
+// Make sure we never bundle this file into the browser.
 if (typeof window !== "undefined") {
   throw new Error("❌ db.ts must never be imported in browser bundles");
 }
-
-// Fail fast if DATABASE_URL is missing or obviously plaintext.
+// Require a DATABASE_URL that uses the postgres scheme.
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL env var is required");
 }
-if (process.env.DATABASE_URL.startsWith("postgres://") === false) {
+if (!process.env.DATABASE_URL.startsWith("postgres://")) {
   throw new Error("DATABASE_URL must use the postgres:// scheme");
 }
 
-
+/* ▸ 3.  Local pg Pool
+   -------------------------------------------------- */
 /**
- * 
- * Absolute path to the Supabase root-CA certificate.
- * Adjust if your cert lives elsewhere.
- * Example:  certs/prod-ca-2021.crt  (placed at project root)
+ * For local development we disable TLS entirely; the connection is
+ * just a UNIX socket / localhost TCP.  All the other hardening knobs
+ * (statement-timeout, keep-alive, etc.) stay the same so behaviour
+ * matches production as closely as possible.
  */
-const caPath = path.resolve(process.cwd(), "certs/prod-ca-2021.crt");
-let supabaseCA = "";
-try {
-  supabaseCA = fs.readFileSync(caPath, "utf8");
-  console.info(`✔︎ Loaded Supabase CA from ${caPath}`);
-} catch (err) {
-  console.error("✘ Failed to load Supabase CA:", (err as Error).message);
-  throw err;                              // hard-fail: no CA → no DB
-}
+const isProd = process.env.NODE_ENV === "production";
 
-/* ──────────────── 4. Secure pg Pool (TLS 1.3+, keep-alive) ─────── */
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    ca: supabaseCA,
-    rejectUnauthorized: true,
-    /** Enforce modern cipher suites; Node ≥20 negotiates TLS 1.3 by default,
-     * but we pin it defensivey. */
-    minVersion: "TLSv1.3",
-  },
-  max: Number.parseInt(process.env.PG_POOL_MAX ?? "10", 10),
+/* strip every ssl_min_protocol_version param that may be present
+   (Heroku build-pack, psql env-vars, etc.) */
+const cleanDbUrl = process.env.DATABASE_URL!.replace(
+  /[?&]ssl_?min_?protocol_?version=[^&]+/gi,
+  ""
+);
+
+const pgPool = new Pool({
+  connectionString: cleanDbUrl,
+  ssl: isProd
+    ? { rejectUnauthorized: false, minVersion: "TLSv1.3" } // ✔︎ always valid
+    : false,                                               // ← local dev
+  max: Number(process.env.PG_POOL_MAX ?? 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 2_000,
   keepAlive: true,
-  statement_timeout: 5_000,   // abort rlong-running queries server-side
+  statement_timeout: 5_000,
 });
 
-/* Optional structured diagnostics; disable in production logs */
+/* Nice diagnostics when hacking locally */
 if (process.env.NODE_ENV !== "production") {
-  pool.on("connect", () => console.info("↯ DB connection established"));
-  pool.on("error", (err) => console.error("DB client error:", err));
+  pgPool.on("connect", () => console.info("↯ Local DB connection established"));
+  pgPool.on("error", err => console.error("↯ Local DB client error:", err));
 }
 
-/* ──────────────── 5. Kysely instance ───────────────── */
-
-export { pool as pgPool };   // for raw SQL users 
+/* ▸ 4.  Kysely instance (identical to prod)
+   -------------------------------------------------- */
+export { pgPool };               // raw-SQL callers import { pgPool }
 export const db = new Kysely<DB>({
-  dialect: new PostgresDialect({ pool }),
+  dialect: new PostgresDialect({ pool: pgPool }),
 });
