@@ -99,7 +99,7 @@ export async function POST(req: Request) {
         });
         return obj;
     });
-
+    console.log(data)
     if (!data) {
         return NextResponse.json({ error: "File is empty" }, { status: 400 });
     }

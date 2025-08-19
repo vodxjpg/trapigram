@@ -153,7 +153,7 @@ export async function POST(request: Request) {
             regularPrice: p.regularPrice,
             salePrice: p.salePrice,
             cost: p.cost,
-            managedStock: p.manageStock,
+            manageStock: p.manageStock,
             backorder: p.allowBackorders,
             warehouseId: p.warehouseId,
             countries: p.countries,

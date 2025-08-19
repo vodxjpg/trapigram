@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
                 expendingLimit: number;
                 countries: string[];
                 visibility: boolean;
+                stackable: boolean
             }>;
         };
 
@@ -58,28 +59,11 @@ export async function POST(request: NextRequest) {
             expendingLimit: c.expendingLimit,
             countries: c.countries.join(', '),
             visibility: c.visibility ? 1 : 0,
+            stackable: c.stackable ? 1 : 0,
         }));
 
-        const dummyRow = {
-            id: 'example-id',
-            name: 'example-name',
-            code: 'example-code',
-            description: 'example-description',
-            discount: 'example-discount',
-            discountType: 'example-discountType',
-            startDate: 'example startDate DD/MM/YYYY',
-            expirationDate: 'example expirationDate DD/MM/YYYY',
-            limitPerUser: 'example-limitPerUser',
-            usageLimit: 'example-usageLimit',
-            usagePerUser: 'example-usagePerUser',
-            expendingMinimum: 'example-expendingMinimum',
-            expendingLimit: 'example-expendingLimit',
-            countries: 'example-countries',
-            visibility: 'example-visibility',
-        }
-
         // Build sheet & workbook
-        const ws = XLSX.utils.json_to_sheet([dummyRow, ...rows]);
+        const ws = XLSX.utils.json_to_sheet([...rows]);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Coupons');
 

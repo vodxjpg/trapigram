@@ -20,6 +20,7 @@ const couponSchema = z.object({
   expendingMinimum: z.coerce.number().int().min(0, { message: "Expending minimum must be at least 0." }).default(0),
   countries: z.array(z.string()).min(1, { message: "At least one country is required." }),
   visibility: z.boolean(),
+  stackable: z.boolean(),
   expirationDate: z.string().nullable().optional(),
   startDate: z.string().nullable().optional(),
   limitPerUser: z.coerce
@@ -52,7 +53,7 @@ export async function GET(req: NextRequest) {
   // Updated SELECT query to include "expendingMinimum"
   let query = `
     SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "startDate", "expirationDate", 
-     "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt"
+     "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, stackable, "createdAt", "updatedAt"
     FROM coupons
     WHERE "organizationId" = $1
   `;
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
       visibility,
     } = parsedCoupon;
 
-        // Early check (still keep the catch below for race-safety)
+    // Early check (still keep the catch below for race-safety)
     const dup = await pool.query(
       `SELECT 1 FROM coupons WHERE code = $1 AND "organizationId" = $2 LIMIT 1`,
       [code, organizationId],
@@ -157,17 +158,17 @@ export async function POST(req: NextRequest) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 });
     }
-      // Unique violation (duplicate code)
-  if (error?.code === "23505") {
-    // PG detail looks like: Key (code)=(V2FTW) already exists.
-    const m = /Key \((.+)\)=\((.+)\)/.exec(error?.detail || "");
-    const field = m?.[1] || "code";
-    const val   = m?.[2] || "";
-    const msg   = field === "code" && val
-      ? `Coupon code "${val}" is already in use. Please choose a different code.`
-      : `This ${field} is already in use.`;
-    return NextResponse.json({ error: msg }, { status: 409 });
-  }
+    // Unique violation (duplicate code)
+    if (error?.code === "23505") {
+      // PG detail looks like: Key (code)=(V2FTW) already exists.
+      const m = /Key \((.+)\)=\((.+)\)/.exec(error?.detail || "");
+      const field = m?.[1] || "code";
+      const val = m?.[2] || "";
+      const msg = field === "code" && val
+        ? `Coupon code "${val}" is already in use. Please choose a different code.`
+        : `This ${field} is already in use.`;
+      return NextResponse.json({ error: msg }, { status: 409 });
+    }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

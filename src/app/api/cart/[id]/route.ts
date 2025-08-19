@@ -21,6 +21,7 @@ export async function GET(
     if (!cartRes.rowCount)
       return NextResponse.json({ error: "Cart not found" }, { status: 404 });
     const cart = cartRes.rows[0];
+    await pool.query(`UPDATE carts SET "couponCode" = NULL WHERE id = $1`, [id])
 
     const clientRes = await pool.query(
       `SELECT country,"levelId" FROM clients WHERE id=$1`,

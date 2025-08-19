@@ -1,3 +1,4 @@
+// src/app/(dashboard)/coupons/coupon-form.tsx
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
@@ -77,12 +78,16 @@ const schema = z.object({
   name: z.string().min(1, "Name is required"),
   code: z.string().min(1, "Code is required"),
   description: z.string().min(1, "Description is required"),
+  // NEW: stackable boolean
+  stackable: z.boolean().default(false),
   discountType: z.enum(["fixed", "percentage"]),
   discountAmount: z.coerce.number().min(0.01, "Amount must be greater than 0"),
   usageLimit: z.coerce.number().int().min(0).default(0),
   expendingLimit: z.coerce.number().int().min(0).default(0),
   expendingMinimum: z.coerce.number().int().min(0).default(0),
-  countries: z.array(z.string().length(2)).min(1, "At least one country is required"),
+  countries: z
+    .array(z.string().length(2))
+    .min(1, "At least one country is required"),
   visibility: z.boolean().default(true),
   hasExpiration: z.boolean().default(false),
   startDate: z
@@ -116,26 +121,31 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
       name: "",
       code: "",
       description: "",
+      // NEW default
+      stackable: false,
       discountType: "fixed",
       discountAmount: 0,
       usageLimit: 0,
-   
       expendingLimit: 0,
       expendingMinimum: 0,
       countries: [],
       visibility: true,
       hasExpiration: false,
-      startDate: minStartLocal,          // ← new default
+      startDate: minStartLocal,
       expirationDate: null,
       limitPerUser: 0,
     },
   });
 
   /* ---------------------------- countries -------------------------------- */
-  const [countryOptions, setCountryOptions] = useState<{ value: string; label: string }[]>([]);
+  const [countryOptions, setCountryOptions] = useState<
+    { value: string; label: string }[]
+  >([]);
   useEffect(() => {
     fetch("/api/organizations/countries", {
-      headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+      },
     })
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch organization countries");
@@ -152,7 +162,9 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
           }))
         );
       })
-      .catch((err) => toast.error(err.message || "Failed to load organization countries"));
+      .catch((err) =>
+        toast.error(err.message || "Failed to load organization countries")
+      );
   }, []);
 
   /* ---------------------------- preload edit ----------------------------- */
@@ -165,12 +177,13 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
       form.reset({
         ...couponData,
         countries,
-      
+        // ensure boolean for stackable if missing
+        stackable: Boolean((couponData as any).stackable),
         hasExpiration: Boolean(couponData.expirationDate),
         startDate: couponData.startDate
           ? isoToLocalInput(couponData.startDate)
           : minStartLocal,
-          expirationDate: couponData.expirationDate ?? null, // <-- add this
+        expirationDate: couponData.expirationDate ?? null,
       });
     }
   }, [couponData, isEditing, form, minStartLocal]);
@@ -180,7 +193,10 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
   useEffect(() => {
     const on = Boolean(expVal);
     if (form.getValues("hasExpiration") !== on) {
-      form.setValue("hasExpiration", on, { shouldValidate: false, shouldDirty: true });
+      form.setValue("hasExpiration", on, {
+        shouldValidate: false,
+        shouldDirty: true,
+      });
     }
   }, [expVal, form]);
 
@@ -188,31 +204,34 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
   const onSubmit = async (vals: Values) => {
     setSubmitting(true);
     try {
-      console.log(couponData)
-      const url = isEditing && couponData?.id
-        ? `/api/coupons/${couponData.id}`
-        : "/api/coupons";
+      const url =
+        isEditing && (couponData as any)?.id
+          ? `/api/coupons/${(couponData as any).id}`
+          : "/api/coupons";
+
       const payload = {
-        ...vals,
-        // ensure ISO strings
+        ...vals, // includes `stackable`
         startDate: new Date(vals.startDate).toISOString(),
-        expirationDate: vals.expirationDate ? new Date(vals.expirationDate).toISOString() : null,
+        expirationDate: vals.expirationDate
+          ? new Date(vals.expirationDate).toISOString()
+          : null,
       };
+
       const res = await fetch(url, {
         method: isEditing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          const msg =
-            typeof data?.error === "string"
-              ? data.error
-              : Array.isArray(data?.error)
-                ? data.error.map((e: any) => e.message).join("\n")
-                : "Request failed";
-          throw new Error(msg);
-        }
+        const data = await res.json().catch(() => ({}));
+        const msg =
+          typeof data?.error === "string"
+            ? data.error
+            : Array.isArray(data?.error)
+              ? data.error.map((e: any) => e.message).join("\n")
+              : "Request failed";
+        throw new Error(msg);
+      }
       toast.success(isEditing ? "Coupon updated" : "Coupon created");
       router.push("/coupons");
       router.refresh();
@@ -278,11 +297,19 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                         isMulti
                         options={countryOptions}
                         placeholder="Select country(s)"
-                        value={countryOptions.filter((o) => field.value.includes(o.value))}
-                        onChange={(opts: any) => field.onChange(opts.map((o: any) => o.value))}
+                        value={countryOptions.filter((o) =>
+                          field.value.includes(o.value)
+                        )}
+                        onChange={(opts: any) =>
+                          field.onChange(opts.map((o: any) => o.value))
+                        }
                         formatOptionLabel={(o: any) => (
                           <div className="flex items-center gap-2">
-                            <ReactCountryFlag countryCode={o.value} svg style={{ width: 20 }} />
+                            <ReactCountryFlag
+                              countryCode={o.value}
+                              svg
+                              style={{ width: 20 }}
+                            />
                             <span>{o.label}</span>
                           </div>
                         )}
@@ -294,38 +321,92 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
               />
             </div>
 
-            {/* Discount Type & Amount */}
+            {/* Stackable & Discount Type + Amount */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-              <FormField
-                control={form.control}
-                name="discountType"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Discount Type</FormLabel>
-                    <FormControl>
-                      <div className="flex items-center gap-3">
-                        <span className={field.value === "fixed" ? "font-semibold" : ""}>Fixed</span>
-                        <Switch
-                          checked={field.value === "percentage"}
-                          onCheckedChange={(c) => field.onChange(c ? "percentage" : "fixed")}
-                        />
-                        <span className={field.value === "percentage" ? "font-semibold" : ""}>%</span>
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {/* LEFT column: Stackable (left) + Discount Type (right) */}
+              <div className="flex items-center gap-8">
+                <FormField
+                  control={form.control}
+                  name="stackable"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Stackable</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-3">
+                          <span className={!field.value ? "font-semibold" : ""}>
+                            No
+                          </span>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                          <span className={field.value ? "font-semibold" : ""}>
+                            Yes
+                          </span>
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="discountType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Discount Type</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={
+                              field.value === "fixed" ? "font-semibold" : ""
+                            }
+                          >
+                            Fixed
+                          </span>
+                          <Switch
+                            checked={field.value === "percentage"}
+                            onCheckedChange={(c) =>
+                              field.onChange(c ? "percentage" : "fixed")
+                            }
+                          />
+                          <span
+                            className={
+                              field.value === "percentage"
+                                ? "font-semibold"
+                                : ""
+                            }
+                          >
+                            %
+                          </span>
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* RIGHT column: Amount */}
               <FormField
                 control={form.control}
                 name="discountAmount"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>
-                      Amount {form.watch("discountType") === "percentage" ? "(%)" : "(currency)"}
+                      Amount{" "}
+                      {form.watch("discountType") === "percentage"
+                        ? "(%)"
+                        : "(currency)"}
                     </FormLabel>
                     <FormControl>
-                      <Input type="number" step="0.01" placeholder="0.00" {...field} />
+                      <Input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        {...field}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -368,7 +449,10 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                     <FormLabel>Visibility</FormLabel>
                     <FormControl>
                       <div className="flex items-center gap-2">
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
                         <span>{field.value ? "Visible" : "Hidden"}</span>
                       </div>
                     </FormControl>
@@ -425,7 +509,12 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                           if (raw && !raw.includes("T")) {
                             const now = new Date();
                             field.onChange(
-                              withTime(raw, now.getHours(), now.getMinutes(), now.getSeconds())
+                              withTime(
+                                raw,
+                                now.getHours(),
+                                now.getMinutes(),
+                                now.getSeconds()
+                              )
                             );
                           } else {
                             field.onChange(raw);
@@ -451,7 +540,9 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                           type="datetime-local"
                           step={1}
                           min={minExpireLocal}
-                          value={field.value ? isoToLocalInput(field.value) : ""}
+                          value={
+                            field.value ? isoToLocalInput(field.value) : ""
+                          }
                           onChange={(e) => {
                             const raw = e.target.value;
                             if (!raw) {
@@ -475,7 +566,11 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
 
             {/* Submit Buttons */}
             <div className="flex justify-center gap-4 mt-6">
-              <Button type="button" variant="outline" onClick={() => router.push("/coupons")}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push("/coupons")}
+              >
                 Cancel
               </Button>
               <Button type="submit" disabled={submitting}>

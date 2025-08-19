@@ -20,6 +20,7 @@ const couponUpdateSchema = z.object({
   expendingMinimum: z.coerce.number().int().min(0, { message: "Expending minimum must be at least 0." }).default(0),
   countries: z.array(z.string()).min(1, { message: "At least one country is required." }),
   visibility: z.boolean(),
+  stackable: z.boolean(),
   startDate: z.string().nullable().optional(),
   expirationDate: z.string().nullable().optional(),
   limitPerUser: z.coerce
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         "discountType", "discountAmount",
         "expirationDate", "startDate",
         "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum",
-        countries, visibility, "createdAt", "updatedAt"
+        countries, visibility, stackable, "createdAt", "updatedAt"
       FROM coupons
       WHERE id = $1 AND "organizationId" = $2
     `;
@@ -50,10 +51,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Coupon not found" }, { status: 404 });
     }
-      const coupon = result.rows[0];
-  if (typeof coupon.countries === "string") {
-    try { coupon.countries = JSON.parse(coupon.countries); } catch {}
-  }
+    const coupon = result.rows[0];
+    if (typeof coupon.countries === "string") {
+      try { coupon.countries = JSON.parse(coupon.countries); } catch { }
+    }
     return NextResponse.json(coupon);
   } catch (error: any) {
     console.error("[GET /api/coupons/[id]] error:", error);
@@ -105,10 +106,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Coupon not found" }, { status: 404 });
     }
-       const coupon = result.rows[0];
-       if (typeof coupon.countries === "string") {
-         try { coupon.countries = JSON.parse(coupon.countries); } catch {}
-       }
+    const coupon = result.rows[0];
+    if (typeof coupon.countries === "string") {
+      try { coupon.countries = JSON.parse(coupon.countries); } catch { }
+    }
     return NextResponse.json(coupon);
   } catch (error: any) {
     console.error("[PATCH /api/coupons/[id]] error:", error);
@@ -117,14 +118,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
 
     if (error?.code === "23505") {
-        const m = /Key \((.+)\)=\((.+)\)/.exec(error?.detail || "");
-        const field = m?.[1] || "code";
-        const val   = m?.[2] || "";
-        const msg   = field === "code" && val
-          ? `Coupon code "${val}" is already in use. Please choose a different code.`
-          : `This ${field} is already in use.`;
-        return NextResponse.json({ error: msg }, { status: 409 });
-      }
+      const m = /Key \((.+)\)=\((.+)\)/.exec(error?.detail || "");
+      const field = m?.[1] || "code";
+      const val = m?.[2] || "";
+      const msg = field === "code" && val
+        ? `Coupon code "${val}" is already in use. Please choose a different code.`
+        : `This ${field} is already in use.`;
+      return NextResponse.json({ error: msg }, { status: 409 });
+    }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

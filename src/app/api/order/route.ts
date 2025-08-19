@@ -34,22 +34,21 @@ function encryptSecretNode(plain: string): string {
 /*  Zod – order payload                                               */
 /* ------------------------------------------------------------------ */
 const orderSchema = z.object({
-  organization: z.string(),
-  clientId: z.string().uuid(),
-  cartId: z.string().uuid(),
-  country: z.string().length(2),
-  paymentMethod: z.string().min(1),
-  shippingAmount: z.coerce.number().min(0),
-  shippingMethodTitle: z.string(),
-  shippingMethodDescription: z.string(),
-  discountAmount: z.coerce.number().min(0),
-  totalAmount: z.coerce.number().min(0),
-  subtotal: z.coerce.number().min(0),
-  couponCode: z.string().nullable().optional(),
-  couponType: z.string().nullable().optional(),
-  counponType: z.string().nullable().optional(), // legacy typo
-  shippingCompany: z.string().nullable().optional(),
-  address: z.string().min(1),
+  organization: z.string(),//
+  clientId: z.string().uuid(),//
+  cartId: z.string().uuid(),//
+  country: z.string().length(2),//
+  paymentMethod: z.string().min(1),//
+  shippingAmount: z.coerce.number().min(0),//
+  shippingMethodTitle: z.string(),//
+  shippingMethodDescription: z.string(),//
+  discountAmount: z.coerce.number().min(0),//
+  totalAmount: z.coerce.number().min(0),//
+  subtotal: z.coerce.number().min(0),//
+  couponCode: z.string().nullable().optional(),//
+  couponType: z.string().nullable().optional(),//
+  shippingCompany: z.string().nullable().optional(),//
+  address: z.string().min(1),//
   trackingNumber: z.string().nullable().optional(),
   discountValue: z.coerce.number().min(0),
   pointsRedeemed: z.coerce.number().min(0).optional(),
@@ -66,14 +65,14 @@ type OrderPayload = z.infer<typeof orderSchema>;
 /* – Does NOT change SQL selection; it trims the JSON we return.   */
 /* --------------------------------------------------------------- */
 function parseFields(sp: URLSearchParams): string[] | null {
-    const raw = sp.get("fields");
-    if (!raw) return null;
-    return raw.split(",").map(s => s.trim()).filter(Boolean);
-  }
-  function pickFields<T extends Record<string, any>>(obj: T, fields: string[] | null) {
-    if (!fields) return obj;
-    return fields.reduce<Record<string, any>>((acc, k) => (k in obj ? (acc[k] = (obj as any)[k], acc) : acc), {});
-  }
+  const raw = sp.get("fields");
+  if (!raw) return null;
+  return raw.split(",").map(s => s.trim()).filter(Boolean);
+}
+function pickFields<T extends Record<string, any>>(obj: T, fields: string[] | null) {
+  if (!fields) return obj;
+  return fields.reduce<Record<string, any>>((acc, k) => (k in obj ? (acc[k] = (obj as any)[k], acc) : acc), {});
+}
 
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
@@ -138,7 +137,7 @@ export async function GET(req: NextRequest) {
         }
       }
       if (filterReferral === "false") clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
-      if (filterReferral === "true")  clauses.push(`o."referralAwarded" = TRUE`);
+      if (filterReferral === "true") clauses.push(`o."referralAwarded" = TRUE`);
 
       // NEW: optional LIMIT
       let limitClause = "";
@@ -179,22 +178,22 @@ export async function GET(req: NextRequest) {
     const clauses: string[] = [`o."organizationId" = $1`];
     const vals: unknown[] = [organizationId];
 
-      if (filterStatus) {
-            const statuses = filterStatus.split(",");
-            if (statuses.length > 1) {
-              clauses.push(`o.status IN (${statuses.map((_, i) => `$${vals.length + i + 1}`).join(",")})`);
-              vals.push(...statuses);
-            } else {
-              clauses.push(`o.status = $${vals.length + 1}`);
-              vals.push(filterStatus);
-            }
+    if (filterStatus) {
+      const statuses = filterStatus.split(",");
+      if (statuses.length > 1) {
+        clauses.push(`o.status IN (${statuses.map((_, i) => `$${vals.length + i + 1}`).join(",")})`);
+        vals.push(...statuses);
+      } else {
+        clauses.push(`o.status = $${vals.length + 1}`);
+        vals.push(filterStatus);
       }
-     if (filterReferral === "false") {
-         clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
-       }
-       if (filterReferral === "true") {
-         clauses.push(`o."referralAwarded" = TRUE`);
-       }
+    }
+    if (filterReferral === "false") {
+      clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
+    }
+    if (filterReferral === "true") {
+      clauses.push(`o."referralAwarded" = TRUE`);
+    }
     const listSql = `
       SELECT o.*, c."firstName", c."lastName", c."username", c.email
         FROM orders o
@@ -217,7 +216,7 @@ export async function GET(req: NextRequest) {
       shippingCompany: o.shippingService ?? o.shippingService ?? null,
       referralAwarded: !!o.referralAwarded
     }));
-        const projected = fields
+    const projected = fields
       ? orders.map(o => pickFields(o, fields))
       : orders;
     return NextResponse.json(projected, { status: 200 });
@@ -255,15 +254,17 @@ export async function POST(req: NextRequest) {
       - discountAmt
       - pointsAmt
       + shippingAmt;
-    console.log(
+    /* console.log(
       "🧮  Calculated totalAmount:",
       body.subtotal,
       "-", body.discountAmount,
       "-", (body.pointsRedeemedAmount ?? 0),
       "+", body.shippingAmount,
       "=", body.totalAmount
-    )
+    ) */
+    console.log(body)
     payload = orderSchema.parse(body);
+    console.log(payload)
   } catch (err) {
     if (err instanceof z.ZodError)
       return NextResponse.json({ error: err.errors }, { status: 400 });
@@ -283,7 +284,6 @@ export async function POST(req: NextRequest) {
     totalAmount,
     couponCode,
     couponType,
-    counponType,
     shippingCompany,
     address,
     trackingNumber = null,
@@ -292,7 +292,7 @@ export async function POST(req: NextRequest) {
     pointsRedeemed = 0,
     pointsRedeemedAmount = 0,
   } = payload;
-  const couponTypeResolved = couponType ?? counponType ?? null;
+  const couponTypeResolved = couponType ?? null;
 
   const orderId = uuidv4();
   await pool.query(

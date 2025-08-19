@@ -83,6 +83,7 @@ type Coupon = {
   expendingLimit: number;
   countries: string[];
   visibility: boolean;
+  stackable: boolean;
 };
 
 const fmtLocal = (iso: string | null) =>
@@ -140,7 +141,6 @@ export function CouponsTable() {
       );
       if (!res.ok) throw new Error("Failed to fetch coupons");
       const data = await res.json();
-      console.log(data);
       setCoupons(data.coupons);
       setTotalPages(data.totalPages || 1);
     } catch (err) {
@@ -454,6 +454,7 @@ export function CouponsTable() {
               <TableHead>Expending Limit</TableHead>
               <TableHead>Countries</TableHead>
               <TableHead>Visibility</TableHead>
+              <TableHead>Stackable</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -497,6 +498,7 @@ export function CouponsTable() {
                     ))}
                   </TableCell>
                   <TableCell>{c.visibility ? "Visible" : "Hidden"}</TableCell>
+                  <TableCell>{c.stackable ? "Yes" : "No"}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>

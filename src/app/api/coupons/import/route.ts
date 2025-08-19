@@ -150,6 +150,7 @@ export async function POST(req: Request) {
                         expendingLimit: coupon.expendingLimit,
                         countries: JSON.stringify(countryArray),
                         visibility: coupon.visibility = 1 ? true : false,
+                        stackable: coupon.stackable = 1 ? true : false,
                         createdAt: new Date(),
                         updatedAt: new Date()
                     }).execute()
@@ -231,6 +232,11 @@ export async function POST(req: Request) {
                 const vis = coupon.visibility.toString()
                 if (vis && vis.trim() !== "") {
                     updatePayload.visibility = coupon.visibility = 1 ? true : false
+                }
+
+                const stack = coupon.stackable.toString()
+                if (stack && stack.trim() !== "") {
+                    updatePayload.stackable = coupon.stackable = 1 ? true : false
                 }
 
                 // now run the update

@@ -12,11 +12,10 @@ import {
   Plus,
   Trash2,
   User,
-  Check,
   Tag,
   DollarSign,
   Truck,
-  Search
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,14 +40,16 @@ import { toast } from "sonner";
 import { formatCurrency } from "@/lib/currency";
 /* ─── constants ──────────────────────────────────────────────── */
 // If the env-var is set use it, otherwise fall back to the public endpoint.
-const NIFTIPAY_BASE =
-  (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com").replace(/\/+$/, "")
+const NIFTIPAY_BASE = (
+  process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com"
+).replace(/\/+$/, "");
 
 type NiftipayNet = { chain: string; asset: string; label: string };
 
 async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
   const r = await fetch("/api/niftipay/payment-methods");
-  if (!r.ok) throw new Error(await r.text().catch(() => "Niftipay methods failed"));
+  if (!r.ok)
+    throw new Error(await r.text().catch(() => "Niftipay methods failed"));
   const { methods } = await r.json();
   return (methods || []).map((m: any) => ({
     chain: m.chain,
@@ -56,7 +57,6 @@ async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
     label: m.label ?? `${m.asset} on ${m.chain}`,
   }));
 }
-
 
 // Interfaces
 interface Product {
@@ -69,7 +69,7 @@ interface Product {
   image: string;
   stockData: Record<string, { [countryCode: string]: number }>;
   subtotal: number;
-  isAffiliate?: boolean;   // ← new
+  isAffiliate?: boolean; // ← new
 }
 interface OrderItem {
   product: Product;
@@ -98,18 +98,42 @@ interface Address {
 interface PaymentMethod {
   id: string;
   name: string;
-  active?: boolean;           // <-- new
+  active?: boolean; // <-- new
   details?: string;
   apiKey?: string | null;
 }
-
 
 /* ─── helpers (new) ───────────────────────────────────────────── */
 
 /* ─── currency map helpers ─────────────────────────────────────── */
 const EU_COUNTRIES = new Set([
-  "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU",
-  "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+  "AT",
+  "BE",
+  "BG",
+  "HR",
+  "CY",
+  "CZ",
+  "DK",
+  "EE",
+  "FI",
+  "FR",
+  "DE",
+  "GR",
+  "HU",
+  "IE",
+  "IT",
+  "LV",
+  "LT",
+  "LU",
+  "MT",
+  "NL",
+  "PL",
+  "PT",
+  "RO",
+  "SK",
+  "SI",
+  "ES",
+  "SE",
 ]);
 
 function countryToFiat(c: string): string {
@@ -126,14 +150,12 @@ function fmt(n: number | string): string {
   });
 }
 
-
 function firstPointPrice(pp: any): number {
   if (!pp) return 0;
-  const firstLvl   = Object.values(pp)[0] as any ?? {};
-  const firstCtMap = Object.values(firstLvl)[0] as any ?? {};
-  return (firstCtMap.sale ?? firstCtMap.regular) ?? 0;
+  const firstLvl = (Object.values(pp)[0] as any) ?? {};
+  const firstCtMap = (Object.values(firstLvl)[0] as any) ?? {};
+  return firstCtMap.sale ?? firstCtMap.regular ?? 0;
 }
-
 
 const DEBOUNCE_MS = 400;
 export default function OrderForm() {
@@ -157,7 +179,7 @@ export default function OrderForm() {
       (c) =>
         c.username?.toLowerCase().includes(t) ||
         c.email?.toLowerCase().includes(t) ||
-        `${c.firstName} ${c.lastName}`.toLowerCase().includes(t),
+        `${c.firstName} ${c.lastName}`.toLowerCase().includes(t)
     );
   }, [clients, searchTerm]);
 
@@ -168,7 +190,8 @@ export default function OrderForm() {
   ───────────────────────────────────────────────────────────────── */
   useEffect(() => {
     const q = searchTerm.trim();
-    if (q.length < 3) {              // short query → reset
+    if (q.length < 3) {
+      // short query → reset
       setResults([]);
       setSearching(false);
       return;
@@ -191,7 +214,7 @@ export default function OrderForm() {
       } finally {
         setSearching(false);
       }
-    }, DEBOUNCE_MS);                 // 400 ms debounce
+    }, DEBOUNCE_MS); // 400 ms debounce
 
     return () => clearTimeout(timer); // cleanup on next keystroke/unmount
   }, [searchTerm]);
@@ -209,22 +232,32 @@ export default function OrderForm() {
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
 
-
   const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
   const [quantity, setQuantity] = useState(1);
   const [productsLoading, setProductsLoading] = useState(true);
 
   const [couponCode, setCouponCode] = useState("");
-  const [couponApplied, setCouponApplied] = useState(false);
-  const [discountType, setDiscountType] = useState<"percentage" | "fixed">(
-    "fixed"
-  );
-  const [discount, setDiscount] = useState(0);
-  const [value, setValue] = useState(0);
 
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [newAddress, setNewAddress] = useState("");
   const [selectedAddressId, setSelectedAddressId] = useState("");
+
+  // NEW state for stacked coupons
+  const [appliedCodes, setAppliedCodes] = useState<string[]>([]);
+  const [discountTotal, setDiscountTotal] = useState(0); // cumulative discount €
+  const [couponBreakdown, setCouponBreakdown] = useState<
+    {
+      code: string;
+      discountType: "percentage" | "fixed";
+      discountValue: number;
+      discountAmount: number;
+      subtotalAfter: number;
+    }[]
+  >([]);
+  const [couponTypeByCode, setCouponTypeByCode] = useState<
+    Record<string, string>
+  >({});
+  const [couponValues, setCouponValues] = useState<number[]>([]);
 
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
@@ -241,7 +274,7 @@ export default function OrderForm() {
 
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
 
-  const [subtotal, setSubtotal] = useState(0);
+  const [itemsSubtotal, setItemsSubtotal] = useState(0);
 
   const calcRowSubtotal = (p: Product, qty: number) => p.price * qty;
 
@@ -264,12 +297,11 @@ export default function OrderForm() {
   useEffect(() => {
     const sum = orderItems.reduce(
       (acc, item) =>
-        acc +
-        (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
+        acc + (item.product.subtotal ?? item.product.price * item.quantity),
       0
     );
-    setSubtotal(sum);
-  }, [orderItems, clientCountry]);
+    setItemsSubtotal(sum);
+  }, [orderItems]);
 
   useEffect(() => {
     loadClients();
@@ -338,9 +370,9 @@ export default function OrderForm() {
         return accumulator + current.subtotal;
       }, 0);
 
-      setSubtotal(subtotal);
+      setItemsSubtotal(subtotal);
 
-      if (clientInfo) setClientCountry(clientInfo.country);  // reuse
+      if (clientInfo) setClientCountry(clientInfo.country); // reuse
       setShippingLoading(true);
       try {
         const shipRes = await fetch("/api/shipments", {
@@ -385,8 +417,8 @@ export default function OrderForm() {
         throw new Error("Failed to fetch product lists");
       }
 
-      const { products: norm } = await normRes.json();   // regular shop products
-      const { products: aff } = await affRes.json();     // affiliate catalogue
+      const { products: norm } = await normRes.json(); // regular shop products
+      const { products: aff } = await affRes.json(); // affiliate catalogue
 
       /* ---------- map everything into one uniform <Product> shape ---------- */
 
@@ -407,9 +439,10 @@ export default function OrderForm() {
 
         // 2) affiliate products
         ...aff.map((a: any) => {
-           const firstPts = firstPointPrice(a.pointsPrice);
+          const firstPts = firstPointPrice(a.pointsPrice);
 
-          const regularPrice: Record<string, number> = {    // keep it simple
+          const regularPrice: Record<string, number> = {
+            // keep it simple
             pts: firstPts,
           };
 
@@ -421,7 +454,7 @@ export default function OrderForm() {
             image: a.image,
             regularPrice,
             price: firstPts,
-            stockData: a.stock ?? {},           // often empty → unlimited
+            stockData: a.stock ?? {}, // often empty → unlimited
             isAffiliate: true,
             subtotal: 0,
           };
@@ -437,7 +470,6 @@ export default function OrderForm() {
     }
   }
 
-
   const countryProducts = products.filter((p) => {
     // if it’s an affiliate product, show it un-conditionally
     if (!Object.keys(p.stockData).length) return true;
@@ -445,7 +477,7 @@ export default function OrderForm() {
     // otherwise require stock in the client’s country
     const totalStock = Object.values(p.stockData).reduce(
       (sum, e) => sum + (e[clientCountry] || 0),
-      0,
+      0
     );
     return totalStock > 0;
   });
@@ -458,14 +490,16 @@ export default function OrderForm() {
     if (prodTerm.trim().length < 3) return countryProducts;
     const q = prodTerm.toLowerCase();
     return countryProducts.filter(
-      p => p.title.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q),
+      (p) =>
+        p.title.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
     );
   }, [countryProducts, prodTerm]);
 
   /* pick a product (works for both local + remote) */
   const pickProduct = (id: string, obj: Product) => {
     setSelectedProduct(id);
-    if (!products.some(p => p.id === id)) setProducts(prev => [...prev, obj]);
+    if (!products.some((p) => p.id === id))
+      setProducts((prev) => [...prev, obj]);
     setProdTerm("");
     setProdResults([]);
   };
@@ -484,12 +518,16 @@ export default function OrderForm() {
 
         /* shop products */
         const [shop, aff] = await Promise.all([
-          fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`)
-            .then(r => r.json())
-            .then(d => d.products as any[]),
-          fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`)
-            .then(r => r.json())
-            .then(d => d.products as any[]),
+          fetch(
+            `/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`
+          )
+            .then((r) => r.json())
+            .then((d) => d.products as any[]),
+          fetch(
+            `/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`
+          )
+            .then((r) => r.json())
+            .then((d) => d.products as any[]),
         ]);
 
         /* map ➜ our <Product> shape, tagging affiliates */
@@ -516,8 +554,6 @@ export default function OrderForm() {
 
     return () => clearTimeout(t);
   }, [prodTerm]);
-
-
 
   useEffect(() => {
     if (!selectedClient) return;
@@ -597,7 +633,7 @@ export default function OrderForm() {
       setSelectedNiftipay("");
       return;
     }
-  
+
     (async () => {
       setNiftipayLoading(true);
       try {
@@ -614,13 +650,11 @@ export default function OrderForm() {
       }
     })();
   }, [selectedPaymentMethod, paymentMethods, selectedNiftipay]);
-  
-  
 
-// Optional: auto-select Niftipay to actually trigger the effect in UIs
-useEffect(() => {
+  // Optional: auto-select Niftipay to actually trigger the effect in UIs
+  useEffect(() => {
     if (!selectedPaymentMethod) {
-      const n = paymentMethods.find(m => /niftipay/i.test(m.name || ""));
+      const n = paymentMethods.find((m) => /niftipay/i.test(m.name || ""));
       if (n) setSelectedPaymentMethod(n.id);
     }
   }, [paymentMethods, selectedPaymentMethod]);
@@ -654,7 +688,7 @@ useEffect(() => {
           (body.error as string) ??
           (body.message as string) ??
           "Failed to add product";
-        throw new Error(msg);        // the toast handler below will show it
+        throw new Error(msg); // the toast handler below will show it
       }
       /* ▲▲ ——— patch ends here ——— ▲▲ */
 
@@ -758,35 +792,57 @@ useEffect(() => {
       toast.error("Generate cart first and enter a coupon");
       return;
     }
+
     try {
+      // Always send the raw, undiscounted items subtotal.
       const res = await fetch(`/api/cart/${cartId}/apply-coupon`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: couponCode, total: subtotal }),
+        body: JSON.stringify({ code: couponCode.trim(), total: itemsSubtotal }),
       });
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error);
-      }
-      const data = await res.json();
-      const {
-        discountAmount: amt,
-        discountType: dt,
-        discountValue: dv,
-        cc,
-      } = data;
 
-      if (cc === null) {
-        setCouponCode("");
-        setCouponApplied(false);
-        toast.error("Coupon can't be applied!");
-      } else {
-        setDiscount(amt);
-        setValue(dv);
-        setDiscountType(dt);
-        setCouponApplied(true);
-        toast.success("Coupon applied!");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          err?.error ||
+            err?.message ||
+            (typeof err === "string" ? err : "Could not apply coupon")
+        );
       }
+
+      const data = await res.json();
+      console.log(data);
+      //CouponType is stored in data.couponType
+      if (data.discountValue !== undefined && data.discountValue !== null) {
+        setCouponValues((prev) => [...prev, Number(data.discountValue)]);
+      }
+
+      // Use ONLY the server's recomputed values.
+      const codes = (data.appliedCodes || "")
+        .split(",")
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+
+      setAppliedCodes(codes);
+      setDiscountTotal(Number(data.cumulativeDiscount || 0));
+      setCouponBreakdown(Array.isArray(data.breakdown) ? data.breakdown : []);
+
+      // ⬇️ NEW: store couponType by the code you just applied
+      setCouponTypeByCode((prev) => {
+        const next = { ...prev };
+        const type = String(data.discountType ?? "").trim();
+        const justApplied = couponCode.trim();
+        if (type && justApplied) next[justApplied] = type;
+
+        // keep only types for codes the server says are applied
+        for (const k of Object.keys(next)) {
+          if (!codes.includes(k)) delete next[k];
+        }
+        return next;
+      });
+
+      setCouponCode("");
+      toast.success("Coupon applied!");
     } catch (err: any) {
       toast.error(err.message || "Could not apply coupon");
     }
@@ -820,7 +876,8 @@ useEffect(() => {
     }
   };
 
-  const total = subtotal - discount;
+  const totalBeforeShipping = Math.max(0, itemsSubtotal - discountTotal);
+  const total = totalBeforeShipping + shippingCost;
 
   // Shipping cost
   useEffect(() => {
@@ -828,25 +885,33 @@ useEffect(() => {
     const m = shippingMethods.find((m) => m.id === selectedShippingMethod);
     const tier = m?.costs.find(
       (c) =>
-        total >= c.minOrderCost &&
-        (c.maxOrderCost === 0 || total <= c.maxOrderCost)
+        totalBeforeShipping >= c.minOrderCost &&
+        (c.maxOrderCost === 0 || totalBeforeShipping <= c.maxOrderCost)
     );
     setShippingCost(tier?.shipmentCost || 0);
-  }, [total, selectedShippingMethod]);
+  }, [totalBeforeShipping, selectedShippingMethod, shippingMethods]);
 
   // — Cancel / Create
   const cancelOrder = () => {
     setSelectedClient("");
     setOrderGenerated(false);
     setOrderItems([]);
+
+    // old coupon flags (keep if you still use them somewhere)
     setCouponCode("");
-    setCouponApplied(false);
-    setDiscount(0);
+
+    // NEW: clear stacked coupons state
+    setAppliedCodes([]);
+    setDiscountTotal(0);
+    setCouponBreakdown([]);
+
     setSelectedPaymentMethod("");
     setClientCountry("");
     setSelectedShippingMethod("");
     setSelectedShippingCompany("");
     setShippingCost(0);
+    setCouponTypeByCode({});
+    setCouponValues([]);
   };
 
   const createOrder = async () => {
@@ -854,9 +919,7 @@ useEffect(() => {
       toast.error("Generate your cart first!");
       return;
     }
-    const pmObj = paymentMethods.find(
-      (m) => m.id === selectedPaymentMethod
-    );
+    const pmObj = paymentMethods.find((m) => m.id === selectedPaymentMethod);
     const payment = pmObj?.name;
     if (!payment) {
       toast.error("Select a payment method");
@@ -888,25 +951,27 @@ useEffect(() => {
       toast.error("Select an address");
       return;
     }
-    const shippingAmount = shippingCost;
-    const discountAmount = discount;
-
     const payload = {
       clientId: selectedClient,
       cartId,
       country: clientCountry,
       paymentMethod: payment,
-      shippingAmount,
+      shippingAmount: shippingCost,
       shippingMethodTitle: shippingMethodObj.title,
       shippingMethodDescription: shippingMethodObj.description,
-      discountAmount,
-      couponCode: couponCode || null,
-      counponType: discountType,
-      shippingCompany: shippingCompanyName,
       address: addr.address,
-      subtotal: subtotal,
-      discountType,
-      discountValue: value,
+      subtotal: itemsSubtotal, // raw items subtotal
+      discountAmount: discountTotal, // total discounts from all coupons
+      couponCode: appliedCodes.length ? appliedCodes.join(",") : null, // "A,B"
+      // ⬇️ NEW: coupon types in the same order as couponCode
+      couponType: appliedCodes.length
+        ? appliedCodes
+            .map((c) => couponTypeByCode[c] || "")
+            .filter(Boolean)
+            .join(",")
+        : null,
+      discountValues: couponValues.length ? couponValues : [],
+      shippingCompany: shippingCompanyName,
     };
 
     try {
@@ -928,44 +993,46 @@ useEffect(() => {
       }
       toast.success("Order created successfully!");
       /* ── extra: create Niftipay invoice & store meta ───────── */
-if (isNiftipay) {
-  const [chain, asset] = selectedNiftipay.split(":");
-  const client = clients.find((c) => c.id === selectedClient)!;
-  const safeEmail = client.email?.trim() || "user@trapyfy.com";
-  const fiat = countryToFiat(client.country);        // "GBP" | "EUR" | "USD" | More coming
-  const totalF = total + shippingCost;
+      if (isNiftipay) {
+        const [chain, asset] = selectedNiftipay.split(":");
+        const client = clients.find((c) => c.id === selectedClient)!;
+        const safeEmail = client.email?.trim() || "user@trapyfy.com";
+        const fiat = countryToFiat(client.country); // "GBP" | "EUR" | "USD" | More coming
+        const totalF = total; // already includes shippingCost
 
-  const nRes = await fetch(`/api/niftipay/orders`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      network: chain,
-      asset,
-      amount: totalF,
-      currency: fiat,
-      firstName: client.firstName,
-      lastName: client.lastName,
-      email: safeEmail,
-      merchantId: activeOrg?.id ?? "",
-      reference: data.orderKey,
-    }),
-  });
+        const nRes = await fetch(`/api/niftipay/orders`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            network: chain,
+            asset,
+            amount: totalF,
+            currency: fiat,
+            firstName: client.firstName,
+            lastName: client.lastName,
+            email: safeEmail,
+            merchantId: activeOrg?.id ?? "",
+            reference: data.orderKey,
+          }),
+        });
 
-  if (!nRes.ok) {
-    const msg = await nRes.text();
-    console.error("[Niftipay] ", msg);
-    toast.error(`Niftipay: ${msg}`);
-    return;
-  }
+        if (!nRes.ok) {
+          const msg = await nRes.text();
+          console.error("[Niftipay] ", msg);
+          toast.error(`Niftipay: ${msg}`);
+          return;
+        }
 
-  const meta = await nRes.json();
-  await fetch(`/api/order/${data.id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ orderMeta: [meta] }),
-  });
-  toast.success(`Niftipay invoice created: send ${fmt(meta.order.amount)} ${asset}`);
-}
+        const meta = await nRes.json();
+        await fetch(`/api/order/${data.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderMeta: [meta] }),
+        });
+        toast.success(
+          `Niftipay invoice created: send ${fmt(meta.order.amount)} ${asset}`
+        );
+      }
 
       cancelOrder();
       router.push(`/orders/${data.id}`);
@@ -994,7 +1061,9 @@ if (isNiftipay) {
                 <Select
                   value={selectedClient}
                   onValueChange={(val) => {
-                    const obj = [...clients, ...searchResults].find(c => c.id === val);
+                    const obj = [...clients, ...searchResults].find(
+                      (c) => c.id === val
+                    );
                     if (obj) pickClient(val, obj);
                   }}
                   disabled={clientsLoading || orderGenerated}
@@ -1013,7 +1082,7 @@ if (isNiftipay) {
                       <Search className="h-4 w-4 text-muted-foreground" />
                       <Input
                         value={searchTerm}
-                        onChange={e => setSearchTerm(e.target.value)}
+                        onChange={(e) => setSearchTerm(e.target.value)}
                         placeholder="Search (min 3 chars)"
                         className="h-8"
                       />
@@ -1021,7 +1090,7 @@ if (isNiftipay) {
 
                     <ScrollArea className="max-h-72">
                       {/* Local clients first */}
-                      {filteredClients.map(c => (
+                      {filteredClients.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.firstName} {c.lastName} — {c.username} ({c.email})
                         </SelectItem>
@@ -1034,19 +1103,28 @@ if (isNiftipay) {
 
                       {/* Remote search results (exclude already-listed ids) */}
                       {searchResults
-                        .filter(c => !clients.some(lc => lc.id === c.id))
-                        .map(c => (
+                        .filter((c) => !clients.some((lc) => lc.id === c.id))
+                        .map((c) => (
                           <SelectItem key={c.id} value={c.id}>
-                            {c.firstName} {c.lastName} — {c.username} ({c.email})
-                            <span className="ml-1 text-xs text-muted-foreground">(remote)</span>
+                            {c.firstName} {c.lastName} — {c.username} ({c.email}
+                            )
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              (remote)
+                            </span>
                           </SelectItem>
                         ))}
                       {searching && (
-                        <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
+                        <div className="px-3 py-2 text-sm text-muted-foreground">
+                          Searching…
+                        </div>
                       )}
-                      {!searching && searchTerm && searchResults.length === 0 && (
-                        <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
-                      )}
+                      {!searching &&
+                        searchTerm &&
+                        searchResults.length === 0 && (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">
+                            No matches
+                          </div>
+                        )}
                     </ScrollArea>
                   </SelectContent>
                 </Select>
@@ -1062,7 +1140,6 @@ if (isNiftipay) {
               </div>
             </CardContent>
           </Card>
-
 
           {/* Product Selection */}
 
@@ -1161,8 +1238,10 @@ if (isNiftipay) {
                   <Label>Select Product</Label>
                   <Select
                     value={selectedProduct}
-                    onValueChange={val => {
-                      const obj = [...products, ...prodResults].find(p => p.id === val);
+                    onValueChange={(val) => {
+                      const obj = [...products, ...prodResults].find(
+                        (p) => p.id === val
+                      );
                       if (obj) pickProduct(val, obj);
                     }}
                     disabled={productsLoading}
@@ -1180,7 +1259,7 @@ if (isNiftipay) {
                         <Search className="h-4 w-4 text-muted-foreground" />
                         <Input
                           value={prodTerm}
-                          onChange={e => setProdTerm(e.target.value)}
+                          onChange={(e) => setProdTerm(e.target.value)}
                           placeholder="Search products (min 3 chars)"
                           className="h-8"
                         />
@@ -1189,45 +1268,58 @@ if (isNiftipay) {
                       <ScrollArea className="max-h-72">
                         {/* ─── Local shop products ─── */}
                         {filteredProducts
-                          .filter(p => !p.isAffiliate)
-                          .map(p => (
+                          .filter((p) => !p.isAffiliate)
+                          .map((p) => (
                             <SelectItem key={p.id} value={p.id}>
-                              {p.title} — ${p.regularPrice[clientCountry] ?? p.price}
+                              {p.title} — $
+                              {p.regularPrice[clientCountry] ?? p.price}
                             </SelectItem>
                           ))}
 
                         {/* divider before affiliates (any local ones) */}
-                        {filteredProducts.some(p => p.isAffiliate) && <Separator className="my-2" />}
+                        {filteredProducts.some((p) => p.isAffiliate) && (
+                          <Separator className="my-2" />
+                        )}
 
                         {/* ─── Local affiliate products ─── */}
                         {filteredProducts
-                          .filter(p => p.isAffiliate)
-                          .map(p => (
+                          .filter((p) => p.isAffiliate)
+                          .map((p) => (
                             <SelectItem key={p.id} value={p.id}>
                               {p.title} — {p.price} pts
                             </SelectItem>
                           ))}
 
                         {/* remote results not yet listed */}
-                        {prodResults.length > 0 && <Separator className="my-2" />}
+                        {prodResults.length > 0 && (
+                          <Separator className="my-2" />
+                        )}
                         {prodResults
-                          .filter(p => !products.some(lp => lp.id === p.id))
-                          .map(p => (
+                          .filter((p) => !products.some((lp) => lp.id === p.id))
+                          .map((p) => (
                             <SelectItem key={p.id} value={p.id}>
-                              {p.title} — {p.isAffiliate ? `${p.price} pts` : `$${p.price}`}
-                              <span className="ml-1 text-xs text-muted-foreground">(remote)</span>
+                              {p.title} —{" "}
+                              {p.isAffiliate ? `${p.price} pts` : `$${p.price}`}
+                              <span className="ml-1 text-xs text-muted-foreground">
+                                (remote)
+                              </span>
                             </SelectItem>
                           ))}
 
                         {prodSearching && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
+                          <div className="px-3 py-2 text-sm text-muted-foreground">
+                            Searching…
+                          </div>
                         )}
-                        {!prodSearching && prodTerm && prodResults.length === 0 && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
-                        )}
+                        {!prodSearching &&
+                          prodTerm &&
+                          prodResults.length === 0 && (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">
+                              No matches
+                            </div>
+                          )}
                       </ScrollArea>
                     </SelectContent>
-
                   </Select>
                 </div>
 
@@ -1262,31 +1354,55 @@ if (isNiftipay) {
                 <Tag className="h-5 w-5" /> Discount Coupon
               </CardTitle>
             </CardHeader>
-            <CardContent className="flex flex-col sm:flex-row gap-4">
-              <div className="flex-1">
-                <Label>Coupon Code</Label>
-                <Input
-                  value={couponCode}
-                  onChange={(e) => setCouponCode(e.target.value)}
-                  disabled={couponApplied}
-                  placeholder="Enter coupon code"
-                />
+            <CardContent className="flex flex-col gap-4">
+              {/* Applied codes badges */}
+              {appliedCodes.length > 0 && discountTotal > 0 && (
+                <div className="flex justify-between text-green-600">
+                  <span>Discount (coupons):</span>
+                  <span className="font-medium">
+                    –{formatCurrency(discountTotal, clientCountry)}
+                  </span>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1">
+                  <Label>Coupon Code</Label>
+                  <Input
+                    value={couponCode}
+                    onChange={(e) => setCouponCode(e.target.value)}
+                    placeholder="Enter coupon code"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <Button onClick={applyCoupon} disabled={!couponCode}>
+                    {appliedCodes.length ? "Apply Another" : "Apply Coupon"}
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-end">
-                <Button
-                  onClick={applyCoupon}
-                  disabled={!couponCode || couponApplied}
-                  variant={couponApplied ? "outline" : "default"}
-                >
-                  {couponApplied ? (
-                    <>
-                      <Check className="h-4 w-4 mr-2" /> Applied
-                    </>
-                  ) : (
-                    "Apply Coupon"
-                  )}
-                </Button>
-              </div>
+
+              {/* Optional: show breakdown lines */}
+              {couponBreakdown.length > 0 && (
+                <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+                  {couponBreakdown.map((b, i) => (
+                    <div
+                      key={`${b.code}-${i}`}
+                      className="flex justify-between"
+                    >
+                      <span>
+                        {b.code} —{" "}
+                        {b.discountType === "percentage"
+                          ? `${b.discountValue}%`
+                          : `-${formatCurrency(b.discountAmount, clientCountry)}`}
+                      </span>
+                      <span>
+                        Subtotal:{" "}
+                        {formatCurrency(b.subtotalAfter, clientCountry)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -1370,7 +1486,9 @@ if (isNiftipay) {
                       {shippingMethods.map((m) => {
                         const tier = m.costs.find(
                           ({ minOrderCost, maxOrderCost }) =>
-                            total >= minOrderCost && (maxOrderCost === 0 || total <= maxOrderCost),
+                            totalBeforeShipping >= minOrderCost &&
+                            (maxOrderCost === 0 ||
+                              totalBeforeShipping <= maxOrderCost)
                         );
                         const cost = tier ? tier.shipmentCost : 0;
 
@@ -1384,7 +1502,6 @@ if (isNiftipay) {
                         );
                       })}
                     </SelectContent>
-
                   </Select>
                 </div>
                 {/* Company */}
@@ -1436,47 +1553,47 @@ if (isNiftipay) {
                   <SelectValue placeholder="Select a payment method" />
                 </SelectTrigger>
                 <SelectContent>
-  {paymentMethods.map((m) => (
-    <SelectItem key={m.id} value={m.id}>
-      {m.name}{m.active === false ? " (inactive)" : ""}
-    </SelectItem>
-  ))}
-</SelectContent>
-
+                  {paymentMethods.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name}
+                      {m.active === false ? " (inactive)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
               {/* ▼ Niftipay network selector */}
               {paymentMethods.find(
                 (p) =>
                   p.id === selectedPaymentMethod &&
-                  p.name.toLowerCase() === "niftipay",
+                  p.name.toLowerCase() === "niftipay"
               ) && (
-                  <div className="mt-4">
-                    <Label>Select Crypto Network</Label>
-                    <Select
-                      value={selectedNiftipay}
-                      onValueChange={setSelectedNiftipay}
-                      disabled={niftipayLoading}
-                    >
-                      <SelectTrigger>
-                        <SelectValue
-                          placeholder={
-                            niftipayLoading ? "Loading…" : "Select network"
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {niftipayNetworks.map((n) => (
-                          <SelectItem
-                            key={`${n.chain}:${n.asset}`}
-                            value={`${n.chain}:${n.asset}`}
-                          >
-                            {n.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
+                <div className="mt-4">
+                  <Label>Select Crypto Network</Label>
+                  <Select
+                    value={selectedNiftipay}
+                    onValueChange={setSelectedNiftipay}
+                    disabled={niftipayLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          niftipayLoading ? "Loading…" : "Select network"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {niftipayNetworks.map((n) => (
+                        <SelectItem
+                          key={`${n.chain}:${n.asset}`}
+                          value={`${n.chain}:${n.asset}`}
+                        >
+                          {n.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -1503,36 +1620,30 @@ if (isNiftipay) {
                     <span>Items:</span>
                     <span className="font-medium">{orderItems.length}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Subtotal:</span>
-                    <span className="font-medium">
-                      {formatCurrency(subtotal, clientCountry)}
-                    </span>
-                  </div>
-                  {couponApplied && discount > 0 && (
+                  {/* Discount from coupons */}
+                  {discountTotal > 0 && (
                     <div className="flex justify-between text-green-600">
-                      <span>
-                        Discount
-                        {discountType === "percentage" ? ` (${value}%)` : ""}:
-                      </span>
+                      <span>Discount (coupons):</span>
                       <span className="font-medium">
-                        –{formatCurrency(discount, clientCountry)}
+                        –{formatCurrency(discountTotal, clientCountry)}
                       </span>
                     </div>
                   )}
+
+                  {/* Shipping */}
                   <div className="flex justify-between">
                     <span>Shipping:</span>
                     <span className="font-medium">
                       {formatCurrency(shippingCost, clientCountry)}
                     </span>
                   </div>
+
                   <Separator />
+
+                  {/* Final total */}
                   <div className="flex justify-between text-lg font-bold">
                     <span>Total:</span>
-                    <span>
-                      {" "}
-                      {formatCurrency(total + shippingCost, clientCountry)}
-                    </span>
+                    <span>{formatCurrency(total, clientCountry)}</span>
                   </div>
                 </div>
               ) : (
@@ -1551,7 +1662,7 @@ if (isNiftipay) {
                   (paymentMethods.find(
                     (p) =>
                       p.id === selectedPaymentMethod &&
-                      p.name.toLowerCase() === "niftipay",
+                      p.name.toLowerCase() === "niftipay"
                   )
                     ? !selectedNiftipay
                     : false) ||

@@ -1,12 +1,7 @@
 // src/app/(dashboard)/warehouses/warehouse-table.tsx
 "use client";
 
-import {
-  useState,
-  useEffect,
-  startTransition,
-  type FormEvent,
-} from "react";
+import { useState, useEffect, startTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -19,12 +14,12 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-import { useDebounce } from "@/hooks/use-debounce";            // ← NEW
-import { authClient }  from "@/lib/auth-client";
+import { useDebounce } from "@/hooks/use-debounce"; // ← NEW
+import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
-
-import { Button }      from "@/components/ui/button";
-import { Input }       from "@/components/ui/input";
+import { Copy } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -40,8 +35,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Badge }       from "@/components/ui/badge";
-import { toast }       from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -72,30 +67,44 @@ export function WarehouseTable() {
 
   /* ── permissions ──────────────────────────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
-  const { hasPermission: canView,   isLoading: viewLoading } =
-    useHasPermission(organizationId, { warehouses: ["view"] });
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    organizationId,
+    { warehouses: ["view"] }
+  );
 
-  const { hasPermission: canCreate }  = useHasPermission(organizationId, { warehouses: ["create"] });
-  const { hasPermission: canUpdate }  = useHasPermission(organizationId, { warehouses: ["update"] });
-  const { hasPermission: canDelete }  = useHasPermission(organizationId, { warehouses: ["delete"] });
-  const { hasPermission: canShare  }  = useHasPermission(organizationId, { warehouses: ["sharing"] });
-  const { hasPermission: canSync   }  = useHasPermission(organizationId, { warehouses: ["synchronize"] });
+  const { hasPermission: canCreate } = useHasPermission(organizationId, {
+    warehouses: ["create"],
+  });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, {
+    warehouses: ["update"],
+  });
+  const { hasPermission: canDelete } = useHasPermission(organizationId, {
+    warehouses: ["delete"],
+  });
+  const { hasPermission: canShare } = useHasPermission(organizationId, {
+    warehouses: ["sharing"],
+  });
+  const { hasPermission: canSync } = useHasPermission(organizationId, {
+    warehouses: ["synchronize"],
+  });
 
   /* ── data state ───────────────────────────────────────────────── */
-  const [warehouses, setWarehouses]         = useState<Warehouse[]>([]);
-  const [loading,    setLoading]            = useState(true);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [loading, setLoading] = useState(true);
 
   /* ── UI state ─────────────────────────────────────────────────── */
-  const [drawerOpen,       setDrawerOpen]       = useState(false);
-  const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(null);
-  const [dialogOpen,       setDialogOpen]       = useState(false);
-  const [syncToken,        setSyncToken]        = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(
+    null
+  );
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [syncToken, setSyncToken] = useState("");
 
   /* ── search text (debounced) ──────────────────────────────────── */
   const [searchQuery, setSearchQuery] = useState("");
-  const debounced = useDebounce(searchQuery, 300);                 // ← NEW
+  const debounced = useDebounce(searchQuery, 300); // ← NEW
 
   /* ---------------------------------------------------------------- */
   /*  Guards                                                          */
@@ -161,7 +170,7 @@ export function WarehouseTable() {
     let token = syncToken.trim();
     try {
       const parsed = new URL(token);
-      const parts  = parsed.pathname.split("/").filter(Boolean);
+      const parts = parsed.pathname.split("/").filter(Boolean);
       if (parts.length) token = parts[parts.length - 1];
     } catch {
       /* raw token, ignore */
@@ -254,7 +263,22 @@ export function WarehouseTable() {
             ) : (
               warehouses.map((w) => (
                 <TableRow key={w.id}>
-                  <TableCell>{w.id}</TableCell>
+                  <TableCell>
+                    <div className="inline-flex items-center gap-1">
+                      <span>{w.id}</span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => {
+                          navigator.clipboard.writeText(w.id);
+                          toast.success("ID copied to clipboard");
+                        }}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </TableCell>
                   <TableCell className="font-medium">{w.name}</TableCell>
                   <TableCell>
                     {w.organizationId.map((id) => (
