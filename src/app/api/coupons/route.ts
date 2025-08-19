@@ -110,6 +110,7 @@ export async function POST(req: NextRequest) {
       expendingMinimum, // new field
       countries,
       visibility,
+      stackable,
     } = parsedCoupon;
 
     // Early check (still keep the catch below for race-safety)
@@ -127,8 +128,24 @@ export async function POST(req: NextRequest) {
     const couponId = uuidv4();
 
     const insertQuery = `
-      INSERT INTO coupons(id, "organizationId", name, code, description, "discountType", "discountAmount", "startDate", "expirationDate", "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, "createdAt", "updatedAt")
-      VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+      INSERT INTO coupons(
+        id, "organizationId", name, code, description,
+        "discountType", "discountAmount",
+        "startDate", "expirationDate",
+        "limitPerUser", "usageLimit",
+        "expendingLimit", "expendingMinimum",
+        countries, visibility, stackable,
+        "createdAt", "updatedAt"
+      )
+      VALUES(
+        $1, $2, $3, $4, $5,
+        $6, $7,
+        $8, $9,
+        $10, $11,
+        $12, $13,
+        $14, $15, $16,
+        NOW(), NOW()
+      )
       RETURNING *
     `;
     const values = [
@@ -147,6 +164,7 @@ export async function POST(req: NextRequest) {
       expendingMinimum,  // new field value inserted here
       JSON.stringify(countries),
       visibility,
+      stackable,
     ];
 
     const result = await pool.query(insertQuery, values);
