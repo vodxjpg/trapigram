@@ -1208,7 +1208,7 @@ export async function PATCH(
         }
       }
 
-      /* mark flag only for completed (NOT needed for paid anymore) */
+      /* mark flag only for completed (Not needed for paid anymore) */
       if (newStatus === "completed") {
         await pool.query(
           `UPDATE orders
