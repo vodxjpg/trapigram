@@ -216,7 +216,6 @@ interface DB {
     expendingLimit: number;
     countries: string;
     visibility: boolean;
-    stackable: boolean;
     createdAt: Date;
     updatedAt: Date;
   };
@@ -767,6 +766,7 @@ interface DB {
     createdAt: Date;
     updatedAt: Date;
   };
+<<<<<<< HEAD
   /** Platform fee rates */
   userFeeRates: {
     id: string;
@@ -813,6 +813,54 @@ interface DB {
     orderFeeId: string;
     amount: string;        // numeric
   };
+=======
+    /** Platform fee rates */
+   userFeeRates: {
+     id: string;
+     userId: string;
+     percent: string;       // numeric
+     startsAt: Date;
+     endsAt: Date | null;
+     createdAt: Date;
+    };
+  
+    /** Captured fees per order */
+   orderFees: {
+     id: string;
+     orderId: string;
+     userId: string;
+     feeAmount: string;     // numeric
+     percentApplied: string;// numeric
+     capturedAt: Date;
+    };
+  
+    /** Monthly invoices */
+   userInvoices: {
+     id: string;
+     userId: string;
+     periodStart: string;   // DATE
+     periodEnd: string;     // DATE
+     totalAmount: number;   // numeric
+     paidAmount: number;
+     status: string;        // pending|sent|paid
+     dueDate: string;       // DATE
+     createdAt: Date;
+     niftipayOrderId: string | null;
+     niftipayReference: string | null;
+     niftipayNetwork: string;
+     niftipayAsset: string;
+     niftipayAddress: string | null;
+     niftipayQrUrl: string | null;
+    };
+  
+    /** Line items for invoices */
+   invoiceItems: {
+     id: string;
+     invoiceId: string;
+     orderFeeId: string;
+     amount: string;        // numeric
+    };
+>>>>>>> 4f77b6e5aa447ec911fbd90e7c198450866a8b2b
 }
 
 /* ──────────────────────────────────────────────────────────────── *
