@@ -43,6 +43,7 @@ export async function GET(req: NextRequest) {
             r."${currency}shipping"    AS "shippingCost",
             r."${currency}discount" AS "discount",
             r."${currency}cost" AS "cost",
+            r.cancelled AS status,
             o."orderMeta" AS asset
         FROM "orderRevenue" r
         JOIN orders o
@@ -64,12 +65,13 @@ export async function GET(req: NextRequest) {
             }
             m.netProfit = m.totalPrice - m.shippingCost - m.discount - m.cost
         })
+        console.log(row)
 
         const chartQuery = `SELECT DATE(o."datePaid"), r.id, r."orderId", r."${currency}total" AS total, r."${currency}shipping" AS shipping, r."${currency}discount" AS discount, r."${currency}cost" AS cost, 
             r."createdAt", r."updatedAt", r."organizationId"  FROM "orderRevenue" r
             JOIN orders o
             ON r."orderId" = o.id
-            WHERE r."organizationId" = $1 AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
+            WHERE r."organizationId" = $1 AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz AND r.cancelled = FALSE
             ORDER BY o."datePaid" DESC`;
 
         const chartResult = await pool.query(chartQuery, values);

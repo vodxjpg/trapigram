@@ -8,7 +8,10 @@ import sanitizeHtml from "sanitize-html";
 import { v4 as uuidv4 } from "uuid";
 
 // Run this route in Node.js so that Buffer, FormData.arrayBuffer(), etc. work
-export const runtime = "nodejs";
+// app/api/product/import/route.ts
+export const runtime = "nodejs";        // you already have this
+export const dynamic = "force-dynamic"; // ensure it never gets statically optimized/cached
+export const maxDuration = 300;         // ask the platform for up to 300s for this route
 
 function safeTrim(value: any): string {
     return typeof value === "string" ? value.trim() : "";

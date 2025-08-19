@@ -52,8 +52,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type Order = {
   id: string;
-  datePaid: string; // ISO date string
+  datePaid: string;
   orderNumber: string;
+  status: boolean; // ← was string
   userId: string;
   country: string;
   totalPrice: number;
@@ -90,6 +91,7 @@ export default function OrderReport() {
 
   // ** NEW: state for real orders **
   const [orders, setOrders] = useState<Order[]>([]);
+  const [status, setStatus] = useState<"all" | "paid" | "cancelled">("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chartData, setChartData] = useState<
@@ -111,9 +113,9 @@ export default function OrderReport() {
       try {
         const from = encodeURIComponent(dateRange.from.toISOString());
         const to = encodeURIComponent(dateRange.to.toISOString());
-        // include currency param:
+
         const res = await fetch(
-          `/api/report/revenue?from=${from}&to=${to}&currency=${currency}`
+          `/api/report/revenue?from=${from}&to=${to}&currency=${currency}&status=${status}`
         );
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const data = await res.json();
@@ -128,16 +130,27 @@ export default function OrderReport() {
     }
 
     fetchOrders();
-  }, [dateRange, currency]);
+  }, [dateRange, currency, status]); // ← added status
 
   const filteredData = chartData;
 
   // paging and filtering now uses real `orders`
   const filteredOrders = useMemo(() => {
-    return orders.sort(
+    // convert to boolean once for safety
+    const toBool = (v: any) => v === true || v === "true";
+    const wantCancelled =
+      status === "cancelled" ? true : status === "paid" ? false : null;
+
+    let list = orders;
+
+    if (wantCancelled !== null) {
+      list = orders.filter((o) => toBool(o.status) === wantCancelled);
+    }
+
+    return [...list].sort(
       (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
     );
-  }, [orders]);
+  }, [orders, status]);
 
   const totalPages = Math.ceil(filteredOrders.length / rowsPerPage);
   const startIndex = (currentPage - 1) * rowsPerPage;
@@ -209,6 +222,7 @@ export default function OrderReport() {
     const dataForSheet = orders.map((o) => ({
       "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
       "Order Number": o.orderNumber,
+      Status: o.status === true || o.status === "true" ? "Cancelled" : "Paid",
       "User ID": o.userId,
       Country: o.country,
       "Total Price": o.totalPrice,
@@ -342,6 +356,27 @@ export default function OrderReport() {
                     <SelectItem value="EUR">EUR</SelectItem>
                   </SelectContent>
                 </Select>
+                {/* Status Select */}
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">Status</span>
+                  <Select
+                    value={status}
+                    onValueChange={(v) =>
+                      setStatus(v as "all" | "paid" | "cancelled")
+                    }
+                    className="w-32"
+                  >
+                    <SelectTrigger size="sm">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="paid">Paid</SelectItem>
+                      <SelectItem value="cancelled">Cancelled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <Button
                   variant="default"
                   size="sm"
@@ -371,6 +406,7 @@ export default function OrderReport() {
                         {[
                           "Paid At",
                           "Order Number",
+                          "Status",
                           "User ID",
                           "Country",
                           "Total Price",
@@ -420,6 +456,11 @@ export default function OrderReport() {
                             </TableCell>
                             <TableCell className="font-medium">
                               {o.orderNumber}
+                            </TableCell>
+                            <TableCell>
+                              {o.status === true || o.status === "true"
+                                ? "Cancelled"
+                                : "Paid"}
                             </TableCell>
                             <TableCell>{o.userId}</TableCell>
                             <TableCell>{o.country}</TableCell>

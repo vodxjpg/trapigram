@@ -970,7 +970,7 @@ export default function OrderForm() {
             .filter(Boolean)
             .join(",")
         : null,
-      discountValues: couponValues.length ? couponValues : [],
+      discountValue: couponValues.length ? couponValues : [],
       shippingCompany: shippingCompanyName,
     };
 

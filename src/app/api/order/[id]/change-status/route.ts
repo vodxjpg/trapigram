@@ -151,8 +151,8 @@ async function getRevenue(id: string, organizationId: string) {
       }, 0);
 
       let total = 0
-        console.log(paymentType)
-        if (paymentType === 'niftipay') {
+      console.log(paymentType)
+      if (paymentType === 'niftipay') {
         let coinRaw = ""
         let amount = 0
         const meta = Array.isArray(order.orderMeta) ? order.orderMeta : JSON.parse(order.orderMeta ?? "[]");
@@ -395,7 +395,7 @@ async function getRevenue(id: string, organizationId: string) {
         }
       } else { //some changes
         // NOTE: exchange rate lookup narrowed to the single nearest row at/just before paid date
-// and parameterized to avoid SQL injection.
+        // and parameterized to avoid SQL injection.
         const exchangeQuery = `
           SELECT "EUR","GBP" FROM "exchangeRate"
            WHERE date <= to_timestamp($1) ORDER BY date DESC LIMIT 1`;
@@ -683,7 +683,7 @@ export async function PATCH(
   const toastWarnings: string[] = [];
   let txOpen = false, released = false;
   try {
-   await client.query("BEGIN"); txOpen = true;
+    await client.query("BEGIN"); txOpen = true;
 
     /* 1️⃣ lock order row */
     const {
@@ -835,14 +835,14 @@ export async function PATCH(
     // release the transactional connection ASAP; do side-effects with pool
     client.release(); released = true;
 
-      /* ──────────────────────────────────────────────────────────────
-     *  Niftipay (Coinx) sync via merchant API key
-     *  – use the merchant's own key saved in paymentMethods
-     *  – mirrors Trapigram status → Coinx order status
-     *    supported here: cancelled, paid
-     * ───────────────────────────────────────────────────────────── */
+    /* ──────────────────────────────────────────────────────────────
+   *  Niftipay (Coinx) sync via merchant API key
+   *  – use the merchant's own key saved in paymentMethods
+   *  – mirrors Trapigram status → Coinx order status
+   *    supported here: cancelled, paid
+   * ───────────────────────────────────────────────────────────── */
     if (ord.paymentMethod?.toLowerCase?.() === "niftipay" &&
-        (newStatus === "cancelled" || newStatus === "paid")) {
+      (newStatus === "cancelled" || newStatus === "paid")) {
       try {
         // 1) load the merchant's Niftipay key for this org
         const { rows: [pm] } = await pool.query(
@@ -857,9 +857,9 @@ export async function PATCH(
         const merchantApiKey: string | null = pm?.apiKey ?? null;
         if (!merchantApiKey) {
           console.warn("[niftipay] No merchant API key configured for org", organizationId);
-                   toastWarnings.push(
-          "Niftipay not configured for this organisation (missing API key). Crypto invoice was not updated."
-        );
+          toastWarnings.push(
+            "Niftipay not configured for this organisation (missing API key). Crypto invoice was not updated."
+          );
         } else {
           const base = process.env.NIFTIPAY_API_URL || "https://www.niftipay.com";
 
@@ -868,19 +868,19 @@ export async function PATCH(
             `${base}/api/orders?reference=${encodeURIComponent(ord.orderKey)}`,
             { headers: { "x-api-key": merchantApiKey } }
           );
-              if (!findRes.ok) {
-      const t = await findRes.text().catch(() => "");
-      console.error("[niftipay] GET /api/orders failed:", t);
-      toastWarnings.push(
-        "Could not look up Coinx invoice for this order (network/API error)."
-      );
+          if (!findRes.ok) {
+            const t = await findRes.text().catch(() => "");
+            console.error("[niftipay] GET /api/orders failed:", t);
+            toastWarnings.push(
+              "Could not look up Coinx invoice for this order (network/API error)."
+            );
           } else {
             const data = await findRes.json().catch(() => ({}));
             const coinxOrder = (data?.orders || []).find((o: any) => o.reference === ord.orderKey);
             if (!coinxOrder) {
-                          toastWarnings.push(
-               `No matching Coinx invoice found for reference ${ord.orderKey}. Check that your order key matches the invoice reference.`
-             );
+              toastWarnings.push(
+                `No matching Coinx invoice found for reference ${ord.orderKey}. Check that your order key matches the invoice reference.`
+              );
             } else {
               const targetStatus = newStatus === "cancelled" ? "cancelled" : "paid";
               const patchRes = await fetch(`${base}/api/orders/${coinxOrder.id}`, {
@@ -891,18 +891,18 @@ export async function PATCH(
                 },
                 body: JSON.stringify({ status: targetStatus }),
               });
-                        const body = await patchRes.json().catch(() => ({}));
-           if (!patchRes.ok) {
-             console.error("[niftipay] PATCH /api/orders/:id failed:", body || (await patchRes.text().catch(()=> "")));
-             toastWarnings.push(
-               "Coinx refused the status update. The invoice may not exist or the API key is invalid."
-             );
-           } else if (Array.isArray(body?.warnings) && body.warnings.length) {
-             for (const w of body.warnings) {
-               // surface Coinx forwarding/dust/XRP notes to the UI
-               toastWarnings.push(typeof w === "string" ? w : w?.message || "Coinx reported a warning.");
-             }
-           }
+              const body = await patchRes.json().catch(() => ({}));
+              if (!patchRes.ok) {
+                console.error("[niftipay] PATCH /api/orders/:id failed:", body || (await patchRes.text().catch(() => "")));
+                toastWarnings.push(
+                  "Coinx refused the status update. The invoice may not exist or the API key is invalid."
+                );
+              } else if (Array.isArray(body?.warnings) && body.warnings.length) {
+                for (const w of body.warnings) {
+                  // surface Coinx forwarding/dust/XRP notes to the UI
+                  toastWarnings.push(typeof w === "string" ? w : w?.message || "Coinx reported a warning.");
+                }
+              }
 
             }
           }
@@ -945,6 +945,20 @@ export async function PATCH(
       } catch (err) {
         console.error(
           `Failed to update revenue or capture fee for order ${id}:`,
+          err
+        );
+      }
+    }
+
+    if (newStatus === "cancelled" || newStatus === "refunded") {
+      try {
+        const statusQuery = `UPDATE "orderRevenue" SET cancelled = TRUE, "updatedAt" = NOW() WHERE "orderId" = '${id}'`
+        const statusResult = pool.query(statusQuery)
+        const result = statusResult.rows[0]
+        console.log(result)
+      } catch (err) {
+        console.error(
+          `Failed to update revenue for order ${id}:`,
           err
         );
       }
@@ -1181,7 +1195,7 @@ export async function PATCH(
                  'Milestone spending bonus',NOW(),NOW())`,
               [logId, organizationId, ord.clientId, delta],
             );
-             await pool.query(
+            await pool.query(
               `INSERT INTO "affiliatePointBalances" AS b
            ("clientId","organizationId","pointsCurrent","createdAt","updatedAt")
          VALUES ($1,$2,$3,NOW(),NOW())
@@ -1212,6 +1226,6 @@ export async function PATCH(
     console.error("[PATCH /api/order/:id/change-status]", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   } finally {
-   if (!released) client.release();
+    if (!released) client.release();
   }
 }

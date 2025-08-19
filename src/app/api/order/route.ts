@@ -47,7 +47,7 @@ const orderSchema = z.object({
   shippingCompany: z.string().nullable().optional(),//
   address: z.string().min(1),//
   trackingNumber: z.string().nullable().optional(),
-  discountValue: z.coerce.number().min(0),
+  discountValue: z.array(z.number()),
   pointsRedeemed: z.coerce.number().min(0).optional(),
   pointsRedeemedAmount: z.coerce.number().min(0).optional(),
 });
@@ -241,6 +241,7 @@ export async function POST(req: NextRequest) {
   let payload: OrderPayload;
   try {
     const body = await req.json();
+    console.log(body)
     body.organization = organizationId;
     body.totalAmount =
       body.subtotal -
