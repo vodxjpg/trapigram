@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
 }
 
 /* ─────────────── POST – create group ─────────────── */
+/* ─────────────── POST – create or merge group ─────────────── */
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -45,39 +46,61 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  // If this chat is already registered for this org, update instead of inserting a duplicate
+  // Optional: allow ?mode=replace to explicitly overwrite
+  const mode = req.nextUrl.searchParams.get("mode") || "merge";
+  const NORM = (s: string) => s.toUpperCase();
+
   const existing = await db
     .selectFrom("notificationGroups")
-    .select(["id"])
+    .select(["id", "name", "countries"])
     .where("organizationId", "=", ctx.organizationId)
     .where("groupId", "=", data.groupId)
     .executeTakeFirst();
-  
+
   if (existing) {
+    // parse existing countries -> array
+    const existingArr: string[] = Array.isArray(existing.countries)
+      ? (existing.countries as unknown as string[])
+      : JSON.parse(existing.countries || "[]");
+
+    // merge or replace
+    const nextCountries =
+      mode === "replace"
+        ? Array.from(new Set(data.countries.map(NORM)))
+        : Array.from(new Set([...existingArr.map(NORM), ...data.countries.map(NORM)]));
+
     await db
       .updateTable("notificationGroups")
       .set({
-        name: data.name,
-        countries: JSON.stringify(data.countries),
+        name: data.name ?? existing.name,
+        countries: JSON.stringify(nextCountries),
         updatedAt: new Date(),
       })
       .where("id", "=", existing.id)
       .execute();
-    return NextResponse.json({ id: existing.id, ...data, updated: true }, { status: 200 });
+
+    return NextResponse.json(
+      { id: existing.id, ...data, countries: nextCountries, updated: true, mode },
+      { status: 200 }
+    );
   }
-  
+
+  // create new row
   const id = uuidv4();
+  const normed = Array.from(new Set(data.countries.map(NORM)));
   await db
     .insertInto("notificationGroups")
     .values({
       id,
       organizationId: ctx.organizationId,
       name: data.name,
-      countries: JSON.stringify(data.countries),
+      countries: JSON.stringify(normed),
       groupId: data.groupId,
       createdAt: new Date(),
       updatedAt: new Date(),
     })
     .execute();
-  return NextResponse.json({ id, ...data, created: true }, { status: 201 });
+
+  return NextResponse.json({ id, ...data, countries: normed, created: true }, { status: 201 });
 }
+

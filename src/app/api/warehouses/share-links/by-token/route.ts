@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       "warehouseShareLink.token",
       "warehouse.name as warehouseName",
       "user.name as creatorName",
-      "user.email as creatorEmail"
+      "user.email as creatorEmail",
     ])
     .where("warehouseShareLink.token", "=", token)
     .where("warehouseShareLink.status", "=", "active")

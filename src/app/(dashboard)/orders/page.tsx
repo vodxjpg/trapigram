@@ -268,14 +268,21 @@ export default function OrdersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (!res.ok) throw new Error("Failed to update status");
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to update status");
+      }
       setOrders((prev) =>
         prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)),
       );
-      toast.success(`Order status changed`);
+      if (Array.isArray(payload?.warnings) && payload.warnings.length) {
+        payload.warnings.forEach((msg: string) => {
+          if (msg) toast.warning(msg);
+        });
+      }
     } catch (err) {
       console.error(err);
-      toast.error("Error updating order status");
+      toast.error(err?.message || "Error updating order status");
     }
   };
   const handleTracking = (orderId: string) => {
@@ -302,19 +309,19 @@ export default function OrdersPage() {
         }),
       });
       if (!res.ok) throw new Error("Failed to save tracking number");
-       // Reflect API behavior locally: tracking, company, and status → completed
-       setOrders((prev) =>
-         prev.map((o) =>
-           o.id === selectedOrderId
-             ? {
-                 ...o,
-                 trackingNumber: draftTracking,
-                 shippingCompany: company.name,
-                 status: "completed",
-               }
-             : o
-         )
-       );
+      // Reflect API behavior locally: tracking, company, and status → completed
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === selectedOrderId
+            ? {
+              ...o,
+              trackingNumber: draftTracking,
+              shippingCompany: company.name,
+              status: "completed",
+            }
+            : o
+        )
+      );
       toast.success("Tracking number saved");
       setDialogOpen(false);
     } catch (err) {

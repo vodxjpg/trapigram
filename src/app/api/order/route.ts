@@ -8,9 +8,6 @@ import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
 
-
-
-
 /* ------------------------------------------------------------------ */
 /*  Encryption helpers                                                */
 /* ------------------------------------------------------------------ */
@@ -61,8 +58,6 @@ type OrderPayload = z.infer<typeof orderSchema>;
 /* ================================================================== */
 /* --------------------------------------------------------------- */
 /* Optional response field projection via ?fields=a,b,c            */
-/* – Backward compatible: if not provided, return current shape.   */
-/* – Does NOT change SQL selection; it trims the JSON we return.   */
 /* --------------------------------------------------------------- */
 function parseFields(sp: URLSearchParams): string[] | null {
   const raw = sp.get("fields");
@@ -71,7 +66,10 @@ function parseFields(sp: URLSearchParams): string[] | null {
 }
 function pickFields<T extends Record<string, any>>(obj: T, fields: string[] | null) {
   if (!fields) return obj;
-  return fields.reduce<Record<string, any>>((acc, k) => (k in obj ? (acc[k] = (obj as any)[k], acc) : acc), {});
+  return fields.reduce<Record<string, any>>(
+    (acc, k) => (k in obj ? ((acc[k] = (obj as any)[k]), acc) : acc),
+    {},
+  );
 }
 
 export async function GET(req: NextRequest) {
@@ -82,8 +80,7 @@ export async function GET(req: NextRequest) {
   const fields = parseFields(searchParams);
 
   /* Accept both ?orderKey=123 and ?reference=123 -------------------- */
-  const filterOrderKey =
-    searchParams.get("orderKey") ?? searchParams.get("reference");
+  const filterOrderKey = searchParams.get("orderKey") ?? searchParams.get("reference");
 
   const filterClientId = searchParams.get("clientId");
   const filterStatus = searchParams.get("status");
@@ -91,21 +88,21 @@ export async function GET(req: NextRequest) {
 
   const limitParam = searchParams.get("limit");
   const limit =
-    limitParam != null
-      ? Math.max(1, Math.min(100, Number(limitParam) || 10))
-      : null;
-
+    limitParam != null ? Math.max(1, Math.min(100, Number(limitParam) || 10)) : null;
 
   try {
     /* 1) Single order ------------------------------------------------- */
     if (filterOrderKey) {
       const sql = `
-        SELECT o.*, c."firstName", c."lastName", c."username", c.email
-          FROM orders o
-          JOIN clients c ON c.id = o."clientId"
-         WHERE o."organizationId" = $1
-           AND o."orderKey"       = $2
-         LIMIT 1
+        SELECT
+          o.*,
+          c."firstName", c."lastName", c."username", c.email,
+          c."referredBy" AS "referredBy"
+        FROM orders o
+        JOIN clients c ON c.id = o."clientId"
+       WHERE o."organizationId" = $1
+         AND o."orderKey"       = $2
+       LIMIT 1
       `;
       const r = await pool.query(sql, [organizationId, filterOrderKey]);
       if (!r.rowCount)
@@ -126,9 +123,7 @@ export async function GET(req: NextRequest) {
         const statuses = filterStatus.split(",");
         if (statuses.length > 1) {
           clauses.push(
-            `o.status IN (${statuses
-              .map((_, i) => `$${vals.length + i + 1}`)
-              .join(",")})`
+            `o.status IN (${statuses.map((_, i) => `$${vals.length + i + 1}`).join(",")})`,
           );
           vals.push(...statuses);
         } else {
@@ -136,10 +131,11 @@ export async function GET(req: NextRequest) {
           vals.push(filterStatus);
         }
       }
-      if (filterReferral === "false") clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
+      if (filterReferral === "false")
+        clauses.push(`COALESCE(o."referralAwarded", FALSE) = FALSE`);
       if (filterReferral === "true") clauses.push(`o."referralAwarded" = TRUE`);
 
-      // NEW: optional LIMIT
+      // optional LIMIT
       let limitClause = "";
       if (limit) {
         limitClause = ` LIMIT $${vals.length + 1}`;
@@ -147,12 +143,15 @@ export async function GET(req: NextRequest) {
       }
 
       const sql = `
-        SELECT o.*, c."firstName", c."lastName", c."username", c.email
-          FROM orders o
-          JOIN clients c ON c.id = o."clientId"
-         WHERE ${clauses.join(" AND ")}
-         ORDER BY o."dateCreated" DESC
-         ${limitClause}
+        SELECT
+          o.*,
+          c."firstName", c."lastName", c."username", c.email,
+          c."referredBy" AS "referredBy"
+        FROM orders o
+        JOIN clients c ON c.id = o."clientId"
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY o."dateCreated" DESC
+       ${limitClause}
       `;
       const r = await pool.query(sql, vals);
       const orders = r.rows.map(o => ({
@@ -162,13 +161,14 @@ export async function GET(req: NextRequest) {
         createdAt: o.createdAt,
         total: Number(o.totalAmount),
         trackingNumber: o.trackingNumber,
+        clientId: o.clientId,
         firstName: o.firstName,
         lastName: o.lastName,
         username: o.username,
         email: o.email,
-        // NEW:
         shippingCompany: o.shippingService ?? null,
         referralAwarded: !!o.referralAwarded,
+        referredBy: o.referredBy ?? null, // from clients join
       }));
       const projected = fields ? orders.map(o => pickFields(o, fields)) : orders;
       return NextResponse.json(projected, { status: 200 });
@@ -181,7 +181,9 @@ export async function GET(req: NextRequest) {
     if (filterStatus) {
       const statuses = filterStatus.split(",");
       if (statuses.length > 1) {
-        clauses.push(`o.status IN (${statuses.map((_, i) => `$${vals.length + i + 1}`).join(",")})`);
+        clauses.push(
+          `o.status IN (${statuses.map((_, i) => `$${vals.length + i + 1}`).join(",")})`,
+        );
         vals.push(...statuses);
       } else {
         clauses.push(`o.status = $${vals.length + 1}`);
@@ -195,11 +197,14 @@ export async function GET(req: NextRequest) {
       clauses.push(`o."referralAwarded" = TRUE`);
     }
     const listSql = `
-      SELECT o.*, c."firstName", c."lastName", c."username", c.email
-        FROM orders o
-        JOIN clients c ON c.id = o."clientId"
-       WHERE ${clauses.join(" AND ")}
-       ORDER BY o."dateCreated" DESC
+      SELECT
+        o.*,
+        c."firstName", c."lastName", c."username", c.email,
+        c."referredBy" AS "referredBy"
+      FROM orders o
+      JOIN clients c ON c.id = o."clientId"
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY o."dateCreated" DESC
     `;
     const r = await pool.query(listSql, vals);
     const orders = r.rows.map(o => ({
@@ -209,21 +214,22 @@ export async function GET(req: NextRequest) {
       createdAt: o.createdAt,
       total: Number(o.totalAmount),
       trackingNumber: o.trackingNumber,
+      clientId: o.clientId,
       firstName: o.firstName,
       lastName: o.lastName,
       username: o.username,
       email: o.email,
-      shippingCompany: o.shippingService ?? o.shippingService ?? null,
-      referralAwarded: !!o.referralAwarded
+      shippingCompany: o.shippingService ?? null,
+      referralAwarded: !!o.referralAwarded,
+      referredBy: o.referredBy ?? null, // from clients join
     }));
-    const projected = fields
-      ? orders.map(o => pickFields(o, fields))
-      : orders;
+    const projected = fields ? orders.map(o => pickFields(o, fields)) : orders;
     return NextResponse.json(projected, { status: 200 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
 }
+
 /* ================================================================== */
 /* POST – create order                                                */
 /* ================================================================== */
@@ -236,33 +242,31 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     body.organization = organizationId;
-    body.totalAmount = body.subtotal - body.discountAmount - (body.pointsRedeemedAmount ?? 0) + body.shippingAmount;
+    body.totalAmount =
+      body.subtotal -
+      body.discountAmount -
+      (body.pointsRedeemedAmount ?? 0) +
+      body.shippingAmount;
+
+    // Recalculate monetary subtotal from non-affiliate cart lines
     const normalRows = await pool.query(
       `SELECT cp.quantity, cp."unitPrice"
          FROM "cartProducts" cp
          JOIN products p ON p.id = cp."productId"
         WHERE cp."cartId" = $1`,
-      [body.cartId]
+      [body.cartId],
     );
-    const monetarySubtotal = normalRows.rows
-      .reduce((acc, r) => acc + Number(r.unitPrice) * r.quantity, 0);
+    const monetarySubtotal = normalRows.rows.reduce(
+      (acc, r) => acc + Number(r.unitPrice) * r.quantity,
+      0,
+    );
     const discountAmt = Number(body.discountAmount ?? 0);
     const pointsAmt = Number(body.pointsRedeemedAmount ?? 0);
     const shippingAmt = Number(body.shippingAmount ?? 0);
+
     body.subtotal = monetarySubtotal;
-    body.totalAmount = monetarySubtotal
-      - discountAmt
-      - pointsAmt
-      + shippingAmt;
-    /* console.log(
-      "🧮  Calculated totalAmount:",
-      body.subtotal,
-      "-", body.discountAmount,
-      "-", (body.pointsRedeemedAmount ?? 0),
-      "+", body.shippingAmount,
-      "=", body.totalAmount
-    ) */
-    console.log(body)
+    body.totalAmount = monetarySubtotal - discountAmt - pointsAmt + shippingAmt;
+
     payload = orderSchema.parse(body);
     console.log(payload)
   } catch (err) {
@@ -296,7 +300,7 @@ export async function POST(req: NextRequest) {
 
   const orderId = uuidv4();
   await pool.query(
-    `CREATE SEQUENCE IF NOT EXISTS order_key_seq START 1 INCREMENT 1 OWNED BY NONE`
+    `CREATE SEQUENCE IF NOT EXISTS order_key_seq START 1 INCREMENT 1 OWNED BY NONE`,
   );
   const seq = await pool.query(`SELECT nextval('order_key_seq') AS seq`);
   const orderKey = String(Number(seq.rows[0].seq)).padStart(3, "0");
@@ -307,11 +311,24 @@ export async function POST(req: NextRequest) {
   const cartStatus = false;
 
   const baseValues: unknown[] = [
-    orderId, organization, clientId, cartId, country, paymentMethod,
-    shippingAmount, discountAmount, totalAmount,
-    couponCode, couponTypeResolved, shippingCompany, shippingMethod,
-    trackingNumber, encryptedAddress, orderStatus,
-    subtotal, discountValue,
+    orderId,
+    organization,
+    clientId,
+    cartId,
+    country,
+    paymentMethod,
+    shippingAmount,
+    discountAmount,
+    totalAmount,
+    couponCode,
+    couponTypeResolved,
+    shippingCompany,
+    shippingMethod,
+    trackingNumber,
+    encryptedAddress,
+    orderStatus,
+    subtotal,
+    discountValue,
     pointsRedeemed,
     pointsRedeemedAmount,
   ];
@@ -358,7 +375,7 @@ export async function POST(req: NextRequest) {
     for (const ln of cartLines) {
       if (!ln.manageStock) continue;
       let qtyLeft = ln.quantity;
-      /* fetch every stock row that can serve this country            */
+
       const { rows: whRows } = await pool.query(
         `SELECT id, quantity
            FROM "warehouseStock"
@@ -383,7 +400,6 @@ export async function POST(req: NextRequest) {
         if (qtyLeft === 0) break;
       }
 
-      /* not enough units and back-orders are disabled → abort */
       if (qtyLeft > 0 && !ln.allowBackorders) {
         await pool.query("ROLLBACK");
         return NextResponse.json(
@@ -392,111 +408,131 @@ export async function POST(req: NextRequest) {
         );
       }
     }
-    /* =============================================================== */
+
     const r = await pool.query(insertSQL, insertValues);
     await pool.query("COMMIT");
 
-    let oldOrder = await pool.query(`SELECT * FROM "orders" WHERE id = '${r.rows[0].id}'`)
-    let oldCart = await pool.query(`SELECT * FROM "carts" WHERE id = '${oldOrder.rows[0].cartId}'`)
-    let oldCartProduct = await pool.query(`SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}'`)
-    let oneProducts = oldCartProduct.rows
-    let newOrderId = ""
+    // ────────────────────────────────────────────────────────────────
+    // Existing “shared product mapping” split logic (unchanged),
+    // with no attempt to write a nonexistent orders."referredBy" column.
+    // ────────────────────────────────────────────────────────────────
+    let oldOrder = await pool.query(
+      `SELECT * FROM "orders" WHERE id = '${r.rows[0].id}'`,
+    );
+    let oldCart = await pool.query(
+      `SELECT * FROM "carts" WHERE id = '${oldOrder.rows[0].cartId}'`,
+    );
+    let oldCartProduct = await pool.query(
+      `SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}'`,
+    );
+    let oneProducts = oldCartProduct.rows;
+    let newOrderId = "";
 
-    let array: {
-      organizationId: string
-      productId: string
-    }[] = []
-
-    let newOrganization = ""
+    let array: { organizationId: string; productId: string }[] = [];
+    let newOrganization = "";
 
     for (let i = 0; i < oneProducts.length; i++) {
-      const two = await pool.query(`SELECT * FROM "sharedProductMapping" WHERE "targetProductId" = '${oneProducts[i].productId}'`)
+      const two = await pool.query(
+        `SELECT * FROM "sharedProductMapping" WHERE "targetProductId" = '${oneProducts[i].productId}'`,
+      );
       if (two.rows[0]) {
-        const orgTwo = await pool.query(`SELECT "organizationId" FROM "products" WHERE "id" = '${two.rows[0].sourceProductId}'`)
-        newOrganization = orgTwo.rows[0].organizationId
+        const orgTwo = await pool.query(
+          `SELECT "organizationId" FROM "products" WHERE "id" = '${two.rows[0].sourceProductId}'`,
+        );
+        newOrganization = orgTwo.rows[0].organizationId;
 
         array.push({
           organizationId: newOrganization,
-          productId: two.rows[0].sourceProductId
-        })
+          productId: two.rows[0].sourceProductId,
+        });
       }
     }
-    let groupedMap = array.reduce<Record<string, string[]>>((acc, { organizationId, productId }) => {
-      if (!acc[organizationId]) {
-        acc[organizationId] = []
-      }
-      acc[organizationId].push(productId)
-      return acc
-    }, {})
+    let groupedMap = array.reduce<Record<string, string[]>>(
+      (acc, { organizationId, productId }) => {
+        if (!acc[organizationId]) {
+          acc[organizationId] = [];
+        }
+        acc[organizationId].push(productId);
+        return acc;
+      },
+      {},
+    );
 
     let groupedArray = Object.entries(groupedMap).map(([organizationId, productIds]) => ({
       organizationId,
-      productIds
-    }))
+      productIds,
+    }));
 
     while (groupedArray.length > 0) {
-
       for (let i = 0; i < groupedArray.length; i++) {
+        const oldClient = await pool.query(
+          `SELECT * FROM "clients" WHERE "id" = '${oldOrder.rows[0].clientId}'`,
+        );
+        const checkClient = await pool.query(
+          `SELECT id FROM clients WHERE "userId" = '${oldClient.rows[0].userId}' AND "organizationId" = '${groupedArray[i].organizationId}'`,
+        );
 
-        const oldClient = await pool.query(`SELECT * FROM "clients" WHERE "id" = '${oldOrder.rows[0].clientId}'`)
-        const checkClient = await pool.query(`SELECT id FROM clients WHERE "userId" = '${oldClient.rows[0].userId}' AND "organizationId" = '${groupedArray[i].organizationId}'`)
-
-        let newClientId = ""
+        let newClientId = "";
 
         if (checkClient.rows.length > 0) {
-          newClientId = checkClient.rows[0].id
+          newClientId = checkClient.rows[0].id;
         } else {
-          newClientId = uuidv4()
+          newClientId = uuidv4();
 
-          const newClient = await pool.query(`INSERT INTO "clients" (id, "userId", "organizationId", username, "firstName", "lastName", email, "phoneNumber", country, "createdAt", "updatedAt")
-            VALUES ('${newClientId}', '${oldClient.rows[0].userId}', '${newOrganization}', '${oldClient.rows[0].username}', '${oldClient.rows[0].firstName}','${oldClient.rows[0].lastName}', '${oldClient.rows[0].email}', '${oldClient.rows[0].phoneNumber}', '${oldClient.rows[0].country}', NOW(), NOW())
-            RETURNING *`)
+          await pool.query(
+            `INSERT INTO "clients" (id, "userId", "organizationId", username, "firstName", "lastName", email, "phoneNumber", country, "createdAt", "updatedAt")
+             VALUES ('${newClientId}', '${oldClient.rows[0].userId}', '${newOrganization}', '${oldClient.rows[0].username}', '${oldClient.rows[0].firstName}','${oldClient.rows[0].lastName}', '${oldClient.rows[0].email}', '${oldClient.rows[0].phoneNumber}', '${oldClient.rows[0].country}', NOW(), NOW())
+             RETURNING *`,
+          );
 
           await pool.query("COMMIT");
         }
 
-        const newCartId = uuidv4()
-        const newStatus = false
+        const newCartId = uuidv4();
+        const newStatus = false;
 
-        const newCart = await pool.query(`INSERT INTO "carts" (id, "clientId", country, "shippingMethod", status, "organizationId", "createdAt", "updatedAt") 
-          VALUES ('${newCartId}', '${newClientId}', '${oldCart.rows[0].country}', '${oldCart.rows[0].shippingMethod}', ${newStatus}, '${groupedArray[i].organizationId}', NOW(), NOW()) 
-          RETURNING *`)
+        await pool.query(
+          `INSERT INTO "carts" (id, "clientId", country, "shippingMethod", status, "organizationId", "createdAt", "updatedAt") 
+           VALUES ('${newCartId}', '${newClientId}', '${oldCart.rows[0].country}', '${oldCart.rows[0].shippingMethod}', ${newStatus}, '${groupedArray[i].organizationId}', NOW(), NOW()) 
+           RETURNING *`,
+        );
         await pool.query("COMMIT");
 
-        let subtotal = 0
+        let subtotal = 0;
 
         for (let j = 0; j < groupedArray[i].productIds.length; j++) {
+          const product = await pool.query(
+            `SELECT * FROM "products" WHERE id = '${groupedArray[i].productIds[j]}'`,
+          );
+          const oldCartProductInfo = await pool.query(
+            `SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}' AND "productId" = '${oneProducts[i].productId}'`,
+          );
 
-          const product = await pool.query(`SELECT * FROM "products" WHERE id = '${groupedArray[i].productIds[j]}'`)
-          const oldCartProductInfo = await pool.query(`SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}' AND "productId" = '${oneProducts[i].productId}'`)
+          const newCPId = uuidv4();
 
-          const newCPId = uuidv4()
-
-          const newCartProduct = await pool.query(`INSERT INTO "cartProducts" (id, "cartId", "productId", "quantity", "unitPrice", "affiliateProductId")
-            VALUES ('${newCPId}', '${newCartId}', '${groupedArray[i].productIds[j]}', ${oldCartProductInfo.rows[0].quantity}, ${product.rows[0].regularPrice[oldCart.rows[0].country]}, ${oldCartProductInfo.rows[0].affiliateProductId})
-            RETURNING *`)
+          await pool.query(
+            `INSERT INTO "cartProducts" (id, "cartId", "productId", "quantity", "unitPrice", "affiliateProductId")
+             VALUES ('${newCPId}', '${newCartId}', '${groupedArray[i].productIds[j]}', ${oldCartProductInfo.rows[0].quantity}, ${product.rows[0].regularPrice[oldCart.rows[0].country]}, ${oldCartProductInfo.rows[0].affiliateProductId})
+             RETURNING *`,
+          );
           await pool.query("COMMIT");
 
-          subtotal = Number(product.rows[0].regularPrice[oldCart.rows[0].country]) + subtotal
-          console.log(subtotal)
-
+          subtotal = Number(product.rows[0].regularPrice[oldCart.rows[0].country]) + subtotal;
         }
 
-
-        newOrderId = uuidv4()
-        const orderKey = String(Number(seq.rows[0].seq)).padStart(3, "0");
-        const newOrder = `
+        newOrderId = uuidv4();
+        const newOrderSQL = `
           INSERT INTO orders
             (id, "organizationId","clientId","cartId",country,"paymentMethod",
-            "shippingTotal", "totalAmount","shippingService","shippingMethod",
-            address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
-            "dateCreated","createdAt","updatedAt","orderKey", "discountTotal")
+             "shippingTotal", "totalAmount","shippingService","shippingMethod",
+             address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
+             "dateCreated","createdAt","updatedAt","orderKey", "discountTotal")
           VALUES
             ($1, $2, $3, $4,$5, $6,
-            $7, $8, $9,
-            $10, $11, $12, $13,
-            $14,$15,
-            NOW(),NOW(),NOW(),$16, $17)
+             $7, $8, $9,
+             $10, $11, $12, $13,
+             $14,$15,
+             NOW(),NOW(),NOW(),$16, $17)
           RETURNING *
         `;
 
@@ -517,42 +553,55 @@ export async function POST(req: NextRequest) {
           oldOrder.rows[0].pointsRedeemed,
           oldOrder.rows[0].pointsRedeemedAmount,
           orderKey,
-          0
-        ]
+          0,
+        ];
 
-        const newOrderResult = await pool.query(newOrder, newOrderValues)
+        await pool.query(newOrderSQL, newOrderValues);
       }
-      oldOrder = await pool.query(`SELECT * FROM "orders" WHERE id = '${newOrderId}'`)
-      oldCart = await pool.query(`SELECT * FROM "carts" WHERE id = '${oldOrder.rows[0].cartId}'`)
-      oldCartProduct = await pool.query(`SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}'`)
-      oneProducts = oldCartProduct.rows
-      array = []
+
+      oldOrder = await pool.query(
+        `SELECT * FROM "orders" WHERE id = '${newOrderId}'`,
+      );
+      oldCart = await pool.query(
+        `SELECT * FROM "carts" WHERE id = '${oldOrder.rows[0].cartId}'`,
+      );
+      oldCartProduct = await pool.query(
+        `SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}'`,
+      );
+      oneProducts = oldCartProduct.rows;
+      array = [];
 
       for (let i = 0; i < oneProducts.length; i++) {
-        const two = await pool.query(`SELECT * FROM "sharedProductMapping" WHERE "targetProductId" = '${oneProducts[i].productId}'`)
+        const two = await pool.query(
+          `SELECT * FROM "sharedProductMapping" WHERE "targetProductId" = '${oneProducts[i].productId}'`,
+        );
         if (two.rows[0]) {
-          const orgTwo = await pool.query(`SELECT "organizationId" FROM "products" WHERE "id" = '${two.rows[0].sourceProductId}'`)
-          newOrganization = orgTwo.rows[0].organizationId
+          const orgTwo = await pool.query(
+            `SELECT "organizationId" FROM "products" WHERE "id" = '${two.rows[0].sourceProductId}'`,
+          );
+          newOrganization = orgTwo.rows[0].organizationId;
 
           array.push({
             organizationId: newOrganization,
-            productId: two.rows[0].sourceProductId
-          })
+            productId: two.rows[0].sourceProductId,
+          });
         }
       }
-      groupedMap = array.reduce<Record<string, string[]>>((acc, { organizationId, productId }) => {
-        if (!acc[organizationId]) {
-          acc[organizationId] = []
-        }
-        acc[organizationId].push(productId)
-        return acc
-      }, {})
+      groupedMap = array.reduce<Record<string, string[]>>(
+        (acc, { organizationId, productId }) => {
+          if (!acc[organizationId]) {
+            acc[organizationId] = [];
+          }
+          acc[organizationId].push(productId);
+          return acc;
+        },
+        {},
+      );
 
       groupedArray = Object.entries(groupedMap).map(([organizationId, productIds]) => ({
         organizationId,
-        productIds
-      }))
-
+        productIds,
+      }));
     }
 
     return NextResponse.json(r.rows[0], { status: 201 });

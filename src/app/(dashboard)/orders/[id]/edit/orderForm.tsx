@@ -825,12 +825,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     if (!orderData?.id) return;
 
     try {
-      /* --- 0. Handle Niftipay "switch-away" case --- */
-      /* ----------------------------------------------------------
- * 0. Handle DELETE of the previous Niftipay invoice
- *    • case A – user switches to another payment method
- *    • case B – still Niftipay but picks a *different* chain/asset
- * ---------------------------------------------------------- */
+      /* --- 0. Niftipay coin switch: cancel old invoice → create new (same reference) --- */
       const pmObj = paymentMethods.find(p => p.id === selectedPaymentMethod);
       const oldPM = orderData.shippingInfo.payment?.toLowerCase();
       const newPM = pmObj?.name.toLowerCase();
@@ -850,52 +845,47 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             selectedNiftipay !== prevNA)  // … and it changed
         );
 
-      if (needDelete) {
-        const niftipayMethod = paymentMethods.find(p => p.name.toLowerCase() === "niftipay");
-        const key = niftipayMethod?.apiKey;
-        if (!key) {
-          console.error("[Trapigram] Niftipay API key missing for DELETE");
-          toast.error("Niftipay API key missing");
-          return;
-        }
+     if (needDelete) {
+  const niftipayMethod = paymentMethods.find(p => p.name.toLowerCase() === "niftipay");
+  const key = niftipayMethod?.apiKey;
+  if (!key) {
+    toast.error("Niftipay API key missing");
+    return;
+  }
 
-        // Log DELETE request details
+  // 0a) look up the invoice id by reference
+  const findRes = await fetchJsonVerbose(
+    `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+    { credentials: "omit", headers: { "x-api-key": key } },
+    "Niftipay FIND by reference"
+  );
+  if (!findRes.ok) {
+    toast.error("Could not look up Niftipay invoice");
+    return;
+  }
+  const { orders: found = [] } = await findRes.clone().json().catch(() => ({ orders: [] }));
+  const existing = found.find((o: any) => o.reference === orderData.orderKey);
 
-        console.log("[Trapigram] Attempting to delete Niftipay order", {
-          reference: orderData.orderKey,
-          apiKey: key ? key.slice(0, 8) + "..." : "undefined",
-          merchantId,
-          url: `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-        });
-
-            const del = await fetchJsonVerbose(
-                `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-                {
-                  credentials: "omit",
-                  method: "DELETE",
-                  headers: { "x-api-key": key },
-                },
-                "DELETE Niftipay",
-              );
-
-
-        if (!(del.ok || del.status === 404)) {
-          const errorBody = await del.json().catch(() => ({ error: "Unknown error" }));
-          console.error("[Trapigram] DELETE request failed", {
-            status: del.status,
-            error: errorBody.error,
-            reference: orderData.orderKey,
-          });
-          toast.error(errorBody.error || `Failed to delete Niftipay order (${del.status})`);
-          return;
-        }
-
-        console.log("[Trapigram] Previous Niftipay invoice gone (status", del.status, ")");
-        console.log("[Trapigram] Niftipay order deleted successfully", {
-          status: del.status,
-          reference: orderData.orderKey,
-        });
-      }
+  // 0b) cancel it if not already cancelled (fires webhook)
+  if (existing && existing.status !== "cancelled") {
+    const patch = await fetchJsonVerbose(
+      `${NIFTIPAY_BASE}/api/orders/${existing.id}`,
+      {
+        method: "PATCH",
+        credentials: "omit",
+        headers: { "Content-Type": "application/json", "x-api-key": key },
+        body: JSON.stringify({ status: "cancelled" }),
+      },
+      "Niftipay CANCEL"
+    );
+    if (!patch.ok) {
+      const err = await patch.json().catch(() => ({}));
+      toast.error(err.error || "Failed to cancel previous Niftipay invoice");
+      return;
+    }
+    toast.success("Previous crypto invoice cancelled");
+  }
+}
 
       /* --- 1. Patch the order itself --- */
       const selectedAddressText = addresses.find(a => a.id === selectedAddressId)?.address ?? null;
@@ -974,7 +964,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         console.log("pmObj", pmObj);
 
 
-        const niftipayRes = await fetch(`${NIFTIPAY_BASE}/api/orders`, {
+        const niftipayRes = await fetch(`${NIFTIPAY_BASE}/api/orders?replaceCancelled=1`, {
           method: "POST",
           credentials: "omit",
           headers: {
