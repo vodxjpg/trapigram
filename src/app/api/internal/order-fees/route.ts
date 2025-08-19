@@ -66,7 +66,15 @@ export async function POST(req: NextRequest) {
 
   // 7) record fee
   const id = crypto.randomUUID();
-  const capturedAt = new Date();
+  // Align with the accounting period of the order:
+  const ordPaid = await db
+    .selectFrom("orders")
+    .select(["datePaid"])
+    .where("id", "=", orderId)
+    .executeTakeFirst();
+  const capturedAt = ordPaid?.datePaid ? new Date(ordPaid.datePaid as any) : new Date();
+
+
   const inserted = await db
     .insertInto("orderFees")
     .values({

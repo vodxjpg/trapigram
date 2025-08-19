@@ -1,6 +1,7 @@
 // src/app/api/internal/generate-invoices/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "kysely";
+import { Selectable } from "kysely";
 import { db } from "@/lib/db";
 import { requireInternalAuth } from "@/lib/internalAuth";
 import crypto from "crypto";
@@ -94,12 +95,26 @@ export async function POST(req: NextRequest) {
       .where("capturedAt", ">=", start)
       .where("capturedAt", "<=", end)
       .executeTakeFirst();
-    const total = sumRow?.total ?? 0;
+    const total = Number(sumRow?.total ?? 0);
     console.log(`  → total fees for period: ${total}`);
 
+      // For zero-fee users, still create a $0 invoice if there was activity (fee rows) in the window.
+    let hasActivity = false;
     if (total <= 0) {
-      console.log("  → skipping, nothing to invoice");
-      continue;
+      const cntRow = await db
+        .selectFrom("orderFees")
+        .select(sql<number>`count(*)`.as("count"))
+        .where("userId", "=", userId)
+        .where("capturedAt", ">=", start)
+        .where("capturedAt", "<=", end)
+        .executeTakeFirst();
+      const feeCount = Number(cntRow?.count ?? 0);
+      hasActivity = feeCount > 0;
+      if (!hasActivity) {
+        console.log("  → skipping, no fee activity in this window");
+        continue;
+      }
+      console.log("  → zero-amount invoice will be created (activity present)");
     }
 
     // insert invoice (now with paidAmount = 0)
@@ -112,7 +127,8 @@ export async function POST(req: NextRequest) {
         periodEnd:         pe,
         totalAmount:       total,
         paidAmount:        0,
-        status:            "pending",
+        // Auto-settle zero invoices; keep normal ones pending.
+        status:            total > 0 ? "pending" : "paid",
         dueDate:           due,
         niftipayNetwork:   "ETH",
         niftipayAsset:     "USDT",
@@ -136,20 +152,24 @@ export async function POST(req: NextRequest) {
 
     console.log(`  → created invoice ${inv.id}`);
 
-    // ── 6) Mint on-chain immediately
-    try {
-      await fetch(MINT_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type":       "application/json",
-          "x-internal-secret":  INTERNAL_SECRET,
-        },
-        body: JSON.stringify({ invoiceId: inv.id }),
-      });
-      console.log(`  → minted invoice ${inv.id} on Niftipay`);
-    } catch (err) {
-      console.error(`  → failed to mint invoice ${inv.id}:`, err);
-    }
+           // ── 6) Mint on-chain immediately (skip mint for zero-amount invoices)
+     if (Number(inv.totalAmount) > 0) {
+       try {
+         await fetch(MINT_ENDPOINT, {
+           method: "POST",
+           headers: {
+             "Content-Type":       "application/json",
+             "x-internal-secret":  INTERNAL_SECRET,
+           },
+           body: JSON.stringify({ invoiceId: inv.id }),
+         });
+         console.log(`  → minted invoice ${inv.id} on Niftipay`);
+       } catch (err) {
+         console.error(`  → failed to mint invoice ${inv.id}:`, err);
+       }
+     } else {
+       console.log(`  → skip mint (zero-amount invoice ${inv.id})`);
+     }
 
     // attach each fee line-item
     const fees = await db

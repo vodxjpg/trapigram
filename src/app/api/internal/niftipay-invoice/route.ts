@@ -47,6 +47,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
   }
 
+    // Do not mint zero-amount invoices (should already be skipped upstream, this is a hard guard)
+  const amt = Number(inv.totalAmount);
+  if (!isFinite(amt) || amt <= 0) {
+    return NextResponse.json(
+      { error: "Zero-amount invoices are not minted" },
+      { status: 400 },
+    );
+  }
+
   if (inv.niftipayOrderId) {
     return NextResponse.json(
       { error: "On-chain invoice already minted" },

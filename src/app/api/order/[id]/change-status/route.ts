@@ -922,25 +922,24 @@ export async function PATCH(
         console.log(`Revenue updated for order ${id}`);
 
         // 2) capture platform fee via internal API
-        const ts = Date.now().toString();
-        const sig = createHmac("sha256", process.env.SERVICE_API_KEY!)
-          .update(ts)
-          .digest("hex"); // internal service call remains unchanged
-
-        await fetch(
-          `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": process.env.SERVICE_API_KEY!,
-              "x-timestamp": ts,
-              "x-signature": sig,
-            },
-            body: JSON.stringify({ orderId: id }),
-          }
-        );
+        const feeRes = await fetch(
+        `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-secret": process.env.INTERNAL_API_SECRET!, // ✅ match requireInternalAuth
+          },
+          body: JSON.stringify({ orderId: id }),
+        }
+      );
+      if (!feeRes.ok) {
+        const body = await feeRes.text().catch(() => "");
+        console.error(`[fees] failed to capture for order ${id}: ${feeRes.status} ${feeRes.statusText} ${body}`);
+        toastWarnings.push("Couldn’t record platform fee (internal API).");
+      } else {
         console.log(`Platform fee captured for order ${id}`);
+      }
 
       } catch (err) {
         console.error(
