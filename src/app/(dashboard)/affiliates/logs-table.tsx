@@ -123,7 +123,7 @@ export function LogsTable() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Link href={`/clients/${l.clientId}`}>
+                    <Link href={`/clients/${l.clientId}/info`}>
                       {l.clientLabel || fallbackId(l.clientId)}
                     </Link>
                   </TableCell>
@@ -139,7 +139,7 @@ export function LogsTable() {
                   <TableCell>{l.description ?? "-"}</TableCell>
                   <TableCell>
                     {l.sourceClientId ? (
-                      <Link href={`/clients/${l.sourceClientId}`}>
+                      <Link href={`/clients/${l.sourceClientId}/info`}>
                         {l.sourceClientLabel || fallbackId(l.sourceClientId)}
                       </Link>
                     ) : (
