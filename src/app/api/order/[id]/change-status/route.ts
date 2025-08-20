@@ -922,22 +922,30 @@ export async function PATCH(
         console.log(`Revenue updated for order ${id}`);
 
         // 2) capture platform fee via internal API
-        const feeRes = await fetch(
-        `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-internal-secret": process.env.INTERNAL_API_SECRET!, // ✅ match requireInternalAuth
-          },
-          body: JSON.stringify({ orderId: id }),
-        }
-      );
+            const feesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
+      console.log(`[fees] POST → ${feesUrl}`, {
+        orderId: id,
+        orgId: organizationId,
+        hasSecret: Boolean(process.env.INTERNAL_API_SECRET),
+      });
+      const feeRes = await fetch(feesUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": process.env.INTERNAL_API_SECRET!, // ✅ match requireInternalAuth
+        },
+        body: JSON.stringify({ orderId: id }),
+      });
+      const feeText = await feeRes.text().catch(() => "");
       if (!feeRes.ok) {
-        const body = await feeRes.text().catch(() => "");
-        console.error(`[fees] failed to capture for order ${id}: ${feeRes.status} ${feeRes.statusText} ${body}`);
+        console.error(
+          `[fees] ← ${feeRes.status} ${feeRes.statusText}; body=${feeText || "<empty>"}`
+        );
         toastWarnings.push("Couldn’t record platform fee (internal API).");
       } else {
+        let parsed: any = null;
+        try { parsed = JSON.parse(feeText); } catch {}
+        console.log(`[fees] ok – inserted`, parsed?.item ?? feeText);
         console.log(`Platform fee captured for order ${id}`);
       }
 

@@ -4,6 +4,12 @@ import { db } from "@/lib/db";
 import { requireInternalAuth } from "@/lib/internalAuth";
 import crypto from "crypto";
 
+const dbg = (...a: any[]) => console.log("[orderFees]", ...a);
+if (!process.env.INTERNAL_API_SECRET) {
+  console.warn("[orderFees] ⚠️  INTERNAL_API_SECRET is not set – internal auth will fail.");
+}
+
+
 export async function POST(req: NextRequest) {
   // 1) auth
   const err = requireInternalAuth(req);
@@ -14,21 +20,37 @@ export async function POST(req: NextRequest) {
   try {
     body = await req.json();
   } catch {
+    dbg("bad-request: invalid JSON body");
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
   const { orderId } = body;
   if (!orderId) {
-    return NextResponse.json({ error: "orderId is required" }, { status: 400 });
+      dbg("bad-request: missing orderId");
+  return NextResponse.json({ error: "orderId is required" }, { status: 400 });
   }
 
   // 3) fetch order
   const order = await db
     .selectFrom("orders")
-    .select(["organizationId", "totalAmount"])
+   .select(["organizationId", "totalAmount", "status"])
     .where("id", "=", orderId)
     .executeTakeFirst();
   if (!order) {
+      dbg("not-found: order", { orderId });
     return NextResponse.json({ error: "Order not found" }, { status: 404 });
+  }
+
+    dbg("order", { orderId, orgId: order.organizationId, status: order.status, totalAmount: String(order.totalAmount) });
+ 
+  // 3a) idempotency: skip if a fee already exists for this order
+  const existing = await db
+    .selectFrom("orderFees")
+    .select("id")
+    .where("orderId", "=", orderId)
+    .executeTakeFirst();
+  if (existing) {
+    dbg("duplicate-skip: fee already exists", { orderId, feeId: existing.id });
+    return NextResponse.json({ skipped: true, reason: "fee already exists", feeId: existing.id }, { status: 200 });
   }
 
   // 4) find organization owner
@@ -39,9 +61,10 @@ export async function POST(req: NextRequest) {
     .where("role", "=", "owner")
     .executeTakeFirst();
   if (!owner) {
-    return NextResponse.json({ error: "Organization owner not found" }, { status: 404 });
-  }
-
+  dbg("not-found: org owner", { orgId: order.organizationId });
+return NextResponse.json({ error: "Organization owner not found" }, { status: 404 });
+   }
+  dbg("owner", { userId: owner.userId });
   // 5) load all rates and pick the active one in JS
   const now = new Date();
   const allRates = await db
@@ -50,20 +73,35 @@ export async function POST(req: NextRequest) {
     .where("userId", "=", owner.userId)
     .orderBy("startsAt", "desc")
     .execute();
-
+dbg("rates", { count: allRates.length });
   const active = allRates.find((r) => {
     const start = new Date(r.startsAt);
     const end = r.endsAt ? new Date(r.endsAt) : null;
     return start <= now && (!end || end > now);
   });
   if (!active) {
-    return NextResponse.json({ error: "No fee rate defined for user" }, { status: 404 });
+     dbg("no-active-rate", { userId: owner.userId, at: now.toISOString() });
+ return NextResponse.json({ error: "No fee rate defined for user" }, { status: 404 });
   }
-
+  dbg("active-rate", {
+    percent: String(active.percent),
+    startsAt: new Date(active.startsAt).toISOString(),
+    endsAt: active.endsAt ? new Date(active.endsAt).toISOString() : null,
+  });
+ 
   // 6) calculate fee
-  const pct = parseFloat(active.percent);
-  const fee = (pct / 100) * Number(order.totalAmount);
-
+  const pct = Number(active.percent);
+  const orderTotal = Number(order.totalAmount);
+  if (!isFinite(pct)) {
+    dbg("invalid-rate-percent", { percent: active.percent });
+    return NextResponse.json({ error: "Invalid fee rate percent for user" }, { status: 400 });
+  }
+  if (!isFinite(orderTotal)) {
+    dbg("invalid-order-total", { totalAmount: order.totalAmount });
+    return NextResponse.json({ error: "Invalid order total" }, { status: 400 });
+  }
+  const fee = (pct / 100) * orderTotal;
+  dbg("calc", { pct, orderTotal, fee });
   // 7) record fee
   const id = crypto.randomUUID();
   // Align with the accounting period of the order:
@@ -73,27 +111,35 @@ export async function POST(req: NextRequest) {
     .where("id", "=", orderId)
     .executeTakeFirst();
   const capturedAt = ordPaid?.datePaid ? new Date(ordPaid.datePaid as any) : new Date();
+   dbg("capturedAt", { capturedAt: capturedAt.toISOString(), hasDatePaid: Boolean(ordPaid?.datePaid) });
 
 
-  const inserted = await db
-    .insertInto("orderFees")
-    .values({
-      id,
-      orderId,
-      userId: owner.userId,
-      percentApplied: pct.toString(),
-      feeAmount: fee.toString(),
-      capturedAt,
-    })
-    .returning([
-      "id",
-      "orderId",
-      "userId",
-      "percentApplied",
-      "feeAmount",
-      "capturedAt",
-    ])
-    .executeTakeFirst();
+  let inserted;
+  try {
+    inserted = await db
+      .insertInto("orderFees")
+      .values({
+        id,
+        orderId,
+        userId: owner.userId,
+        percentApplied: pct.toString(),
+        feeAmount: fee.toString(),
+        capturedAt,
+      })
+      .returning([
+        "id",
+        "orderId",
+        "userId",
+        "percentApplied",
+        "feeAmount",
+        "capturedAt",
+      ])
+      .executeTakeFirst();
+  } catch (e) {
+    dbg("insert-failed", { error: (e as Error)?.message });
+    return NextResponse.json({ error: "Failed to insert fee record" }, { status: 500 });
+  }
+  dbg("inserted", inserted);
 
   return NextResponse.json({ item: inserted! }, { status: 201 });
 }
