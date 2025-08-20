@@ -674,8 +674,8 @@ export async function PATCH(
   { params }: { params: { id: string } },
 ) {
   // 1) context + permission guard
-  const ctx = await getContext(req) as { organizationId: string };
-  const { organizationId } = ctx;
+  const ctx = await getContext(req) as { organizationId: string; tenantId: string };
+  const { organizationId, tenantId } = ctx
   const { id } = params;
   const { status: newStatus } = orderStatusSchema.parse(await req.json());
 
@@ -846,19 +846,22 @@ export async function PATCH(
       (newStatus === "cancelled" || newStatus === "paid")
     ) {
       try {
-        // 1) load the merchant's Niftipay key for this org
-        const { rows: [pm] } = await pool.query(
-          `SELECT "apiKey"
-             FROM "paymentMethods"
-            WHERE "organizationId" = $1
-              AND lower(name) = 'niftipay'
-              AND "active" = TRUE
-            LIMIT 1`,
-          [organizationId],
-        );
-        const merchantApiKey: string | null = pm?.apiKey ?? null;
+        // 1) load the merchant's Niftipay key by tenantId (paymentMethods is tenant-scoped)
+let merchantApiKey: string | null = null;
+if (tenantId) {
+  const { rows: [pm] } = await pool.query(
+    `SELECT "apiKey"
+       FROM "paymentMethods"
+      WHERE "tenantId" = $1
+        AND lower(name) = 'niftipay'
+        AND "active" = TRUE
+      LIMIT 1`,
+    [tenantId],
+  );
+  merchantApiKey = pm?.apiKey ?? null;
+}
         if (!merchantApiKey) {
-          console.warn("[niftipay] No merchant API key configured for org", organizationId);
+         console.warn("[niftipay] No merchant API key configured for tenant", tenantId);
           toastWarnings.push(
             "Niftipay not configured for this organisation (missing API key). Crypto invoice was not updated."
           );
