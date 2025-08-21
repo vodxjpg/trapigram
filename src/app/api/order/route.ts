@@ -7,6 +7,9 @@ import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
+import { adjustStock } from "@/lib/stock";
+import { sendNotification } from "@/lib/notifications";
+
 
 /* ------------------------------------------------------------------ */
 /*  Encryption helpers                                                */
@@ -600,6 +603,15 @@ export async function POST(req: NextRequest) {
       [newCPId, newCartId, sourceProductId, qty, transfer, affId],
     );
       subtotal += transfer * qty;
+
+            // 🔧 Immediately RESERVE supplier stock for shared items (open is ACTIVE)
+      if (qty > 0) {
+        try {
+          await adjustStock(pool as any, sourceProductId, oldCart.rows[0].country, -qty);
+        } catch (e) {
+          console.warn("[split][stock] reserve failed", { productId: sourceProductId, qty, country: oldCart.rows[0].country }, e);
+        }
+      }
     }
 
         newOrderId = uuidv4();
@@ -656,6 +668,49 @@ RETURNING *
      subtotal,
      shippingShare,
    });
+
+      // 📣 Admin notification to SUPPLIER org with per-supplier product list
+    // Build product list from the new supplier cartId (newCartId)
+    const { rows: prodRows } = await pool.query(
+      `
+        SELECT
+          cp.quantity,
+          COALESCE(p.title, ap.title)                             AS title,
+          COALESCE(cat.name, 'Uncategorised')                     AS category
+        FROM "cartProducts" cp
+        LEFT JOIN products p              ON p.id  = cp."productId"
+        LEFT JOIN "affiliateProducts" ap  ON ap.id = cp."affiliateProductId"
+        LEFT JOIN "productCategory" pc    ON pc."productId" = COALESCE(p.id, ap.id)
+        LEFT JOIN "productCategories" cat ON cat.id = pc."categoryId"
+        WHERE cp."cartId" = $1
+        ORDER BY category, title
+      `,
+      [newCartId],
+    );
+    const grouped: Record<string, { q: number; t: string }[]> = {};
+    for (const r of prodRows) {
+      grouped[r.category] ??= [];
+      grouped[r.category].push({ q: r.quantity, t: r.title });
+    }
+    const productList = Object.entries(grouped)
+      .map(([cat, items]) => {
+        const lines = items.map((it) => `${it.t} - x${it.q}`).join("<br>");
+        return `<b>${cat.toUpperCase()}</b><br><br>${lines}`;
+      })
+      .join("<br><br>");
+
+    await sendNotification({
+      organizationId: groupedArray[i].organizationId,
+      type: "order_placed",
+      subject: `Shared order created (S-${orderKey})`,
+      message: `A shared order was created for your organisation.<br>{product_list}`,
+      variables: { product_list: productList, order_number: `S-${orderKey}` },
+      country: oldCart.rows[0].country,
+      trigger: "admin_only",
+      channels: ["in_app", "telegram"],
+      clientId: null,
+      url: `/orders/${newOrderId}`,
+    });
     }
 
     return NextResponse.json(r.rows[0], { status: 201 });

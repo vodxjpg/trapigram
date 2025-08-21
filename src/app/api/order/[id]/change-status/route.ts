@@ -622,6 +622,39 @@ const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
 const FIRST_NOTIFY_STATUSES = ["paid", "completed"] as const
 const isActive = (s: string) => ACTIVE.includes(s);
 const isInactive = (s: string) => INACTIVE.includes(s);
+
+
+/* util: build {product_list} for a given cart (normal  affiliate, grouped) */
+async function buildProductListForCart(cartId: string) {
+  const { rows } = await pool.query(
+    `
+      SELECT
+        cp.quantity,
+        COALESCE(p.title, ap.title)                             AS title,
+        COALESCE(cat.name, 'Uncategorised')                     AS category
+      FROM "cartProducts" cp
+      LEFT JOIN products p              ON p.id  = cp."productId"
+      LEFT JOIN "affiliateProducts" ap  ON ap.id = cp."affiliateProductId"
+      LEFT JOIN "productCategory" pc    ON pc."productId" = COALESCE(p.id, ap.id)
+      LEFT JOIN "productCategories" cat ON cat.id = pc."categoryId"
+      WHERE cp."cartId" = $1
+      ORDER BY category, title
+    `,
+    [cartId],
+  );
+  const grouped: Record<string, { q: number; t: string }[]> = {};
+  for (const r of rows) {
+    grouped[r.category] ??= [];
+    grouped[r.category].push({ q: r.quantity, t: r.title });
+  }
+  return Object.entries(grouped)
+    .map(([cat, items]) => {
+      const lines = items.map((it) => `${it.t} - x${it.q}`).join("<br>");
+      return `<b>${cat.toUpperCase()}</b><br><br>${lines}`;
+    })
+    .join("<br><br>");
+}
+
 /* Create supplier orders (S-<orderKey>) for mapped items if missing */
 async function ensureSupplierOrdersExist(baseOrderId: string) {
   // fetch the buyer order fresh (we’ll need org, cart, country, key)
@@ -676,7 +709,7 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
         `SELECT cost FROM "sharedProduct" WHERE "shareLinkId" = $1 AND "productId" = $2 LIMIT 1`,
         [it.shareLinkId, it.sourceProductId]);
       const transfer = Number(sp?.cost?.[o.country] ?? 0);
-     sum += transfer * qty;
+      sum += transfer * qty;
     }
     transferSubtotals[orgId] = sum;
   }
@@ -740,20 +773,20 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
     // create supplier order S-<baseKey>
     const supplierOrderId = uuidv4();
     await pool.query(
-  `INSERT INTO orders
+      `INSERT INTO orders
     (id,"organizationId","clientId","cartId",country,"paymentMethod",
      "shippingTotal","totalAmount","shippingService","shippingMethod",
      address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
      "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash")
    VALUES
     ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18)`,
-  [
-    supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
-    shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
-    o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
-    `S-${baseKey}`, 0, supplierCartHash,  // ← supply a non-null hash
-  ],
-);
+      [
+        supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
+        shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
+        o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
+        `S-${baseKey}`, 0, supplierCartHash,  // ← supply a non-null hash
+      ],
+    );
     console.log("[ensureSupplierOrders] created S-order", { supplierOrderId, key: `S-${baseKey}`, orgId, subtotal, shippingShare });
   }
 }
@@ -1003,6 +1036,15 @@ export async function PATCH(
       const setBits = [`status = $1`, `"updatedAt" = NOW()`];
       if (dateCol) setBits.splice(1, 0, `"${dateCol}" = COALESCE("${dateCol}", NOW())`);
       const baseKey = String(ord.orderKey || "").replace(/^S-/, "");
+
+      // capture sibling states BEFORE update (to decide stock effects)
+      const { rows: beforeSibs } = await pool.query(
+        `SELECT id, status, "cartId", country, "organizationId"
+      FROM orders
+     WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
+       AND id <> $2`,
+        [baseKey, id],
+      );
       const sql = `
     UPDATE orders o
        SET ${setBits.join(", ")}
@@ -1026,6 +1068,30 @@ export async function PATCH(
         for (const s of sibs) {
           try { await getRevenue(s.id, s.organizationId); }
           catch (e) { console.warn("[cascade] revenue sibling failed:", s.id, e); }
+        }
+      }
+
+      // 🔧 STOCK EFFECTS for supplier siblings on cascade
+      // apply when a sibling transitions across ACTIVE/INACTIVE boundary due to cascade
+      for (const sb of beforeSibs) {
+        const wasActive = isActive(sb.status);
+        const willBeActive = isActive(newStatus);
+        if (wasActive === willBeActive) continue; // no boundary change → skip
+        const effectSign: 1 | -1 = willBeActive ? -1 : +1; // -1 reserve, +1 release
+        const { rows: lines } = await pool.query(
+          `SELECT "productId","affiliateProductId",quantity
+        FROM "cartProducts" WHERE "cartId" = $1`,
+          [sb.cartId],
+        );
+        for (const ln of lines) {
+          if (ln.productId) {
+            try { await adjustStock(pool as unknown as Pool, ln.productId, sb.country, effectSign * ln.quantity); }
+            catch (e) { console.warn("[cascade][stock] product adjust failed", { orderId: sb.id, productId: ln.productId }, e); }
+          }
+          if (ln.affiliateProductId) {
+            try { await adjustStock(pool as unknown as Pool, ln.affiliateProductId, sb.country, effectSign * ln.quantity); }
+            catch (e) { console.warn("[cascade][stock] affiliate adjust failed", { orderId: sb.id, productId: ln.affiliateProductId }, e); }
+          }
         }
       }
 
@@ -1297,41 +1363,8 @@ export async function PATCH(
     }
 
     if (shouldNotify) {
-      /* build product list (normal and  affiliate) */
-      const { rows: prodRows } = await pool.query(
-        `
-      SELECT
-        cp.quantity,
-        COALESCE(p.title, ap.title)                             AS title,
-        COALESCE(cat.name, 'Uncategorised')                     AS category
-      FROM "cartProducts" cp
-      /* normal products ---------------------------------------- */
-      LEFT JOIN products p              ON p.id  = cp."productId"
-      /* affiliate products ------------------------------------- */
-      LEFT JOIN "affiliateProducts" ap  ON ap.id = cp."affiliateProductId"
-      /* category (first one found) ----------------------------- */
-      LEFT JOIN "productCategory" pc    ON pc."productId" = COALESCE(p.id, ap.id)
-      LEFT JOIN "productCategories" cat ON cat.id = pc."categoryId"
-      WHERE cp."cartId" = $1
-      ORDER BY category, title
-    `,
-        [ord.cartId],
-      );
-      /* ✨ group by categories */
-      const grouped: Record<string, { q: number; t: string }[]> = {};
-      for (const r of prodRows) {
-        grouped[r.category] ??= [];
-        grouped[r.category].push({ q: r.quantity, t: r.title });
-      }
-
-      const productList = Object.entries(grouped)
-        .map(([cat, items]) => {
-          const lines = items
-            .map((it) => `${it.t} - x${it.q}`)
-            .join("<br>");
-          return `<b>${cat.toUpperCase()}</b><br><br>${lines}`;
-        })
-        .join("<br><br>");
+      // product list for THIS order/cart only
+      const productList = await buildProductListForCart(ord.cartId);
 
       /* map status → notification type */
       /* ── gather extra variables for the “underpaid” e-mail ───────────── */
@@ -1376,35 +1409,62 @@ export async function PATCH(
 
       const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
 
-      await sendNotification({
+      const isSupplierOrder = String(ord.orderKey || "").startsWith("S-");
+      const baseNotificationPayload = {
         organizationId,
         type: notifType,
         subject: `Order #${ord.orderKey} ${newStatus}`,
-        message:
-          `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+        message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
         country: ord.country,
-        trigger: "order_status_change",
-        channels: ["email", "in_app", "telegram"],
-        clientId: ord.clientId,
-        url: `/orders/${id}`,
         variables: {
           product_list: productList,
           order_number: ord.orderKey,
           order_date: orderDate,
           order_shipping_method: ord.shippingMethod ?? "-",
           tracking_number: ord.trackingNumber ?? "",
-          expected_amt: expectedAmt,        // ★ NEW
+          expected_amt: expectedAmt,
           received_amt: receivedAmt,
           shipping_company: ord.shippingService ?? "",
           pending_amt: pendingAmt,
-          asset: assetSymbol,        // ★ NEW
+          asset: assetSymbol,
         },
-      });
+      } as const;
+
+      if (isSupplierOrder) {
+        // Supplier (shared) order:
+        //  • Always notify supplier admins (in_app + telegram)
+        //  • Buyer gets ONLY an email and ONLY when status === "completed"
+        await sendNotification({
+          ...baseNotificationPayload,
+          trigger: "admin_only",
+          channels: ["in_app", "telegram"],
+          clientId: null,
+          url: `/orders/${id}`,
+        });
+        if (newStatus === "completed") {
+          await sendNotification({
+            ...baseNotificationPayload,
+            trigger: "user_only_email",
+            channels: ["email"],
+            clientId: ord.clientId,
+            url: `/orders/${id}`,
+          });
+        }
+      } else {
+        // Normal (buyer) order – unchanged behavior
+        await sendNotification({
+          ...baseNotificationPayload,
+          trigger: "order_status_change",
+          channels: ["email", "in_app", "telegram"],
+          clientId: ord.clientId,
+          url: `/orders/${id}`,
+        });
+      }
 
       /* ─────────────────────────────────────────────────────────────
- *  Affiliate / referral bonuses
- *     – ONLY once, when the order first becomes PAID
- * ──────────────────────────────────────────────────────────── */
+      *  Affiliate / referral bonuses
+      *     – ONLY once, when the order first becomes PAID
+      * ──────────────────────────────────────────────────────────── */
       if (newStatus === "paid" && ord.status !== "paid") {
         /*  1) fetch affiliate-settings (points & steps) */
         /* ── grab settings (use real column names, alias them to old variable names) ── */

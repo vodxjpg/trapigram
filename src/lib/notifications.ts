@@ -215,6 +215,12 @@ export async function sendNotification(params: SendNotificationParams) {
     })
     .execute();
 
+     // Internal routing hints (no signature change):
+ //  - trigger === "admin_only"      → do not DM client or send user e-mails
+ //  - trigger === "user_only_email" → send only the user's e-mail (no admin e-mails/groups)
+ const suppressAdminFanout = trigger === "user_only_email";
+ const suppressUserFanout  = trigger === "admin_only";
+
   /* 6️⃣ channel fan-out */
   /* — EMAIL — */
   if (channels.includes("email")) {
@@ -234,7 +240,7 @@ export async function sendNotification(params: SendNotificationParams) {
 
     const promises: Promise<unknown>[] = [];
 
-    if (adminEmails.length) {
+    if (adminEmails.length && !suppressAdminFanout) {
       promises.push(
         ...adminEmails.map((addr) =>
           send({
@@ -247,7 +253,7 @@ export async function sendNotification(params: SendNotificationParams) {
       );
     }
 
-    if (userEmails.length) {
+   if (userEmails.length && !suppressUserFanout) {
       promises.push(
         ...userEmails.map((addr) =>
           send({
@@ -266,41 +272,44 @@ export async function sendNotification(params: SendNotificationParams) {
 
   /* — IN-APP — */
   if (channels.includes("in_app")) {
-    const targets = new Set<string | null>();
-    if (userId) targets.add(userId);
-    if (clientRow?.userId) targets.add(clientRow.userId);
-    ownerIds.forEach((id) => targets.add(id));
-    if (targets.size === 0) targets.add(null);
-
-    for (const uid of targets) {
-      await dispatchInApp({
-        organizationId,
-        userId: uid,
-        clientId,
-        message: bodyUserGeneric,
-        country,
-        url,
-      });
+     if (!suppressAdminFanout) {
+   const targets = new Set<string | null>();
+   if (userId) targets.add(userId);
+   if (clientRow?.userId) targets.add(clientRow.userId);
+   ownerIds.forEach((id) => targets.add(id));
+   if (targets.size === 0) targets.add(null);
+        for (const uid of targets) {
+    await dispatchInApp({
+      organizationId,
+      userId: uid,
+      clientId,
+      message: bodyUserGeneric,
+      country,
+      url,
+    });
+  }
     }
   }
 
   /* — WEBHOOK — */
   if (channels.includes("webhook")) {
+     if (!suppressAdminFanout) {
     await dispatchWebhook({ organizationId, type, message: bodyUserGeneric });
+  }
   }
 
   /* — TELEGRAM — */
   if (channels.includes("telegram")) {
-    await dispatchTelegram({
-      organizationId,
-      type,
-      country,
-      bodyAdmin: hasAdminTpl ? bodyAdminGeneric : "",
-      bodyUser: hasUserTpl ? bodyUserGeneric : "",
-      adminUserIds: [],
-      clientUserId: clientRow?.userId || null,
-      ticketId,
-    });
+     await dispatchTelegram({
+    organizationId,
+    type,
+    country,
+    bodyAdmin: suppressAdminFanout ? "" : (hasAdminTpl ? bodyAdminGeneric : ""),
+    bodyUser: suppressUserFanout ? "" : (hasUserTpl ? bodyUserGeneric : ""),
+    adminUserIds: [],
+    clientUserId: suppressUserFanout ? null : (clientRow?.userId || null),
+    ticketId,
+  });
   }
 }
 
