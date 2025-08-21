@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import * as XLSX from "xlsx";
@@ -54,8 +55,10 @@ type Order = {
   id: string;
   datePaid: string;
   orderNumber: string;
-  status: boolean; // ← was string
+  cancelled: boolean;
+  refunded: boolean; // ← was string
   userId: string;
+  username: string;
   country: string;
   totalPrice: number;
   shippingCost: number;
@@ -91,7 +94,9 @@ export default function OrderReport() {
 
   // ** NEW: state for real orders **
   const [orders, setOrders] = useState<Order[]>([]);
-  const [status, setStatus] = useState<"all" | "paid" | "cancelled">("all");
+  const [status, setStatus] = useState<
+    "all" | "paid" | "refunded" | "cancelled"
+  >("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chartData, setChartData] = useState<
@@ -119,6 +124,7 @@ export default function OrderReport() {
         );
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const data = await res.json();
+        console.log(data);
         setOrders(data.orders);
         setChartData(data.chartData);
         setCurrentPage(1);
@@ -136,18 +142,24 @@ export default function OrderReport() {
 
   // paging and filtering now uses real `orders`
   const filteredOrders = useMemo(() => {
-    // convert to boolean once for safety
-    const toBool = (v: any) => v === true || v === "true";
-    const wantCancelled =
-      status === "cancelled" ? true : status === "paid" ? false : null;
+    const matchesStatus = (o: Order) => {
+      switch (status) {
+        case "paid":
+          // show only orders that are neither cancelled nor refunded
+          return o.cancelled === false && o.refunded === false;
+        case "cancelled":
+          return o.cancelled === true;
+        case "refunded":
+          return o.refunded === true;
+        case "all":
+        default:
+          return true;
+      }
+    };
 
-    let list = orders;
+    const list = orders.filter(matchesStatus);
 
-    if (wantCancelled !== null) {
-      list = orders.filter((o) => toBool(o.status) === wantCancelled);
-    }
-
-    return [...list].sort(
+    return list.sort(
       (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
     );
   }, [orders, status]);
@@ -222,7 +234,12 @@ export default function OrderReport() {
     const dataForSheet = orders.map((o) => ({
       "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
       "Order Number": o.orderNumber,
-      Status: o.status === true || o.status === "true" ? "Cancelled" : "Paid",
+      Status:
+        o.cancelled === true
+          ? "Cancelled"
+          : o.refunded === true
+            ? "Refunded"
+            : "Paid",
       "User ID": o.userId,
       Country: o.country,
       "Total Price": o.totalPrice,
@@ -362,7 +379,7 @@ export default function OrderReport() {
                   <Select
                     value={status}
                     onValueChange={(v) =>
-                      setStatus(v as "all" | "paid" | "cancelled")
+                      setStatus(v as "all" | "paid" | "cancelled" | "refunded")
                     }
                     className="w-32"
                   >
@@ -373,6 +390,7 @@ export default function OrderReport() {
                       <SelectItem value="all">All</SelectItem>
                       <SelectItem value="paid">Paid</SelectItem>
                       <SelectItem value="cancelled">Cancelled</SelectItem>
+                      <SelectItem value="refunded">Refunded</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -407,7 +425,7 @@ export default function OrderReport() {
                           "Paid At",
                           "Order Number",
                           "Status",
-                          "User ID",
+                          "Username",
                           "Country",
                           "Total Price",
                           "Shipping Cost",
@@ -458,25 +476,44 @@ export default function OrderReport() {
                               {o.orderNumber}
                             </TableCell>
                             <TableCell>
-                              {o.status === true || o.status === "true"
+                              {o.cancelled === true
                                 ? "Cancelled"
-                                : "Paid"}
+                                : o.refunded === true
+                                  ? "Refunded"
+                                  : "Paid"}
                             </TableCell>
-                            <TableCell>{o.userId}</TableCell>
+                            <TableCell>
+                              <Link href={`/clients/${o.userId || o.id}/info`}>
+                                {o.username || o.userId}
+                              </Link>
+                            </TableCell>
+
                             <TableCell>{o.country}</TableCell>
-                            <TableCell className="text-right">
+                            <TableCell
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true ? "text-red-600" : ""}`}
+                            >
                               {formatCurrency(o.totalPrice)}
                             </TableCell>
-                            <TableCell className="text-right">
+                            <TableCell
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true ? "text-red-600" : ""}`}
+                            >
                               {formatCurrency(o.shippingCost)}
                             </TableCell>
-                            <TableCell className="text-right">
+                            <TableCell
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true ? "text-red-600" : ""}`}
+                            >
                               {formatCurrency(o.discount)}
                             </TableCell>
-                            <TableCell className="text-right">
+                            <TableCell
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true ? "text-red-600" : ""}`}
+                            >
                               {formatCurrency(o.cost)}
                             </TableCell>
-                            <TableCell>{o.coin}</TableCell>
+                            <TableCell
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true ? "text-red-600" : ""}`}
+                            >
+                              {o.coin}
+                            </TableCell>
                             <TableCell
                               className={`text-right font-medium ${o.netProfit >= 0 ? "text-green-600" : "text-red-600"}`}
                             >

@@ -39,15 +39,18 @@ export async function GET(req: NextRequest) {
             o."orderKey"   AS "orderNumber",
             o."clientId"   AS "userId",
             o.country,
+            c.username,
             r."${currency}total"       AS "totalPrice",
             r."${currency}shipping"    AS "shippingCost",
             r."${currency}discount" AS "discount",
             r."${currency}cost" AS "cost",
-            r.cancelled AS status,
+            r.cancelled, r.refunded,
             o."orderMeta" AS asset
         FROM "orderRevenue" r
         JOIN orders o
             ON r."orderId" = o.id
+        JOIN clients c
+            ON o."clientId" = c.id
         WHERE
             r."organizationId" = $1
             AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
@@ -71,7 +74,7 @@ export async function GET(req: NextRequest) {
             r."createdAt", r."updatedAt", r."organizationId"  FROM "orderRevenue" r
             JOIN orders o
             ON r."orderId" = o.id
-            WHERE r."organizationId" = $1 AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz AND r.cancelled = FALSE
+            WHERE r."organizationId" = $1 AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz AND r.cancelled = FALSE AND r.refunded = FALSE
             ORDER BY o."datePaid" DESC`;
 
         const chartResult = await pool.query(chartQuery, values);
