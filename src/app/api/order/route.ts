@@ -334,6 +334,8 @@ export async function POST(req: NextRequest) {
     pointsRedeemedAmount,
   ];
   const cartHash = encryptSecretNode(JSON.stringify(baseValues));
+    // Maintain NOT NULL invariant for carts.cartUpdatedHash as well
+  const cartUpdatedHash = cartHash
   const insertValues = [...baseValues, cartHash, orderKey];
 
   const insertSQL = `
@@ -356,9 +358,14 @@ export async function POST(req: NextRequest) {
   `;
 
   const updCartSQL = `
-    UPDATE carts SET status = $1, "updatedAt" = NOW(), "cartHash" = $2 WHERE id = $3
+        UPDATE carts
+       SET status = $1,
+           "updatedAt" = NOW(),
+           "cartHash" = $2,
+           "cartUpdatedHash" = $3
+     WHERE id = $4
   `;
-  const updCartVals = [cartStatus, cartHash, cartId];
+  const updCartVals = [cartStatus, cartHash, cartUpdatedHash, cartId];
 
   try {
     await pool.query("BEGIN");
@@ -504,8 +511,13 @@ export async function POST(req: NextRequest) {
         );
 
                 await pool.query(
-          `INSERT INTO "carts" (id, "clientId", country, "shippingMethod", status, "organizationId", "cartHash", "createdAt", "updatedAt")
-           VALUES ('${newCartId}', '${newClientId}', '${oldCart.rows[0].country}', '${oldCart.rows[0].shippingMethod}', ${newStatus}, '${groupedArray[i].organizationId}', '${newCartHash}', NOW(), NOW())
+         `INSERT INTO "carts"
+   (id, "clientId", country, "shippingMethod", status, "organizationId",
+    "cartHash", "cartUpdatedHash", "createdAt", "updatedAt")
+ VALUES
+   ('${newCartId}', '${newClientId}', '${oldCart.rows[0].country}',
+    '${oldCart.rows[0].shippingMethod}', ${newStatus}, '${groupedArray[i].organizationId}',
+    '${newCartHash}', '${newCartHash}', NOW(), NOW())
            RETURNING *`,
         );
         await pool.query("COMMIT");
