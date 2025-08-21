@@ -770,7 +770,7 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
         shippingAssigned += shippingShare;
       }
     }
-    // create supplier order S-<baseKey>
+    // create supplier order S-<orderKey>
     const supplierOrderId = uuidv4();
      await pool.query(
    `INSERT INTO orders
