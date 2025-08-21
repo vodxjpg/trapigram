@@ -676,15 +676,15 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
         `SELECT cost FROM "sharedProduct" WHERE "shareLinkId" = $1 AND "productId" = $2 LIMIT 1`,
         [it.shareLinkId, it.sourceProductId]);
       const transfer = Number(sp?.cost?.[o.country] ?? 0);
-      sum = transfer * qty;
+     sum += transfer * qty;
     }
     transferSubtotals[orgId] = sum;
   }
   const buyerShipping = Number(o.shippingTotal || 0);
-  const totalTransfer = Object.values(transferSubtotals).reduce((a, b) => a  b, 0) || 0;
+  const totalTransfer = Object.values(transferSubtotals).reduce((a, b) => a + b, 0) || 0;
   let shippingAssigned = 0;
 
-  for (let i = 0; i < entries.length; i) {
+  for (let i = 0; i < entries.length; i++) {
     const [orgId, items] = entries[i];
     // ensure client exists in supplier org
     const { rows: [oldClient] } = await pool.query(`SELECT * FROM clients WHERE id = $1`, [o.clientId]);
@@ -725,7 +725,7 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
            VALUES ($1,$2,$3,$4,$5,$6)`,
           [uuidv4(), supplierCartId, it.sourceProductId, qty, transfer, affId],
         );
-        subtotal = transfer * qty;
+        subtotal += transfer * qty;
       }
     }
     // shipping split
@@ -734,7 +734,7 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
       if (i === entries.length - 1) shippingShare = buyerShipping - shippingAssigned;
       else {
         shippingShare = Number(((buyerShipping * (transferSubtotals[orgId] || 0)) / totalTransfer).toFixed(2));
-        shippingAssigned = shippingShare;
+        shippingAssigned += shippingShare;
       }
     }
     // create supplier order S-<baseKey>
@@ -749,7 +749,7 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
         ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17)`,
       [
         supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
-        shippingShare, shippingShare  subtotal, o.shippingService, o.shippingMethod,
+       shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
         o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
         `S-${baseKey}`, 0,
       ],
