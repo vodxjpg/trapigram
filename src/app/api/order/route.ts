@@ -603,20 +603,20 @@ export async function POST(req: NextRequest) {
     }
 
         newOrderId = uuidv4();
-        const newOrderSQL = `
-          INSERT INTO orders
-            (id, "organizationId","clientId","cartId",country,"paymentMethod",
-             "shippingTotal", "totalAmount","shippingService","shippingMethod",
-             address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
-             "dateCreated","createdAt","updatedAt","orderKey", "discountTotal")
-          VALUES
-            ($1, $2, $3, $4,$5, $6,
-             $7, $8, $9,
-             $10, $11, $12, $13,
-             $14,$15,
-             NOW(),NOW(),NOW(),$16, $17)
-          RETURNING *
-        `;
+         const newOrderSQL = `
+INSERT INTO orders
+  (id, "organizationId","clientId","cartId",country,"paymentMethod",
+   "shippingTotal","totalAmount","shippingService","shippingMethod",
+   address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
+   "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash")
+VALUES
+  ($1,$2,$3,$4,$5,$6,
+   $7,$8,$9,
+   $10,$11,$12,$13,
+   $14,$15,
+   NOW(),NOW(),NOW(),$16,$17,$18)
+RETURNING *
+  `;
          const supplierOrderKey = `S-${orderKey}`;
                 // Pro-rate shipping for this supplier group. Last group gets the rounding remainder.
         let shippingShare = 0;
@@ -646,6 +646,7 @@ export async function POST(req: NextRequest) {
           oldOrder.rows[0].pointsRedeemedAmount,
           supplierOrderKey  ,
           0,
+          newCartHash,
         ];
 
            await pool.query(newOrderSQL, newOrderValues);

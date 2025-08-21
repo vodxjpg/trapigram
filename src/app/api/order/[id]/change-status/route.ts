@@ -740,20 +740,20 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
     // create supplier order S-<baseKey>
     const supplierOrderId = uuidv4();
     await pool.query(
-      `INSERT INTO orders
-        (id,"organizationId","clientId","cartId",country,"paymentMethod",
-         "shippingTotal","totalAmount","shippingService","shippingMethod",
-         address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
-         "dateCreated","createdAt","updatedAt","orderKey","discountTotal")
-       VALUES
-        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17)`,
-      [
-        supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
-       shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
-        o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
-        `S-${baseKey}`, 0,
-      ],
-    );
+  `INSERT INTO orders
+    (id,"organizationId","clientId","cartId",country,"paymentMethod",
+     "shippingTotal","totalAmount","shippingService","shippingMethod",
+     address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
+     "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash")
+   VALUES
+    ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18)`,
+  [
+    supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
+    shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
+    o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
+    `S-${baseKey}`, 0, supplierCartHash,  // ← supply a non-null hash
+  ],
+);
     console.log("[ensureSupplierOrders] created S-order", { supplierOrderId, key: `S-${baseKey}`, orgId, subtotal, shippingShare });
   }
 }
