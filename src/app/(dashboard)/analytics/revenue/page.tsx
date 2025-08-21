@@ -231,24 +231,39 @@ export default function OrderReport() {
 
   // ** ADD: export to Excel **
   const exportToExcel = () => {
-    const dataForSheet = orders.map((o) => ({
-      "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
-      "Order Number": o.orderNumber,
-      Status:
-        o.cancelled === true
-          ? "Cancelled"
-          : o.refunded === true
-            ? "Refunded"
-            : "Paid",
-      "User ID": o.userId,
-      Country: o.country,
-      "Total Price": o.totalPrice,
-      "Shipping Cost": o.shippingCost,
-      Discount: o.discount,
-      Cost: o.cost,
-      Asset: o.coin,
-      "Net Profit": o.netProfit,
-    }));
+    const dataForSheet = orders.map((o) => {
+      let netProfitDisplay;
+
+      if (o.cancelled === true) {
+        // Cancelled → always zero
+        netProfitDisplay = 0;
+      } else if (o.refunded === true) {
+        // Refunded → prepend minus sign, ensure numeric
+        netProfitDisplay = -Math.abs(Number(o.netProfit) || 0);
+      } else {
+        // Paid → as-is
+        netProfitDisplay = o.netProfit;
+      }
+
+      return {
+        "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
+        "Order Number": o.orderNumber,
+        Status:
+          o.cancelled === true
+            ? "Cancelled"
+            : o.refunded === true
+              ? "Refunded"
+              : "Paid",
+        "User ID": o.userId,
+        Country: o.country,
+        "Total Price": o.totalPrice,
+        "Shipping Cost": o.shippingCost,
+        Discount: o.discount,
+        Cost: o.cost,
+        Asset: o.coin,
+        "Net Profit": netProfitDisplay,
+      };
+    });
 
     const ws = XLSX.utils.json_to_sheet(dataForSheet);
     const wb = XLSX.utils.book_new();
@@ -515,9 +530,15 @@ export default function OrderReport() {
                               {o.coin}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.netProfit >= 0 ? "text-green-600" : "text-red-600"}`}
+                              className={`text-right font-medium ${
+                                o.cancelled || o.refunded
+                                  ? "text-red-600"
+                                  : o.netProfit >= 0
+                                    ? "text-green-600"
+                                    : "text-red-600"
+                              }`}
                             >
-                              {formatCurrency(o.netProfit)}
+                              {o.cancelled ? "0" : formatCurrency(o.netProfit)}
                             </TableCell>
                           </TableRow>
                         ))

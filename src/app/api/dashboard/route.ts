@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
         const orderAmount = orders.length
 
         const revenueQuery = `SELECT "${currency}total" AS total, "${currency}discount" AS discount, "${currency}shipping" AS shipping, "${currency}cost" AS cost FROM "orderRevenue"
-        WHERE "organizationId" = '${organizationId}' AND "createdAt"::date BETWEEN '${from}' AND '${to}'`;
+        WHERE "organizationId" = '${organizationId}' AND "createdAt"::date BETWEEN '${from}' AND '${to}' AND cancelled = FALSE AND refunded = FALSE`;
 
         const revenueResult = await pool.query(revenueQuery);
         const revenues = revenueResult.rows
@@ -151,7 +151,7 @@ export async function GET(req: NextRequest) {
             r."createdAt", r."updatedAt", r."organizationId"  FROM "orderRevenue" r
             JOIN orders o
             ON r."orderId" = o.id
-            WHERE r."organizationId" = $1 AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
+            WHERE r."organizationId" = $1 AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz AND r.cancelled = FALSE AND r.refunded = FALSE
             ORDER BY o."datePaid" DESC`;
 
         const chartResult = await pool.query(chartQuery, values);
