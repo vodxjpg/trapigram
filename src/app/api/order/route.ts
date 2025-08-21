@@ -492,9 +492,20 @@ export async function POST(req: NextRequest) {
         const newCartId = uuidv4();
         const newStatus = false;
 
-        await pool.query(
-          `INSERT INTO "carts" (id, "clientId", country, "shippingMethod", status, "organizationId", "createdAt", "updatedAt") 
-           VALUES ('${newCartId}', '${newClientId}', '${oldCart.rows[0].country}', '${oldCart.rows[0].shippingMethod}', ${newStatus}, '${groupedArray[i].organizationId}', NOW(), NOW()) 
+        // cartHash is NOT NULL in "carts"; generate one for the split carts too
+        const newCartHash = encryptSecretNode(
+          JSON.stringify([
+            newCartId,
+            newClientId,
+            oldCart.rows[0].country,
+            oldCart.rows[0].shippingMethod,
+            groupedArray[i].organizationId,
+          ]),
+        );
+
+                await pool.query(
+          `INSERT INTO "carts" (id, "clientId", country, "shippingMethod", status, "organizationId", "cartHash", "createdAt", "updatedAt")
+           VALUES ('${newCartId}', '${newClientId}', '${oldCart.rows[0].country}', '${oldCart.rows[0].shippingMethod}', ${newStatus}, '${groupedArray[i].organizationId}', '${newCartHash}', NOW(), NOW())
            RETURNING *`,
         );
         await pool.query("COMMIT");
