@@ -622,6 +622,141 @@ const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
 const FIRST_NOTIFY_STATUSES = ["paid", "completed"] as const
 const isActive = (s: string) => ACTIVE.includes(s);
 const isInactive = (s: string) => INACTIVE.includes(s);
+/* Create supplier orders (S-<orderKey>) for mapped items if missing */
+async function ensureSupplierOrdersExist(baseOrderId: string) {
+  // fetch the buyer order fresh (we’ll need org, cart, country, key)
+  const { rows: [o] } = await pool.query(
+    `SELECT id,"organizationId","clientId","cartId",country,"orderKey","paymentMethod",
+            "shippingService","shippingMethod","address",status,
+            "shippingTotal","pointsRedeemed","pointsRedeemedAmount"
+       FROM orders WHERE id = $1`, [baseOrderId]);
+  if (!o) return;
+  const baseKey: string = String(o.orderKey || "").replace(/^S-/, "");
+  // already have supplier siblings?
+  const { rowCount: sibs } = await pool.query(
+    `SELECT 1 FROM orders WHERE "orderKey" = ('S-' || $1) LIMIT 1`, [baseKey]);
+  if (sibs) return; // nothing to do
+
+  // build mapping of target(B) -> source(A) by organization
+  const { rows: cpRows } = await pool.query(
+    `SELECT "productId",quantity,"affiliateProductId","unitPrice"
+       FROM "cartProducts" WHERE "cartId" = $1`, [o.cartId]);
+  if (!cpRows.length) return;
+
+  type MapItem = { organizationId: string; shareLinkId: string; sourceProductId: string; targetProductId: string; };
+  const map: MapItem[] = [];
+  for (const ln of cpRows) {
+    if (!ln.productId) continue;
+    const { rows: [m] } = await pool.query(
+      `SELECT "shareLinkId","sourceProductId","targetProductId"
+         FROM "sharedProductMapping" WHERE "targetProductId" = $1 LIMIT 1`,
+      [ln.productId]);
+    if (!m) continue;
+    const { rows: [prod] } = await pool.query(
+      `SELECT "organizationId" FROM products WHERE id = $1`, [m.sourceProductId]);
+    if (!prod) continue;
+    map.push({ organizationId: prod.organizationId, ...m });
+  }
+  if (!map.length) return;
+
+  const groups: Record<string, MapItem[]> = {};
+  for (const it of map) (groups[it.organizationId] ??= []).push(it);
+  const entries = Object.entries(groups);
+
+  // precompute transfer subtotals for shipping split
+  const transferSubtotals: Record<string, number> = {};
+  for (const [orgId, items] of entries) {
+    let sum = 0;
+    for (const it of items) {
+      const { rows: [ln] } = await pool.query(
+        `SELECT quantity FROM "cartProducts" WHERE "cartId" = $1 AND "productId" = $2 LIMIT 1`,
+        [o.cartId, it.targetProductId]);
+      const qty = Number(ln?.quantity || 0);
+      const { rows: [sp] } = await pool.query(
+        `SELECT cost FROM "sharedProduct" WHERE "shareLinkId" = $1 AND "productId" = $2 LIMIT 1`,
+        [it.shareLinkId, it.sourceProductId]);
+      const transfer = Number(sp?.cost?.[o.country] ?? 0);
+      sum = transfer * qty;
+    }
+    transferSubtotals[orgId] = sum;
+  }
+  const buyerShipping = Number(o.shippingTotal || 0);
+  const totalTransfer = Object.values(transferSubtotals).reduce((a, b) => a  b, 0) || 0;
+  let shippingAssigned = 0;
+
+  for (let i = 0; i < entries.length; i) {
+    const [orgId, items] = entries[i];
+    // ensure client exists in supplier org
+    const { rows: [oldClient] } = await pool.query(`SELECT * FROM clients WHERE id = $1`, [o.clientId]);
+    const { rows: [found] } = await pool.query(
+      `SELECT id FROM clients WHERE "userId" = $1 AND "organizationId" = $2 LIMIT 1`,
+      [oldClient.userId, orgId]);
+    const supplierClientId = found?.id ?? uuidv4();
+    if (!found) {
+      await pool.query(
+        `INSERT INTO clients (id,"userId","organizationId",username,"firstName","lastName",email,"phoneNumber",country,"createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())`,
+        [supplierClientId, oldClient.userId, orgId, oldClient.username, oldClient.firstName, oldClient.lastName, oldClient.email, oldClient.phoneNumber, oldClient.country],
+      );
+    }
+    // create supplier cart
+    const supplierCartId = uuidv4();
+    const supplierCartHash = createHmac("sha256", "cart").update(supplierCartId).digest("hex");
+    await pool.query(
+      `INSERT INTO carts (id,"clientId",country,"shippingMethod",status,"organizationId","cartHash","cartUpdatedHash","createdAt","updatedAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$7,NOW(),NOW())`,
+      [supplierCartId, supplierClientId, o.country, o.shippingMethod, false, orgId, supplierCartHash],
+    );
+    // add items at transfer price
+    let subtotal = 0;
+    for (const it of items) {
+      const { rows: [ln] } = await pool.query(
+        `SELECT quantity,"affiliateProductId" FROM "cartProducts" WHERE "cartId" = $1 AND "productId" = $2 LIMIT 1`,
+        [o.cartId, it.targetProductId]);
+      const qty = Number(ln?.quantity || 0);
+      const affId = ln?.affiliateProductId || null;
+      const { rows: [sp] } = await pool.query(
+        `SELECT cost FROM "sharedProduct" WHERE "shareLinkId" = $1 AND "productId" = $2 LIMIT 1`,
+        [it.shareLinkId, it.sourceProductId]);
+      const transfer = Number(sp?.cost?.[o.country] ?? 0);
+      if (qty > 0) {
+        await pool.query(
+          `INSERT INTO "cartProducts" (id,"cartId","productId","quantity","unitPrice","affiliateProductId")
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [uuidv4(), supplierCartId, it.sourceProductId, qty, transfer, affId],
+        );
+        subtotal = transfer * qty;
+      }
+    }
+    // shipping split
+    let shippingShare = 0;
+    if (totalTransfer > 0) {
+      if (i === entries.length - 1) shippingShare = buyerShipping - shippingAssigned;
+      else {
+        shippingShare = Number(((buyerShipping * (transferSubtotals[orgId] || 0)) / totalTransfer).toFixed(2));
+        shippingAssigned = shippingShare;
+      }
+    }
+    // create supplier order S-<baseKey>
+    const supplierOrderId = uuidv4();
+    await pool.query(
+      `INSERT INTO orders
+        (id,"organizationId","clientId","cartId",country,"paymentMethod",
+         "shippingTotal","totalAmount","shippingService","shippingMethod",
+         address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
+         "dateCreated","createdAt","updatedAt","orderKey","discountTotal")
+       VALUES
+        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17)`,
+      [
+        supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
+        shippingShare, shippingShare  subtotal, o.shippingService, o.shippingMethod,
+        o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
+        `S-${baseKey}`, 0,
+      ],
+    );
+    console.log("[ensureSupplierOrders] created S-order", { supplierOrderId, key: `S-${baseKey}`, orgId, subtotal, shippingShare });
+  }
+}
 
 /* ——— stock / points helper (unchanged) ——— */
 async function applyItemEffects(
@@ -854,6 +989,8 @@ export async function PATCH(
     console.log(`Transaction committed for order ${id}`);
     // release the transactional connection ASAP; do side-effects with pool
     client.release(); released = true;
+    // 🔒 Ensure supplier orders exist before we cascade the status
+    try { await ensureSupplierOrdersExist(id); } catch (e) { console.warn("[ensureSupplierOrders] failed:", e); }
     /* ──────────────────────────────────────────────────────────────
      * Cascade status to supplier “split” orders (baseKey and S-baseKey)
      * – normalize orderKey so 123 and S-123 are siblings
@@ -1099,7 +1236,7 @@ export async function PATCH(
     if (newStatus === "cancelled") {
       try {
         const statusQuery = `UPDATE "orderRevenue" SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
-        const statusResult = pool.query(statusQuery)
+        const statusResult = await pool.query(statusQuery)
         const result = statusResult.rows
         console.log(result)
       } catch (err) {
@@ -1113,7 +1250,7 @@ export async function PATCH(
     if (newStatus === "refunded") {
       try {
         const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
-        const statusResult = pool.query(statusQuery)
+        const statusResult = await pool.query(statusQuery)
         const result = statusResult.rows
         console.log(result)
       } catch (err) {
@@ -1127,7 +1264,7 @@ export async function PATCH(
     if (newStatus !== "refunded" && newStatus !== "cancelled") {
       try {
         const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
-        const statusResult = pool.query(statusQuery)
+        const statusResult = await pool.query(statusQuery)
         const result = statusResult.rows[0]
         console.log(result)
       } catch (err) {

@@ -427,15 +427,18 @@ export async function POST(req: NextRequest) {
     //  • Pro-rate buyer shipping across supplier orders by transfer-subtotal share
     //  • Remove the old "second pass" loop
     // ────────────────────────────────────────────────────────────────
-    let oldOrder = await pool.query(
-      `SELECT * FROM "orders" WHERE id = '${r.rows[0].id}'`,
-    );
-    let oldCart = await pool.query(
-      `SELECT * FROM "carts" WHERE id = '${oldOrder.rows[0].cartId}'`,
-    );
-    let oldCartProduct = await pool.query(
-      `SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}'`,
-    );
+        const oldOrder = await pool.query(
+       `SELECT * FROM "orders" WHERE id = $1`,
+       [r.rows[0].id],
+     );
+     const oldCart = await pool.query(
+       `SELECT * FROM "carts" WHERE id = $1`,
+       [oldOrder.rows[0].cartId],
+     );
+     const oldCartProduct = await pool.query(
+       `SELECT * FROM "cartProducts" WHERE "cartId" = $1`,
+       [oldOrder.rows[0].cartId],
+     );
     let oneProducts = oldCartProduct.rows;
     let newOrderId = "";
 
@@ -449,13 +452,15 @@ export async function POST(req: NextRequest) {
     let array: MapItem[] = [];
     let newOrganization = "";
 
-    for (let i = 0; i < oneProducts.length; i++) {
-      const two = await pool.query(
-        `SELECT * FROM "sharedProductMapping" WHERE "targetProductId" = '${oneProducts[i].productId}'`,
-      );
+          for (let i = 0; i < oneProducts.length; i++) {
+        const two = await pool.query(
+          `SELECT * FROM "sharedProductMapping" WHERE "targetProductId" = $1`,
+          [oneProducts[i].productId],
+        );
       if (two.rows[0]) {
-        const orgTwo = await pool.query(
-          `SELECT "organizationId" FROM "products" WHERE "id" = '${two.rows[0].sourceProductId}'`,
+                const orgTwo = await pool.query(
+          `SELECT "organizationId" FROM "products" WHERE "id" = $1`,
+          [two.rows[0].sourceProductId],
         );
         newOrganization = orgTwo.rows[0].organizationId;
 
@@ -479,23 +484,24 @@ export async function POST(req: NextRequest) {
   }));
 
   // Pre-compute each supplier group's transfer-price subtotal to pro-rate shipping later
-  const transferSubtotals: Record<string, number> = {};
+ console.log("[split] supplier groups:", Object.keys(groupedMap).length);
+ const transferSubtotals: Record<string, number> = {};
   for (const group of groupedArray) {
     let sum = 0;
     for (const it of group.items) {
-      const oldCartProductInfo = await pool.query(
-        `SELECT quantity FROM "cartProducts"
-          WHERE "cartId" = '${oldOrder.rows[0].cartId}'
-            AND "productId" = '${it.targetProductId}'`,
-      );
+         const oldCartProductInfo = await pool.query(
+     `SELECT quantity FROM "cartProducts"
+       WHERE "cartId" = $1 AND "productId" = $2`,
+     [oldOrder.rows[0].cartId, it.targetProductId],
+   );
       const qty = Number(oldCartProductInfo.rows[0]?.quantity || 0);
       // Fetch transfer price from sharedProduct
-      const sp = await pool.query(
-        `SELECT cost FROM "sharedProduct"
-          WHERE "shareLinkId" = '${it.shareLinkId}'
-            AND "productId"   = '${it.sourceProductId}'
-          LIMIT 1`,
-      );
+         const sp = await pool.query(
+     `SELECT cost FROM "sharedProduct"
+       WHERE "shareLinkId" = $1 AND "productId" = $2
+       LIMIT 1`,
+     [it.shareLinkId, it.sourceProductId],
+     );
       if (!sp.rows[0]) continue; // no share row; skip silently
       const transfer = Number(sp.rows[0].cost?.[oldCart.rows[0].country] ?? 0);
       sum += transfer * qty;
@@ -510,11 +516,13 @@ export async function POST(req: NextRequest) {
   for (let i = 0; i < groupedArray.length; i++) {
     const group = groupedArray[i];
         const oldClient = await pool.query(
-          `SELECT * FROM "clients" WHERE "id" = '${oldOrder.rows[0].clientId}'`,
-        );
-              const checkClient = await pool.query(
-        `SELECT id FROM clients WHERE "userId" = '${oldClient.rows[0].userId}' AND "organizationId" = '${groupedArray[i].organizationId}'`,
-      );
+    `SELECT * FROM "clients" WHERE "id" = $1`,
+    [oldOrder.rows[0].clientId],
+  );
+  const checkClient = await pool.query(
+    `SELECT id FROM clients WHERE "userId" = $1 AND "organizationId" = $2`,
+    [oldClient.rows[0].userId, groupedArray[i].organizationId],
+  );
 
         let newClientId = "";
 
@@ -523,13 +531,21 @@ export async function POST(req: NextRequest) {
         } else {
           newClientId = uuidv4();
 
-     await pool.query(
-       `INSERT INTO "clients" (id, "userId", "organizationId", username, "firstName", "lastName", email, "phoneNumber", country, "createdAt", "updatedAt")
-        VALUES ('${newClientId}', '${oldClient.rows[0].userId}', '${groupedArray[i].organizationId}', '${oldClient.rows[0].username}', '${oldClient.rows[0].firstName}','${oldClient.rows[0].lastName}', '${oldClient.rows[0].email}', '${oldClient.rows[0].phoneNumber}', '${oldClient.rows[0].country}', NOW(), NOW())
-        RETURNING *`,
-     );
-
-          await pool.query("COMMIT");
+ await pool.query(
+   `INSERT INTO "clients" (id,"userId","organizationId",username,"firstName","lastName",email,"phoneNumber",country,"createdAt","updatedAt")
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())`,
+   [
+     newClientId,
+     oldClient.rows[0].userId,
+     groupedArray[i].organizationId,
+     oldClient.rows[0].username,
+     oldClient.rows[0].firstName,
+     oldClient.rows[0].lastName,
+     oldClient.rows[0].email,
+     oldClient.rows[0].phoneNumber,
+     oldClient.rows[0].country,
+   ],
+ );
         }
 
         const newCartId = uuidv4();
@@ -546,50 +562,43 @@ export async function POST(req: NextRequest) {
           ]),
         );
 
-                await pool.query(
-         `INSERT INTO "carts"
-   (id, "clientId", country, "shippingMethod", status, "organizationId",
-    "cartHash", "cartUpdatedHash", "createdAt", "updatedAt")
- VALUES
-   ('${newCartId}', '${newClientId}', '${oldCart.rows[0].country}',
-    '${oldCart.rows[0].shippingMethod}', ${newStatus}, '${groupedArray[i].organizationId}',
-    '${newCartHash}', '${newCartHash}', NOW(), NOW())
-           RETURNING *`,
-        );
-        await pool.query("COMMIT");
+            await pool.query(
+      `INSERT INTO "carts"
+         (id,"clientId",country,"shippingMethod",status,"organizationId","cartHash","cartUpdatedHash","createdAt","updatedAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())`,
+      [newCartId, newClientId, oldCart.rows[0].country, oldCart.rows[0].shippingMethod, newStatus, groupedArray[i].organizationId, newCartHash, newCartHash],
+    );
 
         
             let subtotal = 0;
     for (let j = 0; j < group.items.length; j++) {
       const { sourceProductId, targetProductId, shareLinkId } = group.items[j];
       // quantity from the buyer's original cart line (target product)
-      const oldCartProductInfo = await pool.query(
-        `SELECT quantity, "affiliateProductId"
-           FROM "cartProducts"
-          WHERE "cartId" = '${oldOrder.rows[0].cartId}'
-            AND "productId" = '${targetProductId}'`,
-      );
+          const oldCartProductInfo = await pool.query(
+      `SELECT quantity,"affiliateProductId"
+         FROM "cartProducts"
+        WHERE "cartId" = $1 AND "productId" = $2`,
+      [oldOrder.rows[0].cartId, targetProductId],
+    );
       const qty = Number(oldCartProductInfo.rows[0]?.quantity || 0);
       const affId = oldCartProductInfo.rows[0]?.affiliateProductId || null;
 
       // transfer price from sharedProduct
-      const sp = await pool.query(
-        `SELECT cost FROM "sharedProduct"
-          WHERE "shareLinkId" = '${shareLinkId}'
-            AND "productId"   = '${sourceProductId}'
-          LIMIT 1`,
-      );
+           const sp = await pool.query(
+       `SELECT cost FROM "sharedProduct"
+         WHERE "shareLinkId" = $1 AND "productId" = $2
+         LIMIT 1`,
+       [shareLinkId, sourceProductId],
+     );
       const transfer = Number(sp.rows[0]?.cost?.[oldCart.rows[0].country] ?? 0);
 
       const newCPId = uuidv4();
-      await pool.query(
-        `INSERT INTO "cartProducts"
-           (id, "cartId", "productId", "quantity", "unitPrice", "affiliateProductId")
-         VALUES
-           ('${newCPId}', '${newCartId}', '${sourceProductId}', ${qty}, ${transfer}, ${affId})
-         RETURNING *`,
-      );
-      await pool.query("COMMIT");
+          await pool.query(
+      `INSERT INTO "cartProducts"
+         (id,"cartId","productId","quantity","unitPrice","affiliateProductId")
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [newCPId, newCartId, sourceProductId, qty, transfer, affId],
+    );
       subtotal += transfer * qty;
     }
 
@@ -639,7 +648,13 @@ export async function POST(req: NextRequest) {
           0,
         ];
 
-        await pool.query(newOrderSQL, newOrderValues);
+           await pool.query(newOrderSQL, newOrderValues);
+   console.log("[split] created supplier order", {
+     supplierOrg: groupedArray[i].organizationId,
+     orderKey: supplierOrderKey,
+     subtotal,
+     shippingShare,
+   });
     }
 
     return NextResponse.json(r.rows[0], { status: 201 });
