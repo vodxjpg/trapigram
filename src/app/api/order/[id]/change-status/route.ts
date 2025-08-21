@@ -134,7 +134,8 @@ async function getRevenue(id: string, organizationId: string) {
       for (const ct of categoryData) {
         categories.push({
           categoryId: ct.categoryId,
-          price: ct.regularPrice[country],
+          // Use the actual charged line price (cp.unitPrice), not the product's retail price
+          price: Number(ct.unitPrice),
           cost: ct.cost[country],
           quantity: ct.quantity
         })
@@ -843,6 +844,57 @@ export async function PATCH(
     console.log(`Transaction committed for order ${id}`);
     // release the transactional connection ASAP; do side-effects with pool
     client.release(); released = true;
+    /* ──────────────────────────────────────────────────────────────
+     * Cascade status to supplier “split” orders (baseKey and S-baseKey)
+     * – normalize orderKey so 123 and S-123 are siblings
+     * – update status + date cols on siblings
+     * – after cascade to PAID, also generate revenue for siblings
+     * ───────────────────────────────────────────────────────────── */
+    const CASCADE_STATUSES = new Set(["paid", "cancelled", "refunded"]);
+    if (CASCADE_STATUSES.has(newStatus)) {
+      const dateCol = DATE_COL_FOR_STATUS[newStatus];
+      const setBits = [`status = $1`, `"updatedAt" = NOW()`];
+      if (dateCol) setBits.splice(1, 0, `"${dateCol}" = COALESCE("${dateCol}", NOW())`);
+      const baseKey = String(ord.orderKey || "").replace(/^S-/, "");
+      const sql = `
+    UPDATE orders o
+       SET ${setBits.join(", ")}
+     WHERE (o."orderKey" = $2 OR o."orderKey" = ('S-' || $2))
+       AND o.id <> $3
+       AND o.status <> $1
+  `;
+      const { rowCount } = await pool.query(sql, [newStatus, baseKey, id]);
+      console.log(`[cascade] ${newStatus} → ${rowCount} sibling orders for baseKey=${baseKey}`);
+
+      // Generate revenue for siblings when they become PAID as part of the cascade
+      if (newStatus === "paid") {
+        const { rows: sibs } = await pool.query(
+          `SELECT id, "organizationId"
+         FROM orders
+        WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
+          AND id <> $2
+          AND status = 'paid'`,
+          [baseKey, id],
+        );
+        for (const s of sibs) {
+          try { await getRevenue(s.id, s.organizationId); }
+          catch (e) { console.warn("[cascade] revenue sibling failed:", s.id, e); }
+        }
+      }
+
+      // On cancel/refund, cancel sibling revenues too
+      if (newStatus === "cancelled" || newStatus === "refunded") {
+        await pool.query(
+          `UPDATE "orderRevenue"
+          SET cancelled = TRUE, "updatedAt" = NOW()
+        WHERE "orderId" IN (
+          SELECT id FROM orders
+           WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
+        )`,
+          [baseKey],
+        );
+      }
+    }
 
     /* ──────────────────────────────────────────────────────────────
    *  Niftipay (Coinx) sync via merchant API key

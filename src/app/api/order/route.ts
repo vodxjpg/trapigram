@@ -100,8 +100,8 @@ export async function GET(req: NextRequest) {
           c."referredBy" AS "referredBy"
         FROM orders o
         JOIN clients c ON c.id = o."clientId"
-       WHERE o."organizationId" = $1
-         AND o."orderKey"       = $2
+           WHERE o."organizationId" = $1
+        AND (o."orderKey" = $2 OR o."orderKey" = ('S-' || $2))
        LIMIT 1
       `;
       const r = await pool.query(sql, [organizationId, filterOrderKey]);
@@ -420,9 +420,12 @@ export async function POST(req: NextRequest) {
     const r = await pool.query(insertSQL, insertValues);
     await pool.query("COMMIT");
 
-    // ────────────────────────────────────────────────────────────────
-    // Existing “shared product mapping” split logic (unchanged),
-    // with no attempt to write a nonexistent orders."referredBy" column.
+      // ────────────────────────────────────────────────────────────────
+    // Split the order into supplier orders based on sharedProductMapping.
+    // Changes:
+    //  • Price supplier lines at the *transfer* price from sharedProduct.cost[country]
+    //  • Pro-rate buyer shipping across supplier orders by transfer-subtotal share
+    //  • Remove the old "second pass" loop
     // ────────────────────────────────────────────────────────────────
     let oldOrder = await pool.query(
       `SELECT * FROM "orders" WHERE id = '${r.rows[0].id}'`,
@@ -436,7 +439,14 @@ export async function POST(req: NextRequest) {
     let oneProducts = oldCartProduct.rows;
     let newOrderId = "";
 
-    let array: { organizationId: string; productId: string }[] = [];
+        // keep BOTH ids so we can read qty from the original cart (target)
+    type MapItem = {
+      organizationId: string;
+      shareLinkId: string;
+      sourceProductId: string;
+      targetProductId: string;
+    };
+    let array: MapItem[] = [];
     let newOrganization = "";
 
     for (let i = 0; i < oneProducts.length; i++) {
@@ -451,34 +461,60 @@ export async function POST(req: NextRequest) {
 
         array.push({
           organizationId: newOrganization,
-          productId: two.rows[0].sourceProductId,
+          shareLinkId: two.rows[0].shareLinkId,
+          sourceProductId: two.rows[0].sourceProductId,
+          targetProductId: two.rows[0].targetProductId,
         });
       }
     }
-    let groupedMap = array.reduce<Record<string, string[]>>(
-      (acc, { organizationId, productId }) => {
-        if (!acc[organizationId]) {
-          acc[organizationId] = [];
-        }
-        acc[organizationId].push(productId);
-        return acc;
-      },
-      {},
-    );
+      const groupedMap = array.reduce<Record<string, MapItem[]>>((acc, item) => {
+    if (!acc[item.organizationId]) acc[item.organizationId] = [];
+    acc[item.organizationId].push(item);
+    return acc;
+  }, {});
 
-    let groupedArray = Object.entries(groupedMap).map(([organizationId, productIds]) => ({
-      organizationId,
-      productIds,
-    }));
+  const groupedArray = Object.entries(groupedMap).map(([organizationId, items]) => ({
+    organizationId,
+    items,
+  }));
 
-    while (groupedArray.length > 0) {
-      for (let i = 0; i < groupedArray.length; i++) {
+  // Pre-compute each supplier group's transfer-price subtotal to pro-rate shipping later
+  const transferSubtotals: Record<string, number> = {};
+  for (const group of groupedArray) {
+    let sum = 0;
+    for (const it of group.items) {
+      const oldCartProductInfo = await pool.query(
+        `SELECT quantity FROM "cartProducts"
+          WHERE "cartId" = '${oldOrder.rows[0].cartId}'
+            AND "productId" = '${it.targetProductId}'`,
+      );
+      const qty = Number(oldCartProductInfo.rows[0]?.quantity || 0);
+      // Fetch transfer price from sharedProduct
+      const sp = await pool.query(
+        `SELECT cost FROM "sharedProduct"
+          WHERE "shareLinkId" = '${it.shareLinkId}'
+            AND "productId"   = '${it.sourceProductId}'
+          LIMIT 1`,
+      );
+      if (!sp.rows[0]) continue; // no share row; skip silently
+      const transfer = Number(sp.rows[0].cost?.[oldCart.rows[0].country] ?? 0);
+      sum += transfer * qty;
+    }
+    transferSubtotals[group.organizationId] = sum;
+  }
+  const buyerShipping = Number(oldOrder.rows[0].shippingTotal || 0);
+  const totalTransferSubtotal = Object.values(transferSubtotals).reduce((a, b) => a + b, 0) || 0;
+  let shippingAssigned = 0;
+
+  // Create supplier orders (single pass)
+  for (let i = 0; i < groupedArray.length; i++) {
+    const group = groupedArray[i];
         const oldClient = await pool.query(
           `SELECT * FROM "clients" WHERE "id" = '${oldOrder.rows[0].clientId}'`,
         );
-        const checkClient = await pool.query(
-          `SELECT id FROM clients WHERE "userId" = '${oldClient.rows[0].userId}' AND "organizationId" = '${groupedArray[i].organizationId}'`,
-        );
+              const checkClient = await pool.query(
+        `SELECT id FROM clients WHERE "userId" = '${oldClient.rows[0].userId}' AND "organizationId" = '${groupedArray[i].organizationId}'`,
+      );
 
         let newClientId = "";
 
@@ -487,11 +523,11 @@ export async function POST(req: NextRequest) {
         } else {
           newClientId = uuidv4();
 
-          await pool.query(
-            `INSERT INTO "clients" (id, "userId", "organizationId", username, "firstName", "lastName", email, "phoneNumber", country, "createdAt", "updatedAt")
-             VALUES ('${newClientId}', '${oldClient.rows[0].userId}', '${newOrganization}', '${oldClient.rows[0].username}', '${oldClient.rows[0].firstName}','${oldClient.rows[0].lastName}', '${oldClient.rows[0].email}', '${oldClient.rows[0].phoneNumber}', '${oldClient.rows[0].country}', NOW(), NOW())
-             RETURNING *`,
-          );
+     await pool.query(
+       `INSERT INTO "clients" (id, "userId", "organizationId", username, "firstName", "lastName", email, "phoneNumber", country, "createdAt", "updatedAt")
+        VALUES ('${newClientId}', '${oldClient.rows[0].userId}', '${groupedArray[i].organizationId}', '${oldClient.rows[0].username}', '${oldClient.rows[0].firstName}','${oldClient.rows[0].lastName}', '${oldClient.rows[0].email}', '${oldClient.rows[0].phoneNumber}', '${oldClient.rows[0].country}', NOW(), NOW())
+        RETURNING *`,
+     );
 
           await pool.query("COMMIT");
         }
@@ -522,27 +558,40 @@ export async function POST(req: NextRequest) {
         );
         await pool.query("COMMIT");
 
-        let subtotal = 0;
+        
+            let subtotal = 0;
+    for (let j = 0; j < group.items.length; j++) {
+      const { sourceProductId, targetProductId, shareLinkId } = group.items[j];
+      // quantity from the buyer's original cart line (target product)
+      const oldCartProductInfo = await pool.query(
+        `SELECT quantity, "affiliateProductId"
+           FROM "cartProducts"
+          WHERE "cartId" = '${oldOrder.rows[0].cartId}'
+            AND "productId" = '${targetProductId}'`,
+      );
+      const qty = Number(oldCartProductInfo.rows[0]?.quantity || 0);
+      const affId = oldCartProductInfo.rows[0]?.affiliateProductId || null;
 
-        for (let j = 0; j < groupedArray[i].productIds.length; j++) {
-          const product = await pool.query(
-            `SELECT * FROM "products" WHERE id = '${groupedArray[i].productIds[j]}'`,
-          );
-          const oldCartProductInfo = await pool.query(
-            `SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}' AND "productId" = '${oneProducts[i].productId}'`,
-          );
+      // transfer price from sharedProduct
+      const sp = await pool.query(
+        `SELECT cost FROM "sharedProduct"
+          WHERE "shareLinkId" = '${shareLinkId}'
+            AND "productId"   = '${sourceProductId}'
+          LIMIT 1`,
+      );
+      const transfer = Number(sp.rows[0]?.cost?.[oldCart.rows[0].country] ?? 0);
 
-          const newCPId = uuidv4();
-
-          await pool.query(
-            `INSERT INTO "cartProducts" (id, "cartId", "productId", "quantity", "unitPrice", "affiliateProductId")
-             VALUES ('${newCPId}', '${newCartId}', '${groupedArray[i].productIds[j]}', ${oldCartProductInfo.rows[0].quantity}, ${product.rows[0].regularPrice[oldCart.rows[0].country]}, ${oldCartProductInfo.rows[0].affiliateProductId})
-             RETURNING *`,
-          );
-          await pool.query("COMMIT");
-
-          subtotal = Number(product.rows[0].regularPrice[oldCart.rows[0].country]) + subtotal;
-        }
+      const newCPId = uuidv4();
+      await pool.query(
+        `INSERT INTO "cartProducts"
+           (id, "cartId", "productId", "quantity", "unitPrice", "affiliateProductId")
+         VALUES
+           ('${newCPId}', '${newCartId}', '${sourceProductId}', ${qty}, ${transfer}, ${affId})
+         RETURNING *`,
+      );
+      await pool.query("COMMIT");
+      subtotal += transfer * qty;
+    }
 
         newOrderId = uuidv4();
         const newOrderSQL = `
@@ -559,7 +608,17 @@ export async function POST(req: NextRequest) {
              NOW(),NOW(),NOW(),$16, $17)
           RETURNING *
         `;
-
+         const supplierOrderKey = `S-${orderKey}`;
+                // Pro-rate shipping for this supplier group. Last group gets the rounding remainder.
+        let shippingShare = 0;
+        if (totalTransferSubtotal > 0) {
+          if (i === groupedArray.length - 1) {
+            shippingShare = buyerShipping - shippingAssigned;
+          } else {
+            shippingShare = Number(((buyerShipping * (transferSubtotals[groupedArray[i].organizationId] || 0)) / totalTransferSubtotal).toFixed(2));
+            shippingAssigned += shippingShare;
+          }
+        }
         const newOrderValues = [
           newOrderId,
           groupedArray[i].organizationId,
@@ -567,8 +626,8 @@ export async function POST(req: NextRequest) {
           newCartId,
           oldCart.rows[0].country,
           oldOrder.rows[0].paymentMethod,
-          oldOrder.rows[0].shippingTotal,
-          Number(oldOrder.rows[0].shippingTotal) + subtotal,
+          shippingShare,
+          shippingShare + subtotal,
           oldOrder.rows[0].shippingService,
           oldOrder.rows[0].shippingMethod,
           oldOrder.rows[0].address,
@@ -576,56 +635,11 @@ export async function POST(req: NextRequest) {
           subtotal,
           oldOrder.rows[0].pointsRedeemed,
           oldOrder.rows[0].pointsRedeemedAmount,
-          orderKey,
+          supplierOrderKey  ,
           0,
         ];
 
         await pool.query(newOrderSQL, newOrderValues);
-      }
-
-      oldOrder = await pool.query(
-        `SELECT * FROM "orders" WHERE id = '${newOrderId}'`,
-      );
-      oldCart = await pool.query(
-        `SELECT * FROM "carts" WHERE id = '${oldOrder.rows[0].cartId}'`,
-      );
-      oldCartProduct = await pool.query(
-        `SELECT * FROM "cartProducts" WHERE "cartId" = '${oldOrder.rows[0].cartId}'`,
-      );
-      oneProducts = oldCartProduct.rows;
-      array = [];
-
-      for (let i = 0; i < oneProducts.length; i++) {
-        const two = await pool.query(
-          `SELECT * FROM "sharedProductMapping" WHERE "targetProductId" = '${oneProducts[i].productId}'`,
-        );
-        if (two.rows[0]) {
-          const orgTwo = await pool.query(
-            `SELECT "organizationId" FROM "products" WHERE "id" = '${two.rows[0].sourceProductId}'`,
-          );
-          newOrganization = orgTwo.rows[0].organizationId;
-
-          array.push({
-            organizationId: newOrganization,
-            productId: two.rows[0].sourceProductId,
-          });
-        }
-      }
-      groupedMap = array.reduce<Record<string, string[]>>(
-        (acc, { organizationId, productId }) => {
-          if (!acc[organizationId]) {
-            acc[organizationId] = [];
-          }
-          acc[organizationId].push(productId);
-          return acc;
-        },
-        {},
-      );
-
-      groupedArray = Object.entries(groupedMap).map(([organizationId, productIds]) => ({
-        organizationId,
-        productIds,
-      }));
     }
 
     return NextResponse.json(r.rows[0], { status: 201 });
