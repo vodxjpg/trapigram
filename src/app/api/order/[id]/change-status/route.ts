@@ -772,21 +772,22 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
     }
     // create supplier order S-<baseKey>
     const supplierOrderId = uuidv4();
-    await pool.query(
-      `INSERT INTO orders
-    (id,"organizationId","clientId","cartId",country,"paymentMethod",
-     "shippingTotal","totalAmount","shippingService","shippingMethod",
-     address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
-     "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash")
-   VALUES
-    ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18)`,
-      [
-        supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
-        shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
-        o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
-        `S-${baseKey}`, 0, supplierCartHash,  // ← supply a non-null hash
-      ],
-    );
+     await pool.query(
+   `INSERT INTO orders
+ (id,"organizationId","clientId","cartId",country,"paymentMethod",
+  "shippingTotal","totalAmount","shippingService","shippingMethod",
+  address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
+  "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash","orderMeta")
+VALUES
+ ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18,'[]'::jsonb)`,
+   [
+     supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
+     shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
+     o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
+     `S-${baseKey}`, 0, supplierCartHash,  // ← non-null hash
+   ],
+ );
+
     console.log("[ensureSupplierOrders] created S-order", { supplierOrderId, key: `S-${baseKey}`, orgId, subtotal, shippingShare });
   }
 }
@@ -1054,6 +1055,83 @@ export async function PATCH(
   `;
       const { rowCount } = await pool.query(sql, [newStatus, baseKey, id]);
       console.log(`[cascade] ${newStatus} → ${rowCount} sibling orders for baseKey=${baseKey}`);
+
+      // --- Notify supplier siblings that changed due to the cascade ---
+  (async () => {
+  // map status→notification type (repeat here or hoist globally)
+  const notifTypeMap: Record<string, NotificationType> = {
+    open: "order_placed",
+    underpaid: "order_partially_paid",
+    paid: "order_paid",
+    completed: "order_completed",
+    cancelled: "order_cancelled",
+    refunded: "order_refunded",
+  };
+
+  // Only supplier siblings (S-xxxx) that now sit at the cascaded status
+  const { rows: sibsForNotif } = await pool.query(
+    `SELECT id, "organizationId", "clientId", "cartId", country, "orderKey",
+            "shippingMethod","shippingService","trackingNumber","dateCreated",
+            COALESCE("notifiedPaidOrCompleted", FALSE) AS "notified"
+       FROM orders
+      WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
+        AND id <> $2
+        AND status = $3
+        AND "orderKey" LIKE 'S-%'`,
+    [baseKey, id, newStatus],
+  );
+
+  for (const sb of sibsForNotif) {
+    // Respect "only once" for paid/completed
+    const should =
+      newStatus === "paid" || newStatus === "completed"
+        ? !sb.notified
+        : newStatus === "cancelled" || newStatus === "refunded";
+
+    if (!should) continue;
+
+    const productList = await buildProductListForCart(sb.cartId);
+    const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
+
+        try {
+        await sendNotification({
+      organizationId: sb.organizationId,              // supplier org
+      type: notifTypeMap[newStatus],
+      subject: `Order #${sb.orderKey} ${newStatus}`,
+      message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+      variables: {
+        product_list: productList,
+        order_number: sb.orderKey,
+        order_date: orderDate,
+        order_shipping_method: sb.shippingMethod ?? "-",
+        tracking_number: sb.trackingNumber ?? "",
+        shipping_company: sb.shippingService ?? "",
+      },
+      country: sb.country,
+      trigger: "admin_only",                          // admin-only fanout
+      channels: ["in_app", "telegram"],               // same as elsewhere for suppliers
+      clientId: null,
+      url: `/orders/${sb.id}`,
+           });
+      } catch (e) {
+        console.warn("[cascade][notify] failed for supplier sibling", sb.id, e);
+        continue;
+      }
+    // Mark "notified" so we don’t notify twice for paid/completed
+    if (newStatus === "paid" || newStatus === "completed") {
+                try {
+       await pool.query(
+         `UPDATE orders
+             SET "notifiedPaidOrCompleted" = TRUE,
+                 "updatedAt" = NOW()
+           WHERE id = $1`,
+         [sb.id],
+       );
+     } catch (e) { console.warn("[cascade][notify] mark-notified failed", sb.id, e); }
+    }
+  }
+      })();
+
 
       // Generate revenue for siblings when they become PAID as part of the cascade
       if (newStatus === "paid") {

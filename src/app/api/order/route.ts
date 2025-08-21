@@ -615,18 +615,18 @@ export async function POST(req: NextRequest) {
     }
 
         newOrderId = uuidv4();
-         const newOrderSQL = `
+        const newOrderSQL = `
 INSERT INTO orders
   (id, "organizationId","clientId","cartId",country,"paymentMethod",
    "shippingTotal","totalAmount","shippingService","shippingMethod",
    address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
-   "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash")
+   "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash","orderMeta")
 VALUES
   ($1,$2,$3,$4,$5,$6,
    $7,$8,$9,
    $10,$11,$12,$13,
    $14,$15,
-   NOW(),NOW(),NOW(),$16,$17,$18)
+   NOW(),NOW(),NOW(),$16,$17,$18,'[]'::jsonb)
 RETURNING *
   `;
          const supplierOrderKey = `S-${orderKey}`;
