@@ -105,6 +105,15 @@ export async function getRevenue(id: string, organizationId: string) {
             const productResult = await pool.query(productQuery)
             const products = productResult.rows
 
+            const affiliateQuery = `SELECT p.*, cp.quantity
+                    FROM "cartProducts" cp
+                    JOIN "affiliateProducts" p ON cp."affiliateProductId" = p.id
+                    WHERE cp."cartId" = '${cartId}'`
+            const affiliateResult = await pool.query(affiliateQuery)
+            const affiliate = affiliateResult.rows
+
+            const allProducts = products.concat(affiliate)
+
             const categoryQuery = `SELECT cp.*, p.*, pc."categoryId" FROM "cartProducts" AS cp
                 JOIN "products" AS p ON cp."productId" = p."id"
                 LEFT JOIN "productCategory" AS pc ON pc."productId" = p."id"
@@ -129,7 +138,7 @@ export async function getRevenue(id: string, organizationId: string) {
                 cost: cost * quantity,
             }));
 
-            const totalCost = products.reduce((sum, product) => {
+            const totalCost = allProducts.reduce((sum, product) => {
                 return sum + ((product.cost[country] * product.quantity) || 0);
             }, 0);
 

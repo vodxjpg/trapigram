@@ -121,6 +121,16 @@ async function getRevenue(id: string, organizationId: string) {
       const productResult = await pool.query(productQuery, [cartId]);
       const products = productResult.rows
 
+      const affiliateQuery = `SELECT p.*, cp.quantity
+                    FROM "cartProducts" cp
+                    JOIN "affiliateProducts" p ON cp."affiliateProductId" = p.id
+                    WHERE cp."cartId" = '${cartId}'`
+      const affiliateResult = await pool.query(affiliateQuery)
+      const affiliate = affiliateResult.rows
+
+      const allProducts = products.concat(affiliate)
+      console.log(allProducts)
+
       const categoryQuery = `SELECT cp.*, p.*, pc."categoryId"
                                FROM "cartProducts" AS cp
                                JOIN "products" AS p ON cp."productId" = p."id"
@@ -146,7 +156,7 @@ async function getRevenue(id: string, organizationId: string) {
         cost: cost * quantity,
       }));
 
-      const totalCost = products.reduce((sum, product) => {
+      const totalCost = allProducts.reduce((sum, product) => {
         return sum + ((product.cost[country] * product.quantity) || 0);
       }, 0);
 
@@ -949,10 +959,38 @@ export async function PATCH(
         );
       }
     }
-
-    if (newStatus === "cancelled" || newStatus === "refunded") {
+    console.log(newStatus)
+    if (newStatus === "cancelled") {
       try {
-        const statusQuery = `UPDATE "orderRevenue" SET cancelled = TRUE, "updatedAt" = NOW() WHERE "orderId" = '${id}'`
+        const statusQuery = `UPDATE "orderRevenue" SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
+        const statusResult = pool.query(statusQuery)
+        const result = statusResult.rows
+        console.log(result)
+      } catch (err) {
+        console.error(
+          `Failed to update revenue for order ${id}:`,
+          err
+        );
+      }
+    }
+
+    if (newStatus === "refunded") {
+      try {
+        const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
+        const statusResult = pool.query(statusQuery)
+        const result = statusResult.rows
+        console.log(result)
+      } catch (err) {
+        console.error(
+          `Failed to update revenue for order ${id}:`,
+          err
+        );
+      }
+    }
+
+    if (newStatus !== "refunded" && newStatus !== "cancelled") {
+      try {
+        const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
         const statusResult = pool.query(statusQuery)
         const result = statusResult.rows[0]
         console.log(result)
