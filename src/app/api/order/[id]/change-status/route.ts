@@ -684,8 +684,8 @@ export async function PATCH(
   { params }: { params: { id: string } },
 ) {
   // 1) context + permission guard
-  const ctx = await getContext(req) as { organizationId: string };
-  const { organizationId } = ctx;
+  const ctx = await getContext(req) as { organizationId: string; tenantId: string };
+  const { organizationId, tenantId } = ctx
   const { id } = params;
   const { status: newStatus } = orderStatusSchema.parse(await req.json());
 
@@ -725,6 +725,7 @@ export async function PATCH(
     }
 
     /* 2️⃣ determine transition */
+    const statusChanged = newStatus !== ord.status;
     const becameActive = isActive(newStatus) && !isActive(ord.status);
     const becameInactive = isInactive(newStatus) && !isInactive(ord.status);
 
@@ -816,6 +817,14 @@ export async function PATCH(
       }
     }
 
+    /* 2a️⃣ no-op guard: if status didn’t change, skip all side-effects.
+       This prevents duplicate Coinx PATCHes and email spam on retries. */
+    if (!statusChanged) {
+      await client.query("ROLLBACK");
+      client.release();
+      return NextResponse.json({ id, status: ord.status, warnings: ["No status change; skipped side-effects"] });
+    }
+
     /* 6️⃣ finally update order status */
     const dateCol = DATE_COL_FOR_STATUS[newStatus];
 
@@ -832,8 +841,8 @@ export async function PATCH(
     console.log(`Updating order ${id} from ${ord.status} to ${newStatus}`);
     await client.query(
       `UPDATE orders
-      SET ${sets.join(", ")}
-    WHERE id = $2`,
+       SET ${sets.join(", ")}
+     WHERE id = $2`,
       [newStatus, id],
     );
     console.log(`Order ${id} updated to ${newStatus}`);
@@ -851,69 +860,137 @@ export async function PATCH(
    *  – mirrors Trapigram status → Coinx order status
    *    supported here: cancelled, paid
    * ───────────────────────────────────────────────────────────── */
-    if (ord.paymentMethod?.toLowerCase?.() === "niftipay" &&
-      (newStatus === "cancelled" || newStatus === "paid")) {
+    if (
+      ord.paymentMethod?.toLowerCase?.() === "niftipay" &&
+      (newStatus === "cancelled" || newStatus === "paid")
+    ) {
       try {
-        // 1) load the merchant's Niftipay key for this org
-        const { rows: [pm] } = await pool.query(
-          `SELECT "apiKey"
-             FROM "paymentMethods"
-            WHERE "organizationId" = $1
-              AND lower(name) = 'niftipay'
-              AND "active" = TRUE
-            LIMIT 1`,
-          [organizationId],
-        );
-        const merchantApiKey: string | null = pm?.apiKey ?? null;
+        // 1) load the merchant's Niftipay key by tenantId (paymentMethods is tenant-scoped)
+        let merchantApiKey: string | null = null;
+        if (tenantId) {
+          const { rows: [pm] } = await pool.query(
+            `SELECT "apiKey"
+              FROM "paymentMethods"
+              WHERE "tenantId" = $1
+                AND lower(name) = 'niftipay'
+                AND "active" = TRUE
+              LIMIT 1`,
+            [tenantId],
+          );
+          merchantApiKey = pm?.apiKey ?? null;
+        }
         if (!merchantApiKey) {
-          console.warn("[niftipay] No merchant API key configured for org", organizationId);
+          console.warn("[niftipay] No merchant API key configured for tenant", tenantId);
           toastWarnings.push(
             "Niftipay not configured for this organisation (missing API key). Crypto invoice was not updated."
           );
         } else {
-          const base = process.env.NIFTIPAY_API_URL || "https://www.niftipay.com";
 
-          // 2) find Coinx order by our orderKey (stored as 'reference' on Coinx)
-          const findRes = await fetch(
-            `${base}/api/orders?reference=${encodeURIComponent(ord.orderKey)}`,
-            { headers: { "x-api-key": merchantApiKey } }
-          );
-          if (!findRes.ok) {
-            const t = await findRes.text().catch(() => "");
-            console.error("[niftipay] GET /api/orders failed:", t);
-            toastWarnings.push(
-              "Could not look up Coinx invoice for this order (network/API error)."
-            );
-          } else {
-            const data = await findRes.json().catch(() => ({}));
-            const coinxOrder = (data?.orders || []).find((o: any) => o.reference === ord.orderKey);
-            if (!coinxOrder) {
-              toastWarnings.push(
-                `No matching Coinx invoice found for reference ${ord.orderKey}. Check that your order key matches the invoice reference.`
-              );
-            } else {
-              const targetStatus = newStatus === "cancelled" ? "cancelled" : "paid";
-              const patchRes = await fetch(`${base}/api/orders/${coinxOrder.id}`, {
+
+          const base = process.env.NIFTIPAY_API_URL || "https://www.niftipay.com";
+          const targetStatus = newStatus === "cancelled" ? "cancelled" : "paid";
+          console.log(`[coinx] sync → ${targetStatus}; orderKey=${ord.orderKey}; base=${base}`);
+
+          // 2) Try to PATCH by Coinx orderId obtained from our orderMeta (webhook payload)
+          //    This is the most reliable path and avoids reference-mismatch issues.
+          let patched = false;
+          try {
+            const metaArr =
+              Array.isArray(ord.orderMeta) ? ord.orderMeta : JSON.parse(ord.orderMeta ?? "[]");
+            const fromNewest = [...metaArr].reverse();
+            // prefer an explicit "pending" event, else fall back to any event that carries an order.id
+            const evtWithId =
+              fromNewest.find((m: any) => (m?.event ?? "").toLowerCase() === "pending" && m?.order?.id) ??
+              fromNewest.find((m: any) => m?.order?.id);
+            const coinxOrderId: string | undefined = evtWithId?.order?.id;
+
+            if (coinxOrderId) {
+              console.log(`[coinx] attempting direct PATCH by id=${coinxOrderId}`);
+              // add a short timeout to avoid hitting the 15s function limit
+              const ac = new AbortController();
+              const to = setTimeout(() => ac.abort(), 4000);
+              const patchRes = await fetch(`${base}/api/orders/${coinxOrderId}`, {
                 method: "PATCH",
                 headers: {
                   "Content-Type": "application/json",
+                  "Accept": "application/json",
                   "x-api-key": merchantApiKey,
                 },
                 body: JSON.stringify({ status: targetStatus }),
+                signal: ac.signal,
               });
-              const body = await patchRes.json().catch(() => ({}));
+              clearTimeout(to);
+              const body = await patchRes.json().catch(async () => {
+                const txt = await patchRes.text().catch(() => "");
+                return { _raw: txt };
+              });
               if (!patchRes.ok) {
-                console.error("[niftipay] PATCH /api/orders/:id failed:", body || (await patchRes.text().catch(() => "")));
-                toastWarnings.push(
-                  "Coinx refused the status update. The invoice may not exist or the API key is invalid."
-                );
-              } else if (Array.isArray(body?.warnings) && body.warnings.length) {
-                for (const w of body.warnings) {
-                  // surface Coinx forwarding/dust/XRP notes to the UI
-                  toastWarnings.push(typeof w === "string" ? w : w?.message || "Coinx reported a warning.");
+                console.error("[coinx] PATCH by id failed:", body);
+                // fall through to reference-based lookup
+              } else {
+                patched = true;
+                console.log(`[coinx] ok – status set to ${targetStatus} (by id)`);
+                if (Array.isArray((body as any)?.warnings)) {
+                  for (const w of (body as any).warnings) {
+                    toastWarnings.push(typeof w === "string" ? w : w?.message || "Coinx reported a warning.");
+                  }
                 }
               }
+            } else {
+              console.log("[coinx] no order.id in orderMeta; will try reference lookup");
+            }
+          } catch (e) {
+            console.warn("[coinx] meta parse / id-path failed; will try reference lookup:", e);
+          }
 
+          // 3) Fallback: find Coinx order by our orderKey stored as 'reference' on Coinx
+          if (!patched) {
+            const findUrl = `${base}/api/orders?reference=${encodeURIComponent(String(ord.orderKey ?? ""))}`;
+            const ac2 = new AbortController();
+            const to2 = setTimeout(() => ac2.abort(), 4000);
+            const findRes = await fetch(findUrl, {
+              headers: { "Accept": "application/json", "x-api-key": merchantApiKey },
+              signal: ac2.signal,
+            });
+            clearTimeout(to2);
+            if (!findRes.ok) {
+              const t = await findRes.text().catch(() => "");
+              console.error("[niftipay] GET /api/orders failed:", t);
+              toastWarnings.push("Could not look up Coinx invoice for this order (network/API error).");
+            } else {
+              const data = await findRes.json().catch(() => ({}));
+              const coinxOrder = (data?.orders || []).find(
+                (o: any) => String(o.reference) === String(ord.orderKey)
+              );
+              if (!coinxOrder) {
+                toastWarnings.push(
+                  `No Coinx invoice matched reference "${ord.orderKey}". Ensure Coinx reference equals Trapigram orderKey.`
+                );
+              } else {
+                const patchRes = await fetch(`${base}/api/orders/${coinxOrder.id}`, {
+                  method: "PATCH",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "x-api-key": merchantApiKey,
+                  },
+                  body: JSON.stringify({ status: targetStatus }),
+                });
+                const body = await patchRes.json().catch(async () => {
+                  const txt = await patchRes.text().catch(() => "");
+                  return { _raw: txt };
+                });
+                if (!patchRes.ok) {
+                  console.error("[niftipay] PATCH /api/orders/:id failed:", body);
+                  toastWarnings.push("Coinx refused the status update. The invoice may not exist or the API key is invalid.");
+                } else if (Array.isArray((body as any)?.warnings) && (body as any).warnings.length) {
+                  for (const w of (body as any).warnings) {
+                    toastWarnings.push(typeof w === "string" ? w : w?.message || "Coinx reported a warning.");
+                  }
+                } else {
+                  console.log(`[coinx] ok – status set to ${targetStatus} (by reference fallback)`);
+                }
+              }
             }
           }
         }
@@ -924,33 +1001,40 @@ export async function PATCH(
       }
     }
 
-    // ─── trigger revenue update & platform‐fee capture for paid orders ───
-    if (newStatus === "paid") {
+    // ─── trigger revenue/fee **only** on the first transition to PAID ───
+    if (newStatus === "paid" && ord.status !== "paid") {
       try {
         // 1) update revenue
         await getRevenue(id, organizationId);
         console.log(`Revenue updated for order ${id}`);
 
         // 2) capture platform fee via internal API
-        const ts = Date.now().toString();
-        const sig = createHmac("sha256", process.env.SERVICE_API_KEY!)
-          .update(ts)
-          .digest("hex"); // internal service call remains unchanged
-
-        await fetch(
-          `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": process.env.SERVICE_API_KEY!,
-              "x-timestamp": ts,
-              "x-signature": sig,
-            },
-            body: JSON.stringify({ orderId: id }),
-          }
-        );
-        console.log(`Platform fee captured for order ${id}`);
+        const feesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
+        console.log(`[fees] POST → ${feesUrl}`, {
+          orderId: id,
+          orgId: organizationId,
+          hasSecret: Boolean(process.env.INTERNAL_API_SECRET),
+        });
+        const feeRes = await fetch(feesUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-secret": process.env.INTERNAL_API_SECRET!, // ✅ match requireInternalAuth
+          },
+          body: JSON.stringify({ orderId: id }),
+        });
+        const feeText = await feeRes.text().catch(() => "");
+        if (!feeRes.ok) {
+          console.error(
+            `[fees] ← ${feeRes.status} ${feeRes.statusText}; body=${feeText || "<empty>"}`
+          );
+          toastWarnings.push("Couldn’t record platform fee (internal API).");
+        } else {
+          let parsed: any = null;
+          try { parsed = JSON.parse(feeText); } catch { }
+          console.log(`[fees] ok – inserted`, parsed?.item ?? feeText);
+          console.log(`Platform fee captured for order ${id}`);
+        }
 
       } catch (err) {
         console.error(
@@ -1017,6 +1101,7 @@ export async function PATCH(
       shouldNotify = true;                     // notify always on first underpaid
     } else if (FIRST_NOTIFY_STATUSES.includes(
       newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
+      // fire only once across PAID/COMPLETED
       shouldNotify = !ord.notifiedPaidOrCompleted;
     } else if (newStatus === "cancelled" || newStatus === "refunded") {
       shouldNotify = true;
@@ -1246,13 +1331,13 @@ export async function PATCH(
         }
       }
 
-      /* mark flag only for completed (Not needed for paid anymore) */
-      if (newStatus === "completed") {
+      /* mark as notified on first PAID **or** COMPLETED to prevent repeats */
+      if ((newStatus === "paid" || newStatus === "completed") && !ord.notifiedPaidOrCompleted) {
         await pool.query(
           `UPDATE orders
-              SET "notifiedPaidOrCompleted" = true,
-                  "updatedAt" = NOW()
-            WHERE id = $1`,
+          SET "notifiedPaidOrCompleted" = TRUE,
+              "updatedAt" = NOW()
+        WHERE id = $1`,
           [id],
         );
       }

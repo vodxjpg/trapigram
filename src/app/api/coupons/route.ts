@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
     countValues.push(`%${search}%`);
   }
 
-  // Updated SELECT query to include "expendingMinimum"
+  // Updated SELECT query to include "expendingMinimum" per coupon
   let query = `
     SELECT id, "organizationId", name, code, description, "discountType", "discountAmount", "startDate", "expirationDate", 
      "limitPerUser", "usageLimit", "expendingLimit", "expendingMinimum", countries, visibility, stackable, "createdAt", "updatedAt"
