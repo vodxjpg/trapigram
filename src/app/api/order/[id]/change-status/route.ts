@@ -1273,20 +1273,14 @@ export async function PATCH(
               console.log("[coinx] no order.id in orderMeta; will try reference lookup");
             }
           } catch (e) {
-               const msg = String((e as any)?.message || e);
-            if (msg.includes("The operation was aborted") || msg.includes("AbortError")) {
-              console.warn("[coinx] PATCH by id timed out; falling back to reference lookup.");
-            } else {
-              console.warn("[coinx] meta parse / id-path failed; will try reference lookup:", e);
-            }
+            console.warn("[coinx] meta parse / id-path failed; will try reference lookup:", e);
           }
-          
 
           // 3) Fallback: find Coinx order by our orderKey stored as 'reference' on Coinx
           if (!patched) {
             const findUrl = `${base}/api/orders?reference=${encodeURIComponent(String(ord.orderKey ?? ""))}`;
             const ac2 = new AbortController();
-            const to2 = setTimeout(() => ac2.abort(), 6000);
+            const to2 = setTimeout(() => ac2.abort(), 4000);
             const findRes = await fetch(findUrl, {
               headers: { "Accept": "application/json", "x-api-key": merchantApiKey },
               signal: ac2.signal,
