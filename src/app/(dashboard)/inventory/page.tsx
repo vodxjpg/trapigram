@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -38,6 +39,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { PageHeader } from "@/components/page-header";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 type InventoryCountRow = {
   id: string | number;
   reference: string;
@@ -48,6 +51,17 @@ type InventoryCountRow = {
 };
 
 export default function Component() {
+    const router = useRouter();
+  // org  permissions
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(orgId, { stockManagement: ["view"] });
+  const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, { stockManagement: ["update"] });
+
+  useEffect(() => {
+    if (!viewLoading && !canView) router.replace("/products"); // or "/" – match your UX
+  }, [viewLoading, canView, router]);
+  if (viewLoading || updateLoading || !canView) return null;
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
@@ -196,6 +210,7 @@ export default function Component() {
 
   // DELETE /api/inventory/[ID] (triggered from AlertDialog)
   const handleDelete = async (row: InventoryCountRow) => {
+    if (!canUpdate) return; // permission guard
     try {
       setDeleting(true);
       const res = await fetch(`/api/inventory/${row.id}`, {
@@ -248,15 +263,16 @@ export default function Component() {
               title="Inventory count"
               description="Count your inventory and get a detailed report"
               actions={
-                <div className="flex items-center gap-2">
-                   {/* NEW: Link to /inventory/new */}
+                    canUpdate ? (
+      <div className="flex items-center gap-2">
         <Button asChild className="flex items-center gap-2">
           <Link href="/inventory/new">
             <Plus className="h-4 w-4" />
             Add New Count
           </Link>
         </Button>
-                </div>
+      </div>
+    ) : null
               }
             />
 
@@ -364,11 +380,12 @@ export default function Component() {
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => {
-                                setRowToDelete(item);
-                                setDeleteOpen(true);
+                                                 if (!canUpdate) return;
+                  setRowToDelete(item);
+                  setDeleteOpen(true);
                               }}
                               className="flex items-center gap-2 text-red-600 focus:text-red-700"
-                              disabled={item.isCompleted}
+                              disabled={item.isCompleted || !canUpdate}
                             >
                               <Trash2 className="h-4 w-4" />
                               Delete

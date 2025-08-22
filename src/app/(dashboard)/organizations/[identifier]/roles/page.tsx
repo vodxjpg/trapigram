@@ -62,9 +62,7 @@ useEffect(() => {
             <li key={r.id} className="p-4 flex justify-between items-start">
               <div>
                 <span className="capitalize font-medium">{r.name}</span>
-                <pre className="text-xs text-muted-foreground mt-1">
-                  {Object.keys(r.permissions).join(", ")}
-                </pre>
+                
               </div>
               <div className="flex gap-3">
                 <Button

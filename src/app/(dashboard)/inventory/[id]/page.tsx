@@ -4,6 +4,7 @@
 import { useCallback } from "react";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +27,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 /**
  * Inventory metadata
@@ -79,6 +82,17 @@ const saveProductCount = async (
 
 export default function InventoryDetailPage() {
   const { id } = useParams();
+  const { id } = useParams();
+  const router = useRouter();
+  // permissions
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(orgId, { stockManagement: ["view"] });
+  const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, { stockManagement: ["update"] });
+  useEffect(() => {
+    if (!viewLoading && !canView) router.replace("/inventory");
+  }, [viewLoading, canView, router]);
+  if (viewLoading || updateLoading || !canView) return null;
   const [inventory, setInventory] = useState<InventoryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +164,7 @@ export default function InventoryDetailPage() {
   };
 
   const confirmDiscrepancySave = async () => {
+    if (!canUpdate) return;
     if (!pendingProductId) return;
     const product = products.find((p) => p.id === pendingProductId);
     const value = countedValues[pendingProductId];
@@ -169,6 +184,7 @@ export default function InventoryDetailPage() {
   };
 
   const handleSave = async (productId: string) => {
+    if (!canUpdate) return;
     const product = products.find((p) => p.id === productId);
     const value = countedValues[productId];
     if (!product || value == null) return;
@@ -259,6 +275,8 @@ export default function InventoryDetailPage() {
                         handleCountedChange(product.id, e.target.value)
                       }
                       className="w-20"
+                      disabled={!canUpdate}
+
                     />
                   )}
                 </TableCell>
@@ -274,7 +292,8 @@ export default function InventoryDetailPage() {
                     <Button
                       size="sm"
                       onClick={() => handleSave(product.id)}
-                      disabled={!countedValues[product.id]}
+                      disabled={!countedValues[product.id] || !canUpdate}
+                    >
                     >
                       Save
                     </Button>
@@ -444,10 +463,10 @@ export default function InventoryDetailPage() {
       </Card>
 
       {/* Discrepancy Modal */}
-      <Dialog
-        open={showDiscrepancyModal}
-        onOpenChange={setShowDiscrepancyModal}
-      >
+         <Dialog
+      open={showDiscrepancyModal && canUpdate}
+      onOpenChange={setShowDiscrepancyModal}
+    >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Discrepancy Reason</DialogTitle>
@@ -459,6 +478,7 @@ export default function InventoryDetailPage() {
             value={discrepancyReason}
             onChange={(e) => setDiscrepancyReason(e.target.value)}
             placeholder="Explain discrepancy..."
+            disabled={!canUpdate}
           />
           <DialogFooter>
             <Button
@@ -468,8 +488,8 @@ export default function InventoryDetailPage() {
               Cancel
             </Button>
             <Button
-              onClick={confirmDiscrepancySave}
-              disabled={!discrepancyReason.trim()}
+                       onClick={confirmDiscrepancySave}
+           disabled={!discrepancyReason.trim() || !canUpdate}
             >
               Save
             </Button>

@@ -29,6 +29,8 @@ import {
   CommandItem,
   CommandEmpty,
 } from "@/components/ui/command";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 type Warehouse = {
   id: string;
@@ -48,6 +50,16 @@ type FormData = {
 
 export default function InventoryCount() {
   const router = useRouter();
+   // permissions: need update to create
+ const { data: activeOrg } = authClient.useActiveOrganization();
+ const orgId = activeOrg?.id ?? null;
+ const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(orgId, { stockManagement: ["view"] });
+ const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, { stockManagement: ["update"] });
+ useEffect(() => {
+   if (!viewLoading && (!canView || !canUpdate)) router.replace("/inventory");
+ }, [viewLoading, canView, canUpdate, router]);
+ if (viewLoading || updateLoading || !canView || !canUpdate) return null;
+
   const [countType, setCountType] = useState<"all" | "specific">("all");
   const [warehouseOptions, setWarehouseOptions] = useState<Warehouse[]>([]);
   const [productCategories, setProductCategories] = useState<ProductCategory[]>(
@@ -128,6 +140,7 @@ export default function InventoryCount() {
   }, [countType, productCategories.length]);
 
   const onSubmit = async (data: FormData) => {
+     if (!canUpdate) return;
     if (!data.warehouse) return;
 
     // Find selected warehouse object to extract countries
@@ -383,7 +396,7 @@ export default function InventoryCount() {
       )}
 
       <div className="flex justify-end">
-        <Button type="submit" className="px-8">
+         <Button type="submit" className="px-8" disabled={!canUpdate}>
           Continue
         </Button>
       </div>
