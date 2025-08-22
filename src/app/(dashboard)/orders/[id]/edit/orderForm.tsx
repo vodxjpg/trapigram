@@ -88,10 +88,24 @@ interface OrderItemLine {
 }
 
 const NIFTIPAY_BASE =
-  (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com")
-    .replace(/\/+$/, "");          // strip trailing “/” just in case
-
+ (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com")
+   .replace(/\/+$/, ""); // strip trailing “/” just in case
 const DEBOUNCE_MS = 400;
+type NiftipayNet = { chain: string; asset: string; label: string };
+
+// Mirror create-form: fetch Niftipay networks via our backend proxy
+async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
+  const r = await fetch("/api/niftipay/payment-methods");
+  if (!r.ok) {
+    throw new Error(await r.text().catch(() => "Niftipay methods failed"));
+  }
+  const { methods } = await r.json();
+  return (methods || []).map((m: any) => ({
+    chain: m.chain,
+    asset: m.asset,
+    label: m.label ?? `${m.asset} on ${m.chain}`,
+  }));
+}
 
 function mergeLinesByProduct(
   lines: Array<{
@@ -445,58 +459,55 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
    Fetch payment methods + (if Niftipay) chains/assets
 ──────────────────────────────────────────────────────────── */
   useEffect(() => {
-    (async () => {
-      try {
-        const pmRes = await fetch("/api/payment-methods");
-        const { methods } = await pmRes.json();
-        setPaymentMethods(methods);
-        console.log("[Trapigram] Loaded payment methods", {
-          methods: methods.map((m: any) => ({
-            id: m.id,
-            name: m.name,
-            apiKey: m.apiKey ? m.apiKey.slice(0, 8) + "..." : "null",
-          })),
-        });
-        const init = methods.find(
-          (m: any) =>
-            m.name.toLowerCase() === orderData?.shippingInfo.payment?.toLowerCase()
-        )?.id;
-        if (init) setSelectedPaymentMethod(init);
-      } catch (e) {
-        toast.error("Failed loading payment methods");
-      }
-    })();
-  }, [orderData]);
-
-  useEffect(() => {
-    const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
-    if (!pm || pm.name.toLowerCase() !== "niftipay" || !pm.apiKey) {
-      setNiftipayNetworks([]);
-      setSelectedNiftipay("");
-      return;
+  (async () => {
+    try {
+      const pmRes = await fetch("/api/payment-methods");
+      const { methods } = await pmRes.json();
+      setPaymentMethods(methods);
+      const init = methods.find(
+        (m: any) =>
+          m.name?.toLowerCase?.() === orderData?.shippingInfo?.payment?.toLowerCase()
+      )?.id;
+      if (init) setSelectedPaymentMethod(init);
+    } catch {
+      toast.error("Failed loading payment methods");
     }
-    (async () => {
-      try {
-        setNiftipayLoading(true);
-        const res = await fetch(
-                  `${NIFTIPAY_BASE}/api/payment-methods`,
-                  { credentials: "omit", headers: { "x-api-key": pm.apiKey } },
-                );
-        const { methods } = await res.json();
-        setNiftipayNetworks(
-          methods.map((m: any) => ({
-            chain: m.chain,
-            asset: m.asset,
-            label: m.label ?? `${m.asset} on ${m.chain}`,
-          }))
-        );
-      } catch (err: any) {
-        toast.error(err.message);
-      } finally {
-        setNiftipayLoading(false);
+  })();
+}, [orderData]);
+
+// Load Niftipay networks the same way as the create form (via backend proxy)
+useEffect(() => {
+  const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+  if (!pm || !/niftipay/i.test(pm.name || "")) {
+    setNiftipayNetworks([]);
+    setSelectedNiftipay("");
+    return;
+  }
+  (async () => {
+    setNiftipayLoading(true);
+    try {
+      const nets = await fetchNiftipayNetworks();
+      setNiftipayNetworks(nets);
+      // auto-pick first option if none selected (parity with create form)
+      if (!selectedNiftipay && nets[0]) {
+        setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
       }
-    })();
-  }, [selectedPaymentMethod, paymentMethods]);
+    } catch (err: any) {
+      toast.error(err.message || "Niftipay networks load error");
+      setNiftipayNetworks([]);
+    } finally {
+      setNiftipayLoading(false);
+    }
+  })();
+}, [selectedPaymentMethod, paymentMethods, selectedNiftipay]);
+
+// Optional: if nothing is selected (e.g., editing an old order), preselect Niftipay
+useEffect(() => {
+  if (!selectedPaymentMethod) {
+    const n = paymentMethods.find((m) => /niftipay/i.test(m.name || ""));
+    if (n) setSelectedPaymentMethod(n.id);
+  }
+}, [paymentMethods, selectedPaymentMethod]);
 
 
   /* ─── country-aware catalogue (affiliates always pass) ─── */
