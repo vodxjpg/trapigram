@@ -10,6 +10,10 @@ import { sendNotification } from "@/lib/notifications";
 import { createHmac } from "crypto";
 import type { NotificationType } from "@/lib/notifications";
 
+// Vercel runtime hints (keep these AFTER all imports)
+export const runtime = "nodejs";
+export const preferredRegion = ["iad1"];
+
 
 // ── diagnostics ──────────────────────────────────────────────
 
@@ -848,15 +852,33 @@ async function applyItemEffects(
   }
 }
 
-/* ────────────────────────────────────────────────────────────── */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  // 1) context + permission guard
-  const ctx = await getContext(req) as { organizationId: string; tenantId: string };
-  const { organizationId, tenantId } = ctx
+  // 1) context  permission guard (supports internal cron calls)
   const { id } = params;
+  const internalSecret = req.headers.get("x-internal-secret");
+  let organizationId: string;
+  let tenantId: string | null = null;
+
+  if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
+    // Called by Vercel Cron: derive org from the order (no user session)
+    const { rows: [o] } = await pool.query(
+      `SELECT "organizationId" FROM orders WHERE id = $1 LIMIT 1`,
+      [id],
+    );
+    if (!o) {
+      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
+    organizationId = o.organizationId;
+    // tenantId left null; Niftipay sync block already guards on falsy tenantId
+  } else {
+    // Normal authenticated path
+    const ctx = await getContext(req) as { organizationId: string; tenantId: string | null };
+    organizationId = ctx.organizationId;
+    tenantId = ctx.tenantId ?? null;
+  }
   const { status: newStatus } = orderStatusSchema.parse(await req.json());
 
   const client = await pool.connect();
