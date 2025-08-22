@@ -1,7 +1,10 @@
+// src/app/(dashboard)/analytics/coupons/monthly-coupon-report.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -44,11 +47,11 @@ import { CalendarIcon } from "lucide-react";
 
 interface CouponStats {
   id: string;
-  month: string; // e.g. "2025-05"
+  month: string;
   couponCode: string;
   redemptions: number;
   totalOrders: number;
-  totalDiscount: number; // in cents or float
+  totalDiscount: number;
   revenueAfterDiscount: number;
 }
 
@@ -68,6 +71,19 @@ type DatePreset =
 
 export default function MonthlyCouponReport() {
   const router = useRouter();
+
+  // --- Permissions: couponsReport.view
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { couponsReport: ["view"] }
+  );
+
+  useEffect(() => {
+    if (!viewLoading && !canView) router.replace("/analytics");
+  }, [viewLoading, canView, router]);
+
   const [data, setData] = useState<CouponStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,123 +94,93 @@ export default function MonthlyCouponReport() {
   });
   const [isCustomDate, setIsCustomDate] = useState(false);
 
-  // Generate date range based on preset
   const getDateRangeFromPreset = (preset: DatePreset): DateRange => {
     const today = new Date();
 
     switch (preset) {
       case "today":
-        return {
-          from: startOfDay(today),
-          to: endOfDay(today),
-        };
+        return { from: startOfDay(today), to: endOfDay(today) };
       case "yesterday":
-        const yesterday = subDays(today, 1);
-        return {
-          from: startOfDay(yesterday),
-          to: endOfDay(yesterday),
-        };
+        const y = subDays(today, 1);
+        return { from: startOfDay(y), to: endOfDay(y) };
       case "last7days":
-        return {
-          from: subDays(today, 6),
-          to: today,
-        };
+        return { from: subDays(today, 6), to: today };
       case "last30days":
-        return {
-          from: subDays(today, 29),
-          to: today,
-        };
+        return { from: subDays(today, 29), to: today };
       case "currentMonth":
-        return {
-          from: startOfMonth(today),
-          to: endOfMonth(today),
-        };
+        return { from: startOfMonth(today), to: endOfMonth(today) };
       case "lastMonth":
-        const lastMonth = subMonths(today, 1);
-        return {
-          from: startOfMonth(lastMonth),
-          to: endOfMonth(lastMonth),
-        };
+        const lm = subMonths(today, 1);
+        return { from: startOfMonth(lm), to: endOfMonth(lm) };
       case "custom":
-        return dateRange; // Keep existing custom range
+        return dateRange;
       default:
-        return {
-          from: startOfMonth(today),
-          to: endOfMonth(today),
-        };
+        return { from: startOfMonth(today), to: endOfMonth(today) };
     }
   };
 
-  // Handle date preset change
   const handleDatePresetChange = (value: string) => {
     const preset = value as DatePreset;
     setDatePreset(preset);
     setIsCustomDate(preset === "custom");
-
     if (preset !== "custom") {
-      const newDateRange = getDateRangeFromPreset(preset);
-      setDateRange(newDateRange);
+      setDateRange(getDateRangeFromPreset(preset));
     }
   };
 
-  // Format date range for display
   const formatDateRange = () => {
     const { from, to } = dateRange;
-
-    if (datePreset === "today") {
-      return "Today";
-    } else if (datePreset === "yesterday") {
-      return "Yesterday";
-    } else if (from && to) {
-      return `${format(from, "MMM d, yyyy")} - ${format(to, "MMM d, yyyy")}`;
-    }
+    if (datePreset === "today") return "Today";
+    if (datePreset === "yesterday") return "Yesterday";
+    if (from && to) return `${format(from, "MMM d, yyyy")} - ${format(to, "MMM d, yyyy")}`;
     return "";
   };
 
+  // --- Fetch guarded by canView
   useEffect(() => {
-    async function fetchStats() {
+    if (!canView) return;
+    let cancelled = false;
+
+    (async () => {
       try {
         setLoading(true);
-        // Format dates for API
+        setError(null);
+
         const fromDate = format(dateRange.from, "yyyy-MM-dd");
         const toDate = format(dateRange.to, "yyyy-MM-dd");
 
-        const res = await fetch(
-          `/api/report/coupon/?from=${fromDate}&to=${toDate}`
-        );
+        const res = await fetch(`/api/report/coupon/?from=${fromDate}&to=${toDate}`);
         if (!res.ok) throw new Error("Failed to load coupon stats");
         const json = await res.json();
-        setData(json.values.stats);
+        if (!cancelled) setData(json.values.stats);
       } catch (err: any) {
-        setError(err.message);
+        if (!cancelled) setError(err.message);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    }
+    })();
 
-    fetchStats();
-  }, [dateRange]);
+    return () => { cancelled = true; };
+  }, [dateRange, canView]);
 
   const fmtYearMonth = (iso: string | null): string =>
-    iso
-      ? new Date(iso).toISOString().slice(0, 7) // "YYYY-MM"
-      : "—";
+    iso ? new Date(iso).toISOString().slice(0, 7) : "—";
 
   const handleCouponSelect = (couponId: string) => {
     router.push(`/analytics/coupons/${couponId}`);
   };
+
   // Sort by redemptions (highest first)
   const sortedData = [...data].sort((a, b) => b.redemptions - a.redemptions);
 
+  if (viewLoading || !canView) return null; // hide while checking or denied
   if (loading) return <div>Loading report…</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
 
   return (
     <div className="container mx-auto py-8 px-4">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
-        <h1 className="text-3xl font-bold mb-4 md:mb-0">
-          Coupon Performance Report
-        </h1>
+        <h1 className="text-3xl font-bold mb-4 md:mb-0">Coupon Performance Report</h1>
 
         <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
           <Select value={datePreset} onValueChange={handleDatePresetChange}>
@@ -215,15 +201,11 @@ export default function MonthlyCouponReport() {
           {isCustomDate && (
             <Popover>
               <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="w-full sm:w-[300px] justify-start text-left font-normal"
-                >
+                <Button variant="outline" className="w-full sm:w-[300px] justify-start text-left font-normal">
                   <CalendarIcon className="mr-2 h-4 w-4" />
                   {dateRange.from && dateRange.to ? (
                     <>
-                      {format(dateRange.from, "MMM d, yyyy")} -{" "}
-                      {format(dateRange.to, "MMM d, yyyy")}
+                      {format(dateRange.from, "MMM d, yyyy")} - {format(dateRange.to, "MMM d, yyyy")}
                     </>
                   ) : (
                     <span>Pick a date range</span>
@@ -235,10 +217,7 @@ export default function MonthlyCouponReport() {
                   initialFocus
                   mode="range"
                   defaultMonth={dateRange.from}
-                  selected={{
-                    from: dateRange.from,
-                    to: dateRange.to,
-                  }}
+                  selected={{ from: dateRange.from, to: dateRange.to }}
                   onSelect={(range) => {
                     if (range?.from && range?.to) {
                       setDateRange({ from: range.from, to: range.to });
@@ -266,21 +245,15 @@ export default function MonthlyCouponReport() {
                   <TableHead className="text-right">Redemptions</TableHead>
                   <TableHead className="text-right">% of Orders</TableHead>
                   <TableHead className="text-right">Total Discount</TableHead>
-                  <TableHead className="text-right">
-                    Revenue After Discount
-                  </TableHead>
+                  <TableHead className="text-right">Revenue After Discount</TableHead>
                   <TableHead className="text-right">Avg Order Value</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {sortedData.length > 0 ? (
                   sortedData.map((row) => {
-                    const pct =
-                      ((row.redemptions / row.totalOrders) * 100).toFixed(1) +
-                      "%";
-                    const avgAOV = (
-                      row.revenueAfterDiscount / row.redemptions
-                    ).toFixed(2);
+                    const pct = ((row.redemptions / row.totalOrders) * 100).toFixed(1) + "%";
+                    const avgAOV = (row.revenueAfterDiscount / row.redemptions).toFixed(2);
                     return (
                       <TableRow
                         key={`${row.month}-${row.couponCode}`}
@@ -289,16 +262,10 @@ export default function MonthlyCouponReport() {
                       >
                         <TableCell>{fmtYearMonth(row.month)}</TableCell>
                         <TableCell>{row.couponCode}</TableCell>
-                        <TableCell className="text-right">
-                          {row.redemptions}
-                        </TableCell>
+                        <TableCell className="text-right">{row.redemptions}</TableCell>
                         <TableCell className="text-right">{pct}</TableCell>
-                        <TableCell className="text-right">
-                          ${row.totalDiscount.toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          ${row.revenueAfterDiscount.toFixed(2)}
-                        </TableCell>
+                        <TableCell className="text-right">${row.totalDiscount.toFixed(2)}</TableCell>
+                        <TableCell className="text-right">${row.revenueAfterDiscount.toFixed(2)}</TableCell>
                         <TableCell className="text-right">${avgAOV}</TableCell>
                       </TableRow>
                     );
@@ -325,46 +292,25 @@ export default function MonthlyCouponReport() {
             {data.length > 0 ? (
               <ChartContainer
                 className="h-[600px] w-full"
-                config={{
-                  redemptions: {
-                    label: "Redemptions",
-                    color: "hsl(var(--chart-1))",
-                  },
-                }}
+                config={{ redemptions: { label: "Redemptions", color: "hsl(var(--chart-1))" } }}
               >
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={data}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 70 }}
-                  >
+                  <BarChart data={data} margin={{ top: 20, right: 30, left: 20, bottom: 70 }}>
                     <XAxis
                       dataKey="couponCode"
-                      angle={-45} // Rotate labels for better readability
+                      angle={-45}
                       textAnchor="end"
-                      height={70} // Increase height for rotated labels
+                      height={70}
                       tick={{ fontSize: 12 }}
                     />
-                    <YAxis
-                      label={{
-                        value: "Redemptions",
-                        angle: -90,
-                        position: "insideLeft",
-                      }}
-                    />
-                    <ChartTooltip
-                      content={<ChartTooltipContent />}
-                      cursor={{ fill: "rgba(0, 0, 0, 0.1)" }}
-                    />
+                    <YAxis label={{ value: "Redemptions", angle: -90, position: "insideLeft" }} />
+                    <ChartTooltip content={<ChartTooltipContent />} cursor={{ fill: "rgba(0, 0, 0, 0.1)" }} />
                     <Bar
                       dataKey="redemptions"
                       fill="var(--color-redemptions)"
                       radius={[4, 4, 0, 0]}
-                      label={{
-                        position: "top",
-                        fill: "var(--foreground)",
-                        fontSize: 12,
-                      }}
-                      onClick={(data) => handleCouponSelect(data.id)}
+                      label={{ position: "top", fill: "var(--foreground)", fontSize: 12 }}
+                      onClick={(bar) => handleCouponSelect((bar as any).id)}
                       cursor="pointer"
                     />
                   </BarChart>

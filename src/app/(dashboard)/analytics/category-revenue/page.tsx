@@ -1,7 +1,11 @@
+// src/app/(dashboard)/analytics/category-revenue/page.tsx
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import * as XLSX from "xlsx";
 import {
   CalendarIcon,
@@ -67,6 +71,23 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 export default function CategoryRevenueReport() {
+  const router = useRouter();
+
+  // Permissions
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { categoriesReport: ["view"] }
+  );
+  const { hasPermission: canExport, isLoading: exportLoading } =
+    useHasPermission(orgId, { categoriesReport: ["export"] });
+
+  // Navigate away if no view permission
+  useEffect(() => {
+    if (!viewLoading && !canView) router.replace("/analytics");
+  }, [viewLoading, canView, router]);
+
   const [currentPage, setCurrentPage] = useState(1);
   const [dateRange, setDateRange] = useState<CustomDateRange>({
     from: startOfDay(subDays(new Date(), 30)),
@@ -86,8 +107,10 @@ export default function CategoryRevenueReport() {
   const isMobile = useIsMobile();
   const rowsPerPage = 25;
 
-  // Fetch data whenever dateRange or currency changes
+  // Fetch data whenever dateRange or currency changes (only if user can view)
   useEffect(() => {
+    if (!canView) return;
+
     async function fetchCategoryRevenue() {
       setLoading(true);
       setError(null);
@@ -109,7 +132,7 @@ export default function CategoryRevenueReport() {
       }
     }
     fetchCategoryRevenue();
-  }, [dateRange, currency]);
+  }, [dateRange, currency, canView]);
 
   // Sort categories by revenue (highest first)
   const filteredCategories = useMemo(() => {
@@ -181,6 +204,7 @@ export default function CategoryRevenueReport() {
   };
 
   const exportToExcel = () => {
+    if (!canExport) return; // guard
     const dataForSheet = categories.map((c) => ({
       Category: c.category,
       Total: c.total,
@@ -202,6 +226,9 @@ export default function CategoryRevenueReport() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  // While checking permissions (or if denied), render nothing
+  if (viewLoading || exportLoading || !canView) return null;
 
   return (
     <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
@@ -260,7 +287,6 @@ export default function CategoryRevenueReport() {
                         defaultMonth={dateRange?.from || new Date()}
                         selected={tempDateRange}
                         onSelect={(range) => {
-                          console.log("Date range selected:", range);
                           setTempDateRange(range);
                         }}
                         numberOfMonths={2}
@@ -294,7 +320,7 @@ export default function CategoryRevenueReport() {
                   </PopoverContent>
                 </Popover>
               </div>
-              {/* Currency Select */}
+              {/* Currency + Export */}
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">Currency</span>
                 <Select
@@ -315,6 +341,8 @@ export default function CategoryRevenueReport() {
                   size="sm"
                   className="shrink-0"
                   onClick={exportToExcel}
+                  disabled={!canExport}
+                  title={canExport ? "Export to Excel" : "You don't have permission to export"}
                 >
                   <DownloadIcon className="mr-2 h-4 w-4" />
                   Export to Excel

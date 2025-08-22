@@ -1,7 +1,10 @@
+// src/app/(dashboard)/analytics/products/[id]/individual-product-report.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import {
@@ -10,40 +13,18 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
+  Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { format, startOfMonth, endOfMonth, subMonths } from "date-fns";
 import { CalendarIcon, ArrowLeft } from "lucide-react";
 
-interface DailyData {
-  date: string; // e.g. "2025-01"
-  quantity: number;
-  title: string;
-  sku: string;
-}
-
-interface MonthlyData {
-  month: string; // e.g. "2025-01"
-  quantity: number;
-  title: string;
-  sku: string;
-}
-
-interface DateRange {
-  from: Date;
-  to: Date;
-}
-
+interface DailyData { date: string; quantity: number; title: string; sku: string; }
+interface MonthlyData { month: string; quantity: number; title: string; sku: string; }
+interface DateRange { from: Date; to: Date; }
 type DatePreset = "currentMonth" | "lastMonth" | "custom";
 
 export default function IndividualProductReport() {
@@ -51,6 +32,19 @@ export default function IndividualProductReport() {
   const params = useParams();
   const productId = params.id;
   const onBack = () => router.back();
+
+  // --- Permissions: productsReport.view
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { productsReport: ["view"] }
+  );
+
+  useEffect(() => {
+    if (!viewLoading && !canView) router.replace("/analytics/products");
+  }, [viewLoading, canView, router]);
+
   const [dailyData, setDailyData] = useState<DailyData[]>([]);
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,93 +60,58 @@ export default function IndividualProductReport() {
   const [title, setTitle] = useState("");
   const [sku, setSku] = useState("");
 
-  const [yearFilter, setYearFilter] = useState<number>(
-    new Date().getFullYear()
-  );
+  const [yearFilter, setYearFilter] = useState<number>(new Date().getFullYear());
   const yearFilterOptions = [2025, 2026, 2027];
 
-  // Generate date range based on preset
   const getDateRangeFromPreset = (preset: DatePreset): DateRange => {
     const today = new Date();
-
     switch (preset) {
       case "currentMonth":
-        return {
-          from: startOfMonth(today),
-          to: endOfMonth(today),
-        };
+        return { from: startOfMonth(today), to: endOfMonth(today) };
       case "lastMonth":
-        const lastMonth = subMonths(today, 1);
-        return {
-          from: startOfMonth(lastMonth),
-          to: endOfMonth(lastMonth),
-        };
+        const last = subMonths(today, 1);
+        return { from: startOfMonth(last), to: endOfMonth(last) };
       case "custom":
-        const customDate = new Date(selectedYear, selectedMonth, 1);
-        return {
-          from: startOfMonth(customDate),
-          to: endOfMonth(customDate),
-        };
+        const d = new Date(selectedYear, selectedMonth, 1);
+        return { from: startOfMonth(d), to: endOfMonth(d) };
       default:
-        return {
-          from: startOfMonth(today),
-          to: endOfMonth(today),
-        };
+        return { from: startOfMonth(today), to: endOfMonth(today) };
     }
   };
 
-  // Handle date preset change
   const handleDatePresetChange = (value: string) => {
     const preset = value as DatePreset;
     setDatePreset(preset);
     setIsCustomDate(preset === "custom");
-
-    if (preset !== "custom") {
-      const newDateRange = getDateRangeFromPreset(preset);
-      setDateRange(newDateRange);
-    }
+    if (preset !== "custom") setDateRange(getDateRangeFromPreset(preset));
   };
 
-  // Handle custom month/year change
   const handleCustomDateChange = () => {
     if (datePreset === "custom") {
-      const customDate = new Date(selectedYear, selectedMonth, 1);
-      setDateRange({
-        from: startOfMonth(customDate),
-        to: endOfMonth(customDate),
-      });
+      const custom = new Date(selectedYear, selectedMonth, 1);
+      setDateRange({ from: startOfMonth(custom), to: endOfMonth(custom) });
     }
   };
+  useEffect(() => { handleCustomDateChange(); }, [selectedMonth, selectedYear, datePreset]);
 
-  useEffect(() => {
-    handleCustomDateChange();
-  }, [selectedMonth, selectedYear, datePreset]);
-
-  // Format date range for display
   const formatDateRange = () => {
     const { from } = dateRange;
-
-    if (datePreset === "currentMonth") {
-      return "Current Month";
-    } else if (datePreset === "lastMonth") {
-      return "Last Month";
-    } else if (from) {
-      return format(from, "MMMM yyyy");
-    }
+    if (datePreset === "currentMonth") return "Current Month";
+    if (datePreset === "lastMonth") return "Last Month";
+    if (from) return format(from, "MMMM yyyy");
     return "";
   };
 
-  // --- fetch the daily from/to report
+  // Daily report (guarded)
   useEffect(() => {
+    if (!canView) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
         const fromDate = format(dateRange.from, "yyyy-MM-dd");
         const toDate = format(dateRange.to, "yyyy-MM-dd");
-        const res = await fetch(
-          `/api/report/product/${productId}/daily/?from=${fromDate}&to=${toDate}`
-        );
+        const res = await fetch(`/api/report/product/${productId}/daily/?from=${fromDate}&to=${toDate}`);
         if (!res.ok) throw new Error("Failed to load daily report");
         const json = await res.json();
         if (!cancelled) {
@@ -166,55 +125,30 @@ export default function IndividualProductReport() {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [productId, dateRange]);
+    return () => { cancelled = true; };
+  }, [productId, dateRange, canView]);
 
+  // Monthly report (guarded)
   useEffect(() => {
+    if (!canView) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch(
-          `/api/report/product/${productId}/monthly/?year=${yearFilter}`
-        );
+        const res = await fetch(`/api/report/product/${productId}/monthly/?year=${yearFilter}`);
         if (!res.ok) throw new Error("Failed to load monthly report");
         const json = await res.json();
-        if (!cancelled) {
-          setMonthlyData(json.monthly);
-        }
+        if (!cancelled) setMonthlyData(json.monthly);
       } catch (e: any) {
         if (!cancelled) setError(e.message);
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [productId, yearFilter]);
+    return () => { cancelled = true; };
+  }, [productId, yearFilter, canView]);
 
-  // Generate month options (current year and previous year)
-  const monthOptions = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-
-  // Generate year options (current year and 2 previous years)
-  const currentYear = new Date().getFullYear();
-  const yearOptions = [currentYear, currentYear - 1, currentYear - 2];
-
+  if (viewLoading || !canView) return null;
   if (loading) return <div>Loading product report…</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
   if (!dailyData) return <div>No data available</div>;
@@ -234,7 +168,7 @@ export default function IndividualProductReport() {
         </div>
       </div>
 
-      {/* Daily Report Chart */}
+      {/* Daily Report */}
       <Card className="mb-8">
         <CardHeader>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -254,60 +188,32 @@ export default function IndividualProductReport() {
               {isCustomDate && (
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="w-full sm:w-[160px] justify-start text-left font-normal"
-                    >
+                    <Button variant="outline" className="w-full sm:w-[160px] justify-start text-left font-normal">
                       <CalendarIcon className="mr-2 h-4 w-4" />
-                      {format(
-                        new Date(selectedYear, selectedMonth),
-                        "MMM yyyy"
-                      )}
+                      {format(new Date(selectedYear, selectedMonth), "MMM yyyy")}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-4" align="start">
                     <div className="space-y-4">
                       <div>
-                        <label className="text-sm font-medium mb-2 block">
-                          Month
-                        </label>
-                        <Select
-                          value={selectedMonth.toString()}
-                          onValueChange={(value) =>
-                            setSelectedMonth(Number.parseInt(value))
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
+                        <label className="text-sm font-medium mb-2 block">Month</label>
+                        <Select value={selectedMonth.toString()} onValueChange={(v) => setSelectedMonth(Number.parseInt(v))}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {monthOptions.map((month, index) => (
-                              <SelectItem key={index} value={index.toString()}>
-                                {month}
-                              </SelectItem>
-                            ))}
+                            {["January","February","March","April","May","June","July","August","September","October","November","December"].map(
+                              (m, i) => <SelectItem key={i} value={i.toString()}>{m}</SelectItem>
+                            )}
                           </SelectContent>
                         </Select>
                       </div>
                       <div>
-                        <label className="text-sm font-medium mb-2 block">
-                          Year
-                        </label>
-                        <Select
-                          value={selectedYear.toString()}
-                          onValueChange={(value) =>
-                            setSelectedYear(Number.parseInt(value))
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
+                        <label className="text-sm font-medium mb-2 block">Year</label>
+                        <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(Number.parseInt(v))}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {yearOptions.map((year) => (
-                              <SelectItem key={year} value={year.toString()}>
-                                {year}
-                              </SelectItem>
-                            ))}
+                            {[new Date().getFullYear(), new Date().getFullYear()-1, new Date().getFullYear()-2].map(
+                              (y) => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+                            )}
                           </SelectContent>
                         </Select>
                       </div>
@@ -321,54 +227,21 @@ export default function IndividualProductReport() {
         <CardContent>
           <div className="h-[400px] w-full">
             {dailyData ? (
-              <ChartContainer
-                className="h-[400px] w-full"
-                config={{
-                  quantity: {
-                    label: "Quantity",
-                    color: "hsl(var(--chart-1))",
-                  },
-                }}
-              >
+              <ChartContainer className="h-[400px] w-full" config={{ quantity: { label: "Quantity", color: "hsl(var(--chart-1))" } }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={dailyData}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 50 }}
-                  >
+                  <BarChart data={dailyData} margin={{ top: 20, right: 30, left: 20, bottom: 50 }}>
                     <XAxis
                       dataKey="date"
                       tick={{ fontSize: 12 }}
-                      tickFormatter={(v) =>
-                        format(new Date(v + "T00:00:00"), "MMM d")
-                      }
-                      interval={0} // Show all dates
-                      angle={-45} // Rotate labels for better readability
+                      tickFormatter={(v) => format(new Date(v + "T00:00:00"), "MMM d")}
+                      interval={0}
+                      angle={-45}
                       textAnchor="end"
                       height={70}
                     />
-                    <YAxis
-                      tick={{ fontSize: 12 }}
-                      label={{
-                        value: "Quantity",
-                        angle: -90,
-                        position: "insideLeft",
-                      }}
-                    />
-                    <ChartTooltip
-                      content={<ChartTooltipContent />}
-                      cursor={{ fill: "rgba(0, 0, 0, 0.1)" }}
-                    />
-                    <Bar
-                      dataKey="quantity"
-                      fill="var(--color-quantity)"
-                      radius={[4, 4, 0, 0]}
-                      name="Quantity Sold"
-                      label={{
-                        position: "top",
-                        fill: "var(--foreground)",
-                        fontSize: 12,
-                      }}
-                    />
+                    <YAxis tick={{ fontSize: 12 }} label={{ value: "Quantity", angle: -90, position: "insideLeft" }} />
+                    <ChartTooltip content={<ChartTooltipContent />} cursor={{ fill: "rgba(0, 0, 0, 0.1)" }} />
+                    <Bar dataKey="quantity" fill="var(--color-quantity)" radius={[4, 4, 0, 0]} name="Quantity Sold" label={{ position: "top", fill: "var(--foreground)", fontSize: 12 }} />
                   </BarChart>
                 </ResponsiveContainer>
               </ChartContainer>
@@ -381,15 +254,12 @@ export default function IndividualProductReport() {
         </CardContent>
       </Card>
 
-      {/* Monthly Report Chart */}
+      {/* Monthly Report */}
       <Card>
         <CardHeader>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <CardTitle>Monthly Sales Trend</CardTitle>
-            <Select
-              value={yearFilter.toString()}
-              onValueChange={(value) => setYearFilter(Number.parseInt(value))}
-            >
+            <Select value={yearFilter.toString()} onValueChange={(v) => setYearFilter(Number.parseInt(v))}>
               <SelectTrigger className="w-full sm:w-[120px]">
                 <SelectValue placeholder="Select year" />
               </SelectTrigger>
@@ -406,56 +276,24 @@ export default function IndividualProductReport() {
         <CardContent>
           <div className="h-[400px] w-full">
             {monthlyData && monthlyData.length > 0 ? (
-              <ChartContainer
-                className="h-[400px] w-full"
-                config={{
-                  quantity: {
-                    label: "Quantity",
-                    color: "hsl(var(--chart-2))",
-                  },
-                }}
-              >
+              <ChartContainer className="h-[400px] w-full" config={{ quantity: { label: "Quantity", color: "hsl(var(--chart-2))" } }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={monthlyData}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 50 }}
-                  >
+                  <BarChart data={monthlyData} margin={{ top: 20, right: 30, left: 20, bottom: 50 }}>
                     <XAxis
                       dataKey="month"
                       angle={-45}
                       textAnchor="end"
-                      height={70} // Increase height for rotated labels
+                      height={70}
                       tick={{ fontSize: 12 }}
-                      tickFormatter={(val) => {
-                        // Parse year and month explicitly to avoid timezone issues
+                      tickFormatter={(val: string) => {
                         const [year, month] = val.split("-").map(Number);
-                        const date = new Date(year, month - 1, 1); // month is 0-indexed
+                        const date = new Date(year, month - 1, 1);
                         return format(date, "MMM yyyy");
                       }}
                     />
-                    <YAxis
-                      tick={{ fontSize: 12 }}
-                      label={{
-                        value: "Quantity",
-                        angle: -90,
-                        position: "insideLeft",
-                      }}
-                    />
-                    <ChartTooltip
-                      content={<ChartTooltipContent />}
-                      cursor={{ fill: "rgba(0, 0, 0, 0.1)" }}
-                    />
-                    <Bar
-                      dataKey="quantity"
-                      fill="var(--color-quantity)"
-                      radius={[4, 4, 0, 0]}
-                      name="Quantity Sold"
-                      label={{
-                        position: "top",
-                        fill: "var(--foreground)",
-                        fontSize: 12,
-                      }}
-                    />
+                    <YAxis tick={{ fontSize: 12 }} label={{ value: "Quantity", angle: -90, position: "insideLeft" }} />
+                    <ChartTooltip content={<ChartTooltipContent />} cursor={{ fill: "rgba(0, 0, 0, 0.1)" }} />
+                    <Bar dataKey="quantity" fill="var(--color-quantity)" radius={[4, 4, 0, 0]} name="Quantity Sold" label={{ position: "top", fill: "var(--foreground)", fontSize: 12 }} />
                   </BarChart>
                 </ResponsiveContainer>
               </ChartContainer>
