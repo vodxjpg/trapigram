@@ -93,7 +93,19 @@ export default function DashboardPage() {
   const orgId = activeOrg?.id ?? null;
   const { hasPermission: canViewRevenue, isLoading: revLoading } =
     useHasPermission(orgId, { revenue: ["view"] });
-   const canShowRevenue = !revLoading && !!canViewRevenue;
+   
+  // Owners should always be able to view revenue
+  // (normalize possible shapes returned by your auth client)
+  const role =
+    (activeOrg as any)?.userRole ??
+    (activeOrg as any)?.role ??
+    (activeOrg as any)?.membership?.role ??
+    (activeOrg as any)?.currentUserRole ??
+    null;
+  const isOwner = String(role ?? "").toLowerCase() === "owner";
+
+  // Final gate used by UI
+  const canShowRevenue = !revLoading && (!!canViewRevenue || isOwner);
   /**
    * Format helper ― always respect the currency selected
    */
@@ -556,7 +568,7 @@ export default function DashboardPage() {
                       stroke="var(--color-total)"
                       stackId="a"
                     />
-                    {canViewRevenue && (
+                    {canShowRevenue && (
                       <Area
                         dataKey="revenue"
                         type="natural"

@@ -40,7 +40,10 @@ interface MonthlyData {
   title: string;
   sku: string;
 }
-interface DateRange { from: Date; to: Date; }
+interface DateRange {
+  from: Date;
+  to: Date;
+}
 type DatePreset = "currentMonth" | "lastMonth" | "custom";
 
 export default function IndividualCouponReport() {
@@ -60,6 +63,10 @@ export default function IndividualCouponReport() {
     if (!viewLoading && !canView) router.replace("/analytics/coupons");
   }, [viewLoading, canView, router]);
 
+  // 👉 derive flags; don't early-return before hooks finish
+  const permsLoading = viewLoading;
+  const canShow = !permsLoading && canView;
+
   const onBack = () => router.back();
   const [dailyData, setDailyData] = useState<DailyData[]>([]);
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
@@ -75,7 +82,9 @@ export default function IndividualCouponReport() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [code, setCode] = useState("");
 
-  const [yearFilter, setYearFilter] = useState<number>(new Date().getFullYear());
+  const [yearFilter, setYearFilter] = useState<number>(
+    new Date().getFullYear()
+  );
   const yearFilterOptions = [2025, 2026, 2027];
 
   const getDateRangeFromPreset = (preset: DatePreset): DateRange => {
@@ -83,12 +92,14 @@ export default function IndividualCouponReport() {
     switch (preset) {
       case "currentMonth":
         return { from: startOfMonth(today), to: endOfMonth(today) };
-      case "lastMonth":
+      case "lastMonth": {
         const last = subMonths(today, 1);
         return { from: startOfMonth(last), to: endOfMonth(last) };
-      case "custom":
+      }
+      case "custom": {
         const d = new Date(selectedYear, selectedMonth, 1);
         return { from: startOfMonth(d), to: endOfMonth(d) };
+      }
       default:
         return { from: startOfMonth(today), to: endOfMonth(today) };
     }
@@ -122,14 +133,16 @@ export default function IndividualCouponReport() {
 
   // --- Daily report (guarded)
   useEffect(() => {
-    if (!canView) return;
+    if (!canShow) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
         const fromDate = format(dateRange.from, "yyyy-MM-dd");
         const toDate = format(dateRange.to, "yyyy-MM-dd");
-        const res = await fetch(`/api/report/coupon/${couponId}/daily/?from=${fromDate}&to=${toDate}`);
+        const res = await fetch(
+          `/api/report/coupon/${couponId}/daily/?from=${fromDate}&to=${toDate}`
+        );
         if (!res.ok) throw new Error("Failed to load daily report");
         const json = await res.json();
         if (!cancelled) {
@@ -142,17 +155,21 @@ export default function IndividualCouponReport() {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, [couponId, dateRange, canView]);
+    return () => {
+      cancelled = true;
+    };
+  }, [couponId, dateRange, canShow]);
 
   // --- Monthly report (guarded)
   useEffect(() => {
-    if (!canView) return;
+    if (!canShow) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/report/coupon/${couponId}/monthly/?year=${yearFilter}`);
+        const res = await fetch(
+          `/api/report/coupon/${couponId}/monthly/?year=${yearFilter}`
+        );
         if (!res.ok) throw new Error("Failed to load monthly report");
         const json = await res.json();
         if (!cancelled) setMonthlyData(json.monthly);
@@ -162,15 +179,18 @@ export default function IndividualCouponReport() {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, [couponId, yearFilter, canView]);
+    return () => {
+      cancelled = true;
+    };
+  }, [couponId, yearFilter, canShow]);
 
-  if (viewLoading || !canView) return null;
+  // 🔒 UI gates AFTER all hooks are declared
+  if (permsLoading) return <div>Loading permissions…</div>;
+  if (!canShow) return null; // redirect effect will run
   if (loading) return <div>Loading product report…</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
   if (!dailyData) return <div>No data available</div>;
 
-  // ... (rest of the component unchanged)
   return (
     <div className="container mx-auto py-8 px-4">
       <div className="flex items-center gap-4 mb-6">
@@ -210,36 +230,72 @@ export default function IndividualCouponReport() {
                       className="w-full sm:w-[160px] justify-start text-left font-normal"
                     >
                       <CalendarIcon className="mr-2 h-4 w-4" />
-                      {format(new Date(selectedYear, selectedMonth), "MMM yyyy")}
+                      {format(
+                        new Date(selectedYear, selectedMonth),
+                        "MMM yyyy"
+                      )}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-4" align="start">
                     <div className="space-y-4">
                       <div>
-                        <label className="text-sm font-medium mb-2 block">Month</label>
+                        <label className="text-sm font-medium mb-2 block">
+                          Month
+                        </label>
                         <Select
                           value={selectedMonth.toString()}
-                          onValueChange={(value) => setSelectedMonth(Number.parseInt(value))}
+                          onValueChange={(value) =>
+                            setSelectedMonth(Number.parseInt(value))
+                          }
                         >
-                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
                           <SelectContent>
-                            {["January","February","March","April","May","June","July","August","September","October","November","December"].map(
-                              (m, i) => <SelectItem key={i} value={i.toString()}>{m}</SelectItem>
-                            )}
+                            {[
+                              "January",
+                              "February",
+                              "March",
+                              "April",
+                              "May",
+                              "June",
+                              "July",
+                              "August",
+                              "September",
+                              "October",
+                              "November",
+                              "December",
+                            ].map((m, i) => (
+                              <SelectItem key={i} value={i.toString()}>
+                                {m}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
                       <div>
-                        <label className="text-sm font-medium mb-2 block">Year</label>
+                        <label className="text-sm font-medium mb-2 block">
+                          Year
+                        </label>
                         <Select
                           value={selectedYear.toString()}
-                          onValueChange={(value) => setSelectedYear(Number.parseInt(value))}
+                          onValueChange={(value) =>
+                            setSelectedYear(Number.parseInt(value))
+                          }
                         >
-                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
                           <SelectContent>
-                            {[new Date().getFullYear(), new Date().getFullYear()-1, new Date().getFullYear()-2].map(
-                              (y) => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
-                            )}
+                            {[
+                              new Date().getFullYear(),
+                              new Date().getFullYear() - 1,
+                              new Date().getFullYear() - 2,
+                            ].map((y) => (
+                              <SelectItem key={y} value={y.toString()}>
+                                {y}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -253,26 +309,53 @@ export default function IndividualCouponReport() {
         <CardContent>
           <div className="h-[400px] w-full">
             {dailyData ? (
-              <ChartContainer className="h-[400px] w-full" config={{ redemptions: { label: "Redemptions", color: "hsl(var(--chart-1))" } }}>
+              <ChartContainer
+                className="h-[400px] w-full"
+                config={{
+                  redemptions: {
+                    label: "Redemptions",
+                    color: "hsl(var(--chart-1))",
+                  },
+                }}
+              >
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dailyData} margin={{ top: 20, right: 30, left: 20, bottom: 50 }}>
+                  <BarChart
+                    data={dailyData}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 50 }}
+                  >
                     <XAxis
                       dataKey="date"
                       tick={{ fontSize: 12 }}
-                      tickFormatter={(v) => format(new Date(v + "T00:00:00"), "MMM d")}
+                      tickFormatter={(v) =>
+                        format(new Date(v + "T00:00:00"), "MMM d")
+                      }
                       interval={0}
                       angle={-45}
                       textAnchor="end"
                       height={70}
                     />
-                    <YAxis tick={{ fontSize: 12 }} label={{ value: "Redemptions", angle: -90, position: "insideLeft" }} />
-                    <ChartTooltip content={<ChartTooltipContent />} cursor={{ fill: "rgba(0, 0, 0, 0.1)" }} />
+                    <YAxis
+                      tick={{ fontSize: 12 }}
+                      label={{
+                        value: "Redemptions",
+                        angle: -90,
+                        position: "insideLeft",
+                      }}
+                    />
+                    <ChartTooltip
+                      content={<ChartTooltipContent />}
+                      cursor={{ fill: "rgba(0, 0, 0, 0.1)" }}
+                    />
                     <Bar
                       dataKey="redemptions"
                       fill="var(--color-redemptions)"
                       radius={[4, 4, 0, 0]}
                       name="Redemptions"
-                      label={{ position: "top", fill: "var(--foreground)", fontSize: 12 }}
+                      label={{
+                        position: "top",
+                        fill: "var(--foreground)",
+                        fontSize: 12,
+                      }}
                     />
                   </BarChart>
                 </ResponsiveContainer>
@@ -291,7 +374,10 @@ export default function IndividualCouponReport() {
         <CardHeader>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <CardTitle>Monthly Sales Trend</CardTitle>
-            <Select value={yearFilter.toString()} onValueChange={(v) => setYearFilter(Number.parseInt(v))}>
+            <Select
+              value={yearFilter.toString()}
+              onValueChange={(v) => setYearFilter(Number.parseInt(v))}
+            >
               <SelectTrigger className="w-full sm:w-[120px]">
                 <SelectValue placeholder="Select year" />
               </SelectTrigger>
@@ -308,9 +394,20 @@ export default function IndividualCouponReport() {
         <CardContent>
           <div className="h-[400px] w-full">
             {monthlyData && monthlyData.length > 0 ? (
-              <ChartContainer className="h-[400px] w-full" config={{ redemptions: { label: "Redemptions", color: "hsl(var(--chart-2))" } }}>
+              <ChartContainer
+                className="h-[400px] w-full"
+                config={{
+                  redemptions: {
+                    label: "Redemptions",
+                    color: "hsl(var(--chart-2))",
+                  },
+                }}
+              >
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={monthlyData} margin={{ top: 20, right: 30, left: 20, bottom: 50 }}>
+                  <BarChart
+                    data={monthlyData}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 50 }}
+                  >
                     <XAxis
                       dataKey="month"
                       angle={-45}
@@ -323,14 +420,28 @@ export default function IndividualCouponReport() {
                         return format(date, "MMM yyyy");
                       }}
                     />
-                    <YAxis tick={{ fontSize: 12 }} label={{ value: "Redemptions", angle: -90, position: "insideLeft" }} />
-                    <ChartTooltip content={<ChartTooltipContent />} cursor={{ fill: "rgba(0, 0, 0, 0.1)" }} />
+                    <YAxis
+                      tick={{ fontSize: 12 }}
+                      label={{
+                        value: "Redemptions",
+                        angle: -90,
+                        position: "insideLeft",
+                      }}
+                    />
+                    <ChartTooltip
+                      content={<ChartTooltipContent />}
+                      cursor={{ fill: "rgba(0, 0, 0, 0.1)" }}
+                    />
                     <Bar
                       dataKey="redemptions"
                       fill="var(--color-redemptions)"
                       radius={[4, 4, 0, 0]}
                       name="Redemptions"
-                      label={{ position: "top", fill: "var(--foreground)", fontSize: 12 }}
+                      label={{
+                        position: "top",
+                        fill: "var(--foreground)",
+                        fontSize: 12,
+                      }}
                     />
                   </BarChart>
                 </ResponsiveContainer>

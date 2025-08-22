@@ -85,6 +85,10 @@ export default function MonthlyProductReport() {
     if (!viewLoading && !canView) router.replace("/analytics");
   }, [viewLoading, canView, router]);
 
+  // ❗Never return before hooks – compute flags and gate UI later
+const permsLoading = viewLoading;
+const canShow = !permsLoading && canView;
+
   const [data, setData] = useState<ProductStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +141,7 @@ export default function MonthlyProductReport() {
 
   // Fetch stats — only after permission granted
   useEffect(() => {
-    if (!canView) return;
+    if (!canShow) return;
     let cancelled = false;
 
     (async () => {
@@ -159,12 +163,14 @@ export default function MonthlyProductReport() {
     })();
 
     return () => { cancelled = true; };
-  }, [dateRange, canView]);
+}, [dateRange, canShow]);
 
   // Sort by quantity (highest first)
   const sortedData = [...data].sort((a, b) => b.quantity - a.quantity);
 
-  if (viewLoading || !canView) return null;
+  // 🔒 Render gates AFTER all hooks have been called
+  if (permsLoading) return <div>Loading permissions…</div>;
+  if (!canShow) return null; // redirect will take over
   if (loading) return <div>Loading report…</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
 

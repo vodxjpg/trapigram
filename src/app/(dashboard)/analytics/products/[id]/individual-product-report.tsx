@@ -45,6 +45,10 @@ export default function IndividualProductReport() {
     if (!viewLoading && !canView) router.replace("/analytics/products");
   }, [viewLoading, canView, router]);
 
+  // ❗Don’t return before hooks; compute flags now and gate UI later
+const permsLoading = viewLoading;
+const canShow = !permsLoading && canView;
+
   const [dailyData, setDailyData] = useState<DailyData[]>([]);
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,7 +108,7 @@ export default function IndividualProductReport() {
 
   // Daily report (guarded)
   useEffect(() => {
-    if (!canView) return;
+   if (!canShow) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -126,11 +130,11 @@ export default function IndividualProductReport() {
       }
     })();
     return () => { cancelled = true; };
-  }, [productId, dateRange, canView]);
+ }, [productId, dateRange, canShow]);
 
   // Monthly report (guarded)
   useEffect(() => {
-    if (!canView) return;
+   if (!canShow) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -146,9 +150,11 @@ export default function IndividualProductReport() {
       }
     })();
     return () => { cancelled = true; };
-  }, [productId, yearFilter, canView]);
+}, [productId, yearFilter, canShow]);
 
-  if (viewLoading || !canView) return null;
+ // 🔒 Render gates AFTER all hooks have been called
+if (permsLoading) return <div>Loading permissions…</div>;
+if (!canShow) return null; // redirect effect handles it
   if (loading) return <div>Loading product report…</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
   if (!dailyData) return <div>No data available</div>;
