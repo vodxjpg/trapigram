@@ -1274,11 +1274,13 @@ export async function PATCH(
             }
           } catch (e) {
                const msg = String((e as any)?.message || e);
-    if (msg.includes("The operation was aborted") || msg.includes("AbortError")) {
-      console.warn("[coinx] PATCH by id timed out; falling back to reference lookup.");
-    } else {
-      console.warn("[coinx] meta parse / id-path failed; will try reference lookup:", e);
-    }
+            if (msg.includes("The operation was aborted") || msg.includes("AbortError")) {
+              console.warn("[coinx] PATCH by id timed out; falling back to reference lookup.");
+            } else {
+              console.warn("[coinx] meta parse / id-path failed; will try reference lookup:", e);
+            }
+          }
+          
 
           // 3) Fallback: find Coinx order by our orderKey stored as 'reference' on Coinx
           if (!patched) {
