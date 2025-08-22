@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useIsMobile } from "@/hooks/use-mobile";
 import * as XLSX from "xlsx";
 import {
@@ -50,6 +51,8 @@ import {
 } from "@/components/ui/select";
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 type Order = {
   id: string;
@@ -78,6 +81,20 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 export default function OrderReport() {
+   const router = useRouter();
+ // --- permissions ---
+ const { data: activeOrg } = authClient.useActiveOrganization();
+ const orgId = activeOrg?.id ?? null;
+ const { hasPermission: canViewRevenue, isLoading: viewLoading } =
+   useHasPermission(orgId, { revenue: ["view"] });
+ const { hasPermission: canExportRevenue, isLoading: exportLoading } =
+   useHasPermission(orgId, { revenue: ["export"] });
+
+ // Kick users without view access out of the page
+ useEffect(() => {
+   if (!viewLoading && !canViewRevenue) router.replace("/analytics");
+ }, [viewLoading, canViewRevenue, router]);
+ if (viewLoading || exportLoading || !canViewRevenue) return null;
   const [currentPage, setCurrentPage] = useState(1);
   const [dateRange, setDateRange] = useState<CustomDateRange>({
     from: startOfDay(subDays(new Date(), 30)),
@@ -231,6 +248,7 @@ export default function OrderReport() {
 
   // ** ADD: export to Excel **
   const exportToExcel = () => {
+    if (!canExportRevenue) return;
     const dataForSheet = orders.map((o) => {
       let netProfitDisplay;
 
@@ -414,7 +432,11 @@ export default function OrderReport() {
                   variant="default"
                   size="sm"
                   className="shrink-0"
-                  onClick={exportToExcel}
+                                onClick={exportToExcel}
+               disabled={!canExportRevenue}
+               title={
+                 canExportRevenue ? "Export to Excel" : "You lack export permission"
+               }
                 >
                   <DownloadIcon className="mr-2 h-4 w-4" />
                   Export to Excel
