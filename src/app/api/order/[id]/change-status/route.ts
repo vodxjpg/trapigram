@@ -9,6 +9,7 @@ import { adjustStock } from "@/lib/stock";
 import { sendNotification } from "@/lib/notifications";
 import { createHmac } from "crypto";
 import type { NotificationType } from "@/lib/notifications";
+import { enqueueNotificationFanout } from "@/lib/notification-outbox";
 
 // Vercel runtime hints (keep these AFTER all imports)
 export const runtime = "nodejs";
@@ -776,21 +777,21 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
     }
     // create supplier order S-<orderKey>
     const supplierOrderId = uuidv4();
-     await pool.query(
-   `INSERT INTO orders
+    await pool.query(
+      `INSERT INTO orders
  (id,"organizationId","clientId","cartId",country,"paymentMethod",
   "shippingTotal","totalAmount","shippingService","shippingMethod",
   address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
   "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash","orderMeta")
 VALUES
  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18,'[]'::jsonb)`,
-   [
-     supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
-     shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
-     o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
-     `S-${baseKey}`, 0, supplierCartHash,  // ← non-null hash
-   ],
- );
+      [
+        supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
+        shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
+        o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
+        `S-${baseKey}`, 0, supplierCartHash,  // ← non-null hash
+      ],
+    );
 
     console.log("[ensureSupplierOrders] created S-order", { supplierOrderId, key: `S-${baseKey}`, orgId, subtotal, shippingShare });
   }
@@ -1079,20 +1080,20 @@ export async function PATCH(
       console.log(`[cascade] ${newStatus} → ${rowCount} sibling orders for baseKey=${baseKey}`);
 
       // --- Notify supplier siblings that changed due to the cascade ---
-  (async () => {
-  // map status→notification type (repeat here or hoist globally)
-  const notifTypeMap: Record<string, NotificationType> = {
-    open: "order_placed",
-    underpaid: "order_partially_paid",
-    paid: "order_paid",
-    completed: "order_completed",
-    cancelled: "order_cancelled",
-    refunded: "order_refunded",
-  };
+      (async () => {
+        // map status→notification type (repeat here or hoist globally)
+        const notifTypeMap: Record<string, NotificationType> = {
+          open: "order_placed",
+          underpaid: "order_partially_paid",
+          paid: "order_paid",
+          completed: "order_completed",
+          cancelled: "order_cancelled",
+          refunded: "order_refunded",
+        };
 
-  // Only supplier siblings (S-xxxx) that now sit at the cascaded status
-  const { rows: sibsForNotif } = await pool.query(
-    `SELECT id, "organizationId", "clientId", "cartId", country, "orderKey",
+        // Only supplier siblings (S-xxxx) that now sit at the cascaded status
+        const { rows: sibsForNotif } = await pool.query(
+          `SELECT id, "organizationId", "clientId", "cartId", country, "orderKey",
             "shippingMethod","shippingService","trackingNumber","dateCreated",
             COALESCE("notifiedPaidOrCompleted", FALSE) AS "notified"
        FROM orders
@@ -1100,58 +1101,77 @@ export async function PATCH(
         AND id <> $2
         AND status = $3
         AND "orderKey" LIKE 'S-%'`,
-    [baseKey, id, newStatus],
-  );
+          [baseKey, id, newStatus],
+        );
 
-  for (const sb of sibsForNotif) {
-    // Respect "only once" for paid/completed
-    const should =
-      newStatus === "paid" || newStatus === "completed"
-        ? !sb.notified
-        : newStatus === "cancelled" || newStatus === "refunded";
+        for (const sb of sibsForNotif) {
+          // Respect "only once" for paid/completed
+          const should =
+            newStatus === "paid" || newStatus === "completed"
+              ? !sb.notified
+              : newStatus === "cancelled" || newStatus === "refunded";
 
-    if (!should) continue;
+          if (!should) continue;
 
-    const productList = await buildProductListForCart(sb.cartId);
-    const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
+          const productList = await buildProductListForCart(sb.cartId);
+          const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
 
-        try {
-        await sendNotification({
-      organizationId: sb.organizationId,              // supplier org
-      type: notifTypeMap[newStatus],
-      subject: `Order #${sb.orderKey} ${newStatus}`,
-      message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
-      variables: {
-        product_list: productList,
-        order_number: sb.orderKey,
-        order_date: orderDate,
-        order_shipping_method: sb.shippingMethod ?? "-",
-        tracking_number: sb.trackingNumber ?? "",
-        shipping_company: sb.shippingService ?? "",
-      },
-      country: sb.country,
-      trigger: "admin_only",                          // admin-only fanout
-      channels: ["in_app", "telegram"],               // same as elsewhere for suppliers
-      clientId: null,
-      url: `/orders/${sb.id}`,
-           });
-      } catch (e) {
-        console.warn("[cascade][notify] failed for supplier sibling", sb.id, e);
-        continue;
-      }
-    // Mark "notified" so we don’t notify twice for paid/completed
-    if (newStatus === "paid" || newStatus === "completed") {
-                try {
-       await pool.query(
-         `UPDATE orders
-             SET "notifiedPaidOrCompleted" = TRUE,
-                 "updatedAt" = NOW()
-           WHERE id = $1`,
-         [sb.id],
-       );
-     } catch (e) { console.warn("[cascade][notify] mark-notified failed", sb.id, e); }
-    }
-  }
+          try {
+            await enqueueNotificationFanout({
+              organizationId: sb.organizationId,
+              orderId: sb.id,
+              type: notifTypeMap[newStatus],
+              trigger: "admin_only",
+              channels: ["in_app", "telegram"],
+              dedupeSalt: "supplier_admin",
+              payload: {
+                message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+                subject: `Order #${sb.orderKey} ${newStatus}`,
+                variables: {
+                  product_list: productList,
+                  order_number: sb.orderKey,
+                  order_date: orderDate,
+                  order_shipping_method: sb.shippingMethod ?? "-",
+                  tracking_number: sb.trackingNumber ?? "",
+                  shipping_company: sb.shippingService ?? "",
+                },
+                country: sb.country,
+                clientId: null,
+                userId: null,
+                url: `/orders/${sb.id}`,
+              },
+            });
+            if (newStatus === "completed") {
+              await enqueueNotificationFanout({
+                organizationId: sb.organizationId,
+                orderId: sb.id,
+                type: notifTypeMap[newStatus],
+                trigger: "user_only_email",
+                channels: ["email"],
+                dedupeSalt: "supplier_buyer",
+                payload: {
+                  message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+                  subject: `Order #${sb.orderKey} ${newStatus}`,
+                  variables: {
+                    product_list: productList,
+                    order_number: sb.orderKey,
+                    order_date: orderDate,
+                    order_shipping_method: sb.shippingMethod ?? "-",
+                    tracking_number: sb.trackingNumber ?? "",
+                    shipping_company: sb.shippingService ?? "",
+                  },
+                  country: sb.country,
+                  clientId: sb.clientId,
+                  userId: null,
+                  url: `/orders/${sb.id}`,
+                },
+              });
+            }
+          } catch (e) {
+            console.warn("[cascade][enqueue] failed for supplier sibling", sb.id, e);
+            continue;
+          }
+        }
       })();
 
 
@@ -1295,14 +1315,14 @@ export async function PATCH(
               console.log("[coinx] no order.id in orderMeta; will try reference lookup");
             }
           } catch (e) {
-               const msg = String((e as any)?.message || e);
+            const msg = String((e as any)?.message || e);
             if (msg.includes("The operation was aborted") || msg.includes("AbortError")) {
               console.warn("[coinx] PATCH by id timed out; falling back to reference lookup.");
             } else {
               console.warn("[coinx] meta parse / id-path failed; will try reference lookup:", e);
             }
           }
-          
+
 
           // 3) Fallback: find Coinx order by our orderKey stored as 'reference' on Coinx
           if (!patched) {
@@ -1516,12 +1536,12 @@ export async function PATCH(
       const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
 
       const isSupplierOrder = String(ord.orderKey || "").startsWith("S-");
-            // statuses that should alert store admins for buyer orders
+      // statuses that should alert store admins for buyer orders
       const ADMIN_ALERT_STATUSES = new Set(["underpaid", "paid", "completed", "cancelled", "refunded"]);
       // keep “only-once” semantics for paid/completed
       const adminEligibleOnce =
         (newStatus === "paid" || newStatus === "completed") ? !ord.notifiedPaidOrCompleted : true;
- 
+
       const baseNotificationPayload = {
         organizationId,
         type: notifType,
@@ -1546,42 +1566,82 @@ export async function PATCH(
         // Supplier (shared) order:
         //  • Always notify supplier admins (in_app + telegram)
         //  • Buyer gets ONLY an email and ONLY when status === "completed"
-        await sendNotification({
-          ...baseNotificationPayload,
+        await enqueueNotificationFanout({
+          organizationId,
+          orderId: id,
+          type: notifType,
           trigger: "admin_only",
           channels: ["in_app", "telegram"],
-          clientId: null,
-          url: `/orders/${id}`,
+          dedupeSalt: "supplier_admin",
+          payload: {
+            message: baseNotificationPayload.message,
+            subject: baseNotificationPayload.subject,
+            variables: baseNotificationPayload.variables,
+            country: ord.country,
+            clientId: null,
+            userId: null,
+            url: `/orders/${id}`,
+          },
         });
         if (newStatus === "completed") {
-          await sendNotification({
-            ...baseNotificationPayload,
+          await enqueueNotificationFanout({
+            organizationId,
+            orderId: id,
+            type: notifType,
             trigger: "user_only_email",
             channels: ["email"],
-            clientId: ord.clientId,
-            url: `/orders/${id}`,
+            dedupeSalt: "supplier_buyer",
+            payload: {
+              message: baseNotificationPayload.message,
+              subject: baseNotificationPayload.subject,
+              variables: baseNotificationPayload.variables,
+              country: ord.country,
+              clientId: ord.clientId,
+              userId: null,
+              url: `/orders/${id}`,
+            },
           });
         }
       } else {
-       // Normal (buyer) order – notify the buyer as before…
-        await sendNotification({
-          ...baseNotificationPayload,
+        // Normal (buyer) order – notify the buyer as before…
+        await enqueueNotificationFanout({
+          organizationId,
+          orderId: id,
+          type: notifType,
           trigger: "order_status_change",
           channels: ["email", "in_app", "telegram"],
-          clientId: ord.clientId,
-          url: `/orders/${id}`,
+          dedupeSalt: "buyer",
+          payload: {
+            message: baseNotificationPayload.message,
+            subject: baseNotificationPayload.subject,
+            variables: baseNotificationPayload.variables,
+            country: ord.country,
+            clientId: ord.clientId,
+            userId: null,
+            url: `/orders/${id}`,
+          },
         });
-            // …and ALSO notify store admins for key statuses
-          if (ADMIN_ALERT_STATUSES.has(newStatus) && adminEligibleOnce) {
-            await sendNotification({
-              ...baseNotificationPayload,
-              trigger: "admin_only",
-              channels: ["in_app", "telegram"],
+        // …and ALSO notify store admins for key statuses
+        if (ADMIN_ALERT_STATUSES.has(newStatus) && adminEligibleOnce) {
+          await enqueueNotificationFanout({
+            organizationId,
+            orderId: id,
+            type: notifType,
+            trigger: "admin_only",
+            channels: ["in_app", "telegram"],
+            dedupeSalt: "store_admin",
+            payload: {
+              message: baseNotificationPayload.message,
+              subject: baseNotificationPayload.subject,
+              variables: baseNotificationPayload.variables,
+              country: ord.country,
               clientId: null,
+              userId: null,
               url: `/orders/${id}`,
-            });
-            }
-      } 
+            },
+          });
+        }
+      }
 
       /* ─────────────────────────────────────────────────────────────
       *  Affiliate / referral bonuses
@@ -1713,6 +1773,17 @@ export async function PATCH(
         );
       }
     }
+
+    // Fire-and-forget: nudge the outbox drain so users see messages quickly.
+    try {
+      // don’t await; keep request fast
+      fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain`, {
+        method: "GET",
+        headers: {},
+        // GET route authorizes via x-vercel-cron or ?secret – use query here:
+        keepalive: true,
+      }).catch(() => { });
+    } catch { }
 
     return NextResponse.json({ id, status: newStatus, warnings: toastWarnings });
   } catch (e) {
