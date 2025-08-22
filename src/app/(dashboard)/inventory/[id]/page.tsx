@@ -82,7 +82,6 @@ const saveProductCount = async (
 
 export default function InventoryDetailPage() {
   const { id } = useParams();
-  const { id } = useParams();
   const router = useRouter();
   // permissions
   const { data: activeOrg } = authClient.useActiveOrganization();
