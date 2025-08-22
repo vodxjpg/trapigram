@@ -1273,14 +1273,18 @@ export async function PATCH(
               console.log("[coinx] no order.id in orderMeta; will try reference lookup");
             }
           } catch (e) {
-            console.warn("[coinx] meta parse / id-path failed; will try reference lookup:", e);
-          }
+               const msg = String((e as any)?.message || e);
+    if (msg.includes("The operation was aborted") || msg.includes("AbortError")) {
+      console.warn("[coinx] PATCH by id timed out; falling back to reference lookup.");
+    } else {
+      console.warn("[coinx] meta parse / id-path failed; will try reference lookup:", e);
+    }
 
           // 3) Fallback: find Coinx order by our orderKey stored as 'reference' on Coinx
           if (!patched) {
             const findUrl = `${base}/api/orders?reference=${encodeURIComponent(String(ord.orderKey ?? ""))}`;
             const ac2 = new AbortController();
-            const to2 = setTimeout(() => ac2.abort(), 4000);
+            const to2 = setTimeout(() => ac2.abort(), 6000);
             const findRes = await fetch(findUrl, {
               headers: { "Accept": "application/json", "x-api-key": merchantApiKey },
               signal: ac2.signal,
@@ -1488,6 +1492,12 @@ export async function PATCH(
       const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
 
       const isSupplierOrder = String(ord.orderKey || "").startsWith("S-");
+            // statuses that should alert store admins for buyer orders
+      const ADMIN_ALERT_STATUSES = new Set(["underpaid", "paid", "completed", "cancelled", "refunded"]);
+      // keep “only-once” semantics for paid/completed
+      const adminEligibleOnce =
+        (newStatus === "paid" || newStatus === "completed") ? !ord.notifiedPaidOrCompleted : true;
+ 
       const baseNotificationPayload = {
         organizationId,
         type: notifType,
@@ -1529,7 +1539,7 @@ export async function PATCH(
           });
         }
       } else {
-        // Normal (buyer) order – unchanged behavior
+       // Normal (buyer) order – notify the buyer as before…
         await sendNotification({
           ...baseNotificationPayload,
           trigger: "order_status_change",
@@ -1537,6 +1547,15 @@ export async function PATCH(
           clientId: ord.clientId,
           url: `/orders/${id}`,
         });
+            // …and ALSO notify store admins for key statuses
+    if (ADMIN_ALERT_STATUSES.has(newStatus) && adminEligibleOnce) {
+      await sendNotification({
+        ...baseNotificationPayload,
+        trigger: "admin_only",
+        channels: ["in_app", "telegram"],
+        clientId: null,
+        url: `/orders/${id}`,
+      });
       }
 
       /* ─────────────────────────────────────────────────────────────
