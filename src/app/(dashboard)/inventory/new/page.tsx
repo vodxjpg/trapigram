@@ -58,7 +58,9 @@ export default function InventoryCount() {
  useEffect(() => {
    if (!viewLoading && (!canView || !canUpdate)) router.replace("/inventory");
  }, [viewLoading, canView, canUpdate, router]);
- if (viewLoading || updateLoading || !canView || !canUpdate) return null;
+ // ❌ Don’t early-return before hooks
+ const permsLoading = viewLoading || updateLoading;
+ const allowed = !permsLoading && canView && canUpdate;
 
   const [countType, setCountType] = useState<"all" | "specific">("all");
   const [warehouseOptions, setWarehouseOptions] = useState<Warehouse[]>([]);
@@ -83,6 +85,11 @@ export default function InventoryCount() {
     },
   });
 
+ if (permsLoading) {
+   return <div className="max-w-4xl mx-auto p-6 text-sm text-muted-foreground">Loading…</div>;
+ }
+ if (!allowed) return null; // redirect effect above will handle
+
   const selectedWarehouse = watch("warehouse");
 
   useEffect(() => {
@@ -90,6 +97,7 @@ export default function InventoryCount() {
       try {
         const response = await fetch("/api/warehouses");
         const data = await response.json();
+        if (!allowed) return;
         const warehouses = data.warehouses as Warehouse[];
         setWarehouseOptions(warehouses);
       } catch (error) {
@@ -97,9 +105,8 @@ export default function InventoryCount() {
       }
     }
 
-    fetchWarehouses();
-  }, []);
-
+       fetchWarehouses();
+   }, [allowed]);
   // Fetch product categories when switching to "specific" (Partial)
   useEffect(() => {
     if (countType !== "specific" || productCategories.length > 0) return;

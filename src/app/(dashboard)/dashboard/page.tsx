@@ -93,8 +93,7 @@ export default function DashboardPage() {
   const orgId = activeOrg?.id ?? null;
   const { hasPermission: canViewRevenue, isLoading: revLoading } =
     useHasPermission(orgId, { revenue: ["view"] });
-  if (revLoading) return null;
-
+   const canShowRevenue = !revLoading && !!canViewRevenue;
   /**
    * Format helper ― always respect the currency selected
    */
@@ -390,13 +389,13 @@ export default function DashboardPage() {
               <CardHeader>
                 <CardDescription>Total Revenue</CardDescription>
                 <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                  {
-                    totalRevenue === null
-                      ? "Loading..."
-                      : canViewRevenue
-                        ? formatCurrency(totalRevenue)
-                        : "****"
-                  }
+                                  {
+                   totalRevenue === null
+                     ? "Loading..."
+                     : canShowRevenue
+                       ? formatCurrency(totalRevenue)
+                       : "****"
+                 }
                 </CardTitle>
                 <CardAction className="flex items-center space-x-2">
                   <Select

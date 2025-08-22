@@ -94,7 +94,9 @@ export default function OrderReport() {
  useEffect(() => {
    if (!viewLoading && !canViewRevenue) router.replace("/analytics");
  }, [viewLoading, canViewRevenue, router]);
- if (viewLoading || exportLoading || !canViewRevenue) return null;
+  // ❌ do NOT return before hooks; compute flags and gate UI later
+  const permsLoading = viewLoading || exportLoading;
+  const canShow = !permsLoading && canViewRevenue;
   const [currentPage, setCurrentPage] = useState(1);
   const [dateRange, setDateRange] = useState<CustomDateRange>({
     from: startOfDay(subDays(new Date(), 30)),
@@ -130,6 +132,7 @@ export default function OrderReport() {
   // fetch whenever dateRange or currency changes
   useEffect(() => {
     async function fetchOrders() {
+       if (!canShow) return;
       setLoading(true);
       setError(null);
       try {
@@ -152,8 +155,8 @@ export default function OrderReport() {
       }
     }
 
-    fetchOrders();
-  }, [dateRange, currency, status]); // ← added status
+  fetchOrders();
+}, [dateRange, currency, status, canShow]);
 
   const filteredData = chartData;
 
@@ -297,6 +300,18 @@ export default function OrderReport() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  // 🔒 Render gates AFTER all hooks have been called
+if (permsLoading) {
+  return (
+    <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+      <div className="px-4 lg:px-6 text-sm text-muted-foreground">Loading…</div>
+    </div>
+  );
+}
+if (!canShow) {
+  return null; // redirect effect above takes over
+}
 
   return (
     <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">

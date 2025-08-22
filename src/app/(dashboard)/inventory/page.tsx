@@ -61,7 +61,9 @@ export default function Component() {
   useEffect(() => {
     if (!viewLoading && !canView) router.replace("/products"); // or "/" – match your UX
   }, [viewLoading, canView, router]);
-  if (viewLoading || updateLoading || !canView) return null;
+  // ❌ Do not early-return before hooks
+  const permsLoading = viewLoading || updateLoading;
+  const canShow = !permsLoading && canView;
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
@@ -87,6 +89,7 @@ export default function Component() {
       try {
         setLoading(true);
         setError(null);
+        if (!canView) return; // guard when permission denied
         const res = await fetch("/api/inventory", { method: "GET" });
         if (!res.ok) {
           throw new Error(`Failed to fetch inventories: ${res.status}`);
@@ -135,8 +138,8 @@ export default function Component() {
     })();
     return () => {
       isMounted = false;
-    };
-  }, []);
+      };
+ }, [canView]);
 
   // Filter data based on search term
   const filteredData = useMemo(() => {
@@ -250,6 +253,18 @@ export default function Component() {
       </span>
     );
   };
+
+  // Render gate AFTER hooks are declared
+if (permsLoading) {
+  return (
+    <div className="container mx-auto p-6">
+      <p className="text-sm text-muted-foreground">Loading…</p>
+    </div>
+  );
+}
+if (!canShow) {
+  return null; // redirect effect above will take over
+}
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -487,3 +502,4 @@ export default function Component() {
     </div>
   );
 }
+

@@ -91,7 +91,9 @@ export default function InventoryDetailPage() {
   useEffect(() => {
     if (!viewLoading && !canView) router.replace("/inventory");
   }, [viewLoading, canView, router]);
-  if (viewLoading || updateLoading || !canView) return null;
+  // ❌ Don’t early-return before hooks
+ const permsLoading = viewLoading || updateLoading;
+ const canShow = !permsLoading && canView;
   const [inventory, setInventory] = useState<InventoryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +116,8 @@ export default function InventoryDetailPage() {
   const fetchInventory = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/inventory/${id}`);
+        if (!canView) return; // guard
+   const response = await fetch(`/api/inventory/${id}`);
       if (!response.ok) throw new Error("Inventory not found");
       const data = await response.json();
       const { inventory, countProduct } = data;
@@ -152,7 +155,7 @@ export default function InventoryDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+ }, [id, canView]);
 
   useEffect(() => {
     if (id) fetchInventory();
@@ -339,6 +342,14 @@ export default function InventoryDetailPage() {
       </div>
     );
   };
+
+  // Gate AFTER hooks are declared
+if (permsLoading) {
+  return <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
+}
+if (!canShow) {
+  return null; // redirect effect runs
+}
 
   if (loading) return <p className="p-4 text-sm">Loading...</p>;
   if (error) return <p className="p-4 text-sm text-red-500">{error}</p>;
