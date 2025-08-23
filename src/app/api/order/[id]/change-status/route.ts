@@ -624,7 +624,7 @@ const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
  * life-cycle – “paid” & “completed“ behave as before.
  * “cancelled” is always announced.
  */
-const FIRST_NOTIFY_STATUSES = ["paid", "completed"] as const
+const FIRST_NOTIFY_STATUSES = ["paid"] as const;
 const isActive = (s: string) => ACTIVE.includes(s);
 const isInactive = (s: string) => INACTIVE.includes(s);
 
@@ -1477,16 +1477,17 @@ export async function PATCH(
      * ───────────────────────────────────────────── */
     let shouldNotify = false;
 
-    /* —— NEW order placed check —— */               // NEW ⬅︎
-    if (newStatus === "open" && ord.status !== "open") { // NEW ⬅︎
-      shouldNotify = true;                              // NEW ⬅︎
-    }                                                   // NEW ⬅︎
-    else if (newStatus === "underpaid") {
-      shouldNotify = true;                     // notify always on first underpaid
-    } else if (FIRST_NOTIFY_STATUSES.includes(
-      newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
-      // fire only once across PAID/COMPLETED
+    /* order placed */
+    if (newStatus === "open" && ord.status !== "open") {
+      shouldNotify = true;
+    } else if (newStatus === "underpaid") {
+      shouldNotify = true;
+    } else if (newStatus === "paid") {
+      // de-dupe paid once
       shouldNotify = !ord.notifiedPaidOrCompleted;
+    } else if (newStatus === "completed") {
+      // ALWAYS notify buyer on completed
+      shouldNotify = true;
     } else if (newStatus === "cancelled" || newStatus === "refunded") {
       shouldNotify = true;
     }

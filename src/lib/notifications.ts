@@ -121,9 +121,10 @@ export async function sendNotification(params: SendNotificationParams) {
   const makeRawSub = (
     tplSubject: string | null | undefined,
     fallback: string | undefined,
-  ) => (!tplSubject && !fallback
-    ? type.replace(/_/g, " ")
-    : (tplSubject || fallback || "").trim());
+  ) =>
+    !tplSubject && !fallback
+      ? type.replace(/_/g, " ")
+      : (tplSubject || fallback || "").trim();
 
   const rawSubUser = makeRawSub(tplUser?.subject, subject);
   const rawSubAdm = makeRawSub(tplAdmin?.subject, subject);
@@ -215,11 +216,11 @@ export async function sendNotification(params: SendNotificationParams) {
     })
     .execute();
 
-     // Internal routing hints (no signature change):
- //  - trigger === "admin_only"      → do not DM client or send user e-mails
- //  - trigger === "user_only_email" → send only the user's e-mail (no admin e-mails/groups)
- const suppressAdminFanout = trigger === "user_only_email";
- const suppressUserFanout  = trigger === "admin_only";
+  // Internal routing hints:
+  //  - trigger === "admin_only"      → do not DM client or send user e-mails
+  //  - trigger === "user_only_email" → send only the user's e-mail (no admin e-mails/groups)
+  const suppressAdminFanout = trigger === "user_only_email";
+  const suppressUserFanout = trigger === "admin_only";
 
   /* 6️⃣ channel fan-out */
   /* — EMAIL — */
@@ -253,7 +254,7 @@ export async function sendNotification(params: SendNotificationParams) {
       );
     }
 
-   if (userEmails.length && !suppressUserFanout) {
+    if (userEmails.length && !suppressUserFanout) {
       promises.push(
         ...userEmails.map((addr) =>
           send({
@@ -272,44 +273,58 @@ export async function sendNotification(params: SendNotificationParams) {
 
   /* — IN-APP — */
   if (channels.includes("in_app")) {
-     if (!suppressAdminFanout) {
-   const targets = new Set<string | null>();
-   if (userId) targets.add(userId);
-   if (clientRow?.userId) targets.add(clientRow.userId);
-   ownerIds.forEach((id) => targets.add(id));
-   if (targets.size === 0) targets.add(null);
-        for (const uid of targets) {
-    await dispatchInApp({
-      organizationId,
-      userId: uid,
-      clientId,
-      message: bodyUserGeneric,
-      country,
-      url,
-    });
-  }
+    if (!suppressAdminFanout) {
+      const targets = new Set<string | null>();
+      if (userId) targets.add(userId);
+      if (clientRow?.userId) targets.add(clientRow.userId);
+      ownerIds.forEach((id) => targets.add(id));
+      if (targets.size === 0) targets.add(null);
+      for (const uid of targets) {
+        await dispatchInApp({
+          organizationId,
+          userId: uid,
+          clientId,
+          message: bodyUserGeneric,
+          country,
+          url,
+        });
+      }
     }
   }
 
   /* — WEBHOOK — */
   if (channels.includes("webhook")) {
-     if (!suppressAdminFanout) {
-    await dispatchWebhook({ organizationId, type, message: bodyUserGeneric });
-  }
+    if (!suppressAdminFanout) {
+      await dispatchWebhook({ organizationId, type, message: bodyUserGeneric });
+    }
   }
 
   /* — TELEGRAM — */
   if (channels.includes("telegram")) {
-     await dispatchTelegram({
-    organizationId,
-    type,
-    country,
-    bodyAdmin: suppressAdminFanout ? "" : (hasAdminTpl ? bodyAdminGeneric : ""),
-    bodyUser: suppressUserFanout ? "" : (hasUserTpl ? bodyUserGeneric : ""),
-    adminUserIds: [],
-    clientUserId: suppressUserFanout ? null : (clientRow?.userId || null),
-    ticketId,
-  });
+    // 🔧 Only post to admin groups on admin-only triggers.
+    // Buyer-facing notifications will DM the client (if linked) but won't hit groups,
+    // which prevents the duplicate Telegram pings you observed.
+    const wantAdminGroups = trigger === "admin_only";
+    const wantClientDM = !suppressUserFanout; // i.e., not admin_only
+
+    const bodyAdminOut = wantAdminGroups
+      ? (hasAdminTpl ? bodyAdminGeneric : bodyUserGeneric /* safe fallback */)
+      : "";
+
+    const bodyUserOut = wantClientDM
+      ? bodyUserGeneric /* already falls back to `message` */
+      : "";
+
+    await dispatchTelegram({
+      organizationId,
+      type,
+      country,
+      bodyAdmin: bodyAdminOut,
+      bodyUser: bodyUserOut,
+      adminUserIds: [], // keep as-is; groups handle admin broadcast
+      clientUserId: wantClientDM ? clientRow?.userId || null : null,
+      ticketId,
+    });
   }
 }
 
@@ -341,8 +356,6 @@ async function dispatchInApp(opts: {
     })
     .execute();
 }
-
-
 
 async function dispatchWebhook(opts: {
   organizationId: string;
@@ -388,7 +401,6 @@ async function dispatchTelegram(opts: {
     type,
   } = opts;
 
-
   const row = await db
     .selectFrom("organizationPlatformKey")
     .select(["apiKey"])
@@ -414,7 +426,6 @@ async function dispatchTelegram(opts: {
     })
     .map((g) => g.groupId);
 
-
   /* 2️⃣ NEW – ticket-support groups (same filter) */
   let ticketGroupIds: string[] = [];
   if (type === "ticket_created" || type === "ticket_replied") {
@@ -435,14 +446,13 @@ async function dispatchTelegram(opts: {
   }
 
   const targets: { chatId: string; text: string; markup?: string }[] = [];
-  const seenChatIds = new Set<string>();                         // ← de-dupe across everything
-  const ticketSet   = new Set(ticketGroupIds);                   // ← for selective Reply button
+  const seenChatIds = new Set<string>(); // de-dupe across everything
+  const ticketSet = new Set(ticketGroupIds); // for selective Reply button
   const uniqueGroupIds = Array.from(new Set([...orderGroupIds, ...ticketGroupIds]));
- 
 
   if (bodyAdmin.trim()) {
     const safeAdmin = toTelegramHtml(bodyAdmin);
-        // admins (user IDs)
+    // admins (user IDs)
     for (const id of adminUserIds) {
       if (id && !seenChatIds.has(id)) {
         seenChatIds.add(id);
