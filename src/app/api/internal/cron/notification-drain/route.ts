@@ -1,50 +1,75 @@
+// /home/zodx/Desktop/trapigram/src/app/api/internal/cron/notification-drain/route.ts
 
-// src/app/api/cron/notifications-drain/route.ts
+// src/app/api/internal/cron/notification-drain/route.ts
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 
-
 /**
- * This route is invoked by Vercel Cron (GET). It securely POSTs to the
- * internal drain endpoint with x-internal-secret.
+ * Invoked by Vercel Cron (GET). Proxies to the internal drain endpoint
+ * using x-internal-secret. Also supports manual testing with ?secret=
+ * or header x-internal-secret on GET.
  */
 export async function GET(req: NextRequest) {
-  // Only allow Vercel's scheduled invocations (or allow manual via ?secret=)
-  const isCron = req.headers.get("x-vercel-cron") === "1";
   const url = new URL(req.url);
-  const qsSecret = url.searchParams.get("secret");
-   const hdrSecret = req.headers.get("x-internal-secret") || "";
- const ok =
-   isCron ||
-   (qsSecret && qsSecret === process.env.INTERNAL_API_SECRET) ||
-   (hdrSecret && hdrSecret === process.env.INTERNAL_API_SECRET);
- if (!ok) {
-   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
- }
+  const isCron = req.headers.get("x-vercel-cron") === "1";
+  const qsSecret = url.searchParams.get("secret") || "";
+  const hdrSecret = req.headers.get("x-internal-secret") || "";
+  const envSecret = process.env.INTERNAL_API_SECRET || "";
 
-  // Optional tweak via ?limit=... during manual tests
+  const ok =
+    isCron ||
+    (qsSecret && envSecret && qsSecret === envSecret) ||
+    (hdrSecret && envSecret && hdrSecret === envSecret);
+
+  // Verbose diagnostics without leaking secret values
+  console.log("[cron/notification-drain] GET auth", {
+    path: url.pathname,
+    isCron,
+    hasQsSecret: Boolean(qsSecret),
+    hasHdrSecret: Boolean(hdrSecret),
+    envSecretLen: envSecret.length,
+    qsSecretMatches: Boolean(qsSecret && envSecret && qsSecret === envSecret),
+    hdrSecretMatches: Boolean(hdrSecret && envSecret && hdrSecret === envSecret),
+  });
+
+  if (!ok) {
+    return NextResponse.json(
+      { error: "Unauthorized (need x-vercel-cron, ?secret, or x-internal-secret)" },
+      { status: 401 },
+    );
+  }
+
   const limit = Number(url.searchParams.get("limit") || 12);
-  const origin = url.origin; // current deployment origin
+  const capped = Math.max(1, Math.min(limit, 50));
+  const origin = url.origin;
+  const drainUrl = `${origin}/api/internal/notifications/drain?limit=${capped}`;
 
   try {
-    const res = await fetch(
-      `${origin}/api/internal/notifications/drain?limit=${Math.max(1, Math.min(limit, 50))}`,
-      {
-        method: "POST",
-        headers: {
-               "x-internal-secret": process.env.INTERNAL_API_SECRET || "",
-       "accept": "application/json",
-       // run drain as a background function so long fan-outs don't block
-       "x-vercel-background": "1"
-        }
-      }
-    );
+    console.log("[cron/notification-drain] POST → drain", { drainUrl, capped });
+    const res = await fetch(drainUrl, {
+      method: "POST",
+      headers: {
+        "x-internal-secret": envSecret,
+        accept: "application/json",
+        // Ask Vercel to run as a background function.
+        "x-vercel-background": "1",
+      },
+    });
     const body = await res.text();
+    console.log("[cron/notification-drain] drain ←", {
+      status: res.status,
+      ok: res.ok,
+      contentType: res.headers.get("content-type"),
+      bodyPreview: body.slice(0, 200),
+    });
     return new NextResponse(body, {
       status: res.status,
-      headers: { "content-type": res.headers.get("content-type") ?? "application/json" }
+      headers: { "content-type": res.headers.get("content-type") ?? "application/json" },
     });
   } catch (err: any) {
+    console.error("[cron/notification-drain] error", { message: err?.message || String(err) });
     return NextResponse.json({ error: String(err?.message || err) }, { status: 500 });
   }
 }

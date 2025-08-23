@@ -16,7 +16,7 @@
       "schedule": "*/5 * * * *" 
     },
     {
-      "path": "/api/cron/notifications-drain",
+      "path": "/api/internal/cron/notifications-drain",
       "schedule": "*/1 * * * *"
     }
   ]
