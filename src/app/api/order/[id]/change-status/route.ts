@@ -1185,10 +1185,12 @@ export async function PATCH(
           AND status = 'paid'`,
           [baseKey, id],
         );
-        for (const s of sibs) {
-          try { await getRevenue(s.id, s.organizationId); }
-          catch (e) { console.warn("[cascade] revenue sibling failed:", s.id, e); }
-        }
+          for (const s of sibs) {
+      void getRevenue(s.id, s.organizationId).catch((e) =>
+        console.warn("[cascade] revenue sibling failed:", s.id, e)
+      );
+    }
+
       }
 
       // 🔧 STOCK EFFECTS for supplier siblings on cascade
@@ -1384,10 +1386,11 @@ export async function PATCH(
 
     // ─── trigger revenue/fee **only** on the first transition to PAID ───
     if (newStatus === "paid" && ord.status !== "paid") {
-      try {
-        // 1) update revenue
-        await getRevenue(id, organizationId);
-        console.log(`Revenue updated for order ${id}`);
+        try {
+     // 1) update revenue (fire-and-forget to avoid blocking the request)
+     void getRevenue(id, organizationId).catch((e) =>
+       console.warn("[revenue] async base failed:", e)
+     );
 
         // 2) capture platform fee via internal API
         const feesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
@@ -1530,8 +1533,9 @@ export async function PATCH(
         cancelled: "order_cancelled",
         refunded: "order_refunded",
       } as const;
-      const notifType: NotificationType =
-        notifTypeMap[newStatus] || "order_ready";
+         const notifType: NotificationType =
+     (notifTypeMap as Record<string, NotificationType | undefined>)[newStatus] ??
+     "order_message";
 
       const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
 
@@ -1776,13 +1780,15 @@ export async function PATCH(
 
     // Fire-and-forget: nudge the outbox drain so users see messages quickly.
     try {
-      // don’t await; keep request fast
-      fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain`, {
-        method: "GET",
-        headers: {},
-        // GET route authorizes via x-vercel-cron or ?secret – use query here:
-        keepalive: true,
-      }).catch(() => { });
+        // Authorized POST to internal drain (don’t await; keep request fast)
+   fetch(
+     `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`,
+     {
+       method: "POST",
+       headers: { "x-internal-secret": process.env.INTERNAL_API_SECRET || "" },
+       keepalive: true,
+     }
+   ).catch(() => {});
     } catch { }
 
     return NextResponse.json({ id, status: newStatus, warnings: toastWarnings });
