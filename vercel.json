@@ -14,11 +14,10 @@
     },
     { "path": "/api/jobs/expire-orders", 
       "schedule": "*/5 * * * *" 
-   },
-  {
-    "path": "/api/internal/cron/notification-drain",
-    "schedule": "*/1 * * * *"
-  }
-
+    },
+    {
+      "path": "/api/cron/notifications-drain",
+      "schedule": "*/1 * * * *"
+    }
   ]
 }
