@@ -1785,7 +1785,11 @@ export async function PATCH(
      `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`,
      {
        method: "POST",
-       headers: { "x-internal-secret": process.env.INTERNAL_API_SECRET || "" },
+            headers: {
+         "x-internal-secret": process.env.INTERNAL_API_SECRET || "",
+         // ensure this drain runs as a background invocation on Vercel
+         "x-vercel-background": "1"
+       },
        keepalive: true,
      }
    ).catch(() => {});
