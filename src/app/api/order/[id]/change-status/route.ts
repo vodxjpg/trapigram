@@ -129,8 +129,8 @@ async function getRevenue(id: string, organizationId: string) {
       const affiliateQuery = `SELECT p.*, cp.quantity
                     FROM "cartProducts" cp
                     JOIN "affiliateProducts" p ON cp."affiliateProductId" = p.id
-                    WHERE cp."cartId" = '${cartId}'`
-      const affiliateResult = await pool.query(affiliateQuery)
+                    WHERE cp."cartId" = $1`;
+      const affiliateResult = await pool.query(affiliateQuery, [cartId]);
       const affiliate = affiliateResult.rows
 
       const allProducts = products.concat(affiliate)
@@ -670,10 +670,6 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
        FROM orders WHERE id = $1`, [baseOrderId]);
   if (!o) return;
   const baseKey: string = String(o.orderKey || "").replace(/^S-/, "");
-  // already have supplier siblings?
-  const { rowCount: sibs } = await pool.query(
-    `SELECT 1 FROM orders WHERE "orderKey" = ('S-' || $1) LIMIT 1`, [baseKey]);
-  if (sibs) return; // nothing to do
 
   // build mapping of target(B) -> source(A) by organization
   const { rows: cpRows } = await pool.query(
@@ -682,48 +678,69 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
   if (!cpRows.length) return;
 
   type MapItem = { organizationId: string; shareLinkId: string; sourceProductId: string; targetProductId: string; };
-  const map: MapItem[] = [];
-  for (const ln of cpRows) {
-    if (!ln.productId) continue;
-    const { rows: [m] } = await pool.query(
-      `SELECT "shareLinkId","sourceProductId","targetProductId"
-         FROM "sharedProductMapping" WHERE "targetProductId" = $1 LIMIT 1`,
-      [ln.productId]);
-    if (!m) continue;
-    const { rows: [prod] } = await pool.query(
-      `SELECT "organizationId" FROM products WHERE id = $1`, [m.sourceProductId]);
-    if (!prod) continue;
-    map.push({ organizationId: prod.organizationId, ...m });
-  }
-  if (!map.length) return;
-
-  const groups: Record<string, MapItem[]> = {};
-  for (const it of map) (groups[it.organizationId] ??= []).push(it);
-  const entries = Object.entries(groups);
-
-  // precompute transfer subtotals for shipping split
-  const transferSubtotals: Record<string, number> = {};
-  for (const [orgId, items] of entries) {
-    let sum = 0;
-    for (const it of items) {
-      const { rows: [ln] } = await pool.query(
-        `SELECT quantity FROM "cartProducts" WHERE "cartId" = $1 AND "productId" = $2 LIMIT 1`,
-        [o.cartId, it.targetProductId]);
-      const qty = Number(ln?.quantity || 0);
-      const { rows: [sp] } = await pool.query(
-        `SELECT cost FROM "sharedProduct" WHERE "shareLinkId" = $1 AND "productId" = $2 LIMIT 1`,
-        [it.shareLinkId, it.sourceProductId]);
-      const transfer = Number(sp?.cost?.[o.country] ?? 0);
-      sum += transfer * qty;
+  async function firstHop(): Promise<MapItem[]> {
+    const out: MapItem[] = [];
+    for (const ln of cpRows) {
+      if (!ln.productId) continue;
+      const { rows: [m] } = await pool.query(
+        `SELECT "shareLinkId","sourceProductId","targetProductId"
+           FROM "sharedProductMapping" WHERE "targetProductId" = $1 LIMIT 1`,
+        [ln.productId],
+      );
+      if (!m) continue;
+      const { rows: [prod] } = await pool.query(
+        `SELECT "organizationId" FROM products WHERE id = $1`,
+        [m.sourceProductId],
+      );
+      if (!prod) continue;
+      out.push({ organizationId: prod.organizationId, ...m });
     }
-    transferSubtotals[orgId] = sum;
+    return out;
   }
-  const buyerShipping = Number(o.shippingTotal || 0);
-  const totalTransfer = Object.values(transferSubtotals).reduce((a, b) => a + b, 0) || 0;
-  let shippingAssigned = 0;
+  async function nextHopFrom(items: MapItem[]): Promise<MapItem[]> {
+    const out: MapItem[] = [];
+    for (const it of items) {
+      const { rows: [m] } = await pool.query(
+        `SELECT "shareLinkId","sourceProductId","targetProductId"
+           FROM "sharedProductMapping" WHERE "targetProductId" = $1 LIMIT 1`,
+        [it.sourceProductId],
+      );
+      if (!m) continue;
+      const { rows: [prod] } = await pool.query(
+        `SELECT "organizationId" FROM products WHERE id = $1`,
+        [m.sourceProductId],
+      );
+      if (!prod) continue;
+      out.push({ organizationId: prod.organizationId, ...m, targetProductId: it.targetProductId });
+    }
+    return out;
+  }
+
+  // collect full chain and group by org
+  let frontier = await firstHop();
+  const all: MapItem[] = [];
+  let depth = 0;
+  while (frontier.length && depth++ < 5) {
+    all.push(...frontier);
+    frontier = await nextHopFrom(frontier);
+  }
+  if (!all.length) return;
+  const byOrg: Record<string, MapItem[]> = {};
+  for (const it of all) (byOrg[it.organizationId] ??= []).push(it);
+  const entries = Object.entries(byOrg);
+
+  // NOTE: when backfilling missing S-orders after the fact,
+  // do NOT re-split shipping; assign 0 shipping to new siblings.
 
   for (let i = 0; i < entries.length; i++) {
     const [orgId, items] = entries[i];
+    // skip orgs that already have an S-<key> order
+    const { rowCount: exists } = await pool.query(
+      `SELECT 1 FROM orders WHERE "orderKey" = ('S-' || $1) AND "organizationId" = $2 LIMIT 1`,
+      [baseKey, orgId],
+    );
+    if (exists) continue;
+
     // ensure client exists in supplier org
     const { rows: [oldClient] } = await pool.query(`SELECT * FROM clients WHERE id = $1`, [o.clientId]);
     const { rows: [found] } = await pool.query(
@@ -766,15 +783,8 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
         subtotal += transfer * qty;
       }
     }
-    // shipping split
+    // backfill: set shippingShare = 0 to avoid double-charging shipping
     let shippingShare = 0;
-    if (totalTransfer > 0) {
-      if (i === entries.length - 1) shippingShare = buyerShipping - shippingAssigned;
-      else {
-        shippingShare = Number(((buyerShipping * (transferSubtotals[orgId] || 0)) / totalTransfer).toFixed(2));
-        shippingAssigned += shippingShare;
-      }
-    }
     // create supplier order S-<orderKey>
     const supplierOrderId = uuidv4();
     await pool.query(
@@ -1185,11 +1195,11 @@ export async function PATCH(
           AND status = 'paid'`,
           [baseKey, id],
         );
-          for (const s of sibs) {
-      void getRevenue(s.id, s.organizationId).catch((e) =>
-        console.warn("[cascade] revenue sibling failed:", s.id, e)
-      );
-    }
+        for (const s of sibs) {
+          void getRevenue(s.id, s.organizationId).catch((e) =>
+            console.warn("[cascade] revenue sibling failed:", s.id, e)
+          );
+        }
 
       }
 
@@ -1386,11 +1396,11 @@ export async function PATCH(
 
     // ─── trigger revenue/fee **only** on the first transition to PAID ───
     if (newStatus === "paid" && ord.status !== "paid") {
-        try {
-     // 1) update revenue (fire-and-forget to avoid blocking the request)
-     void getRevenue(id, organizationId).catch((e) =>
-       console.warn("[revenue] async base failed:", e)
-     );
+      try {
+        // 1) update revenue (fire-and-forget to avoid blocking the request)
+        void getRevenue(id, organizationId).catch((e) =>
+          console.warn("[revenue] async base failed:", e)
+        );
 
         // 2) capture platform fee via internal API
         const feesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
@@ -1534,9 +1544,9 @@ export async function PATCH(
         cancelled: "order_cancelled",
         refunded: "order_refunded",
       } as const;
-         const notifType: NotificationType =
-     (notifTypeMap as Record<string, NotificationType | undefined>)[newStatus] ??
-     "order_message";
+      const notifType: NotificationType =
+        (notifTypeMap as Record<string, NotificationType | undefined>)[newStatus] ??
+        "order_message";
 
       const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
 
@@ -1781,19 +1791,19 @@ export async function PATCH(
 
     // Fire-and-forget: nudge the outbox drain so users see messages quickly.
     try {
-        // Authorized POST to internal drain (don’t await; keep request fast)
-   fetch(
-     `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`,
-     {
-       method: "POST",
-            headers: {
-         "x-internal-secret": process.env.INTERNAL_API_SECRET || "",
-         // ensure this drain runs as a background invocation on Vercel
-         "x-vercel-background": "1"
-       },
-       keepalive: true,
-     }
-   ).catch(() => {});
+      // Authorized POST to internal drain (don’t await; keep request fast)
+      fetch(
+        `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`,
+        {
+          method: "POST",
+          headers: {
+            "x-internal-secret": process.env.INTERNAL_API_SECRET || "",
+            // ensure this drain runs as a background invocation on Vercel
+            "x-vercel-background": "1"
+          },
+          keepalive: true,
+        }
+      ).catch(() => { });
     } catch { }
 
     return NextResponse.json({ id, status: newStatus, warnings: toastWarnings });

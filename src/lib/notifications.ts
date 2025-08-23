@@ -275,27 +275,36 @@ export async function sendNotification(params: SendNotificationParams) {
 
   /* — IN-APP — */
   if (channels.includes("in_app")) {
-    const targets = new Set<string | null>();
-    // user-facing
+    const deliveries: { uid: string | null; msg: string }[] = [];
+
+    // user-facing (buyer/client)
     if (shouldUserFanout) {
-      if (userId) targets.add(userId);
-      if (clientRow?.userId) targets.add(clientRow.userId);
+      if (userId) deliveries.push({ uid: userId, msg: bodyUserGeneric });
+      if (clientRow?.userId) deliveries.push({ uid: clientRow.userId, msg: bodyUserGeneric });
     }
-    // admin-facing (owners) → only if there is an admin template
+
+    // admin-facing (org owners) – use admin template if available
     if (shouldAdminFanout) {
-      ownerIds.forEach((id) => targets.add(id));
+      ownerIds.forEach((id) => deliveries.push({ uid: id, msg: bodyAdminGeneric }));
     }
-    for (const uid of targets) {
+
+    for (const { uid, msg } of deliveries) {
       await dispatchInApp({
-        organizationId, userId: uid, clientId, message: bodyUserGeneric, country, url,
+        organizationId,
+        userId: uid,
+        clientId,
+        message: msg,
+        country,
+        url,
       });
     }
   }
 
+
   /* — WEBHOOK — */
   if (channels.includes("webhook")) {
     if (shouldAdminFanout) {
-      await dispatchWebhook({ organizationId, type, message: bodyUserGeneric });
+      await dispatchWebhook({ organizationId, type, message: bodyAdminGeneric });
     }
   }
 
