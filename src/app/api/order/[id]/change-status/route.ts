@@ -1054,7 +1054,7 @@ export async function PATCH(
      * – update status + date cols on siblings
      * – after cascade to PAID, also generate revenue for siblings
      * ───────────────────────────────────────────────────────────── */
-    const CASCADE_STATUSES = new Set(["paid", "cancelled", "refunded"]);
+    const CASCADE_STATUSES = new Set(["paid", "cancelled", "refunded", "completed"]);
     if (CASCADE_STATUSES.has(newStatus)) {
       const dateCol = DATE_COL_FOR_STATUS[newStatus];
       const setBits = [`status = $1`, `"updatedAt" = NOW()`];
@@ -1123,7 +1123,7 @@ export async function PATCH(
               type: notifTypeMap[newStatus],
               trigger: "admin_only",
               channels: ["in_app", "telegram"],
-              dedupeSalt: "supplier_admin",
+              dedupeSalt: `supplier_admin:${newStatus}`,
               payload: {
                 message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
                 subject: `Order #${sb.orderKey} ${newStatus}`,
@@ -1148,7 +1148,7 @@ export async function PATCH(
                 type: notifTypeMap[newStatus],
                 trigger: "user_only_email",
                 channels: ["email"],
-                dedupeSalt: "supplier_buyer",
+                dedupeSalt: `supplier_buyer:${newStatus}`,
                 payload: {
                   message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
                   subject: `Order #${sb.orderKey} ${newStatus}`,
@@ -1577,7 +1577,7 @@ export async function PATCH(
           type: notifType,
           trigger: "admin_only",
           channels: ["in_app", "telegram"],
-          dedupeSalt: "supplier_admin",
+          dedupeSalt: `supplier_admin:${newStatus}`,
           payload: {
             message: baseNotificationPayload.message,
             subject: baseNotificationPayload.subject,
@@ -1595,7 +1595,7 @@ export async function PATCH(
             type: notifType,
             trigger: "user_only_email",
             channels: ["email"],
-            dedupeSalt: "supplier_buyer",
+            dedupeSalt: `supplier_buyer:${newStatus}`,
             payload: {
               message: baseNotificationPayload.message,
               subject: baseNotificationPayload.subject,
@@ -1615,7 +1615,7 @@ export async function PATCH(
           type: notifType,
           trigger: "order_status_change",
           channels: ["email", "in_app", "telegram"],
-          dedupeSalt: "buyer",
+          dedupeSalt: `buyer:${newStatus}`,
           payload: {
             message: baseNotificationPayload.message,
             subject: baseNotificationPayload.subject,
@@ -1634,7 +1634,7 @@ export async function PATCH(
             type: notifType,
             trigger: "admin_only",
             channels: ["in_app", "telegram"],
-            dedupeSalt: "store_admin",
+            dedupeSalt: `store_admin:${newStatus}`,
             payload: {
               message: baseNotificationPayload.message,
               subject: baseNotificationPayload.subject,
