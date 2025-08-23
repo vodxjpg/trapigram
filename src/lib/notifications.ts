@@ -117,6 +117,12 @@ export async function sendNotification(params: SendNotificationParams) {
   const hasUserTpl = !!tplUser;
   const hasAdminTpl = !!tplAdmin;
 
+    // Decide fan-out based on trigger  template presence
+  const suppressAdminFanout = trigger === "user_only_email";
+  const suppressUserFanout  = trigger === "admin_only";
+  const shouldAdminFanout   = !suppressAdminFanout && hasAdminTpl;
+  const shouldUserFanout    = !suppressUserFanout; // user can still receive fallback content
+
   /* 2️⃣ subjects & bodies – generic (all channels) */
   const makeRawSub = (
     tplSubject: string | null | undefined,
@@ -216,11 +222,7 @@ export async function sendNotification(params: SendNotificationParams) {
     })
     .execute();
 
-  // Internal routing hints:
-  //  - trigger === "admin_only"      → do not DM client or send user e-mails
-  //  - trigger === "user_only_email" → send only the user's e-mail (no admin e-mails/groups)
-  const suppressAdminFanout = trigger === "user_only_email";
-  const suppressUserFanout = trigger === "admin_only";
+
 
   /* 6️⃣ channel fan-out */
   /* — EMAIL — */
@@ -241,7 +243,7 @@ export async function sendNotification(params: SendNotificationParams) {
 
     const promises: Promise<unknown>[] = [];
 
-    if (adminEmails.length && !suppressAdminFanout) {
+    if (adminEmails.length && shouldAdminFanout) {
       promises.push(
         ...adminEmails.map((addr) =>
           send({
@@ -254,7 +256,7 @@ export async function sendNotification(params: SendNotificationParams) {
       );
     }
 
-    if (userEmails.length && !suppressUserFanout) {
+    if (userEmails.length && shouldUserFanout) {
       promises.push(
         ...userEmails.map((addr) =>
           send({
@@ -273,28 +275,26 @@ export async function sendNotification(params: SendNotificationParams) {
 
   /* — IN-APP — */
   if (channels.includes("in_app")) {
-    if (!suppressAdminFanout) {
-      const targets = new Set<string | null>();
+    const targets = new Set<string | null>();
+    // user-facing
+    if (shouldUserFanout) {
       if (userId) targets.add(userId);
       if (clientRow?.userId) targets.add(clientRow.userId);
+    }
+    // admin-facing (owners) → only if there is an admin template
+    if (shouldAdminFanout) {
       ownerIds.forEach((id) => targets.add(id));
-      if (targets.size === 0) targets.add(null);
-      for (const uid of targets) {
-        await dispatchInApp({
-          organizationId,
-          userId: uid,
-          clientId,
-          message: bodyUserGeneric,
-          country,
-          url,
-        });
-      }
+    }
+    for (const uid of targets) {
+      await dispatchInApp({
+        organizationId, userId: uid, clientId, message: bodyUserGeneric, country, url,
+      });
     }
   }
 
   /* — WEBHOOK — */
   if (channels.includes("webhook")) {
-    if (!suppressAdminFanout) {
+    if (shouldAdminFanout) {
       await dispatchWebhook({ organizationId, type, message: bodyUserGeneric });
     }
   }
@@ -307,13 +307,9 @@ export async function sendNotification(params: SendNotificationParams) {
     const wantAdminGroups = trigger === "admin_only";
     const wantClientDM = !suppressUserFanout; // i.e., not admin_only
 
-    const bodyAdminOut = wantAdminGroups
-      ? (hasAdminTpl ? bodyAdminGeneric : bodyUserGeneric /* safe fallback */)
-      : "";
+    const bodyAdminOut = wantAdminGroups && hasAdminTpl ? bodyAdminGeneric : "";
 
-    const bodyUserOut = wantClientDM
-      ? bodyUserGeneric /* already falls back to `message` */
-      : "";
+   const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
 
     await dispatchTelegram({
       organizationId,
