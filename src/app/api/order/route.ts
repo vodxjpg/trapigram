@@ -511,7 +511,7 @@ export async function POST(req: NextRequest) {
 
     const createdSupplierOrgs = new Set<string>(); // avoid duplicate S-orders per org
 
-    async function createSupplierOrdersFor(items: MapItem[]) {
+    async function createSupplierOrdersFor(items: MapItem[], includeShipping: boolean) {
       if (!items.length) return;
 
       // group by supplier org
@@ -546,9 +546,11 @@ export async function POST(req: NextRequest) {
         transferSubtotals[group.organizationId] = sum;
       }
 
-      const buyerShipping = Number(oldOrder.rows[0].shippingTotal || 0);
-      const totalTransferSubtotal =
-        Object.values(transferSubtotals).reduce((a, b) => a + b, 0) || 0;
+      // Only the first hop (sellers who ship to the buyer) should receive buyer shipping.
+      const buyerShipping = includeShipping ? Number(oldOrder.rows[0].shippingTotal || 0) : 0;
+      const totalTransferSubtotal = includeShipping
+        ? (Object.values(transferSubtotals).reduce((a, b) => a + b, 0) || 0)
+        : 0;
       let shippingAssigned = 0;
 
       for (let i = 0; i < groupedArray.length; i++) {
@@ -636,7 +638,7 @@ export async function POST(req: NextRequest) {
         // shipping share for this group
         const supplierOrderKey = `S-${orderKey}`;
         let shippingShare = 0;
-        if (totalTransferSubtotal > 0) {
+        if (includeShipping && totalTransferSubtotal > 0) {
           if (i === groupedArray.length - 1) {
             shippingShare = buyerShipping - shippingAssigned;
           } else {
@@ -721,9 +723,10 @@ export async function POST(req: NextRequest) {
     // BFS over the chain: B (first hop), then A, then further upstream…
     let frontier = await firstHop();
     let depth = 0;
-    while (frontier.length && depth++ < 5) {
-      await createSupplierOrdersFor(frontier);
+    while (frontier.length && depth < 5) { // supports up to 5 hops
+      await createSupplierOrdersFor(frontier, depth === 0 /* only first hop gets shipping */);
       frontier = await nextHopFrom(frontier);
+      depth++;
     }
 
 
