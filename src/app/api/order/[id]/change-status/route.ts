@@ -15,6 +15,24 @@ import { enqueueNotificationFanout } from "@/lib/notification-outbox";
 export const runtime = "nodejs";
 export const preferredRegion = ["iad1"];
 
+// Small helper: fetch with timeout and JSON parsing
+async function fetchJSON(
+  url: string,
+  init?: RequestInit & { timeoutMs?: number }
+): Promise<{ res: Response; data: any }> {
+  const { timeoutMs = 5000, ...rest } = init ?? {};
+  const ac = new AbortController();
+  const to = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...rest, signal: ac.signal });
+    let data: any = null;
+    try { data = await res.json(); } catch { /* non-json */ }
+    return { res, data };
+  } finally {
+    clearTimeout(to);
+  }
+}
+
 
 // ── diagnostics ──────────────────────────────────────────────
 
@@ -80,6 +98,54 @@ type TransformedCategoryRevenue = {
   cost: number;
 };
 
+// Parameterized insert to avoid SQL injection / NaN strings.
+async function insertOrderRevenue(
+  revenueId: string,
+  orderId: string,
+  organizationId: string,
+  v: {
+    USDtotal: number; USDdiscount: number; USDshipping: number; USDcost: number;
+    GBPtotal: number; GBPdiscount: number; GBPshipping: number; GBPcost: number;
+    EURtotal: number; EURdiscount: number; EURshipping: number; EURcost: number;
+  }
+) {
+  const sql = `
+    INSERT INTO "orderRevenue" (
+      id,"orderId",
+      "USDtotal","USDdiscount","USDshipping","USDcost",
+      "GBPtotal","GBPdiscount","GBPshipping","GBPcost",
+      "EURtotal","EURdiscount","EURshipping","EURcost",
+      "createdAt","updatedAt","organizationId"
+    ) VALUES (
+      $1,$2,
+      $3,$4,$5,$6,
+      $7,$8,$9,$10,
+      $11,$12,$13,$14,
+      NOW(),NOW(),$15
+       )
+    ON CONFLICT ("orderId") DO UPDATE
+      SET "updatedAt" = NOW()
+    RETURNING *`;
+
+  const params = [
+    revenueId, orderId,
+    v.USDtotal, v.USDdiscount, v.USDshipping, v.USDcost,
+    v.GBPtotal, v.GBPdiscount, v.GBPshipping, v.GBPcost,
+    v.EURtotal, v.EURdiscount, v.EURshipping, v.EURcost,
+    organizationId,
+  ];
+  const { rows } = await pool.query(sql, params);
+  return rows[0];
+}
+
+async function insertCategoryRevenue(catRevenueId: string, categoryId: string, organizationId: string, v: {
+  USDtotal: number; USDcost: number; GBPtotal: number; GBPcost: number; EURtotal: number; EURcost: number;
+}) {
+  const sql = `INSERT INTO "categoryRevenue" (id,"categoryId","USDtotal","USDcost","GBPtotal","GBPcost","EURtotal","EURcost","createdAt","updatedAt","organizationId")
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW(),$9)`;
+  await pool.query(sql, [catRevenueId, categoryId, v.USDtotal, v.USDcost, v.GBPtotal, v.GBPcost, v.EURtotal, v.EURcost, organizationId]);
+}
+
 async function getRevenue(id: string, organizationId: string) {
   try {
     const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = $1`;
@@ -99,6 +165,7 @@ async function getRevenue(id: string, organizationId: string) {
       const orderQuery = `SELECT * FROM orders WHERE id = $1 AND "organizationId" = $2`;
       const resultOrders = await pool.query(orderQuery, [id, organizationId]);
       const order = resultOrders.rows[0]
+      if (!order) throw new Error("Order not found");
       console.log(order)
 
       const cartId = order.cartId
@@ -106,10 +173,14 @@ async function getRevenue(id: string, organizationId: string) {
       const country = order.country
 
       // --- after you've fetched `order` from the DB ---
-      const raw = order.datePaid;   // string or Date
+      // Use datePaid if present, else fall back to dateCreated; validate
+      const raw = order.datePaid ?? order.dateCreated;
       const paidDate = raw instanceof Date
         ? raw
         : new Date(raw);
+      if (Number.isNaN(paidDate.getTime())) {
+        throw new Error("Invalid paid date");
+      }
       console.log(raw)
       console.log(paidDate)                     // ensure it's a JS Date
 
@@ -150,9 +221,9 @@ async function getRevenue(id: string, organizationId: string) {
         categories.push({
           categoryId: ct.categoryId,
           // Use the actual charged line price (cp.unitPrice), not the product's retail price
-          price: Number(ct.unitPrice),
-          cost: ct.cost[country],
-          quantity: ct.quantity
+          price: Number(ct.unitPrice ?? 0),
+          cost: Number(ct?.cost?.[country] ?? 0),     // treat missing cost as 0
+          quantity: Number(ct.quantity ?? 0),
         })
       }
 
@@ -163,7 +234,9 @@ async function getRevenue(id: string, organizationId: string) {
       }));
 
       const totalCost = allProducts.reduce((sum, product) => {
-        return sum + ((product.cost[country] * product.quantity) || 0);
+        const unitCost = Number(product?.cost?.[country] ?? 0);
+        const qty = Number(product?.quantity ?? 0);
+        return sum + unitCost * qty;
       }, 0);
 
       let total = 0
@@ -186,16 +259,14 @@ async function getRevenue(id: string, organizationId: string) {
         }
         const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
         dbg("CoinGecko →", url)
-        const options = { method: 'GET', headers: { accept: 'application/json' } };
-
-        const res = await fetch(url, options)
-        dbg("CoinGecko ←", res.status, res.statusText)
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status} – ${res.statusText}`);
+        const options: RequestInit = { method: 'GET', headers: { accept: 'application/json' } };
+        const { res: cgRes, data: cgData } = await fetchJSON(url, { ...options, timeoutMs: 5000 });
+        dbg("CoinGecko ←", cgRes.status, cgRes.statusText)
+        if (!cgRes.ok) {
+          throw new Error(`HTTP ${cgRes.status} – ${cgRes.statusText}`);
         }
 
-        const result = await res.json();
-        const prices = Array.isArray(result?.prices) ? result.prices : [];
+        const prices = Array.isArray(cgData?.prices) ? cgData.prices : [];
         const price = prices.length ? prices[prices.length - 1][1] : null; // use latest data point
         if (price == null) {
           throw new Error("No price data from CoinGecko");
@@ -212,11 +283,9 @@ async function getRevenue(id: string, organizationId: string) {
         let USDGBP = 0
         if (exchangeResult.rows.length === 0) {
           const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
-          dbg("CurrencyLayer →", url)
-          const res = await fetch(url);
-          dbg("CurrencyLayer ←", res.status, res.statusText)
-          const data = await res.json();
-
+          dbg("CurrencyLayer →", url);
+          const { res: clRes, data } = await fetchJSON(url, { timeoutMs: 5000 });
+          dbg("CurrencyLayer ←", clRes.status, clRes.statusText);
           const usdEur = data.quotes?.USDEUR;
           const usdGbp = data.quotes?.USDGBP;
           if (usdEur == null || usdGbp == null) {
@@ -262,38 +331,22 @@ async function getRevenue(id: string, organizationId: string) {
             totalGBP = total * USDGBP
           }
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
-
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
           for (const ct of newCategories) {
 
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * (USDEUR / USDGBP)).toFixed(2)}, ${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total / USDGBP,
+              USDcost: ct.cost / USDGBP,
+              GBPtotal: ct.total,
+              GBPcost: ct.cost,
+              EURtotal: ct.total * (USDEUR / USDGBP),
+              EURcost: ct.cost * (USDEUR / USDGBP),
+            });
           }
           return revenue;
         } else if (euroCountries.includes(country)) {
@@ -318,38 +371,22 @@ async function getRevenue(id: string, organizationId: string) {
             totalGBP = total * USDGBP
           }
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
 
           for (const ct of newCategories) {
-
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDEUR).toFixed(2)}, ${(ct.cost / USDEUR).toFixed(2)},
-                            ${(ct.total * (USDGBP / USDEUR)).toFixed(2)}, ${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total / USDEUR,
+              USDcost: ct.cost / USDEUR,
+              GBPtotal: ct.total * (USDGBP / USDEUR),
+              GBPcost: ct.cost * (USDGBP / USDEUR),
+              EURtotal: ct.total,
+              EURcost: ct.cost,
+            });
           }
           return revenue
         } else {
@@ -374,38 +411,22 @@ async function getRevenue(id: string, organizationId: string) {
             totalGBP = total * USDGBP
           }
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
-
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
           for (const ct of newCategories) {
 
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * USDGBP).toFixed(2)}, ${(ct.cost * USDGBP).toFixed(2)},
-                            ${(ct.total * USDEUR).toFixed(2)}, ${(ct.cost * USDEUR).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total / USDEUR,
+              USDcost: ct.cost / USDEUR,
+              GBPtotal: ct.total * (USDGBP / USDEUR),
+              GBPcost: ct.cost * (USDGBP / USDEUR),
+              EURtotal: ct.total,
+              EURcost: ct.cost,
+            });
           }
           return revenue
         }
@@ -421,8 +442,7 @@ async function getRevenue(id: string, organizationId: string) {
         let USDGBP = 0
         if (exchangeResult.rows.length === 0) {
           const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
-          const res = await fetch(url);
-          const data = await res.json();
+          const { data } = await fetchJSON(url, { timeoutMs: 5000 });
 
           const usdEur = data.quotes?.USDEUR;
           const usdGbp = data.quotes?.USDGBP;
@@ -464,38 +484,23 @@ async function getRevenue(id: string, organizationId: string) {
           const costEUR = costGBP * (USDEUR / USDGBP)
           const totalEUR = totalGBP * (USDEUR / USDGBP)
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
 
           for (const ct of newCategories) {
 
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * (USDEUR / USDGBP)).toFixed(2)}, ${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total,
+              USDcost: ct.cost,
+              GBPtotal: ct.total * USDGBP,
+              GBPcost: ct.cost * USDGBP,
+              EURtotal: ct.total * USDEUR,
+              EURcost: ct.cost * USDEUR,
+            });
           }
           return revenue;
         } else if (euroCountries.includes(country)) {
@@ -514,20 +519,11 @@ async function getRevenue(id: string, organizationId: string) {
           const costUSD = costEUR / USDEUR
           const totalUSD = totalEUR / USDEUR
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
 
           for (const ct of newCategories) {
 
@@ -564,38 +560,22 @@ async function getRevenue(id: string, organizationId: string) {
           const costGBP = costUSD * USDGBP
           const totalGBP = totalUSD * USDGBP
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
-
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
           for (const ct of newCategories) {
 
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * USDGBP).toFixed(2)}, ${(ct.cost * USDGBP).toFixed(2)},
-                            ${(ct.total * USDEUR).toFixed(2)}, ${(ct.cost * USDEUR).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total / USDGBP,
+              USDcost: ct.cost / USDGBP,
+              GBPtotal: ct.total,
+              GBPcost: ct.cost,
+              EURtotal: ct.total * (USDEUR / USDGBP),
+              EURcost: ct.cost * (USDEUR / USDGBP),
+            });
           }
           return revenue
         }
@@ -610,7 +590,16 @@ async function getRevenue(id: string, organizationId: string) {
 /** Stock & points stay RESERVED while the order is *underpaid*. */
 const ACTIVE = ["open", "underpaid", "paid", "completed"]; // stock & points RESERVED
 const INACTIVE = ["cancelled", "failed", "refunded"];      // stock & points RELEASED
-const orderStatusSchema = z.object({ status: z.string() });
+const ALLOWED_STATUSES = [
+  "open",
+  "underpaid",
+  "paid",
+  "completed",
+  "cancelled",
+  "refunded",
+  "failed",
+] as const;
+const orderStatusSchema = z.object({ status: z.enum(ALLOWED_STATUSES) });
 /* record-the-date helper */
 const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
   underpaid: "dateUnderpaid",
@@ -1056,6 +1045,86 @@ export async function PATCH(
     console.log(`Transaction committed for order ${id}`);
     // release the transactional connection ASAP; do side-effects with pool
     client.release(); released = true;
+
+    // 🔔 Notify the BASE order (merchant) too
+    try {
+      const notifTypeMap: Record<string, NotificationType> = {
+        open: "order_placed",
+        underpaid: "order_partially_paid",
+        paid: "order_paid",
+        completed: "order_completed",
+        cancelled: "order_cancelled",
+        refunded: "order_refunded",
+      };
+      const shouldNotify =
+        newStatus === "paid" || newStatus === "completed"
+          ? !ord.notifiedPaidOrCompleted
+          : newStatus === "cancelled" || newStatus === "refunded";
+      if (shouldNotify) {
+        const productList = await buildProductListForCart(ord.cartId);
+        const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
+        await enqueueNotificationFanout({
+          organizationId,
+          orderId: id,
+          type: notifTypeMap[newStatus],
+          trigger: "admin_only",
+          channels: ["in_app", "telegram"],
+          dedupeSalt: `merchant_admin:${newStatus}`,
+          payload: {
+            message: `Order #${ord.orderKey} is now <b>${newStatus}</b><br>{product_list}`,
+            subject: `Order #${ord.orderKey} ${newStatus}`,
+            variables: {
+              product_list: productList,
+              order_number: ord.orderKey,
+              order_date: orderDate,
+              order_shipping_method: ord.shippingMethod ?? "-",
+              tracking_number: ord.trackingNumber ?? "",
+              shipping_company: ord.shippingService ?? "",
+            },
+            country: ord.country,
+            clientId: null,
+            userId: null,
+            url: `/orders/${id}`,
+          },
+        });
+        // Optional: email the buyer when completed (matches your sibling logic)
+        if (newStatus === "completed") {
+          await enqueueNotificationFanout({
+            organizationId,
+            orderId: id,
+            type: "order_completed",
+            trigger: "user_only_email",
+            channels: ["email"],
+            dedupeSalt: `buyer_email:${newStatus}`,
+            payload: {
+              message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+              subject: `Order #${ord.orderKey} ${newStatus}`,
+              variables: {
+                product_list: productList,
+                order_number: ord.orderKey,
+                order_date: orderDate,
+                order_shipping_method: ord.shippingMethod ?? "-",
+                tracking_number: ord.trackingNumber ?? "",
+                shipping_company: ord.shippingService ?? "",
+              },
+              country: ord.country,
+              clientId: ord.clientId,
+              userId: null,
+              url: `/orders/${id}`,
+            },
+          });
+        }
+        if (newStatus === "paid" || newStatus === "completed") {
+          await pool.query(
+            `UPDATE orders SET "notifiedPaidOrCompleted" = TRUE WHERE id = $1 AND "notifiedPaidOrCompleted" = FALSE`,
+            [id],
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("[change-status] enqueue (base order) failed", e);
+    }
+
     // 🔒 Ensure supplier orders exist before we cascade the status
     try { await ensureSupplierOrdersExist(id); } catch (e) { console.warn("[ensureSupplierOrders] failed:", e); }
     /* ──────────────────────────────────────────────────────────────
@@ -1227,16 +1296,26 @@ export async function PATCH(
         }
       }
 
-      // On cancel/refund, cancel sibling revenues too
-      if (newStatus === "cancelled" || newStatus === "refunded") {
+      // On cancel/refund, flag sibling revenues appropriately
+      if (newStatus === "cancelled") {
         await pool.query(
           `UPDATE "orderRevenue"
-          SET cancelled = TRUE, "updatedAt" = NOW()
-        WHERE "orderId" IN (
-          SELECT id FROM orders
-           WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
-        )`,
-          [baseKey],
+           SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW()
+         WHERE "orderId" IN (
+           SELECT id FROM orders
+            WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
+         )`,
+          [baseKey]
+        );
+      } else if (newStatus === "refunded") {
+        await pool.query(
+          `UPDATE "orderRevenue"
+           SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW()
+         WHERE "orderId" IN (
+           SELECT id FROM orders
+            WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
+         )`,
+          [baseKey]
         );
       }
     }
@@ -1409,12 +1488,13 @@ export async function PATCH(
           orgId: organizationId,
           hasSecret: Boolean(process.env.INTERNAL_API_SECRET),
         });
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (process.env.INTERNAL_API_SECRET) {
+          headers["x-internal-secret"] = process.env.INTERNAL_API_SECRET;
+        }
         const feeRes = await fetch(feesUrl, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-internal-secret": process.env.INTERNAL_API_SECRET!, // ✅ match requireInternalAuth
-          },
+          headers,
           body: JSON.stringify({ orderId: id }),
         });
         const feeText = await feeRes.text().catch(() => "");
@@ -1440,8 +1520,8 @@ export async function PATCH(
     console.log(newStatus)
     if (newStatus === "cancelled") {
       try {
-        const statusQuery = `UPDATE "orderRevenue" SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
-        const statusResult = await pool.query(statusQuery)
+        const statusQuery = `UPDATE "orderRevenue" SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = $1 RETURNING *`
+        const statusResult = await pool.query(statusQuery, [id])
         const result = statusResult.rows
         console.log(result)
       } catch (err) {
@@ -1454,8 +1534,8 @@ export async function PATCH(
 
     if (newStatus === "refunded") {
       try {
-        const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
-        const statusResult = await pool.query(statusQuery)
+        const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW() WHERE "orderId" = $1 RETURNING *`
+        const statusResult = await pool.query(statusQuery, [id])
         const result = statusResult.rows
         console.log(result)
       } catch (err) {
@@ -1468,8 +1548,8 @@ export async function PATCH(
 
     if (newStatus !== "refunded" && newStatus !== "cancelled") {
       try {
-        const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
-        const statusResult = await pool.query(statusQuery)
+        const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = $1 RETURNING *`
+        const statusResult = await pool.query(statusQuery, [id])
         const result = statusResult.rows[0]
         console.log(result)
       } catch (err) {
