@@ -17,17 +17,17 @@ export default function OrderPage() {
 
   /* ── secured permission check ────────────────────────────────── */
   const {
-    hasPermission: canViewOrder,
+    hasPermission: canEditOrder,
     isLoading:     permLoading,
-  } = useHasPermission(organizationId, { order: ["view"] });
+ } = useHasPermission(organizationId, { order: ["update"] });
 
   /* ── redirect on denial (runs once permissions are known) ────── */
   useEffect(() => {
-    if (!permLoading && !canViewOrder) {
+    if (!permLoading && !canEditOrder) {
       router.replace("/orders");
     }
-  }, [permLoading, canViewOrder, router]);
+  }, [permLoading, canEditOrder, router]);
 
-  if (permLoading || !canViewOrder) return null; // waiting / redirecting
+  if (permLoading || !canEditOrder) return null; // waiting / redirecting
   return <OrderFormVisual orderId={id} />;
 }

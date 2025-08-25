@@ -1,15 +1,37 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { ReviewsTable } from "./review-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
 
-export default function CategoriesPage() {
-    const { setHeaderTitle } = useHeaderTitle();
+export default function ReviewsPage() {
+  const { setHeaderTitle } = useHeaderTitle();
+  const router = useRouter();
 
-    useEffect(() => {
-        setHeaderTitle("Reviews"); // Set the header title for this page
-    }, [setHeaderTitle]);
+  // scope permission to active org
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+
+  const {
+    hasPermission: canViewReviews,
+    isLoading: permLoading,
+  } = useHasPermission(organizationId, { reviews: ["view"] });
+
+  useEffect(() => {
+    setHeaderTitle("Reviews"); // Set the header title for this page
+  }, [setHeaderTitle]);
+
+  useEffect(() => {
+    if (!permLoading && !canViewReviews) {
+      router.replace("/dashboard");
+    }
+  }, [permLoading, canViewReviews, router]);
+
+  if (permLoading || !canViewReviews) return null; // waiting / redirecting
+
 
   return (
     <div className="flex flex-col gap-6 p-6">

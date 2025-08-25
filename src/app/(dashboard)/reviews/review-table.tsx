@@ -48,6 +48,9 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
+
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -65,6 +68,13 @@ type Review = {
 /* ------------------------------------------------------------------ */
 export function ReviewsTable() {
   const router = useRouter();
+
+     // permission to deep-link into orders
+   const { data: activeOrg } = authClient.useActiveOrganization();
+   const organizationId = activeOrg?.id ?? null;
+   const {
+     hasPermission: canViewOrders,
+   } = useHasPermission(organizationId, { order: ["view"] });
 
   /* ── state ─────────────────────────────────────────────────────── */
   const [reviews,      setReviews     ] = useState<Review[]>([]);
@@ -183,12 +193,19 @@ export function ReviewsTable() {
               reviews.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell>
-                    <Link
-                      href={`/orders/${r.orderId}`}
-                      className="text-blue-600 hover:underline"
-                    >
-                      {r.orderId}
-                    </Link>
+                               {canViewOrders ? (
+              <Link
+                href={`/orders/${r.orderId}`}
+                className="text-blue-600 hover:underline"
+              >
+                {r.orderId}
+              </Link>
+            ) : (
+              <span className="text-muted-foreground" title="No permission to view orders">
+                {r.orderId}
+              </span>
+            )}
+
                   </TableCell>
                   <TableCell>
                     <Button

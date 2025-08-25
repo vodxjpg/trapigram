@@ -23,6 +23,7 @@ const domainStatements: Record<string, string[]> = {
   ],
   // Chat within orders
   orderChat: ["view"],
+  reviews: ["view"],
   product: ["view", "create", "update", "delete"],
   productCategories: ["view", "create", "update", "delete"],
   productAttributes: ["view", "create", "update", "delete"],
