@@ -160,7 +160,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           amount = paidEntry.order.amount
         }
 
-                const coinKey = coinRaw.toUpperCase();
+        const coinKey = coinRaw.toUpperCase();
         const coinId  = coins[coinKey];
         if (!coinId) {
           dbg("⚠️ unsupported asset:", coinKey);
@@ -262,7 +262,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (paymentType === 'niftipay') {
           totalUSD = total
           totalEUR = total * USDEUR
-          totalGBP = total * USDEUR
+          totalGBP = total * USDGBP
         }
         console.log("[orderRevenue] inserting orderRevenue for", country);
         const query = `INSERT INTO "orderRevenue"(id, "orderId",

@@ -39,6 +39,16 @@ const coins: Record<string, string> = {
     'USDT': 'tether',
     'USDT.ERC20': 'tether',
     'USDT.TRC20': 'tether',
+    'USDC': 'usd-coin',
+    'USDC.ERC20': 'usd-coin',
+    'USDC.TRC20': 'usd-coin',
+    'USDC.SOL': 'usd-coin',
+    'USDC.SPL': 'usd-coin',
+    'USDC.POLYGON': 'usd-coin',
+    'USDC.BEP20': 'usd-coin',
+    'USDC.ARBITRUM': 'usd-coin',
+    'USDC.OPTIMISM': 'usd-coin',
+    'USDC.BASE': 'usd-coin',
     'XRP': 'ripple',
     'SOL': 'solana',
     'ADA': 'cardano',
@@ -225,7 +235,7 @@ export async function getRevenue(id: string, organizationId: string) {
                     if (paymentType.toLowerCase() == 'niftipay') {
                         totalUSD = total
                         totalEUR = total * USDEUR
-                        totalGBP = total * USDEUR
+                        totalGBP = total * USDGBP
                     }
 
                     const query = `INSERT INTO "orderRevenue" (id, "orderId", 
