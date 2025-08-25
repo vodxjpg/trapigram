@@ -60,9 +60,10 @@ export async function GET(
   try {
     const { id: clientId } = await params;
     const result = await pool.query(
-      `SELECT id, "clientId", address
-       FROM "clientAddresses"
-       WHERE "clientId" = $1`,
+      `SELECT id, "clientId", address, "createdAt"
+      FROM "clientAddresses"
+      WHERE "clientId" = $1
+      ORDER BY "createdAt" DESC`,
       [clientId]
     );
 
@@ -101,20 +102,55 @@ export async function POST(
       clientId,
     });
 
+    // how many addresses does the client have?
+    const { rows: [{ cnt }] } = await pool.query<{ cnt: number }>(
+      `SELECT COUNT(*)::int AS cnt
+       FROM "clientAddresses"
+       WHERE "clientId" = $1`,
+      [clientId]
+    );
+    console.log(cnt)
+
+    // If there are already N, delete the oldest (N - 4) so that after insert total = 5
+    const toDelete = Math.max(0, cnt - 4);
+    if (toDelete > 0) {
+      await pool.query(
+        `DELETE FROM "clientAddresses"
+         WHERE id IN (
+           SELECT id
+           FROM "clientAddresses"
+           WHERE "clientId" = $1
+           ORDER BY "createdAt" ASC
+           LIMIT $2
+         )`,
+        [clientId, toDelete]
+      );
+    }
+
     const encryptedAddress = encryptSecretNode(parsed.address);
     const addressId = uuidv4();
 
     const insertQ = `
-      INSERT INTO "clientAddresses" 
-        (id, "clientId", address)
-      VALUES ($1, $2, $3)
-      RETURNING id, "clientId", address
+      INSERT INTO "clientAddresses"
+        (id, "clientId", address, "createdAt")
+      VALUES ($1, $2, $3, NOW())
+      RETURNING id, "clientId", address, "createdAt"
     `;
-    const values = [addressId, parsed.clientId, encryptedAddress];
-    const result = await pool.query(insertQ, values);
-    const newAddress = result.rows[0];
+    const { rows } = await pool.query(insertQ, [
+      addressId,
+      parsed.clientId,
+      encryptedAddress,
+    ]);
+    const newAddress = rows[0];
+    console.log(newAddress)
 
-    return NextResponse.json(newAddress, { status: 201 });
+    return NextResponse.json(
+      {
+        ...newAddress,
+        address: decryptSecretNode(newAddress.address),
+      },
+      { status: 201 }
+    );
   } catch (error: any) {
     console.error("[POST /api/clients/[id]/address] error:", error);
     if (error instanceof z.ZodError) {

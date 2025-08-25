@@ -80,7 +80,6 @@ async function getRevenue(id: string, organizationId: string) {
     const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = $1`;
     const resultCheck = await pool.query(checkQuery, [id]);
     const check = resultCheck.rows
-    console.log(check)
 
     if (check.length > 0) {
       console.log("[orderRevenue] revenue‑already‑exists", {
@@ -94,7 +93,6 @@ async function getRevenue(id: string, organizationId: string) {
       const orderQuery = `SELECT * FROM orders WHERE id = $1 AND "organizationId" = $2`;
       const resultOrders = await pool.query(orderQuery, [id, organizationId]);
       const order = resultOrders.rows[0]
-      console.log(order)
 
       const cartId = order.cartId
       const paymentType = (order.paymentMethod ?? "").toLowerCase();
@@ -104,15 +102,11 @@ async function getRevenue(id: string, organizationId: string) {
       const raw = order.datePaid;   // string or Date
       const paidDate = raw instanceof Date
         ? raw
-        : new Date(raw);
-      console.log(raw)
-      console.log(paidDate)                     // ensure it's a JS Date
+        : new Date(raw);                   // ensure it's a JS Date
 
       // now get seconds since the Unix epoch
       const to = Math.floor(paidDate.getTime() / 1000);
       const from = to - 3600;
-      console.log(to)
-      console.log(from)
 
       const productQuery = `SELECT p.*, cp.quantity
                               FROM "cartProducts" cp
@@ -129,7 +123,6 @@ async function getRevenue(id: string, organizationId: string) {
       const affiliate = affiliateResult.rows
 
       const allProducts = products.concat(affiliate)
-      console.log(allProducts)
 
       const categoryQuery = `SELECT cp.*, p.*, pc."categoryId"
                                FROM "cartProducts" AS cp
@@ -162,7 +155,6 @@ async function getRevenue(id: string, organizationId: string) {
       }, 0);
 
       let total = 0
-      console.log(paymentType)
       if (paymentType === 'niftipay') {
         let coinRaw = ""
         let amount = 0
@@ -201,7 +193,6 @@ async function getRevenue(id: string, organizationId: string) {
           SELECT "EUR","GBP" FROM "exchangeRate"
            WHERE date <= to_timestamp($1) ORDER BY date DESC LIMIT 1`;
         const exchangeResult = await pool.query(exchangeQuery, [to])
-        console.log(exchangeResult.rows)
 
         let USDEUR = 0
         let USDGBP = 0
@@ -772,21 +763,21 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
     }
     // create supplier order S-<orderKey>
     const supplierOrderId = uuidv4();
-     await pool.query(
-   `INSERT INTO orders
+    await pool.query(
+      `INSERT INTO orders
  (id,"organizationId","clientId","cartId",country,"paymentMethod",
   "shippingTotal","totalAmount","shippingService","shippingMethod",
   address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
   "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash","orderMeta")
 VALUES
  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18,'[]'::jsonb)`,
-   [
-     supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
-     shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
-     o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
-     `S-${baseKey}`, 0, supplierCartHash,  // ← non-null hash
-   ],
- );
+      [
+        supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
+        shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
+        o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
+        `S-${baseKey}`, 0, supplierCartHash,  // ← non-null hash
+      ],
+    );
 
     console.log("[ensureSupplierOrders] created S-order", { supplierOrderId, key: `S-${baseKey}`, orgId, subtotal, shippingShare });
   }
@@ -1057,20 +1048,20 @@ export async function PATCH(
       console.log(`[cascade] ${newStatus} → ${rowCount} sibling orders for baseKey=${baseKey}`);
 
       // --- Notify supplier siblings that changed due to the cascade ---
-  (async () => {
-  // map status→notification type (repeat here or hoist globally)
-  const notifTypeMap: Record<string, NotificationType> = {
-    open: "order_placed",
-    underpaid: "order_partially_paid",
-    paid: "order_paid",
-    completed: "order_completed",
-    cancelled: "order_cancelled",
-    refunded: "order_refunded",
-  };
+      (async () => {
+        // map status→notification type (repeat here or hoist globally)
+        const notifTypeMap: Record<string, NotificationType> = {
+          open: "order_placed",
+          underpaid: "order_partially_paid",
+          paid: "order_paid",
+          completed: "order_completed",
+          cancelled: "order_cancelled",
+          refunded: "order_refunded",
+        };
 
-  // Only supplier siblings (S-xxxx) that now sit at the cascaded status
-  const { rows: sibsForNotif } = await pool.query(
-    `SELECT id, "organizationId", "clientId", "cartId", country, "orderKey",
+        // Only supplier siblings (S-xxxx) that now sit at the cascaded status
+        const { rows: sibsForNotif } = await pool.query(
+          `SELECT id, "organizationId", "clientId", "cartId", country, "orderKey",
             "shippingMethod","shippingService","trackingNumber","dateCreated",
             COALESCE("notifiedPaidOrCompleted", FALSE) AS "notified"
        FROM orders
@@ -1078,58 +1069,58 @@ export async function PATCH(
         AND id <> $2
         AND status = $3
         AND "orderKey" LIKE 'S-%'`,
-    [baseKey, id, newStatus],
-  );
+          [baseKey, id, newStatus],
+        );
 
-  for (const sb of sibsForNotif) {
-    // Respect "only once" for paid/completed
-    const should =
-      newStatus === "paid" || newStatus === "completed"
-        ? !sb.notified
-        : newStatus === "cancelled" || newStatus === "refunded";
+        for (const sb of sibsForNotif) {
+          // Respect "only once" for paid/completed
+          const should =
+            newStatus === "paid" || newStatus === "completed"
+              ? !sb.notified
+              : newStatus === "cancelled" || newStatus === "refunded";
 
-    if (!should) continue;
+          if (!should) continue;
 
-    const productList = await buildProductListForCart(sb.cartId);
-    const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
+          const productList = await buildProductListForCart(sb.cartId);
+          const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
 
-        try {
-        await sendNotification({
-      organizationId: sb.organizationId,              // supplier org
-      type: notifTypeMap[newStatus],
-      subject: `Order #${sb.orderKey} ${newStatus}`,
-      message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
-      variables: {
-        product_list: productList,
-        order_number: sb.orderKey,
-        order_date: orderDate,
-        order_shipping_method: sb.shippingMethod ?? "-",
-        tracking_number: sb.trackingNumber ?? "",
-        shipping_company: sb.shippingService ?? "",
-      },
-      country: sb.country,
-      trigger: "admin_only",                          // admin-only fanout
-      channels: ["in_app", "telegram"],               // same as elsewhere for suppliers
-      clientId: null,
-      url: `/orders/${sb.id}`,
-           });
-      } catch (e) {
-        console.warn("[cascade][notify] failed for supplier sibling", sb.id, e);
-        continue;
-      }
-    // Mark "notified" so we don’t notify twice for paid/completed
-    if (newStatus === "paid" || newStatus === "completed") {
-                try {
-       await pool.query(
-         `UPDATE orders
+          try {
+            await sendNotification({
+              organizationId: sb.organizationId,              // supplier org
+              type: notifTypeMap[newStatus],
+              subject: `Order #${sb.orderKey} ${newStatus}`,
+              message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+              variables: {
+                product_list: productList,
+                order_number: sb.orderKey,
+                order_date: orderDate,
+                order_shipping_method: sb.shippingMethod ?? "-",
+                tracking_number: sb.trackingNumber ?? "",
+                shipping_company: sb.shippingService ?? "",
+              },
+              country: sb.country,
+              trigger: "admin_only",                          // admin-only fanout
+              channels: ["in_app", "telegram"],               // same as elsewhere for suppliers
+              clientId: null,
+              url: `/orders/${sb.id}`,
+            });
+          } catch (e) {
+            console.warn("[cascade][notify] failed for supplier sibling", sb.id, e);
+            continue;
+          }
+          // Mark "notified" so we don’t notify twice for paid/completed
+          if (newStatus === "paid" || newStatus === "completed") {
+            try {
+              await pool.query(
+                `UPDATE orders
              SET "notifiedPaidOrCompleted" = TRUE,
                  "updatedAt" = NOW()
            WHERE id = $1`,
-         [sb.id],
-       );
-     } catch (e) { console.warn("[cascade][notify] mark-notified failed", sb.id, e); }
-    }
-  }
+                [sb.id],
+              );
+            } catch (e) { console.warn("[cascade][notify] mark-notified failed", sb.id, e); }
+          }
+        }
       })();
 
 
@@ -1376,13 +1367,11 @@ export async function PATCH(
         );
       }
     }
-    console.log(newStatus)
     if (newStatus === "cancelled") {
       try {
         const statusQuery = `UPDATE "orderRevenue" SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
         const statusResult = await pool.query(statusQuery)
         const result = statusResult.rows
-        console.log(result)
       } catch (err) {
         console.error(
           `Failed to update revenue for order ${id}:`,
@@ -1396,7 +1385,6 @@ export async function PATCH(
         const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
         const statusResult = await pool.query(statusQuery)
         const result = statusResult.rows
-        console.log(result)
       } catch (err) {
         console.error(
           `Failed to update revenue for order ${id}:`,
@@ -1410,7 +1398,6 @@ export async function PATCH(
         const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
         const statusResult = await pool.query(statusQuery)
         const result = statusResult.rows[0]
-        console.log(result)
       } catch (err) {
         console.error(
           `Failed to update revenue for order ${id}:`,

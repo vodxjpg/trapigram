@@ -1,18 +1,13 @@
 /* ────────────────────────────────────────────────────────────────
    Cost + Price management table (mobile-friendly)
 ───────────────────────────────────────────────────────────────── */
-"use client"
+"use client";
 
-import { useState } from "react"
-import { ChevronDown, ChevronUp } from "lucide-react"
+import { useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
-import { Input } from "@/components/ui/input"
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -20,25 +15,25 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "@/components/ui/table";
 
 /* ------------------------------------------------------------------
    Types
 ------------------------------------------------------------------ */
 export interface PriceMap {
-  [country: string]: { regular: number; sale: number | null }
+  [country: string]: { regular: number; sale: number | null };
 }
 export interface CostMap {
-  [country: string]: number
+  [country: string]: number;
 }
 
 interface Props {
-  title: string
-  countries: string[]
-  priceData: PriceMap
-  costData: CostMap
-  onPriceChange: (p: PriceMap) => void
-  onCostChange: (c: CostMap) => void
+  title: string;
+  countries: string[];
+  priceData: PriceMap;
+  costData: CostMap;
+  onPriceChange: (p: PriceMap) => void;
+  onCostChange: (c: CostMap) => void;
 }
 
 /* ------------------------------------------------------------------
@@ -52,10 +47,13 @@ export function PriceManagement({
   onPriceChange,
   onCostChange,
 }: Props) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(true);
 
   /* ---------- helpers ---------- */
-  const patchPrice = (country: string, patch: Partial<typeof priceData[string]>) =>
+  const patchPrice = (
+    country: string,
+    patch: Partial<(typeof priceData)[string]>
+  ) =>
     onPriceChange({
       ...priceData,
       [country]: {
@@ -64,10 +62,10 @@ export function PriceManagement({
         ...(priceData[country] || {}),
         ...patch,
       },
-    })
+    });
 
   const patchCost = (country: string, cost: number) =>
-    onCostChange({ ...costData, [country]: cost })
+    onCostChange({ ...costData, [country]: cost });
 
   /* ---------- render ---------- */
   return (
@@ -77,7 +75,11 @@ export function PriceManagement({
         className="cursor-pointer flex items-center justify-between py-3 px-4"
       >
         <CardTitle className="text-base">{title}</CardTitle>
-        {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        {open ? (
+          <ChevronUp className="h-4 w-4" />
+        ) : (
+          <ChevronDown className="h-4 w-4" />
+        )}
       </CardHeader>
 
       {open && (
@@ -89,8 +91,12 @@ export function PriceManagement({
                 <TableRow>
                   <TableHead>Country</TableHead>
                   <TableHead className="w-[120px] text-right">Cost</TableHead>
-                  <TableHead className="w-[120px] text-right">Regular price</TableHead>
-                  <TableHead className="w-[120px] text-right">Sale price (opt.)</TableHead>
+                  <TableHead className="w-[120px] text-right">
+                    Regular price
+                  </TableHead>
+                  <TableHead className="w-[120px] text-right">
+                    Sale price (opt.)
+                  </TableHead>
                 </TableRow>
               </TableHeader>
 
@@ -152,5 +158,5 @@ export function PriceManagement({
         </CardContent>
       )}
     </Card>
-  )
+  );
 }

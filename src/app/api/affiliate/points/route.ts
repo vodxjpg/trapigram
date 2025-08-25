@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
 
   const [{ count }] = (
     await pool.query(
-       `SELECT COUNT(*) FROM "affiliatePointLogs" WHERE ${whereCount.join(" AND ")}`,
+      `SELECT COUNT(*) FROM "affiliatePointLogs" WHERE ${whereCount.join(" AND ")}`,
       vals,
     )
   ).rows;
@@ -174,7 +174,10 @@ export async function POST(req: NextRequest) {
           payload.sourceId ?? null,
         ],
       );
-
+      console.log(payload.id,
+        organizationId,
+        payload.points,
+        payload.points < 0 ? Math.abs(payload.points) : 0)
       /* update running balance */
       await applyBalanceDelta(
         payload.id,

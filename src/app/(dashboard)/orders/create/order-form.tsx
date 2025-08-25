@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
@@ -555,20 +555,56 @@ export default function OrderForm() {
     return () => clearTimeout(t);
   }, [prodTerm]);
 
+  const loadAddresses = useCallback(async () => {
+    if (!selectedClient) return;
+
+    try {
+      const res = await fetch(`/api/clients/${selectedClient}/address`, {
+        headers: {
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+        },
+      });
+
+      if (!res.ok) throw new Error("Addresses load failed");
+
+      const data = await res.json();
+      const addrs: Address[] = data.addresses || [];
+
+      setAddresses(addrs);
+
+      // If nothing selected yet, pick the first one (if any)
+      if (addrs.length && !selectedAddressId) {
+        setSelectedAddressId(addrs[0].id);
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("Addresses load error");
+      setAddresses([]);
+    }
+  }, [selectedClient, selectedAddressId]);
+
   useEffect(() => {
     if (!selectedClient) return;
-    const loadAddresses = async () => {
+    const loadAddresses = async (clientIdArg?: string) => {
+      const cid = clientIdArg ?? selectedClient;
+      if (!cid) return;
       try {
-        const res = await fetch(`/api/clients/${selectedClient}/address`, {
+        const res = await fetch(`/api/clients/${cid}/address`, {
           headers: {
             "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
           },
         });
         const data = await res.json();
-        setAddresses(data.addresses);
-        if (data.addresses.length && !selectedAddressId)
-          setSelectedAddressId(data.addresses[0].id);
-      } catch (e) {
+
+        setAddresses(data.addresses || []);
+
+        // keep selected address if it still exists, otherwise pick the first (newest)
+        setSelectedAddressId((prev) =>
+          prev && (data.addresses || []).some((a: any) => a.id === prev)
+            ? prev
+            : (data.addresses?.[0]?.id ?? "")
+        );
+      } catch {
         toast.error("Addresses load error");
       }
     };
@@ -853,6 +889,7 @@ export default function OrderForm() {
     if (!newAddress) {
       return toast.error("Address field is required");
     }
+
     try {
       const res = await fetch(`/api/clients/${selectedClient}/address`, {
         method: "POST",
@@ -865,14 +902,20 @@ export default function OrderForm() {
           address: newAddress,
         }),
       });
+
       if (!res.ok) throw new Error("Failed to save address");
+
       const created: Address = await res.json();
-      setAddresses((prev) => [...prev, created]);
-      setSelectedAddressId(created.id);
+
+      // Immediately refetch the authoritative list (backend already trimmed to 5)
+      await loadAddresses();
+
+      setSelectedAddressId(created.id); // focus the one we just added
       setNewAddress("");
       toast.success("Address added");
     } catch (err: any) {
-      toast.error(err.message);
+      console.error(err);
+      toast.error(err.message || "Failed to save address");
     }
   };
 

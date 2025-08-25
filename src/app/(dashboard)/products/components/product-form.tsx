@@ -1,21 +1,21 @@
-"use client"
+"use client";
 
-import { useState, useEffect, useRef } from "react"
-import { useRouter } from "next/navigation"
-import { useForm } from "react-hook-form"
-import { zodResolver } from "@hookform/resolvers/zod"
-import { z } from "zod"
-import { v4 as uuidv4 } from "uuid"
-import Image from "next/image"
-import { Loader2, Upload, X } from "lucide-react"
-import dynamic from "next/dynamic"
-import { mutate as swrMutate } from "swr"
-import useSWR from "swr"
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { v4 as uuidv4 } from "uuid";
+import Image from "next/image";
+import { Loader2, Upload, X } from "lucide-react";
+import dynamic from "next/dynamic";
+import { mutate as swrMutate } from "swr";
+import useSWR from "swr";
 // Dynamically import ReactQuill to avoid SSR errors
-const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false })
-import "react-quill-new/dist/quill.snow.css"
+const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
+import "react-quill-new/dist/quill.snow.css";
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/button";
 import {
   Form,
   FormControl,
@@ -24,32 +24,46 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/components/ui/form"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { toast } from "sonner"
-import { Badge } from "@/components/ui/badge"
-import type { Product } from "@/hooks/use-products"
-import type { Attribute, Variation, Warehouse } from "@/types/product"
-import { StockManagement } from "./stock-management"
-import { ProductAttributes } from "./product-attributes"
-import { ProductVariations } from "./product-variations"
-import { PriceManagement } from "./price-management"
-
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import type { Product } from "@/hooks/use-products";
+import type { Attribute, Variation, Warehouse } from "@/types/product";
+import { StockManagement } from "./stock-management";
+import { ProductAttributes } from "./product-attributes";
+import { ProductVariations } from "./product-variations";
+import { PriceManagement } from "./price-management";
 
 // --------------------------------------------------
 //  helpers / types
 // --------------------------------------------------
-type PriceMap = Record<string, { regular: number; sale: number | null }>
-type CostMap = Record<string, number>
+type PriceMap = Record<string, { regular: number; sale: number | null }>;
+type CostMap = Record<string, number>;
 
 // --------------------------------------------------
 //  validation schema
 // --------------------------------------------------
-const priceObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() })
+const priceObj = z.object({
+  regular: z.number().min(0),
+  sale: z.number().nullable(),
+});
 const productSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
@@ -62,14 +76,14 @@ const productSchema = z.object({
   manageStock: z.boolean().default(false),
   prices: z.record(z.string(), priceObj).optional(),
   cost: z.record(z.string(), z.number().min(0)).optional(),
-})
+});
 
-type ProductFormValues = z.infer<typeof productSchema>
+type ProductFormValues = z.infer<typeof productSchema>;
 
 interface ProductFormProps {
-  productId?: string
-  initialData?: Product
-  shared?: boolean
+  productId?: string;
+  initialData?: Product;
+  shared?: boolean;
 }
 
 // --------------------------------------------------
@@ -79,11 +93,16 @@ const quillModules = {
   toolbar: [
     [{ header: [1, 2, false] }],
     ["bold", "italic", "underline", "strike", "blockquote"],
-    [{ list: "ordered" }, { list: "bullet" }, { indent: "-1" }, { indent: "+1" }],
+    [
+      { list: "ordered" },
+      { list: "bullet" },
+      { indent: "-1" },
+      { indent: "+1" },
+    ],
     ["link", "image"],
     ["clean"],
   ],
-}
+};
 
 const quillFormats = [
   "header",
@@ -96,95 +115,109 @@ const quillFormats = [
   "indent",
   "link",
   "image",
-]
+];
 
 // --------------------------------------------------
 //  component
 // --------------------------------------------------
-export function ProductForm({ productId, initialData, shared = false, }: ProductFormProps = {}) {
-  const router = useRouter()
+export function ProductForm({
+  productId,
+  initialData,
+  shared = false,
+}: ProductFormProps = {}) {
+  const router = useRouter();
 
   // --------------------------------------------------
   //  local state
   // --------------------------------------------------
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [imagePreview, setImagePreview] = useState<string | null>(initialData?.image || null)
-  const [isCheckingSku, setIsCheckingSku] = useState(false)
-  const [skuAvailable, setSkuAvailable] = useState(true)
-  const [categories, setCategories] = useState<Array<{ id: string; name: string; slug: string }>>([])
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
-  const [stockData, setStockData] = useState<Record<string, Record<string, number>>>({})
-  const [attributes, setAttributes] = useState<Attribute[]>(initialData?.attributes || [])
-  const [variations, setVariations] = useState<Variation[]>(initialData?.variations || [])
-  const [orgCountries, setOrgCountries] = useState<string[]>([])
-  const [prices, setPrices] = useState<PriceMap>({})
-  const [costs, setCosts] = useState<CostMap>({})
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(
+    initialData?.image || null
+  );
+  const [isCheckingSku, setIsCheckingSku] = useState(false);
+  const [skuAvailable, setSkuAvailable] = useState(true);
+  const [categories, setCategories] = useState<
+    Array<{ id: string; name: string; slug: string }>
+  >([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [stockData, setStockData] = useState<
+    Record<string, Record<string, number>>
+  >({});
+  const [attributes, setAttributes] = useState<Attribute[]>(
+    initialData?.attributes || []
+  );
+  const [variations, setVariations] = useState<Variation[]>(
+    initialData?.variations || []
+  );
+  const [orgCountries, setOrgCountries] = useState<string[]>([]);
+  const [prices, setPrices] = useState<PriceMap>({});
+  const [costs, setCosts] = useState<CostMap>({});
   const { data: raw } = useSWR(
     productId ? `/api/products/${productId}` : null,
     async (url: string) => {
-      const res = await fetch(url)
-      if (!res.ok) throw new Error("Failed to load")
-      return res.json()
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
     }
-  )
-  const isShared = raw?.shared === true
+  );
+  const isShared = raw?.shared === true;
 
   const submitSafely = () => {
-      // blur the currently focused element (often the Quill editor)
-      if (typeof document !== "undefined") {
-        const el = document.activeElement as HTMLElement | null
-        el?.blur?.()
-      }
-      // trigger RHF submission explicitly (don’t rely on native submit)
-      form.handleSubmit(onSubmit)()
+    // blur the currently focused element (often the Quill editor)
+    if (typeof document !== "undefined") {
+      const el = document.activeElement as HTMLElement | null;
+      el?.blur?.();
     }
+    // trigger RHF submission explicitly (don’t rely on native submit)
+    form.handleSubmit(onSubmit)();
+  };
 
   // --------------------------------------------------
   //  parse initial stock for simple products
   // --------------------------------------------------
   useEffect(() => {
-    if (!initialData?.stockData) return
+    if (!initialData?.stockData) return;
     try {
       const parsed =
         typeof initialData.stockData === "string"
           ? JSON.parse(initialData.stockData)
-          : initialData.stockData
-      setStockData(parsed)
+          : initialData.stockData;
+      setStockData(parsed);
     } catch {
-      setStockData({})
+      setStockData({});
     }
-  }, [initialData])
+  }, [initialData]);
 
   // --------------------------------------------------
   //  fetch organization countries (for pricing & cost maps)
   // --------------------------------------------------
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/organizations/countries")
-      if (!res.ok) return
-      const { countries } = await res.json()
-      const list = Array.isArray(countries) ? countries : JSON.parse(countries)
-      setOrgCountries(list)
+      const res = await fetch("/api/organizations/countries");
+      if (!res.ok) return;
+      const { countries } = await res.json();
+      const list = Array.isArray(countries) ? countries : JSON.parse(countries);
+      setOrgCountries(list);
 
       /* prices */
       if (initialData?.prices) {
-        setPrices(initialData.prices as PriceMap)
+        setPrices(initialData.prices as PriceMap);
       } else if (!initialData) {
-        const blank: PriceMap = {}
-        list.forEach((c) => (blank[c] = { regular: 0, sale: null }))
-        setPrices(blank)
+        const blank: PriceMap = {};
+        list.forEach((c) => (blank[c] = { regular: 0, sale: null }));
+        setPrices(blank);
       }
 
       /* cost */
       if (initialData?.cost) {
-        setCosts(initialData.cost as CostMap)
+        setCosts(initialData.cost as CostMap);
       } else if (!initialData) {
-        const blankCost: CostMap = {}
-        list.forEach((c) => (blankCost[c] = 0))
-        setCosts(blankCost)
+        const blankCost: CostMap = {};
+        list.forEach((c) => (blankCost[c] = 0));
+        setCosts(blankCost);
       }
-    })()
-  }, [initialData])
+    })();
+  }, [initialData]);
 
   // --------------------------------------------------
   //  react‑hook‑form
@@ -193,32 +226,32 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
     resolver: zodResolver(productSchema),
     defaultValues: initialData
       ? {
-        title: initialData.title ?? "",
-        description: initialData.description ?? "",
-        image: initialData.image ?? null,
-        sku: initialData.sku ?? "",
-        status: initialData.status ?? "draft",
-        productType: initialData.productType ?? "simple",
-        categories: initialData.categories ?? [],
-        allowBackorders: initialData.allowBackorders ?? false,
-        manageStock: initialData.manageStock ?? false,
-      }
+          title: initialData.title ?? "",
+          description: initialData.description ?? "",
+          image: initialData.image ?? null,
+          sku: initialData.sku ?? "",
+          status: initialData.status ?? "draft",
+          productType: initialData.productType ?? "simple",
+          categories: initialData.categories ?? [],
+          allowBackorders: initialData.allowBackorders ?? false,
+          manageStock: initialData.manageStock ?? false,
+        }
       : {
-        title: "",
-        description: "",
-        image: null,
-        sku: "",
-        status: "draft",
-        productType: "simple",
-        categories: [],
-        allowBackorders: false,
-        manageStock: false,
-      },
-  })
+          title: "",
+          description: "",
+          image: null,
+          sku: "",
+          status: "draft",
+          productType: "simple",
+          categories: [],
+          allowBackorders: false,
+          manageStock: false,
+        },
+  });
 
   // reset form when initialData changes (edit mode)
   useEffect(() => {
-    if (!initialData) return
+    if (!initialData) return;
     form.reset({
       title: initialData.title ?? "",
       description: initialData.description ?? "",
@@ -229,114 +262,121 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
       categories: initialData.categories ?? [],
       allowBackorders: initialData.allowBackorders ?? false,
       manageStock: initialData.manageStock ?? false,
-    })
-    if (initialData.prices) setPrices(initialData.prices as PriceMap)
-    if (initialData.cost) setCosts(initialData.cost as CostMap)
+    });
+    if (initialData.prices) setPrices(initialData.prices as PriceMap);
+    if (initialData.cost) setCosts(initialData.cost as CostMap);
     // Explicitly set variations with stock data
-    if (initialData.variations) setVariations(initialData.variations)
-  }, [initialData, form])
+    if (initialData.variations) setVariations(initialData.variations);
+  }, [initialData, form]);
 
   // synchronize variations with warehouses and countries
   useEffect(() => {
-    if (!initialData?.variations || warehouses.length === 0 || orgCountries.length === 0) return
+    if (
+      !initialData?.variations ||
+      warehouses.length === 0 ||
+      orgCountries.length === 0
+    )
+      return;
     setVariations((cur) =>
       cur.map((v) => {
-        const stock: Record<string, Record<string, number>> = { ...(v.stock || {}) }
-        let stockChanged = false
+        const stock: Record<string, Record<string, number>> = {
+          ...(v.stock || {}),
+        };
+        let stockChanged = false;
         warehouses.forEach((w) => {
           if (!stock[w.id]) {
-            stock[w.id] = {}
-            stockChanged = true
+            stock[w.id] = {};
+            stockChanged = true;
           }
           w.countries.forEach((c) => {
             if (stock[w.id][c] === undefined) {
-              stock[w.id][c] = 0
-              stockChanged = true
+              stock[w.id][c] = 0;
+              stockChanged = true;
             }
-          })
-        })
-        return stockChanged ? { ...v, stock } : v
+          });
+        });
+        return stockChanged ? { ...v, stock } : v;
       })
-    )
-  }, [warehouses, orgCountries, initialData])
+    );
+  }, [warehouses, orgCountries, initialData]);
 
   // watch values that affect UI
-  const productType = form.watch("productType")
-  const manageStock = form.watch("manageStock")
+  const productType = form.watch("productType");
+  const manageStock = form.watch("manageStock");
 
   // --------------------------------------------------
   //  fetch helpers
   // --------------------------------------------------
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/product-categories")
+      const res = await fetch("/api/product-categories");
       if (res.ok) {
-        const { categories } = await res.json()
-        setCategories(categories)
+        const { categories } = await res.json();
+        setCategories(categories);
       }
-    })()
-  }, [])
+    })();
+  }, []);
 
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/warehouses")
-      if (!res.ok) return
-      const { warehouses } = await res.json()
-      setWarehouses(warehouses)
+      const res = await fetch("/api/warehouses");
+      if (!res.ok) return;
+      const { warehouses } = await res.json();
+      setWarehouses(warehouses);
       if (!initialData) {
-        const obj: Record<string, Record<string, number>> = {}
+        const obj: Record<string, Record<string, number>> = {};
         warehouses.forEach((w: Warehouse) => {
-          obj[w.id] = {}
-          w.countries.forEach((c: string) => (obj[w.id][c] = 0))
-        })
-        setStockData(obj)
+          obj[w.id] = {};
+          w.countries.forEach((c: string) => (obj[w.id][c] = 0));
+        });
+        setStockData(obj);
       }
-    })()
-  }, [initialData])
+    })();
+  }, [initialData]);
 
   // --------------------------------------------------
   //  SKU helpers
   // --------------------------------------------------
   const checkSkuAvailability = async (sku: string) => {
-    if (!sku) return true
-    setIsCheckingSku(true)
+    if (!sku) return true;
+    setIsCheckingSku(true);
     try {
-      const res = await fetch(`/api/products/check-sku?sku=${sku}`)
-      const data = await res.json()
-      if (productId && initialData?.sku === sku) return true
-      setSkuAvailable(!data.exists)
-      return !data.exists
+      const res = await fetch(`/api/products/check-sku?sku=${sku}`);
+      const data = await res.json();
+      if (productId && initialData?.sku === sku) return true;
+      setSkuAvailable(!data.exists);
+      return !data.exists;
     } finally {
-      setIsCheckingSku(false)
+      setIsCheckingSku(false);
     }
-  }
+  };
 
-  const generateSku = () => `ORG-${uuidv4().slice(0, 8)}`
+  const generateSku = () => `ORG-${uuidv4().slice(0, 8)}`;
 
   /* --------------------------------------------------
      image upload  (click OR drag-&-drop)
   -------------------------------------------------- */
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadFile = async (file: File) => {
-    const fd = new FormData()
-    fd.append("file", file)
-    const res = await fetch("/api/upload", { method: "POST", body: fd })
-    if (!res.ok) return
-    const { filePath } = await res.json()
-    setImagePreview(filePath)
-    form.setValue("image", filePath)
-  }
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/upload", { method: "POST", body: fd });
+    if (!res.ok) return;
+    const { filePath } = await res.json();
+    setImagePreview(filePath);
+    form.setValue("image", filePath);
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) uploadFile(file)
-  }
+    const file = e.target.files?.[0];
+    if (file) uploadFile(file);
+  };
 
   const handleDrop = (e: React.DragEvent<HTMLLabelElement>) => {
-    e.preventDefault()
-    const file = e.dataTransfer.files?.[0]
-    if (file) uploadFile(file)
-  }
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) uploadFile(file);
+  };
 
   // --------------------------------------------------
   //  transform stock data to warehouseStock format
@@ -346,7 +386,7 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
     productId: string,
     variationId: string | null = null
   ) => {
-    const warehouseStock = []
+    const warehouseStock = [];
     for (const [warehouseId, countries] of Object.entries(stockData)) {
       for (const [country, quantity] of Object.entries(countries)) {
         if (quantity > 0) {
@@ -356,38 +396,41 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
             variationId,
             country,
             quantity,
-          })
+          });
         }
       }
     }
-    return warehouseStock
-  }
+    return warehouseStock;
+  };
 
   // --------------------------------------------------
   //  submit
   // --------------------------------------------------
   const onSubmit = async (values: ProductFormValues) => {
-    setIsSubmitting(true)
+    setIsSubmitting(true);
     try {
       if (!values.sku) {
-        values.sku = generateSku()
+        values.sku = generateSku();
       } else if (!(await checkSkuAvailability(values.sku))) {
-        toast.error("The SKU is already in use.")
-        return
+        toast.error("The SKU is already in use.");
+        return;
       }
 
-      let warehouseStock = []
+      let warehouseStock = [];
       if (manageStock && productType === "simple") {
-        warehouseStock = transformStockToWarehouseStock(stockData, productId || uuidv4())
+        warehouseStock = transformStockToWarehouseStock(
+          stockData,
+          productId || uuidv4()
+        );
       } else if (productType === "variable" && variations.length > 0) {
         for (const variation of variations) {
           warehouseStock.push(
             ...transformStockToWarehouseStock(
               variation.stock || {},
               productId || uuidv4(),
-              variation.id,
-            ),
-          )
+              variation.id
+            )
+          );
         }
       }
 
@@ -398,56 +441,65 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
         warehouseStock: warehouseStock.length ? warehouseStock : undefined,
         attributes,
         variations: productType === "variable" ? variations : [],
-      }
+      };
 
-      const url = productId ? `/api/products/${productId}` : "/api/products"
-      const method = productId ? "PATCH" : "POST"
+      const url = productId ? `/api/products/${productId}` : "/api/products";
+      const method = productId ? "PATCH" : "POST";
 
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      })
+      });
 
-      const data = await res.json().catch(() => ({}))
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
         const msg =
           typeof data?.error === "string"
             ? data.error
-            : `Failed to ${productId ? "update" : "create"} product`
-        toast.error(msg)
-        return
+            : `Failed to ${productId ? "update" : "create"} product`;
+        toast.error(msg);
+        return;
       }
 
-      const { product } = data
+      const { product } = data;
 
       /* --------------------------------------------------
          SWR cache updates
       -------------------------------------------------- */
-      if (productId) swrMutate(`/api/products/${productId}`, product, false)
-      swrMutate((key: string) => key.startsWith("/api/products?"))
+      if (productId) swrMutate(`/api/products/${productId}`, product, false);
+      swrMutate((key: string) => key.startsWith("/api/products?"));
 
-      toast.success(`Product ${productId ? "updated" : "created"} successfully`)
-      router.push("/products")
-      router.refresh()
+      toast.success(
+        `Product ${productId ? "updated" : "created"} successfully`
+      );
+      router.push("/products");
+      router.refresh();
     } catch (err) {
-      toast.error(`Failed to ${productId ? "update" : "create"} product`)
+      toast.error(`Failed to ${productId ? "update" : "create"} product`);
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   return (
-      <Form {...form}>
-        {/* noValidate to avoid mobile native validation from silently blocking */}
-        <form onSubmit={form.handleSubmit(onSubmit)} noValidate className="space-y-8">
+    <Form {...form}>
+      {/* noValidate to avoid mobile native validation from silently blocking */}
+      <form
+        onSubmit={form.handleSubmit(onSubmit)}
+        noValidate
+        className="space-y-8"
+      >
         <Tabs defaultValue="general" className="w-full">
           <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="general">General</TabsTrigger>
             <TabsTrigger value="inventory">Inventory</TabsTrigger>
             <TabsTrigger value="attributes">Attributes</TabsTrigger>
-            <TabsTrigger value="variations" disabled={productType !== "variable"}>
+            <TabsTrigger
+              value="variations"
+              disabled={productType !== "variable"}
+            >
               Variations
             </TabsTrigger>
           </TabsList>
@@ -463,17 +515,15 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                 {shared && (
                   <div className="rounded-md bg-yellow-50 p-4 mt-4">
                     <p className="text-sm text-yellow-700">
-                      <strong>Note:</strong> This is a shared product. You can only edit{" "}
-                      <em>Title</em>, <em>Description</em>, <em>Status</em>,{" "}
-                      <em>Prices</em>.
+                      <strong>Note:</strong> This is a shared product. You can
+                      only edit <em>Title</em>, <em>Description</em>,{" "}
+                      <em>Status</em>, <em>Prices</em>.
                     </p>
                   </div>
                 )}
               </CardHeader>
 
               <CardContent className="space-y-6">
-
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Left Column: Image, Status, Categories */}
                   <div className="space-y-6">
@@ -501,10 +551,11 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                               size="icon"
                               className="absolute top-2 right-2 h-8 w-8 z-20"
                               onClick={(e) => {
-                                e.stopPropagation()
-                                setImagePreview(null)
-                                form.setValue("image", null)
-                                if (fileInputRef.current) fileInputRef.current.value = ""
+                                e.stopPropagation();
+                                setImagePreview(null);
+                                form.setValue("image", null);
+                                if (fileInputRef.current)
+                                  fileInputRef.current.value = "";
                               }}
                             >
                               <X className="h-4 w-4" />
@@ -519,8 +570,8 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                           </div>
                         )}
 
-                         {/* hidden input – sits *under* the delete button */}
-                        
+                        {/* hidden input – sits *under* the delete button */}
+
                         <Input
                           id="image-upload"
                           type="file"
@@ -537,14 +588,19 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Status</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
+                          <Select
+                            onValueChange={field.onChange}
+                            value={field.value}
+                          >
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder="Select status" />
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="published">Published</SelectItem>
+                              <SelectItem value="published">
+                                Published
+                              </SelectItem>
                               <SelectItem value="draft">Draft</SelectItem>
                             </SelectContent>
                           </Select>
@@ -560,11 +616,13 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                           <FormLabel>Categories</FormLabel>
                           <Select
                             onValueChange={(value) => {
-                              const currentValues = field.value || []
+                              const currentValues = field.value || [];
                               if (currentValues.includes(value)) {
-                                field.onChange(currentValues.filter((v) => v !== value))
+                                field.onChange(
+                                  currentValues.filter((v) => v !== value)
+                                );
                               } else {
-                                field.onChange([...currentValues, value])
+                                field.onChange([...currentValues, value]);
                               }
                             }}
                           >
@@ -575,7 +633,10 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                             </FormControl>
                             <SelectContent>
                               {categories.map((category) => (
-                                <SelectItem key={category.id} value={category.id}>
+                                <SelectItem
+                                  key={category.id}
+                                  value={category.id}
+                                >
                                   {category.name}
                                 </SelectItem>
                               ))}
@@ -583,9 +644,15 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                           </Select>
                           <div className="flex flex-wrap gap-2 mt-2">
                             {(field.value || []).map((categoryId) => {
-                              const category = categories.find((c) => c.id === categoryId)
+                              const category = categories.find(
+                                (c) => c.id === categoryId
+                              );
                               return category ? (
-                                <Badge key={categoryId} variant="secondary" className="flex items-center gap-1">
+                                <Badge
+                                  key={categoryId}
+                                  variant="secondary"
+                                  className="flex items-center gap-1"
+                                >
                                   {category.name}
                                   <Button
                                     type="button"
@@ -593,13 +660,17 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                                     size="icon"
                                     className="h-4 w-4 p-0 ml-1"
                                     onClick={() => {
-                                      field.onChange((field.value || []).filter((id) => id !== categoryId))
+                                      field.onChange(
+                                        (field.value || []).filter(
+                                          (id) => id !== categoryId
+                                        )
+                                      );
                                     }}
                                   >
                                     <X className="h-3 w-3" />
                                   </Button>
                                 </Badge>
-                              ) : null
+                              ) : null;
                             })}
                           </div>
                           <FormMessage />
@@ -616,7 +687,10 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                         <FormItem>
                           <FormLabel>Product Title</FormLabel>
                           <FormControl>
-                            <Input placeholder="Enter product title" {...field} />
+                            <Input
+                              placeholder="Enter product title"
+                              {...field}
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -628,19 +702,28 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Product Type</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
+                          <Select
+                            onValueChange={field.onChange}
+                            value={field.value}
+                          >
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder="Select product type" />
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="simple">Simple Product</SelectItem>
-                              <SelectItem value="variable">Variable Product</SelectItem>
+                              <SelectItem value="simple">
+                                Simple Product
+                              </SelectItem>
+                              <SelectItem value="variable">
+                                Variable Product
+                              </SelectItem>
                             </SelectContent>
                           </Select>
                           <FormDescription>
-                            Simple products have per‑country prices. Variable products have per‑country prices inside each variation.
+                            Simple products have per‑country prices. Variable
+                            products have per‑country prices inside each
+                            variation.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -658,21 +741,29 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                                 placeholder="Enter SKU or leave blank to auto-generate"
                                 {...field}
                                 onBlur={(e) => {
-                                  field.onBlur()
+                                  field.onBlur();
                                   if (e.target.value) {
-                                    checkSkuAvailability(e.target.value)
+                                    checkSkuAvailability(e.target.value);
                                   }
                                 }}
                               />
                             </FormControl>
-                            {isCheckingSku && <Loader2 className="h-4 w-4 animate-spin" />}
+                            {isCheckingSku && (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            )}
                             {field.value && !isCheckingSku && (
-                              <Badge variant={skuAvailable ? "outline" : "destructive"}>
+                              <Badge
+                                variant={
+                                  skuAvailable ? "outline" : "destructive"
+                                }
+                              >
                                 {skuAvailable ? "Available" : "Already in use"}
                               </Badge>
                             )}
                           </div>
-                          <FormDescription>Leave blank to auto-generate a unique SKU</FormDescription>
+                          <FormDescription>
+                            Leave blank to auto-generate a unique SKU
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -703,7 +794,8 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                 {productType === "variable" && (
                   <div className="rounded-lg border p-4 bg-blue-50">
                     <p className="text-sm text-blue-700">
-                      <strong>Note:</strong> For variable products, pricing is set per country in each variation.
+                      <strong>Note:</strong> For variable products, pricing is
+                      set per country in each variation.
                     </p>
                   </div>
                 )}
@@ -716,13 +808,14 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
             <Card>
               <CardHeader>
                 <CardTitle>Inventory & Pricing</CardTitle>
-                <CardDescription>Configure prices per country and stock management</CardDescription>
+                <CardDescription>
+                  Configure prices per country and stock management
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-
                 {productType === "simple" && (
                   <>
-                   <PriceManagement
+                    <PriceManagement
                       title="Cost & Prices per country"
                       countries={orgCountries}
                       priceData={prices}
@@ -730,7 +823,6 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                       onPriceChange={setPrices}
                       onCostChange={setCosts}
                     />
-                   
                   </>
                 )}
 
@@ -740,11 +832,19 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                   render={({ field }) => (
                     <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                       <div className="space-y-0.5">
-                        <FormLabel className="text-base">Manage Stock</FormLabel>
-                        <FormDescription>Enable stock management for this product</FormDescription>
+                        <FormLabel className="text-base">
+                          Manage Stock
+                        </FormLabel>
+                        <FormDescription>
+                          Enable stock management for this product
+                        </FormDescription>
                       </div>
                       <FormControl>
-                        <Switch type="button" checked={field.value} onCheckedChange={field.onChange} />
+                        <Switch
+                          type="button"
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
                       </FormControl>
                     </FormItem>
                   )}
@@ -755,11 +855,20 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                   render={({ field }) => (
                     <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                       <div className="space-y-0.5">
-                        <FormLabel className="text-base">Allow Backorders</FormLabel>
-                        <FormDescription>Allow customers to purchase products that are out of stock</FormDescription>
+                        <FormLabel className="text-base">
+                          Allow Backorders
+                        </FormLabel>
+                        <FormDescription>
+                          Allow customers to purchase products that are out of
+                          stock
+                        </FormDescription>
                       </div>
                       <FormControl>
-                        <Switch type="button" checked={field.value} onCheckedChange={field.onChange} />
+                        <Switch
+                          type="button"
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
                       </FormControl>
                     </FormItem>
                   )}
@@ -774,7 +883,9 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
                 {manageStock && productType === "variable" && (
                   <div className="rounded-lg border p-4 bg-blue-50">
                     <p className="text-sm text-blue-700">
-                      <strong>Note:</strong> For variable products, stock is managed individually for each variation in the Variations tab.
+                      <strong>Note:</strong> For variable products, stock is
+                      managed individually for each variation in the Variations
+                      tab.
                     </p>
                   </div>
                 )}
@@ -787,26 +898,31 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
             <Card>
               <CardHeader>
                 <CardTitle>Product Attributes</CardTitle>
-                <CardDescription>Add attributes like color, size, etc.</CardDescription>
+                <CardDescription>
+                  Add attributes like color, size, etc.
+                </CardDescription>
               </CardHeader>
               <CardContent>
-
                 {productType === "variable" && (
                   <div className="rounded-lg border p-4 bg-blue-50 mb-4">
                     <p className="text-sm text-blue-700">
-                      <strong>Important:</strong> For variable products, you need to:
+                      <strong>Important:</strong> For variable products, you
+                      need to:
                     </p>
                     <ol className="list-decimal ml-5 mt-2 text-sm text-blue-700">
                       <li>Add attributes (like Color, Size)</li>
                       <li>
-                        <strong>Select the terms</strong> you want to use (like Red, Blue, Small, Large)
+                        <strong>Select the terms</strong> you want to use (like
+                        Red, Blue, Small, Large)
                       </li>
                       <li>
-                        Toggle <strong>"Use for Variations"</strong> for attributes you want to create variations from
+                        Toggle <strong>"Use for Variations"</strong> for
+                        attributes you want to create variations from
                       </li>
                     </ol>
                     <p className="text-sm text-blue-700 mt-2">
-                      Then go to the Variations tab to generate product variations based on your selections.
+                      Then go to the Variations tab to generate product
+                      variations based on your selections.
                     </p>
                   </div>
                 )}
@@ -824,11 +940,15 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
             <Card>
               <CardHeader>
                 <CardTitle>Product Variations</CardTitle>
-                <CardDescription>Configure variations based on attributes</CardDescription>
+                <CardDescription>
+                  Configure variations based on attributes
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <ProductVariations
-                  attributes={attributes.filter((attr) => attr.useForVariations)}
+                  attributes={attributes.filter(
+                    (attr) => attr.useForVariations
+                  )}
                   variations={variations}
                   onVariationsChange={setVariations}
                   warehouses={warehouses}
@@ -839,21 +959,25 @@ export function ProductForm({ productId, initialData, shared = false, }: Product
           </TabsContent>
         </Tabs>
         <div className="flex justify-end gap-4">
-          <Button type="button" variant="outline" onClick={() => router.push("/products")}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => router.push("/products")}
+          >
             Cancel
           </Button>
           {/* Use an explicit click handler instead of native submit to avoid iOS Safari issues */}
-<Button
-  type="button"
-  onClick={submitSafely}
-  disabled={isSubmitting}
-  aria-busy={isSubmitting}
->
+          <Button
+            type="button"
+            onClick={submitSafely}
+            disabled={isSubmitting}
+            aria-busy={isSubmitting}
+          >
             {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {productId ? "Update Product" : "Create Product"}
           </Button>
         </div>
       </form>
     </Form>
-  )
+  );
 }
