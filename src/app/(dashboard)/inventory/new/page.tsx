@@ -29,6 +29,8 @@ import {
   CommandItem,
   CommandEmpty,
 } from "@/components/ui/command";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 type Warehouse = {
   id: string;
@@ -48,6 +50,18 @@ type FormData = {
 
 export default function InventoryCount() {
   const router = useRouter();
+   // permissions: need update to create
+ const { data: activeOrg } = authClient.useActiveOrganization();
+ const orgId = activeOrg?.id ?? null;
+ const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(orgId, { stockManagement: ["view"] });
+ const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, { stockManagement: ["update"] });
+ useEffect(() => {
+   if (!viewLoading && (!canView || !canUpdate)) router.replace("/inventory");
+ }, [viewLoading, canView, canUpdate, router]);
+ // ❌ Don’t early-return before hooks
+ const permsLoading = viewLoading || updateLoading;
+ const allowed = !permsLoading && canView && canUpdate;
+
   const [countType, setCountType] = useState<"all" | "specific">("all");
   const [warehouseOptions, setWarehouseOptions] = useState<Warehouse[]>([]);
   const [productCategories, setProductCategories] = useState<ProductCategory[]>(
@@ -71,6 +85,11 @@ export default function InventoryCount() {
     },
   });
 
+ if (permsLoading) {
+   return <div className="max-w-4xl mx-auto p-6 text-sm text-muted-foreground">Loading…</div>;
+ }
+ if (!allowed) return null; // redirect effect above will handle
+
   const selectedWarehouse = watch("warehouse");
 
   useEffect(() => {
@@ -78,6 +97,7 @@ export default function InventoryCount() {
       try {
         const response = await fetch("/api/warehouses");
         const data = await response.json();
+        if (!allowed) return;
         const warehouses = data.warehouses as Warehouse[];
         setWarehouseOptions(warehouses);
       } catch (error) {
@@ -85,9 +105,8 @@ export default function InventoryCount() {
       }
     }
 
-    fetchWarehouses();
-  }, []);
-
+       fetchWarehouses();
+   }, [allowed]);
   // Fetch product categories when switching to "specific" (Partial)
   useEffect(() => {
     if (countType !== "specific" || productCategories.length > 0) return;
@@ -128,6 +147,7 @@ export default function InventoryCount() {
   }, [countType, productCategories.length]);
 
   const onSubmit = async (data: FormData) => {
+     if (!canUpdate) return;
     if (!data.warehouse) return;
 
     // Find selected warehouse object to extract countries
@@ -383,7 +403,7 @@ export default function InventoryCount() {
       )}
 
       <div className="flex justify-end">
-        <Button type="submit" className="px-8">
+         <Button type="submit" className="px-8" disabled={!canUpdate}>
           Continue
         </Button>
       </div>

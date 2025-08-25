@@ -1,7 +1,11 @@
+// src/app/(dashboard)/analytics/category-revenue/page.tsx
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import * as XLSX from "xlsx";
 import {
   CalendarIcon,
@@ -21,11 +25,7 @@ import {
 import type { DateRange } from "react-day-picker";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Table,
   TableBody,
@@ -67,6 +67,24 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 export default function CategoryRevenueReport() {
+  const router = useRouter();
+
+  // --- Permissions (always call hooks, never conditionally) ---
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(orgId, { categoriesReport: ["view"] });
+  const { hasPermission: canExport, isLoading: exportLoading } = useHasPermission(orgId, { categoriesReport: ["export"] });
+
+  // Redirect effect (still declared every render)
+  useEffect(() => {
+    if (!viewLoading && !canView) router.replace("/analytics");
+  }, [viewLoading, canView, router]);
+
+  // Derived flags to gate fetch/UI safely
+  const permsLoading = viewLoading || exportLoading;
+  const canShow = !permsLoading && canView;
+
+  // --- Local state hooks (always declared) ---
   const [currentPage, setCurrentPage] = useState(1);
   const [dateRange, setDateRange] = useState<CustomDateRange>({
     from: startOfDay(subDays(new Date(), 30)),
@@ -83,12 +101,16 @@ export default function CategoryRevenueReport() {
   const [error, setError] = useState<string | null>(null);
   const [chartData, setChartData] = useState<CategoryRevenue[]>([]);
 
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobile(); // OK even if unused; keeps hooks order stable
+
   const rowsPerPage = 25;
 
-  // Fetch data whenever dateRange or currency changes
+  // Fetch data when allowed
   useEffect(() => {
-    async function fetchCategoryRevenue() {
+    if (!canShow) return;
+
+    let cancelled = false;
+    (async () => {
       setLoading(true);
       setError(null);
       try {
@@ -99,22 +121,28 @@ export default function CategoryRevenueReport() {
         );
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const data = await res.json();
-        setCategories(data.categories);
-        setChartData(data.categories);
-        setCurrentPage(1);
+        if (!cancelled) {
+          setCategories(Array.isArray(data.categories) ? data.categories : []);
+          setChartData(Array.isArray(data.categories) ? data.categories : []);
+          setCurrentPage(1);
+        }
       } catch (err: any) {
-        setError(err.message || "Unknown error");
+        if (!cancelled) setError(err.message || "Unknown error");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    }
-    fetchCategoryRevenue();
-  }, [dateRange, currency]);
+    })();
 
-  // Sort categories by revenue (highest first)
-  const filteredCategories = useMemo(() => {
-    return categories.sort((a, b) => b.revenue - a.revenue);
-  }, [categories]);
+    return () => {
+      cancelled = true;
+    };
+  }, [dateRange, currency, canShow]);
+
+  // Sort without mutating state
+  const filteredCategories = useMemo(
+    () => [...categories].sort((a, b) => b.revenue - a.revenue),
+    [categories]
+  );
 
   const totalPages = Math.ceil(filteredCategories.length / rowsPerPage);
   const startIndex = (currentPage - 1) * rowsPerPage;
@@ -124,7 +152,7 @@ export default function CategoryRevenueReport() {
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: currency,
+      currency,
     }).format(amount);
 
   function handleDatePreset(preset: string) {
@@ -181,13 +209,13 @@ export default function CategoryRevenueReport() {
   };
 
   const exportToExcel = () => {
+    if (!canExport) return; // permission guard
     const dataForSheet = categories.map((c) => ({
       Category: c.category,
       Total: c.total,
       Cost: c.cost,
       Revenue: c.revenue,
     }));
-
     const ws = XLSX.utils.json_to_sheet(dataForSheet);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Category Revenue");
@@ -202,6 +230,10 @@ export default function CategoryRevenueReport() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  // 🔒 UI gates AFTER all hooks are declared
+  if (permsLoading) return <div>Loading permissions…</div>;
+  if (!canShow) return null; // redirect effect handles denial
 
   return (
     <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
@@ -229,9 +261,7 @@ export default function CategoryRevenueReport() {
                     size="sm"
                     onClick={() => handleDatePreset(p)}
                   >
-                    {p
-                      .replace(/-/g, " ")
-                      .replace(/\b\w/g, (c) => c.toUpperCase())}
+                    {p.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                   </Button>
                 ))}
                 <Popover open={customDateOpen} onOpenChange={setCustomDateOpen}>
@@ -259,10 +289,7 @@ export default function CategoryRevenueReport() {
                         mode="range"
                         defaultMonth={dateRange?.from || new Date()}
                         selected={tempDateRange}
-                        onSelect={(range) => {
-                          console.log("Date range selected:", range);
-                          setTempDateRange(range);
-                        }}
+                        onSelect={(range) => setTempDateRange(range)}
                         numberOfMonths={2}
                       />
                       <div className="flex items-center justify-between pt-4 border-t mt-4">
@@ -272,19 +299,13 @@ export default function CategoryRevenueReport() {
                             : "Select date range"}
                         </div>
                         <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={handleCustomDateCancel}
-                          >
+                          <Button size="sm" variant="outline" onClick={handleCustomDateCancel}>
                             Cancel
                           </Button>
                           <Button
                             size="sm"
                             onClick={handleCustomDateApply}
-                            disabled={
-                              !tempDateRange?.from || !tempDateRange?.to
-                            }
+                            disabled={!tempDateRange?.from || !tempDateRange?.to}
                           >
                             Apply
                           </Button>
@@ -294,13 +315,10 @@ export default function CategoryRevenueReport() {
                   </PopoverContent>
                 </Popover>
               </div>
-              {/* Currency Select */}
+              {/* Currency + Export */}
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">Currency</span>
-                <Select
-                  value={currency}
-                  onValueChange={(v) => setCurrency(v as "USD" | "GBP" | "EUR")}
-                >
+                <Select value={currency} onValueChange={(v) => setCurrency(v as "USD" | "GBP" | "EUR")}>
                   <SelectTrigger className="w-24">
                     <SelectValue placeholder="Currency" />
                   </SelectTrigger>
@@ -315,6 +333,8 @@ export default function CategoryRevenueReport() {
                   size="sm"
                   className="shrink-0"
                   onClick={exportToExcel}
+                  disabled={!canExport}
+                  title={canExport ? "Export to Excel" : "You don't have permission to export"}
                 >
                   <DownloadIcon className="mr-2 h-4 w-4" />
                   Export to Excel
@@ -347,25 +367,16 @@ export default function CategoryRevenueReport() {
                     <TableBody>
                       {currentCategories.length === 0 ? (
                         <TableRow>
-                          <TableCell
-                            colSpan={4}
-                            className="text-center py-8 text-muted-foreground"
-                          >
+                          <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
                             No categories found for the selected date range.
                           </TableCell>
                         </TableRow>
                       ) : (
                         currentCategories.map((category, index) => (
                           <TableRow key={`${category.category}-${index}`}>
-                            <TableCell className="font-medium">
-                              {category.category}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {formatCurrency(category.total)}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {formatCurrency(category.cost)}
-                            </TableCell>
+                            <TableCell className="font-medium">{category.category}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(category.total)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(category.cost)}</TableCell>
                             <TableCell className="text-right font-medium text-green-600">
                               {formatCurrency(category.revenue)}
                             </TableCell>
@@ -379,55 +390,45 @@ export default function CategoryRevenueReport() {
                 {totalPages > 1 && (
                   <div className="flex items-center justify-between mt-4">
                     <div className="text-sm text-muted-foreground">
-                      Showing {startIndex + 1} to{" "}
-                      {Math.min(endIndex, filteredCategories.length)} of{" "}
+                      Showing {startIndex + 1} to {Math.min(endIndex, filteredCategories.length)} of{" "}
                       {filteredCategories.length} categories
                     </div>
                     <div className="flex items-center space-x-2">
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() =>
-                          setCurrentPage((p) => Math.max(p - 1, 1))
-                        }
+                        onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
                         disabled={currentPage === 1}
                       >
                         <ChevronLeftIcon className="h-4 w-4" /> Previous
                       </Button>
                       <div className="flex items-center space-x-1">
-                        {Array.from(
-                          { length: Math.min(5, totalPages) },
-                          (_, i) => {
-                            const num =
-                              totalPages <= 5
-                                ? i + 1
-                                : currentPage <= 3
-                                  ? i + 1
-                                  : currentPage >= totalPages - 2
-                                    ? totalPages - 4 + i
-                                    : currentPage - 2 + i;
-                            return (
-                              <Button
-                                key={num}
-                                size="sm"
-                                variant={
-                                  currentPage === num ? "default" : "outline"
-                                }
-                                className="w-8 h-8 p-0"
-                                onClick={() => setCurrentPage(num)}
-                              >
-                                {num}
-                              </Button>
-                            );
-                          }
-                        )}
+                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                          const num =
+                            totalPages <= 5
+                              ? i + 1
+                              : currentPage <= 3
+                              ? i + 1
+                              : currentPage >= totalPages - 2
+                              ? totalPages - 4 + i
+                              : currentPage - 2 + i;
+                          return (
+                            <Button
+                              key={num}
+                              size="sm"
+                              variant={currentPage === num ? "default" : "outline"}
+                              className="w-8 h-8 p-0"
+                              onClick={() => setCurrentPage(num)}
+                            >
+                              {num}
+                            </Button>
+                          );
+                        })}
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() =>
-                          setCurrentPage((p) => Math.min(p + 1, totalPages))
-                        }
+                        onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
                         disabled={currentPage === totalPages}
                       >
                         Next <ChevronRightIcon className="h-4 w-4" />
@@ -447,24 +448,11 @@ export default function CategoryRevenueReport() {
             <CardTitle>Revenue by Category</CardTitle>
           </CardHeader>
           <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
-            <ChartContainer
-              config={chartConfig}
-              className="aspect-auto h-[400px] w-full"
-            >
-              <BarChart
-                data={chartData}
-                margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-              >
+            <ChartContainer config={chartConfig} className="aspect-auto h-[400px] w-full">
+              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  type="category"
-                  dataKey="category"
-                  tick={{ fontSize: 12 }}
-                />
-                <YAxis
-                  type="number"
-                  tickFormatter={(value) => formatCurrency(value)}
-                />
+                <XAxis type="category" dataKey="category" tick={{ fontSize: 12 }} />
+                <YAxis type="number" tickFormatter={(value) => formatCurrency(value)} />
                 <ChartTooltip
                   content={
                     <ChartTooltipContent
@@ -473,11 +461,7 @@ export default function CategoryRevenueReport() {
                     />
                   }
                 />
-                <Bar
-                  dataKey="revenue"
-                  fill="var(--color-revenue)"
-                  radius={[4, 4, 0, 0]}
-                />
+                <Bar dataKey="revenue" fill="var(--color-revenue)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ChartContainer>
           </CardContent>

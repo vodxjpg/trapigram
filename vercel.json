@@ -11,6 +11,13 @@
     {
       "path": "/api/cron/generate-invoices",
       "schedule": "0 0 * * *"
+    },
+    { "path": "/api/jobs/expire-orders", 
+      "schedule": "*/5 * * * *" 
+    },
+    {
+      "path": "/api/internal/cron/notifications-drain",
+      "schedule": "*/1 * * * *"
     }
   ]
 }

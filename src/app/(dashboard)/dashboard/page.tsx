@@ -46,6 +46,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 export const description = "An interactive area chart";
 
@@ -86,6 +88,24 @@ export default function DashboardPage() {
   const { setHeaderTitle } = useHeaderTitle();
   const [currency, setCurrency] = React.useState<"USD" | "GBP" | "EUR">("USD");
 
+  // --- permissions for revenue ---
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canViewRevenue, isLoading: revLoading } =
+    useHasPermission(orgId, { revenue: ["view"] });
+   
+  // Owners should always be able to view revenue
+  // (normalize possible shapes returned by your auth client)
+  const role =
+    (activeOrg as any)?.userRole ??
+    (activeOrg as any)?.role ??
+    (activeOrg as any)?.membership?.role ??
+    (activeOrg as any)?.currentUserRole ??
+    null;
+  const isOwner = String(role ?? "").toLowerCase() === "owner";
+
+  // Final gate used by UI
+  const canShowRevenue = !revLoading && (!!canViewRevenue || isOwner);
   /**
    * Format helper ― always respect the currency selected
    */
@@ -381,9 +401,13 @@ export default function DashboardPage() {
               <CardHeader>
                 <CardDescription>Total Revenue</CardDescription>
                 <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                  {totalRevenue !== null
-                    ? formatCurrency(totalRevenue)
-                    : "Loading..."}
+                                  {
+                   totalRevenue === null
+                     ? "Loading..."
+                     : canShowRevenue
+                       ? formatCurrency(totalRevenue)
+                       : "****"
+                 }
                 </CardTitle>
                 <CardAction className="flex items-center space-x-2">
                   <Select
@@ -544,13 +568,15 @@ export default function DashboardPage() {
                       stroke="var(--color-total)"
                       stackId="a"
                     />
-                    <Area
-                      dataKey="revenue"
-                      type="natural"
-                      fill="url(#fillRevenue)"
-                      stroke="var(--color-revenue)"
-                      stackId="a"
-                    />
+                    {canShowRevenue && (
+                      <Area
+                        dataKey="revenue"
+                        type="natural"
+                        fill="url(#fillRevenue)"
+                        stroke="var(--color-revenue)"
+                        stackId="a"
+                      />
+                    )}
                   </AreaChart>
                 </ChartContainer>
               </CardContent>

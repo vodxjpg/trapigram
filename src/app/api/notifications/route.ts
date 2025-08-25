@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getContext } from "@/lib/context";
-import { sendNotification, NotificationChannel } from "@/lib/notifications";
+import { sendNotification, type NotificationChannel } from "@/lib/notifications";
 
 const schema = z.object({
   type: z.string().min(1),

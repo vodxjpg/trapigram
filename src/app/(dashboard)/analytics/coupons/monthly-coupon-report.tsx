@@ -1,7 +1,10 @@
+// src/app/(dashboard)/analytics/coupons/monthly-coupon-report.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -44,11 +47,11 @@ import { CalendarIcon } from "lucide-react";
 
 interface CouponStats {
   id: string;
-  month: string; // e.g. "2025-05"
+  month: string;
   couponCode: string;
   redemptions: number;
   totalOrders: number;
-  totalDiscount: number; // in cents or float
+  totalDiscount: number;
   revenueAfterDiscount: number;
 }
 
@@ -68,6 +71,23 @@ type DatePreset =
 
 export default function MonthlyCouponReport() {
   const router = useRouter();
+
+  // --- Permissions: couponsReport.view
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { couponsReport: ["view"] }
+  );
+
+  useEffect(() => {
+    if (!viewLoading && !canView) router.replace("/analytics");
+  }, [viewLoading, canView, router]);
+
+  // 👉 derive flags; don't early-return before hooks finish
+  const permsLoading = viewLoading;
+  const canShow = !permsLoading && canView;
+
   const [data, setData] = useState<CouponStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,84 +98,61 @@ export default function MonthlyCouponReport() {
   });
   const [isCustomDate, setIsCustomDate] = useState(false);
 
-  // Generate date range based on preset
   const getDateRangeFromPreset = (preset: DatePreset): DateRange => {
     const today = new Date();
 
     switch (preset) {
       case "today":
-        return {
-          from: startOfDay(today),
-          to: endOfDay(today),
-        };
-      case "yesterday":
-        const yesterday = subDays(today, 1);
-        return {
-          from: startOfDay(yesterday),
-          to: endOfDay(yesterday),
-        };
+        return { from: startOfDay(today), to: endOfDay(today) };
+      case "yesterday": {
+        const y = subDays(today, 1);
+        return { from: startOfDay(y), to: endOfDay(y) };
+      }
       case "last7days":
-        return {
-          from: subDays(today, 6),
-          to: today,
-        };
+        return { from: subDays(today, 6), to: today };
       case "last30days":
-        return {
-          from: subDays(today, 29),
-          to: today,
-        };
+        return { from: subDays(today, 29), to: today };
       case "currentMonth":
-        return {
-          from: startOfMonth(today),
-          to: endOfMonth(today),
-        };
-      case "lastMonth":
-        const lastMonth = subMonths(today, 1);
-        return {
-          from: startOfMonth(lastMonth),
-          to: endOfMonth(lastMonth),
-        };
+        return { from: startOfMonth(today), to: endOfMonth(today) };
+      case "lastMonth": {
+        const lm = subMonths(today, 1);
+        return { from: startOfMonth(lm), to: endOfMonth(lm) };
+      }
       case "custom":
-        return dateRange; // Keep existing custom range
+        return dateRange;
       default:
-        return {
-          from: startOfMonth(today),
-          to: endOfMonth(today),
-        };
+        return { from: startOfMonth(today), to: endOfMonth(today) };
     }
   };
 
-  // Handle date preset change
   const handleDatePresetChange = (value: string) => {
     const preset = value as DatePreset;
     setDatePreset(preset);
     setIsCustomDate(preset === "custom");
-
     if (preset !== "custom") {
-      const newDateRange = getDateRangeFromPreset(preset);
-      setDateRange(newDateRange);
+      setDateRange(getDateRangeFromPreset(preset));
     }
   };
 
-  // Format date range for display
   const formatDateRange = () => {
     const { from, to } = dateRange;
-
-    if (datePreset === "today") {
-      return "Today";
-    } else if (datePreset === "yesterday") {
-      return "Yesterday";
-    } else if (from && to) {
+    if (datePreset === "today") return "Today";
+    if (datePreset === "yesterday") return "Yesterday";
+    if (from && to)
       return `${format(from, "MMM d, yyyy")} - ${format(to, "MMM d, yyyy")}`;
-    }
     return "";
   };
 
+  // --- Fetch guarded by resolved permission
   useEffect(() => {
-    async function fetchStats() {
+    if (!canShow) return;
+    let cancelled = false;
+
+    (async () => {
       try {
         setLoading(true);
-        // Format dates for API
+        setError(null);
+
         const fromDate = format(dateRange.from, "yyyy-MM-dd");
         const toDate = format(dateRange.to, "yyyy-MM-dd");
 
@@ -164,28 +161,32 @@ export default function MonthlyCouponReport() {
         );
         if (!res.ok) throw new Error("Failed to load coupon stats");
         const json = await res.json();
-        setData(json.values.stats);
+        if (!cancelled) setData(json.values.stats);
       } catch (err: any) {
-        setError(err.message);
+        if (!cancelled) setError(err.message);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    }
+    })();
 
-    fetchStats();
-  }, [dateRange]);
+    return () => {
+      cancelled = true;
+    };
+  }, [dateRange, canShow]);
 
   const fmtYearMonth = (iso: string | null): string =>
-    iso
-      ? new Date(iso).toISOString().slice(0, 7) // "YYYY-MM"
-      : "—";
+    iso ? new Date(iso).toISOString().slice(0, 7) : "—";
 
   const handleCouponSelect = (couponId: string) => {
     router.push(`/analytics/coupons/${couponId}`);
   };
+
   // Sort by redemptions (highest first)
   const sortedData = [...data].sort((a, b) => b.redemptions - a.redemptions);
 
+  // 🔒 UI gates AFTER all hooks are declared
+  if (permsLoading) return <div>Loading permissions…</div>;
+  if (!canShow) return null; // redirect effect handles denied access
   if (loading) return <div>Loading report…</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
 
@@ -235,10 +236,7 @@ export default function MonthlyCouponReport() {
                   initialFocus
                   mode="range"
                   defaultMonth={dateRange.from}
-                  selected={{
-                    from: dateRange.from,
-                    to: dateRange.to,
-                  }}
+                  selected={{ from: dateRange.from, to: dateRange.to }}
                   onSelect={(range) => {
                     if (range?.from && range?.to) {
                       setDateRange({ from: range.from, to: range.to });
@@ -299,7 +297,9 @@ export default function MonthlyCouponReport() {
                         <TableCell className="text-right">
                           ${row.revenueAfterDiscount.toFixed(2)}
                         </TableCell>
-                        <TableCell className="text-right">${avgAOV}</TableCell>
+                        <TableCell className="text-right">
+                          ${avgAOV}
+                        </TableCell>
                       </TableRow>
                     );
                   })
@@ -339,9 +339,9 @@ export default function MonthlyCouponReport() {
                   >
                     <XAxis
                       dataKey="couponCode"
-                      angle={-45} // Rotate labels for better readability
+                      angle={-45}
                       textAnchor="end"
-                      height={70} // Increase height for rotated labels
+                      height={70}
                       tick={{ fontSize: 12 }}
                     />
                     <YAxis
@@ -364,7 +364,7 @@ export default function MonthlyCouponReport() {
                         fill: "var(--foreground)",
                         fontSize: 12,
                       }}
-                      onClick={(data) => handleCouponSelect(data.id)}
+                      onClick={(bar) => handleCouponSelect((bar as any).id)}
                       cursor="pointer"
                     />
                   </BarChart>

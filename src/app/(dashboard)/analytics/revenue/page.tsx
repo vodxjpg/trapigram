@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useIsMobile } from "@/hooks/use-mobile";
 import * as XLSX from "xlsx";
 import {
@@ -50,6 +51,8 @@ import {
 } from "@/components/ui/select";
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 type Order = {
   id: string;
@@ -78,6 +81,22 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 export default function OrderReport() {
+   const router = useRouter();
+ // --- permissions ---
+ const { data: activeOrg } = authClient.useActiveOrganization();
+ const orgId = activeOrg?.id ?? null;
+ const { hasPermission: canViewRevenue, isLoading: viewLoading } =
+   useHasPermission(orgId, { revenue: ["view"] });
+ const { hasPermission: canExportRevenue, isLoading: exportLoading } =
+   useHasPermission(orgId, { revenue: ["export"] });
+
+ // Kick users without view access out of the page
+ useEffect(() => {
+   if (!viewLoading && !canViewRevenue) router.replace("/analytics");
+ }, [viewLoading, canViewRevenue, router]);
+  // ❌ do NOT return before hooks; compute flags and gate UI later
+  const permsLoading = viewLoading || exportLoading;
+  const canShow = !permsLoading && canViewRevenue;
   const [currentPage, setCurrentPage] = useState(1);
   const [dateRange, setDateRange] = useState<CustomDateRange>({
     from: startOfDay(subDays(new Date(), 30)),
@@ -113,6 +132,7 @@ export default function OrderReport() {
   // fetch whenever dateRange or currency changes
   useEffect(() => {
     async function fetchOrders() {
+       if (!canShow) return;
       setLoading(true);
       setError(null);
       try {
@@ -135,8 +155,8 @@ export default function OrderReport() {
       }
     }
 
-    fetchOrders();
-  }, [dateRange, currency, status]); // ← added status
+  fetchOrders();
+}, [dateRange, currency, status, canShow]);
 
   const filteredData = chartData;
 
@@ -231,6 +251,7 @@ export default function OrderReport() {
 
   // ** ADD: export to Excel **
   const exportToExcel = () => {
+    if (!canExportRevenue) return;
     const dataForSheet = orders.map((o) => {
       let netProfitDisplay;
 
@@ -279,6 +300,18 @@ export default function OrderReport() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  // 🔒 Render gates AFTER all hooks have been called
+if (permsLoading) {
+  return (
+    <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+      <div className="px-4 lg:px-6 text-sm text-muted-foreground">Loading…</div>
+    </div>
+  );
+}
+if (!canShow) {
+  return null; // redirect effect above takes over
+}
 
   return (
     <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
@@ -414,7 +447,11 @@ export default function OrderReport() {
                   variant="default"
                   size="sm"
                   className="shrink-0"
-                  onClick={exportToExcel}
+                                onClick={exportToExcel}
+               disabled={!canExportRevenue}
+               title={
+                 canExportRevenue ? "Export to Excel" : "You lack export permission"
+               }
                 >
                   <DownloadIcon className="mr-2 h-4 w-4" />
                   Export to Excel

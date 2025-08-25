@@ -9,6 +9,29 @@ import { adjustStock } from "@/lib/stock";
 import { sendNotification } from "@/lib/notifications";
 import { createHmac } from "crypto";
 import type { NotificationType } from "@/lib/notifications";
+import { enqueueNotificationFanout } from "@/lib/notification-outbox";
+
+// Vercel runtime hints (keep these AFTER all imports)
+export const runtime = "nodejs";
+export const preferredRegion = ["iad1"];
+
+// Small helper: fetch with timeout and JSON parsing
+async function fetchJSON(
+  url: string,
+  init?: RequestInit & { timeoutMs?: number }
+): Promise<{ res: Response; data: any }> {
+  const { timeoutMs = 5000, ...rest } = init ?? {};
+  const ac = new AbortController();
+  const to = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...rest, signal: ac.signal });
+    let data: any = null;
+    try { data = await res.json(); } catch { /* non-json */ }
+    return { res, data };
+  } finally {
+    clearTimeout(to);
+  }
+}
 
 
 // ── diagnostics ──────────────────────────────────────────────
@@ -75,6 +98,54 @@ type TransformedCategoryRevenue = {
   cost: number;
 };
 
+// Parameterized insert to avoid SQL injection / NaN strings.
+async function insertOrderRevenue(
+  revenueId: string,
+  orderId: string,
+  organizationId: string,
+  v: {
+    USDtotal: number; USDdiscount: number; USDshipping: number; USDcost: number;
+    GBPtotal: number; GBPdiscount: number; GBPshipping: number; GBPcost: number;
+    EURtotal: number; EURdiscount: number; EURshipping: number; EURcost: number;
+  }
+) {
+  const sql = `
+    INSERT INTO "orderRevenue" (
+      id,"orderId",
+      "USDtotal","USDdiscount","USDshipping","USDcost",
+      "GBPtotal","GBPdiscount","GBPshipping","GBPcost",
+      "EURtotal","EURdiscount","EURshipping","EURcost",
+      "createdAt","updatedAt","organizationId"
+    ) VALUES (
+      $1,$2,
+      $3,$4,$5,$6,
+      $7,$8,$9,$10,
+      $11,$12,$13,$14,
+      NOW(),NOW(),$15
+       )
+    ON CONFLICT ("orderId") DO UPDATE
+      SET "updatedAt" = NOW()
+    RETURNING *`;
+
+  const params = [
+    revenueId, orderId,
+    v.USDtotal, v.USDdiscount, v.USDshipping, v.USDcost,
+    v.GBPtotal, v.GBPdiscount, v.GBPshipping, v.GBPcost,
+    v.EURtotal, v.EURdiscount, v.EURshipping, v.EURcost,
+    organizationId,
+  ];
+  const { rows } = await pool.query(sql, params);
+  return rows[0];
+}
+
+async function insertCategoryRevenue(catRevenueId: string, categoryId: string, organizationId: string, v: {
+  USDtotal: number; USDcost: number; GBPtotal: number; GBPcost: number; EURtotal: number; EURcost: number;
+}) {
+  const sql = `INSERT INTO "categoryRevenue" (id,"categoryId","USDtotal","USDcost","GBPtotal","GBPcost","EURtotal","EURcost","createdAt","updatedAt","organizationId")
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW(),$9)`;
+  await pool.query(sql, [catRevenueId, categoryId, v.USDtotal, v.USDcost, v.GBPtotal, v.GBPcost, v.EURtotal, v.EURcost, organizationId]);
+}
+
 async function getRevenue(id: string, organizationId: string) {
   try {
     const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = $1`;
@@ -93,16 +164,31 @@ async function getRevenue(id: string, organizationId: string) {
       const orderQuery = `SELECT * FROM orders WHERE id = $1 AND "organizationId" = $2`;
       const resultOrders = await pool.query(orderQuery, [id, organizationId]);
       const order = resultOrders.rows[0]
+<<<<<<< HEAD
+=======
+      if (!order) throw new Error("Order not found");
+      console.log(order)
+>>>>>>> 32b5d73d3f0e5cd188ef530307e816bdc39c2c8c
 
       const cartId = order.cartId
       const paymentType = (order.paymentMethod ?? "").toLowerCase();
       const country = order.country
 
       // --- after you've fetched `order` from the DB ---
-      const raw = order.datePaid;   // string or Date
+      // Use datePaid if present, else fall back to dateCreated; validate
+      const raw = order.datePaid ?? order.dateCreated;
       const paidDate = raw instanceof Date
         ? raw
+<<<<<<< HEAD
         : new Date(raw);                   // ensure it's a JS Date
+=======
+        : new Date(raw);
+      if (Number.isNaN(paidDate.getTime())) {
+        throw new Error("Invalid paid date");
+      }
+      console.log(raw)
+      console.log(paidDate)                     // ensure it's a JS Date
+>>>>>>> 32b5d73d3f0e5cd188ef530307e816bdc39c2c8c
 
       // now get seconds since the Unix epoch
       const to = Math.floor(paidDate.getTime() / 1000);
@@ -118,8 +204,8 @@ async function getRevenue(id: string, organizationId: string) {
       const affiliateQuery = `SELECT p.*, cp.quantity
                     FROM "cartProducts" cp
                     JOIN "affiliateProducts" p ON cp."affiliateProductId" = p.id
-                    WHERE cp."cartId" = '${cartId}'`
-      const affiliateResult = await pool.query(affiliateQuery)
+                    WHERE cp."cartId" = $1`;
+      const affiliateResult = await pool.query(affiliateQuery, [cartId]);
       const affiliate = affiliateResult.rows
 
       const allProducts = products.concat(affiliate)
@@ -138,9 +224,9 @@ async function getRevenue(id: string, organizationId: string) {
         categories.push({
           categoryId: ct.categoryId,
           // Use the actual charged line price (cp.unitPrice), not the product's retail price
-          price: Number(ct.unitPrice),
-          cost: ct.cost[country],
-          quantity: ct.quantity
+          price: Number(ct.unitPrice ?? 0),
+          cost: Number(ct?.cost?.[country] ?? 0),     // treat missing cost as 0
+          quantity: Number(ct.quantity ?? 0),
         })
       }
 
@@ -151,7 +237,9 @@ async function getRevenue(id: string, organizationId: string) {
       }));
 
       const totalCost = allProducts.reduce((sum, product) => {
-        return sum + ((product.cost[country] * product.quantity) || 0);
+        const unitCost = Number(product?.cost?.[country] ?? 0);
+        const qty = Number(product?.quantity ?? 0);
+        return sum + unitCost * qty;
       }, 0);
 
       let total = 0
@@ -173,16 +261,14 @@ async function getRevenue(id: string, organizationId: string) {
         }
         const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
         dbg("CoinGecko →", url)
-        const options = { method: 'GET', headers: { accept: 'application/json' } };
-
-        const res = await fetch(url, options)
-        dbg("CoinGecko ←", res.status, res.statusText)
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status} – ${res.statusText}`);
+        const options: RequestInit = { method: 'GET', headers: { accept: 'application/json' } };
+        const { res: cgRes, data: cgData } = await fetchJSON(url, { ...options, timeoutMs: 5000 });
+        dbg("CoinGecko ←", cgRes.status, cgRes.statusText)
+        if (!cgRes.ok) {
+          throw new Error(`HTTP ${cgRes.status} – ${cgRes.statusText}`);
         }
 
-        const result = await res.json();
-        const prices = Array.isArray(result?.prices) ? result.prices : [];
+        const prices = Array.isArray(cgData?.prices) ? cgData.prices : [];
         const price = prices.length ? prices[prices.length - 1][1] : null; // use latest data point
         if (price == null) {
           throw new Error("No price data from CoinGecko");
@@ -198,11 +284,9 @@ async function getRevenue(id: string, organizationId: string) {
         let USDGBP = 0
         if (exchangeResult.rows.length === 0) {
           const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
-          dbg("CurrencyLayer →", url)
-          const res = await fetch(url);
-          dbg("CurrencyLayer ←", res.status, res.statusText)
-          const data = await res.json();
-
+          dbg("CurrencyLayer →", url);
+          const { res: clRes, data } = await fetchJSON(url, { timeoutMs: 5000 });
+          dbg("CurrencyLayer ←", clRes.status, clRes.statusText);
           const usdEur = data.quotes?.USDEUR;
           const usdGbp = data.quotes?.USDGBP;
           if (usdEur == null || usdGbp == null) {
@@ -248,38 +332,22 @@ async function getRevenue(id: string, organizationId: string) {
             totalGBP = total * USDGBP
           }
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
-
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
           for (const ct of newCategories) {
 
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * (USDEUR / USDGBP)).toFixed(2)}, ${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total / USDGBP,
+              USDcost: ct.cost / USDGBP,
+              GBPtotal: ct.total,
+              GBPcost: ct.cost,
+              EURtotal: ct.total * (USDEUR / USDGBP),
+              EURcost: ct.cost * (USDEUR / USDGBP),
+            });
           }
           return revenue;
         } else if (euroCountries.includes(country)) {
@@ -304,38 +372,22 @@ async function getRevenue(id: string, organizationId: string) {
             totalGBP = total * USDGBP
           }
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
 
           for (const ct of newCategories) {
-
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDEUR).toFixed(2)}, ${(ct.cost / USDEUR).toFixed(2)},
-                            ${(ct.total * (USDGBP / USDEUR)).toFixed(2)}, ${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total / USDEUR,
+              USDcost: ct.cost / USDEUR,
+              GBPtotal: ct.total * (USDGBP / USDEUR),
+              GBPcost: ct.cost * (USDGBP / USDEUR),
+              EURtotal: ct.total,
+              EURcost: ct.cost,
+            });
           }
           return revenue
         } else {
@@ -360,38 +412,22 @@ async function getRevenue(id: string, organizationId: string) {
             totalGBP = total * USDGBP
           }
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
-
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
           for (const ct of newCategories) {
 
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * USDGBP).toFixed(2)}, ${(ct.cost * USDGBP).toFixed(2)},
-                            ${(ct.total * USDEUR).toFixed(2)}, ${(ct.cost * USDEUR).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total / USDEUR,
+              USDcost: ct.cost / USDEUR,
+              GBPtotal: ct.total * (USDGBP / USDEUR),
+              GBPcost: ct.cost * (USDGBP / USDEUR),
+              EURtotal: ct.total,
+              EURcost: ct.cost,
+            });
           }
           return revenue
         }
@@ -407,8 +443,7 @@ async function getRevenue(id: string, organizationId: string) {
         let USDGBP = 0
         if (exchangeResult.rows.length === 0) {
           const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
-          const res = await fetch(url);
-          const data = await res.json();
+          const { data } = await fetchJSON(url, { timeoutMs: 5000 });
 
           const usdEur = data.quotes?.USDEUR;
           const usdGbp = data.quotes?.USDGBP;
@@ -450,38 +485,23 @@ async function getRevenue(id: string, organizationId: string) {
           const costEUR = costGBP * (USDEUR / USDGBP)
           const totalEUR = totalGBP * (USDEUR / USDGBP)
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
 
           for (const ct of newCategories) {
 
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * (USDEUR / USDGBP)).toFixed(2)}, ${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total,
+              USDcost: ct.cost,
+              GBPtotal: ct.total * USDGBP,
+              GBPcost: ct.cost * USDGBP,
+              EURtotal: ct.total * USDEUR,
+              EURcost: ct.cost * USDEUR,
+            });
           }
           return revenue;
         } else if (euroCountries.includes(country)) {
@@ -500,20 +520,11 @@ async function getRevenue(id: string, organizationId: string) {
           const costUSD = costEUR / USDEUR
           const totalUSD = totalEUR / USDEUR
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
 
           for (const ct of newCategories) {
 
@@ -550,38 +561,22 @@ async function getRevenue(id: string, organizationId: string) {
           const costGBP = costUSD * USDGBP
           const totalGBP = totalUSD * USDGBP
 
-          const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-          const resultQuery = await pool.query(query)
-          const revenue = resultQuery.rows[0]
-
+          const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+            USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+            GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+            EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+          });
           for (const ct of newCategories) {
 
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * USDGBP).toFixed(2)}, ${(ct.cost * USDGBP).toFixed(2)},
-                            ${(ct.total * USDEUR).toFixed(2)}, ${(ct.cost * USDEUR).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total / USDGBP,
+              USDcost: ct.cost / USDGBP,
+              GBPtotal: ct.total,
+              GBPcost: ct.cost,
+              EURtotal: ct.total * (USDEUR / USDGBP),
+              EURcost: ct.cost * (USDEUR / USDGBP),
+            });
           }
           return revenue
         }
@@ -596,7 +591,16 @@ async function getRevenue(id: string, organizationId: string) {
 /** Stock & points stay RESERVED while the order is *underpaid*. */
 const ACTIVE = ["open", "underpaid", "paid", "completed"]; // stock & points RESERVED
 const INACTIVE = ["cancelled", "failed", "refunded"];      // stock & points RELEASED
-const orderStatusSchema = z.object({ status: z.string() });
+const ALLOWED_STATUSES = [
+  "open",
+  "underpaid",
+  "paid",
+  "completed",
+  "cancelled",
+  "refunded",
+  "failed",
+] as const;
+const orderStatusSchema = z.object({ status: z.enum(ALLOWED_STATUSES) });
 /* record-the-date helper */
 const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
   underpaid: "dateUnderpaid",
@@ -610,7 +614,7 @@ const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
  * life-cycle – “paid” & “completed“ behave as before.
  * “cancelled” is always announced.
  */
-const FIRST_NOTIFY_STATUSES = ["paid", "completed"] as const
+const FIRST_NOTIFY_STATUSES = ["paid"] as const;
 const isActive = (s: string) => ACTIVE.includes(s);
 const isInactive = (s: string) => INACTIVE.includes(s);
 
@@ -656,10 +660,6 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
        FROM orders WHERE id = $1`, [baseOrderId]);
   if (!o) return;
   const baseKey: string = String(o.orderKey || "").replace(/^S-/, "");
-  // already have supplier siblings?
-  const { rowCount: sibs } = await pool.query(
-    `SELECT 1 FROM orders WHERE "orderKey" = ('S-' || $1) LIMIT 1`, [baseKey]);
-  if (sibs) return; // nothing to do
 
   // build mapping of target(B) -> source(A) by organization
   const { rows: cpRows } = await pool.query(
@@ -668,48 +668,69 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
   if (!cpRows.length) return;
 
   type MapItem = { organizationId: string; shareLinkId: string; sourceProductId: string; targetProductId: string; };
-  const map: MapItem[] = [];
-  for (const ln of cpRows) {
-    if (!ln.productId) continue;
-    const { rows: [m] } = await pool.query(
-      `SELECT "shareLinkId","sourceProductId","targetProductId"
-         FROM "sharedProductMapping" WHERE "targetProductId" = $1 LIMIT 1`,
-      [ln.productId]);
-    if (!m) continue;
-    const { rows: [prod] } = await pool.query(
-      `SELECT "organizationId" FROM products WHERE id = $1`, [m.sourceProductId]);
-    if (!prod) continue;
-    map.push({ organizationId: prod.organizationId, ...m });
-  }
-  if (!map.length) return;
-
-  const groups: Record<string, MapItem[]> = {};
-  for (const it of map) (groups[it.organizationId] ??= []).push(it);
-  const entries = Object.entries(groups);
-
-  // precompute transfer subtotals for shipping split
-  const transferSubtotals: Record<string, number> = {};
-  for (const [orgId, items] of entries) {
-    let sum = 0;
-    for (const it of items) {
-      const { rows: [ln] } = await pool.query(
-        `SELECT quantity FROM "cartProducts" WHERE "cartId" = $1 AND "productId" = $2 LIMIT 1`,
-        [o.cartId, it.targetProductId]);
-      const qty = Number(ln?.quantity || 0);
-      const { rows: [sp] } = await pool.query(
-        `SELECT cost FROM "sharedProduct" WHERE "shareLinkId" = $1 AND "productId" = $2 LIMIT 1`,
-        [it.shareLinkId, it.sourceProductId]);
-      const transfer = Number(sp?.cost?.[o.country] ?? 0);
-      sum += transfer * qty;
+  async function firstHop(): Promise<MapItem[]> {
+    const out: MapItem[] = [];
+    for (const ln of cpRows) {
+      if (!ln.productId) continue;
+      const { rows: [m] } = await pool.query(
+        `SELECT "shareLinkId","sourceProductId","targetProductId"
+           FROM "sharedProductMapping" WHERE "targetProductId" = $1 LIMIT 1`,
+        [ln.productId],
+      );
+      if (!m) continue;
+      const { rows: [prod] } = await pool.query(
+        `SELECT "organizationId" FROM products WHERE id = $1`,
+        [m.sourceProductId],
+      );
+      if (!prod) continue;
+      out.push({ organizationId: prod.organizationId, ...m });
     }
-    transferSubtotals[orgId] = sum;
+    return out;
   }
-  const buyerShipping = Number(o.shippingTotal || 0);
-  const totalTransfer = Object.values(transferSubtotals).reduce((a, b) => a + b, 0) || 0;
-  let shippingAssigned = 0;
+  async function nextHopFrom(items: MapItem[]): Promise<MapItem[]> {
+    const out: MapItem[] = [];
+    for (const it of items) {
+      const { rows: [m] } = await pool.query(
+        `SELECT "shareLinkId","sourceProductId","targetProductId"
+           FROM "sharedProductMapping" WHERE "targetProductId" = $1 LIMIT 1`,
+        [it.sourceProductId],
+      );
+      if (!m) continue;
+      const { rows: [prod] } = await pool.query(
+        `SELECT "organizationId" FROM products WHERE id = $1`,
+        [m.sourceProductId],
+      );
+      if (!prod) continue;
+      out.push({ organizationId: prod.organizationId, ...m, targetProductId: it.targetProductId });
+    }
+    return out;
+  }
+
+  // collect full chain and group by org
+  let frontier = await firstHop();
+  const all: MapItem[] = [];
+  let depth = 0;
+  while (frontier.length && depth++ < 5) {
+    all.push(...frontier);
+    frontier = await nextHopFrom(frontier);
+  }
+  if (!all.length) return;
+  const byOrg: Record<string, MapItem[]> = {};
+  for (const it of all) (byOrg[it.organizationId] ??= []).push(it);
+  const entries = Object.entries(byOrg);
+
+  // NOTE: when backfilling missing S-orders after the fact,
+  // do NOT re-split shipping; assign 0 shipping to new siblings.
 
   for (let i = 0; i < entries.length; i++) {
     const [orgId, items] = entries[i];
+    // skip orgs that already have an S-<key> order
+    const { rowCount: exists } = await pool.query(
+      `SELECT 1 FROM orders WHERE "orderKey" = ('S-' || $1) AND "organizationId" = $2 LIMIT 1`,
+      [baseKey, orgId],
+    );
+    if (exists) continue;
+
     // ensure client exists in supplier org
     const { rows: [oldClient] } = await pool.query(`SELECT * FROM clients WHERE id = $1`, [o.clientId]);
     const { rows: [found] } = await pool.query(
@@ -752,15 +773,8 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
         subtotal += transfer * qty;
       }
     }
-    // shipping split
+    // backfill: set shippingShare = 0 to avoid double-charging shipping
     let shippingShare = 0;
-    if (totalTransfer > 0) {
-      if (i === entries.length - 1) shippingShare = buyerShipping - shippingAssigned;
-      else {
-        shippingShare = Number(((buyerShipping * (transferSubtotals[orgId] || 0)) / totalTransfer).toFixed(2));
-        shippingAssigned += shippingShare;
-      }
-    }
     // create supplier order S-<orderKey>
     const supplierOrderId = uuidv4();
     await pool.query(
@@ -839,15 +853,33 @@ async function applyItemEffects(
   }
 }
 
-/* ────────────────────────────────────────────────────────────── */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  // 1) context + permission guard
-  const ctx = await getContext(req) as { organizationId: string; tenantId: string };
-  const { organizationId, tenantId } = ctx
+  // 1) context  permission guard (supports internal cron calls)
   const { id } = params;
+  const internalSecret = req.headers.get("x-internal-secret");
+  let organizationId: string;
+  let tenantId: string | null = null;
+
+  if (internalSecret && internalSecret === process.env.INTERNAL_API_SECRET) {
+    // Called by Vercel Cron: derive org from the order (no user session)
+    const { rows: [o] } = await pool.query(
+      `SELECT "organizationId" FROM orders WHERE id = $1 LIMIT 1`,
+      [id],
+    );
+    if (!o) {
+      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
+    organizationId = o.organizationId;
+    // tenantId left null; Niftipay sync block already guards on falsy tenantId
+  } else {
+    // Normal authenticated path
+    const ctx = await getContext(req) as { organizationId: string; tenantId: string | null };
+    organizationId = ctx.organizationId;
+    tenantId = ctx.tenantId ?? null;
+  }
   const { status: newStatus } = orderStatusSchema.parse(await req.json());
 
   const client = await pool.connect();
@@ -1014,6 +1046,86 @@ export async function PATCH(
     console.log(`Transaction committed for order ${id}`);
     // release the transactional connection ASAP; do side-effects with pool
     client.release(); released = true;
+
+    // 🔔 Notify the BASE order (merchant) too
+    try {
+      const notifTypeMap: Record<string, NotificationType> = {
+        open: "order_placed",
+        underpaid: "order_partially_paid",
+        paid: "order_paid",
+        completed: "order_completed",
+        cancelled: "order_cancelled",
+        refunded: "order_refunded",
+      };
+      const shouldNotify =
+        newStatus === "paid" || newStatus === "completed"
+          ? !ord.notifiedPaidOrCompleted
+          : newStatus === "cancelled" || newStatus === "refunded";
+      if (shouldNotify) {
+        const productList = await buildProductListForCart(ord.cartId);
+        const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
+        await enqueueNotificationFanout({
+          organizationId,
+          orderId: id,
+          type: notifTypeMap[newStatus],
+          trigger: "admin_only",
+          channels: ["in_app", "telegram"],
+          dedupeSalt: `merchant_admin:${newStatus}`,
+          payload: {
+            message: `Order #${ord.orderKey} is now <b>${newStatus}</b><br>{product_list}`,
+            subject: `Order #${ord.orderKey} ${newStatus}`,
+            variables: {
+              product_list: productList,
+              order_number: ord.orderKey,
+              order_date: orderDate,
+              order_shipping_method: ord.shippingMethod ?? "-",
+              tracking_number: ord.trackingNumber ?? "",
+              shipping_company: ord.shippingService ?? "",
+            },
+            country: ord.country,
+            clientId: null,
+            userId: null,
+            url: `/orders/${id}`,
+          },
+        });
+        // Optional: email the buyer when completed (matches your sibling logic)
+        if (newStatus === "completed") {
+          await enqueueNotificationFanout({
+            organizationId,
+            orderId: id,
+            type: "order_completed",
+            trigger: "user_only_email",
+            channels: ["email"],
+            dedupeSalt: `buyer_email:${newStatus}`,
+            payload: {
+              message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+              subject: `Order #${ord.orderKey} ${newStatus}`,
+              variables: {
+                product_list: productList,
+                order_number: ord.orderKey,
+                order_date: orderDate,
+                order_shipping_method: ord.shippingMethod ?? "-",
+                tracking_number: ord.trackingNumber ?? "",
+                shipping_company: ord.shippingService ?? "",
+              },
+              country: ord.country,
+              clientId: ord.clientId,
+              userId: null,
+              url: `/orders/${id}`,
+            },
+          });
+        }
+        if (newStatus === "paid" || newStatus === "completed") {
+          await pool.query(
+            `UPDATE orders SET "notifiedPaidOrCompleted" = TRUE WHERE id = $1 AND "notifiedPaidOrCompleted" = FALSE`,
+            [id],
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("[change-status] enqueue (base order) failed", e);
+    }
+
     // 🔒 Ensure supplier orders exist before we cascade the status
     try { await ensureSupplierOrdersExist(id); } catch (e) { console.warn("[ensureSupplierOrders] failed:", e); }
     /* ──────────────────────────────────────────────────────────────
@@ -1022,7 +1134,7 @@ export async function PATCH(
      * – update status + date cols on siblings
      * – after cascade to PAID, also generate revenue for siblings
      * ───────────────────────────────────────────────────────────── */
-    const CASCADE_STATUSES = new Set(["paid", "cancelled", "refunded"]);
+    const CASCADE_STATUSES = new Set(["paid", "cancelled", "refunded", "completed"]);
     if (CASCADE_STATUSES.has(newStatus)) {
       const dateCol = DATE_COL_FOR_STATUS[newStatus];
       const setBits = [`status = $1`, `"updatedAt" = NOW()`];
@@ -1085,6 +1197,7 @@ export async function PATCH(
           const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
 
           try {
+<<<<<<< HEAD
             await sendNotification({
               organizationId: sb.organizationId,              // supplier org
               type: notifTypeMap[newStatus],
@@ -1120,6 +1233,62 @@ export async function PATCH(
               );
             } catch (e) { console.warn("[cascade][notify] mark-notified failed", sb.id, e); }
           }
+=======
+            await enqueueNotificationFanout({
+              organizationId: sb.organizationId,
+              orderId: sb.id,
+              type: notifTypeMap[newStatus],
+              trigger: "admin_only",
+              channels: ["in_app", "telegram"],
+              dedupeSalt: `supplier_admin:${newStatus}`,
+              payload: {
+                message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+                subject: `Order #${sb.orderKey} ${newStatus}`,
+                variables: {
+                  product_list: productList,
+                  order_number: sb.orderKey,
+                  order_date: orderDate,
+                  order_shipping_method: sb.shippingMethod ?? "-",
+                  tracking_number: sb.trackingNumber ?? "",
+                  shipping_company: sb.shippingService ?? "",
+                },
+                country: sb.country,
+                clientId: null,
+                userId: null,
+                url: `/orders/${sb.id}`,
+              },
+            });
+            if (newStatus === "completed") {
+              await enqueueNotificationFanout({
+                organizationId: sb.organizationId,
+                orderId: sb.id,
+                type: notifTypeMap[newStatus],
+                trigger: "user_only_email",
+                channels: ["email"],
+                dedupeSalt: `supplier_buyer:${newStatus}`,
+                payload: {
+                  message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+                  subject: `Order #${sb.orderKey} ${newStatus}`,
+                  variables: {
+                    product_list: productList,
+                    order_number: sb.orderKey,
+                    order_date: orderDate,
+                    order_shipping_method: sb.shippingMethod ?? "-",
+                    tracking_number: sb.trackingNumber ?? "",
+                    shipping_company: sb.shippingService ?? "",
+                  },
+                  country: sb.country,
+                  clientId: sb.clientId,
+                  userId: null,
+                  url: `/orders/${sb.id}`,
+                },
+              });
+            }
+          } catch (e) {
+            console.warn("[cascade][enqueue] failed for supplier sibling", sb.id, e);
+            continue;
+          }
+>>>>>>> 32b5d73d3f0e5cd188ef530307e816bdc39c2c8c
         }
       })();
 
@@ -1135,9 +1304,11 @@ export async function PATCH(
           [baseKey, id],
         );
         for (const s of sibs) {
-          try { await getRevenue(s.id, s.organizationId); }
-          catch (e) { console.warn("[cascade] revenue sibling failed:", s.id, e); }
+          void getRevenue(s.id, s.organizationId).catch((e) =>
+            console.warn("[cascade] revenue sibling failed:", s.id, e)
+          );
         }
+
       }
 
       // 🔧 STOCK EFFECTS for supplier siblings on cascade
@@ -1164,16 +1335,26 @@ export async function PATCH(
         }
       }
 
-      // On cancel/refund, cancel sibling revenues too
-      if (newStatus === "cancelled" || newStatus === "refunded") {
+      // On cancel/refund, flag sibling revenues appropriately
+      if (newStatus === "cancelled") {
         await pool.query(
           `UPDATE "orderRevenue"
-          SET cancelled = TRUE, "updatedAt" = NOW()
-        WHERE "orderId" IN (
-          SELECT id FROM orders
-           WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
-        )`,
-          [baseKey],
+           SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW()
+         WHERE "orderId" IN (
+           SELECT id FROM orders
+            WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
+         )`,
+          [baseKey]
+        );
+      } else if (newStatus === "refunded") {
+        await pool.query(
+          `UPDATE "orderRevenue"
+           SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW()
+         WHERE "orderId" IN (
+           SELECT id FROM orders
+            WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
+         )`,
+          [baseKey]
         );
       }
     }
@@ -1264,14 +1445,20 @@ export async function PATCH(
               console.log("[coinx] no order.id in orderMeta; will try reference lookup");
             }
           } catch (e) {
-            console.warn("[coinx] meta parse / id-path failed; will try reference lookup:", e);
+            const msg = String((e as any)?.message || e);
+            if (msg.includes("The operation was aborted") || msg.includes("AbortError")) {
+              console.warn("[coinx] PATCH by id timed out; falling back to reference lookup.");
+            } else {
+              console.warn("[coinx] meta parse / id-path failed; will try reference lookup:", e);
+            }
           }
+
 
           // 3) Fallback: find Coinx order by our orderKey stored as 'reference' on Coinx
           if (!patched) {
             const findUrl = `${base}/api/orders?reference=${encodeURIComponent(String(ord.orderKey ?? ""))}`;
             const ac2 = new AbortController();
-            const to2 = setTimeout(() => ac2.abort(), 4000);
+            const to2 = setTimeout(() => ac2.abort(), 6000);
             const findRes = await fetch(findUrl, {
               headers: { "Accept": "application/json", "x-api-key": merchantApiKey },
               signal: ac2.signal,
@@ -1328,9 +1515,10 @@ export async function PATCH(
     // ─── trigger revenue/fee **only** on the first transition to PAID ───
     if (newStatus === "paid" && ord.status !== "paid") {
       try {
-        // 1) update revenue
-        await getRevenue(id, organizationId);
-        console.log(`Revenue updated for order ${id}`);
+        // 1) update revenue (fire-and-forget to avoid blocking the request)
+        void getRevenue(id, organizationId).catch((e) =>
+          console.warn("[revenue] async base failed:", e)
+        );
 
         // 2) capture platform fee via internal API
         const feesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
@@ -1339,12 +1527,13 @@ export async function PATCH(
           orgId: organizationId,
           hasSecret: Boolean(process.env.INTERNAL_API_SECRET),
         });
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (process.env.INTERNAL_API_SECRET) {
+          headers["x-internal-secret"] = process.env.INTERNAL_API_SECRET;
+        }
         const feeRes = await fetch(feesUrl, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-internal-secret": process.env.INTERNAL_API_SECRET!, // ✅ match requireInternalAuth
-          },
+          headers,
           body: JSON.stringify({ orderId: id }),
         });
         const feeText = await feeRes.text().catch(() => "");
@@ -1369,8 +1558,8 @@ export async function PATCH(
     }
     if (newStatus === "cancelled") {
       try {
-        const statusQuery = `UPDATE "orderRevenue" SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
-        const statusResult = await pool.query(statusQuery)
+        const statusQuery = `UPDATE "orderRevenue" SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = $1 RETURNING *`
+        const statusResult = await pool.query(statusQuery, [id])
         const result = statusResult.rows
       } catch (err) {
         console.error(
@@ -1382,8 +1571,8 @@ export async function PATCH(
 
     if (newStatus === "refunded") {
       try {
-        const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
-        const statusResult = await pool.query(statusQuery)
+        const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW() WHERE "orderId" = $1 RETURNING *`
+        const statusResult = await pool.query(statusQuery, [id])
         const result = statusResult.rows
       } catch (err) {
         console.error(
@@ -1395,8 +1584,8 @@ export async function PATCH(
 
     if (newStatus !== "refunded" && newStatus !== "cancelled") {
       try {
-        const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = '${id}' RETURNING *`
-        const statusResult = await pool.query(statusQuery)
+        const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = $1 RETURNING *`
+        const statusResult = await pool.query(statusQuery, [id])
         const result = statusResult.rows[0]
       } catch (err) {
         console.error(
@@ -1413,16 +1602,17 @@ export async function PATCH(
      * ───────────────────────────────────────────── */
     let shouldNotify = false;
 
-    /* —— NEW order placed check —— */               // NEW ⬅︎
-    if (newStatus === "open" && ord.status !== "open") { // NEW ⬅︎
-      shouldNotify = true;                              // NEW ⬅︎
-    }                                                   // NEW ⬅︎
-    else if (newStatus === "underpaid") {
-      shouldNotify = true;                     // notify always on first underpaid
-    } else if (FIRST_NOTIFY_STATUSES.includes(
-      newStatus as (typeof FIRST_NOTIFY_STATUSES)[number])) {
-      // fire only once across PAID/COMPLETED
+    /* order placed */
+    if (newStatus === "open" && ord.status !== "open") {
+      shouldNotify = true;
+    } else if (newStatus === "underpaid") {
+      shouldNotify = true;
+    } else if (newStatus === "paid") {
+      // de-dupe paid once
       shouldNotify = !ord.notifiedPaidOrCompleted;
+    } else if (newStatus === "completed") {
+      // ALWAYS notify buyer on completed
+      shouldNotify = true;
     } else if (newStatus === "cancelled" || newStatus === "refunded") {
       shouldNotify = true;
     }
@@ -1470,11 +1660,18 @@ export async function PATCH(
         refunded: "order_refunded",
       } as const;
       const notifType: NotificationType =
-        notifTypeMap[newStatus] || "order_ready";
+        (notifTypeMap as Record<string, NotificationType | undefined>)[newStatus] ??
+        "order_message";
 
       const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
 
       const isSupplierOrder = String(ord.orderKey || "").startsWith("S-");
+      // statuses that should alert store admins for buyer orders
+      const ADMIN_ALERT_STATUSES = new Set(["underpaid", "paid", "completed", "cancelled", "refunded"]);
+      // keep “only-once” semantics for paid/completed
+      const adminEligibleOnce =
+        (newStatus === "paid" || newStatus === "completed") ? !ord.notifiedPaidOrCompleted : true;
+
       const baseNotificationPayload = {
         organizationId,
         type: notifType,
@@ -1499,31 +1696,81 @@ export async function PATCH(
         // Supplier (shared) order:
         //  • Always notify supplier admins (in_app + telegram)
         //  • Buyer gets ONLY an email and ONLY when status === "completed"
-        await sendNotification({
-          ...baseNotificationPayload,
+        await enqueueNotificationFanout({
+          organizationId,
+          orderId: id,
+          type: notifType,
           trigger: "admin_only",
           channels: ["in_app", "telegram"],
-          clientId: null,
-          url: `/orders/${id}`,
+          dedupeSalt: `supplier_admin:${newStatus}`,
+          payload: {
+            message: baseNotificationPayload.message,
+            subject: baseNotificationPayload.subject,
+            variables: baseNotificationPayload.variables,
+            country: ord.country,
+            clientId: null,
+            userId: null,
+            url: `/orders/${id}`,
+          },
         });
         if (newStatus === "completed") {
-          await sendNotification({
-            ...baseNotificationPayload,
+          await enqueueNotificationFanout({
+            organizationId,
+            orderId: id,
+            type: notifType,
             trigger: "user_only_email",
             channels: ["email"],
-            clientId: ord.clientId,
-            url: `/orders/${id}`,
+            dedupeSalt: `supplier_buyer:${newStatus}`,
+            payload: {
+              message: baseNotificationPayload.message,
+              subject: baseNotificationPayload.subject,
+              variables: baseNotificationPayload.variables,
+              country: ord.country,
+              clientId: ord.clientId,
+              userId: null,
+              url: `/orders/${id}`,
+            },
           });
         }
       } else {
-        // Normal (buyer) order – unchanged behavior
-        await sendNotification({
-          ...baseNotificationPayload,
+        // Normal (buyer) order – notify the buyer as before…
+        await enqueueNotificationFanout({
+          organizationId,
+          orderId: id,
+          type: notifType,
           trigger: "order_status_change",
           channels: ["email", "in_app", "telegram"],
-          clientId: ord.clientId,
-          url: `/orders/${id}`,
+          dedupeSalt: `buyer:${newStatus}`,
+          payload: {
+            message: baseNotificationPayload.message,
+            subject: baseNotificationPayload.subject,
+            variables: baseNotificationPayload.variables,
+            country: ord.country,
+            clientId: ord.clientId,
+            userId: null,
+            url: `/orders/${id}`,
+          },
         });
+        // …and ALSO notify store admins for key statuses
+        if (ADMIN_ALERT_STATUSES.has(newStatus) && adminEligibleOnce) {
+          await enqueueNotificationFanout({
+            organizationId,
+            orderId: id,
+            type: notifType,
+            trigger: "admin_only",
+            channels: ["in_app", "telegram"],
+            dedupeSalt: `store_admin:${newStatus}`,
+            payload: {
+              message: baseNotificationPayload.message,
+              subject: baseNotificationPayload.subject,
+              variables: baseNotificationPayload.variables,
+              country: ord.country,
+              clientId: null,
+              userId: null,
+              url: `/orders/${id}`,
+            },
+          });
+        }
       }
 
       /* ─────────────────────────────────────────────────────────────
@@ -1656,6 +1903,23 @@ export async function PATCH(
         );
       }
     }
+
+    // Fire-and-forget: nudge the outbox drain so users see messages quickly.
+    try {
+      // Authorized POST to internal drain (don’t await; keep request fast)
+      fetch(
+        `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`,
+        {
+          method: "POST",
+          headers: {
+            "x-internal-secret": process.env.INTERNAL_API_SECRET || "",
+            // ensure this drain runs as a background invocation on Vercel
+            "x-vercel-background": "1"
+          },
+          keepalive: true,
+        }
+      ).catch(() => { });
+    } catch { }
 
     return NextResponse.json({ id, status: newStatus, warnings: toastWarnings });
   } catch (e) {

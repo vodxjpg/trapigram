@@ -812,6 +812,25 @@ interface DB {
     orderFeeId: string;
     amount: string;        // numeric
   };
+
+    /** Outbox for fan-out notifications (drained by cron) */
+  notificationOutbox: {
+    id: string;
+    organizationId: string;
+    orderId: string | null;
+    type: string;                       // NotificationType
+    trigger: string | null;
+    channel: "email" | "in_app" | "telegram"; // NotificationChannel
+    payload: string;                    // JSONB (stored stringified)
+    dedupeKey: string;
+    attempts: number;
+    maxAttempts: number;
+    nextAttemptAt: Date;
+    lastError: string | null;
+    status: "pending" | "sent" | "dead";
+    createdAt: Date;
+    updatedAt: Date;
+  };
 }
 
 /* ──────────────────────────────────────────────────────────────── *

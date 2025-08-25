@@ -1,7 +1,10 @@
+// src/app/(dashboard)/analytics/coupons/[id]/individual-coupon-report.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import {
@@ -26,30 +29,44 @@ import { format, startOfMonth, endOfMonth, subMonths } from "date-fns";
 import { CalendarIcon, ArrowLeft } from "lucide-react";
 
 interface DailyData {
-  date: string; // e.g. "2025-01"
+  date: string;
   quantity: number;
   title: string;
   sku: string;
 }
-
 interface MonthlyData {
-  month: string; // e.g. "2025-01"
+  month: string;
   quantity: number;
   title: string;
   sku: string;
 }
-
 interface DateRange {
   from: Date;
   to: Date;
 }
-
 type DatePreset = "currentMonth" | "lastMonth" | "custom";
 
 export default function IndividualCouponReport() {
   const router = useRouter();
   const params = useParams();
   const couponId = params.id;
+
+  // --- Permissions: couponsReport.view
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { couponsReport: ["view"] }
+  );
+
+  useEffect(() => {
+    if (!viewLoading && !canView) router.replace("/analytics/coupons");
+  }, [viewLoading, canView, router]);
+
+  // 👉 derive flags; don't early-return before hooks finish
+  const permsLoading = viewLoading;
+  const canShow = !permsLoading && canView;
+
   const onBack = () => router.back();
   const [dailyData, setDailyData] = useState<DailyData[]>([]);
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
@@ -70,56 +87,35 @@ export default function IndividualCouponReport() {
   );
   const yearFilterOptions = [2025, 2026, 2027];
 
-  // Generate date range based on preset
   const getDateRangeFromPreset = (preset: DatePreset): DateRange => {
     const today = new Date();
-
     switch (preset) {
       case "currentMonth":
-        return {
-          from: startOfMonth(today),
-          to: endOfMonth(today),
-        };
-      case "lastMonth":
-        const lastMonth = subMonths(today, 1);
-        return {
-          from: startOfMonth(lastMonth),
-          to: endOfMonth(lastMonth),
-        };
-      case "custom":
-        const customDate = new Date(selectedYear, selectedMonth, 1);
-        return {
-          from: startOfMonth(customDate),
-          to: endOfMonth(customDate),
-        };
+        return { from: startOfMonth(today), to: endOfMonth(today) };
+      case "lastMonth": {
+        const last = subMonths(today, 1);
+        return { from: startOfMonth(last), to: endOfMonth(last) };
+      }
+      case "custom": {
+        const d = new Date(selectedYear, selectedMonth, 1);
+        return { from: startOfMonth(d), to: endOfMonth(d) };
+      }
       default:
-        return {
-          from: startOfMonth(today),
-          to: endOfMonth(today),
-        };
+        return { from: startOfMonth(today), to: endOfMonth(today) };
     }
   };
 
-  // Handle date preset change
   const handleDatePresetChange = (value: string) => {
     const preset = value as DatePreset;
     setDatePreset(preset);
     setIsCustomDate(preset === "custom");
-
-    if (preset !== "custom") {
-      const newDateRange = getDateRangeFromPreset(preset);
-      setDateRange(newDateRange);
-    }
+    if (preset !== "custom") setDateRange(getDateRangeFromPreset(preset));
   };
 
-  // Handle custom month/year change
   const handleCustomDateChange = () => {
     if (datePreset === "custom") {
-      const customDate = new Date(selectedYear, selectedMonth, 1);
-      setDateRange({
-        from: startOfMonth(customDate),
-        to: endOfMonth(customDate),
-      });
+      const custom = new Date(selectedYear, selectedMonth, 1);
+      setDateRange({ from: startOfMonth(custom), to: endOfMonth(custom) });
     }
   };
 
@@ -127,22 +123,17 @@ export default function IndividualCouponReport() {
     handleCustomDateChange();
   }, [selectedMonth, selectedYear, datePreset]);
 
-  // Format date range for display
   const formatDateRange = () => {
     const { from } = dateRange;
-
-    if (datePreset === "currentMonth") {
-      return "Current Month";
-    } else if (datePreset === "lastMonth") {
-      return "Last Month";
-    } else if (from) {
-      return format(from, "MMMM yyyy");
-    }
+    if (datePreset === "currentMonth") return "Current Month";
+    if (datePreset === "lastMonth") return "Last Month";
+    if (from) return format(from, "MMMM yyyy");
     return "";
   };
 
-  // --- fetch the daily from/to report
+  // --- Daily report (guarded)
   useEffect(() => {
+    if (!canShow) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -167,9 +158,11 @@ export default function IndividualCouponReport() {
     return () => {
       cancelled = true;
     };
-  }, [couponId, dateRange]);
+  }, [couponId, dateRange, canShow]);
 
+  // --- Monthly report (guarded)
   useEffect(() => {
+    if (!canShow) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -179,9 +172,7 @@ export default function IndividualCouponReport() {
         );
         if (!res.ok) throw new Error("Failed to load monthly report");
         const json = await res.json();
-        if (!cancelled) {
-          setMonthlyData(json.monthly);
-        }
+        if (!cancelled) setMonthlyData(json.monthly);
       } catch (e: any) {
         if (!cancelled) setError(e.message);
       } finally {
@@ -191,29 +182,11 @@ export default function IndividualCouponReport() {
     return () => {
       cancelled = true;
     };
-  }, [couponId, yearFilter]);
-  console.log(monthlyData);
+  }, [couponId, yearFilter, canShow]);
 
-  // Generate month options (current year and previous year)
-  const monthOptions = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-
-  // Generate year options (current year and 2 previous years)
-  const currentYear = new Date().getFullYear();
-  const yearOptions = [currentYear, currentYear - 1, currentYear - 2];
-
+  // 🔒 UI gates AFTER all hooks are declared
+  if (permsLoading) return <div>Loading permissions…</div>;
+  if (!canShow) return null; // redirect effect will run
   if (loading) return <div>Loading product report…</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
   if (!dailyData) return <div>No data available</div>;
@@ -279,9 +252,22 @@ export default function IndividualCouponReport() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {monthOptions.map((month, index) => (
-                              <SelectItem key={index} value={index.toString()}>
-                                {month}
+                            {[
+                              "January",
+                              "February",
+                              "March",
+                              "April",
+                              "May",
+                              "June",
+                              "July",
+                              "August",
+                              "September",
+                              "October",
+                              "November",
+                              "December",
+                            ].map((m, i) => (
+                              <SelectItem key={i} value={i.toString()}>
+                                {m}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -301,9 +287,13 @@ export default function IndividualCouponReport() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {yearOptions.map((year) => (
-                              <SelectItem key={year} value={year.toString()}>
-                                {year}
+                            {[
+                              new Date().getFullYear(),
+                              new Date().getFullYear() - 1,
+                              new Date().getFullYear() - 2,
+                            ].map((y) => (
+                              <SelectItem key={y} value={y.toString()}>
+                                {y}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -339,8 +329,8 @@ export default function IndividualCouponReport() {
                       tickFormatter={(v) =>
                         format(new Date(v + "T00:00:00"), "MMM d")
                       }
-                      interval={0} // Show all dates
-                      angle={-45} // Rotate labels for better readability
+                      interval={0}
+                      angle={-45}
                       textAnchor="end"
                       height={70}
                     />
@@ -386,13 +376,13 @@ export default function IndividualCouponReport() {
             <CardTitle>Monthly Sales Trend</CardTitle>
             <Select
               value={yearFilter.toString()}
-              onValueChange={(value) => setYearFilter(Number.parseInt(value))}
+              onValueChange={(v) => setYearFilter(Number.parseInt(v))}
             >
               <SelectTrigger className="w-full sm:w-[120px]">
                 <SelectValue placeholder="Select year" />
               </SelectTrigger>
               <SelectContent>
-                {yearFilterOptions.map((year) => (
+                {[2025, 2026, 2027].map((year) => (
                   <SelectItem key={year} value={year.toString()}>
                     {year}
                   </SelectItem>
@@ -422,12 +412,11 @@ export default function IndividualCouponReport() {
                       dataKey="month"
                       angle={-45}
                       textAnchor="end"
-                      height={70} // Increase height for rotated labels
+                      height={70}
                       tick={{ fontSize: 12 }}
-                      tickFormatter={(val) => {
-                        // Parse year and month explicitly to avoid timezone issues
+                      tickFormatter={(val: string) => {
                         const [year, month] = val.split("-").map(Number);
-                        const date = new Date(year, month - 1, 1); // month is 0-indexed
+                        const date = new Date(year, month - 1, 1);
                         return format(date, "MMM yyyy");
                       }}
                     />
