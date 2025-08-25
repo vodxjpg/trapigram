@@ -164,11 +164,8 @@ async function getRevenue(id: string, organizationId: string) {
       const orderQuery = `SELECT * FROM orders WHERE id = $1 AND "organizationId" = $2`;
       const resultOrders = await pool.query(orderQuery, [id, organizationId]);
       const order = resultOrders.rows[0]
-<<<<<<< HEAD
-=======
       if (!order) throw new Error("Order not found");
       console.log(order)
->>>>>>> 32b5d73d3f0e5cd188ef530307e816bdc39c2c8c
 
       const cartId = order.cartId
       const paymentType = (order.paymentMethod ?? "").toLowerCase();
@@ -179,16 +176,12 @@ async function getRevenue(id: string, organizationId: string) {
       const raw = order.datePaid ?? order.dateCreated;
       const paidDate = raw instanceof Date
         ? raw
-<<<<<<< HEAD
-        : new Date(raw);                   // ensure it's a JS Date
-=======
         : new Date(raw);
       if (Number.isNaN(paidDate.getTime())) {
         throw new Error("Invalid paid date");
       }
       console.log(raw)
       console.log(paidDate)                     // ensure it's a JS Date
->>>>>>> 32b5d73d3f0e5cd188ef530307e816bdc39c2c8c
 
       // now get seconds since the Unix epoch
       const to = Math.floor(paidDate.getTime() / 1000);
@@ -1197,43 +1190,6 @@ export async function PATCH(
           const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
 
           try {
-<<<<<<< HEAD
-            await sendNotification({
-              organizationId: sb.organizationId,              // supplier org
-              type: notifTypeMap[newStatus],
-              subject: `Order #${sb.orderKey} ${newStatus}`,
-              message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
-              variables: {
-                product_list: productList,
-                order_number: sb.orderKey,
-                order_date: orderDate,
-                order_shipping_method: sb.shippingMethod ?? "-",
-                tracking_number: sb.trackingNumber ?? "",
-                shipping_company: sb.shippingService ?? "",
-              },
-              country: sb.country,
-              trigger: "admin_only",                          // admin-only fanout
-              channels: ["in_app", "telegram"],               // same as elsewhere for suppliers
-              clientId: null,
-              url: `/orders/${sb.id}`,
-            });
-          } catch (e) {
-            console.warn("[cascade][notify] failed for supplier sibling", sb.id, e);
-            continue;
-          }
-          // Mark "notified" so we don’t notify twice for paid/completed
-          if (newStatus === "paid" || newStatus === "completed") {
-            try {
-              await pool.query(
-                `UPDATE orders
-             SET "notifiedPaidOrCompleted" = TRUE,
-                 "updatedAt" = NOW()
-           WHERE id = $1`,
-                [sb.id],
-              );
-            } catch (e) { console.warn("[cascade][notify] mark-notified failed", sb.id, e); }
-          }
-=======
             await enqueueNotificationFanout({
               organizationId: sb.organizationId,
               orderId: sb.id,
@@ -1288,7 +1244,6 @@ export async function PATCH(
             console.warn("[cascade][enqueue] failed for supplier sibling", sb.id, e);
             continue;
           }
->>>>>>> 32b5d73d3f0e5cd188ef530307e816bdc39c2c8c
         }
       })();
 
