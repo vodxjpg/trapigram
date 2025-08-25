@@ -662,7 +662,7 @@ export async function POST(req: NextRequest) {
             newClientId,
             newCartId,
             oldCart.rows[0].country,
-            oldOrder.rows[0].paymentMethod,
+            'dropshipping',
             shippingShare,
             shippingShare + subtotal,
             oldOrder.rows[0].shippingService,

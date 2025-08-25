@@ -183,6 +183,52 @@ async function getRevenue(id: string, organizationId: string) {
       const paymentType = (order.paymentMethod ?? "").toLowerCase();
       const country = order.country
 
+      // cache to avoid N queries per product
+      const mappingCache = new Map<string, { shareLinkId: string; sourceProductId: string } | null>();
+      const costCache = new Map<string, number>();
+
+      async function resolveEffectiveCost(productId: string): Promise<number> {
+        const cacheKey = `${productId}:${country}`;
+        if (costCache.has(cacheKey)) return costCache.get(cacheKey)!;
+
+        // 1) see if productId is a "target" (a shared clone receiving from upstream)
+        let mapping = mappingCache.get(productId);
+        if (mapping === undefined) {
+          const { rows: [m] } = await pool.query(
+            `SELECT "shareLinkId","sourceProductId"
+              FROM "sharedProductMapping"
+              WHERE "targetProductId" = $1
+              LIMIT 1`,
+            [productId],
+          );
+          mapping = m ? { shareLinkId: m.shareLinkId, sourceProductId: m.sourceProductId } : null;
+          mappingCache.set(productId, mapping);
+        }
+
+        let eff = 0;
+        if (mapping) {
+          const { rows: [sp] } = await pool.query(
+            `SELECT cost
+              FROM "sharedProduct"
+              WHERE "shareLinkId" = $1 AND "productId" = $2
+              LIMIT 1`,
+            [mapping.shareLinkId, mapping.sourceProductId],
+          );
+          eff = Number(sp?.cost?.[country] ?? 0);
+        } else {
+          // not a shared clone → use the product's own cost (manufacturer)
+          const { rows: [p] } = await pool.query(
+            `SELECT cost FROM products WHERE id = $1 LIMIT 1`,
+            [productId],
+          );
+          eff = Number(p?.cost?.[country] ?? 0);
+        }
+
+        costCache.set(cacheKey, eff);
+        return eff;
+      }
+
+
       // --- after you've fetched `order` from the DB ---
       // Use datePaid if present, else fall back to dateCreated; validate
       const raw = order.datePaid ?? order.dateCreated;
@@ -226,13 +272,15 @@ async function getRevenue(id: string, organizationId: string) {
       const categories: CategoryRevenue[] = [];
 
       for (const ct of categoryData) {
+        const qty = Number(ct.quantity ?? 0);
+        const price = Number(ct.unitPrice ?? 0); // actual charged
+        const effCost = await resolveEffectiveCost(String(ct.productId));
         categories.push({
           categoryId: ct.categoryId,
-          // Use the actual charged line price (cp.unitPrice), not the product's retail price
-          price: Number(ct.unitPrice ?? 0),
-          cost: Number(ct?.cost?.[country] ?? 0),     // treat missing cost as 0
-          quantity: Number(ct.quantity ?? 0),
-        })
+          price,
+          cost: effCost,
+          quantity: qty,
+        });
       }
 
       const newCategories: TransformedCategoryRevenue[] = categories.map(({ categoryId, price, cost, quantity }) => ({
@@ -241,11 +289,15 @@ async function getRevenue(id: string, organizationId: string) {
         cost: cost * quantity,
       }));
 
-      const totalCost = allProducts.reduce((sum, product) => {
-        const unitCost = Number(product?.cost?.[country] ?? 0);
-        const qty = Number(product?.quantity ?? 0);
+      // cost of normal products using effective shared cost logic
+      const productsCost = categories.reduce((sum, c) => sum + c.cost * c.quantity, 0);
+      // cost of affiliate lines (if any) stays their own cost
+      const affiliateCost = affiliate.reduce((sum, a) => {
+        const unitCost = Number(a?.cost?.[country] ?? 0);
+        const qty = Number(a?.quantity ?? 0);
         return sum + unitCost * qty;
       }, 0);
+      const totalCost = productsCost + affiliateCost;
 
       let total = 0
       if (paymentType === 'niftipay') {
@@ -343,8 +395,8 @@ async function getRevenue(id: string, organizationId: string) {
             EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
           });
           for (const ct of newCategories) {
-
             const catRevenueId = uuidv4();
+            // Native = GBP → USD = GBP/USDGBP, EUR = GBP*(USDEUR / USDGBP), GBP stays
             await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
               USDtotal: ct.total / USDGBP,
               USDcost: ct.cost / USDGBP,
@@ -423,15 +475,15 @@ async function getRevenue(id: string, organizationId: string) {
             EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
           });
           for (const ct of newCategories) {
-
             const catRevenueId = uuidv4();
+            // Native = USD → USD stays, EUR = USD*USDEUR, GBP = USD*USDGBP
             await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
-              USDtotal: ct.total / USDEUR,
-              USDcost: ct.cost / USDEUR,
-              GBPtotal: ct.total * (USDGBP / USDEUR),
-              GBPcost: ct.cost * (USDGBP / USDEUR),
-              EURtotal: ct.total,
-              EURcost: ct.cost,
+              USDtotal: ct.total,
+              USDcost: ct.cost,
+              GBPtotal: ct.total * USDGBP,
+              GBPcost: ct.cost * USDGBP,
+              EURtotal: ct.total * USDEUR,
+              EURcost: ct.cost * USDEUR,
             });
           }
           return revenue
@@ -532,22 +584,16 @@ async function getRevenue(id: string, organizationId: string) {
           });
 
           for (const ct of newCategories) {
-
             const catRevenueId = uuidv4();
-
-            const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDEUR).toFixed(2)}, ${(ct.cost / USDEUR).toFixed(2)},
-                            ${(ct.total * (USDGBP / USDEUR)).toFixed(2)}, ${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-            await pool.query(query)
+            // Native = EUR → USD = EUR/USDEUR, GBP = EUR*(USDGBP/USDEUR)
+            await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+              USDtotal: ct.total / USDEUR,
+              USDcost: ct.cost / USDEUR,
+              GBPtotal: ct.total * (USDGBP / USDEUR),
+              GBPcost: ct.cost * (USDGBP / USDEUR),
+              EURtotal: ct.total,
+              EURcost: ct.cost,
+            });
           }
           return revenue
         } else {
@@ -572,15 +618,15 @@ async function getRevenue(id: string, organizationId: string) {
             EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
           });
           for (const ct of newCategories) {
-
             const catRevenueId = uuidv4();
+            // Native = USD → USD stays, EUR = USD*USDEUR, GBP = USD*USDGBP
             await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
-              USDtotal: ct.total / USDGBP,
-              USDcost: ct.cost / USDGBP,
-              GBPtotal: ct.total,
-              GBPcost: ct.cost,
-              EURtotal: ct.total * (USDEUR / USDGBP),
-              EURcost: ct.cost * (USDEUR / USDGBP),
+              USDtotal: ct.total,
+              USDcost: ct.cost,
+              GBPtotal: ct.total * USDGBP,
+              GBPcost: ct.cost * USDGBP,
+              EURtotal: ct.total * USDEUR,
+              EURcost: ct.cost * USDEUR,
             });
           }
           return revenue
@@ -791,7 +837,7 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
 VALUES
  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18,'[]'::jsonb)`,
       [
-        supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, o.paymentMethod,
+        supplierOrderId, orgId, supplierClientId, supplierCartId, o.country, 'dropshipping',
         shippingShare, shippingShare + subtotal, o.shippingService, o.shippingMethod,
         o.address, o.status, subtotal, o.pointsRedeemed, o.pointsRedeemedAmount,
         `S-${baseKey}`, 0, supplierCartHash,  // ← non-null hash
@@ -1017,15 +1063,15 @@ export async function PATCH(
 
     /* 2a️⃣ no-op guard: if status didn’t change, skip all side-effects.
        This prevents duplicate Coinx PATCHes and email spam on retries. */
-      if (!statusChanged) {
-    await client.query("ROLLBACK");
-    if (!released) { client.release(); released = true; }
-    return NextResponse.json({
-      id,
-      status: ord.status,
-      warnings: ["No status change; skipped side-effects"],
-    });
-  }
+    if (!statusChanged) {
+      await client.query("ROLLBACK");
+      if (!released) { client.release(); released = true; }
+      return NextResponse.json({
+        id,
+        status: ord.status,
+        warnings: ["No status change; skipped side-effects"],
+      });
+    }
     /* 6️⃣ finally update order status */
     const dateCol = DATE_COL_FOR_STATUS[newStatus];
 
@@ -1273,9 +1319,9 @@ export async function PATCH(
           AND status = 'paid'`,
           [baseKey, id],
         );
-              await Promise.allSettled(
-        sibs.map((s) => getRevenue(s.id, s.organizationId))
-      );
+        await Promise.allSettled(
+          sibs.map((s) => getRevenue(s.id, s.organizationId))
+        );
 
       }
 
@@ -1483,12 +1529,12 @@ export async function PATCH(
     // ─── trigger revenue/fee **only** on the first transition to PAID ───
     if (newStatus === "paid" && ord.status !== "paid") {
       try {
-              // 1) update revenue (await to ensure it actually happens before the function exits)
-      try {
-        await getRevenue(id, organizationId);
-      } catch (e) {
-        console.warn("[revenue] failed:", e);
-      }
+        // 1) update revenue (await to ensure it actually happens before the function exits)
+        try {
+          await getRevenue(id, organizationId);
+        } catch (e) {
+          console.warn("[revenue] failed:", e);
+        }
 
         // 2) capture platform fee via internal API
         const feesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
@@ -1874,30 +1920,30 @@ export async function PATCH(
       }
     }
 
-     // Nudge the outbox drain so messages go out immediately.
- try {
-   if (process.env.INTERNAL_API_SECRET) {
-     // Prod path: background POST
-     await fetch(
-       `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`,
-       {
-         method: "POST",
-         headers: {
-           "x-internal-secret": process.env.INTERNAL_API_SECRET,
-           "x-vercel-background": "1",
-           accept: "application/json",
-         },
-         keepalive: true,
-       }
-     ).catch(() => {});
-   } else {
-     // Dev/staging fallback: run drain inline
-     const { drainNotificationOutbox } = await import("@/lib/notification-outbox");
-     await drainNotificationOutbox(12);
-   }
- } catch {
-   /* best-effort */
- }
+    // Nudge the outbox drain so messages go out immediately.
+    try {
+      if (process.env.INTERNAL_API_SECRET) {
+        // Prod path: background POST
+        await fetch(
+          `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`,
+          {
+            method: "POST",
+            headers: {
+              "x-internal-secret": process.env.INTERNAL_API_SECRET,
+              "x-vercel-background": "1",
+              accept: "application/json",
+            },
+            keepalive: true,
+          }
+        ).catch(() => { });
+      } else {
+        // Dev/staging fallback: run drain inline
+        const { drainNotificationOutbox } = await import("@/lib/notification-outbox");
+        await drainNotificationOutbox(12);
+      }
+    } catch {
+      /* best-effort */
+    }
 
 
     return NextResponse.json({ id, status: newStatus, warnings: toastWarnings });
