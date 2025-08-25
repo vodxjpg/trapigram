@@ -515,15 +515,11 @@ export function ProductForm({
                 {shared && (
                   <div className="rounded-md bg-yellow-50 p-4 mt-4">
                     <p className="text-sm text-yellow-700">
-<<<<<<< HEAD
-                      <strong>Note:</strong> This is a shared product. You can
+                      <strong>Note:</strong> This is a shared product, this
+                      means that it belongs to a dropshipping supplier. You can
                       only edit <em>Title</em>, <em>Description</em>,{" "}
-                      <em>Status</em>, <em>Prices</em>.
-=======
-                      <strong>Note:</strong> This is a shared product, this means that it belongs to a dropshipping supplier. You can only edit{" "}
-                      <em>Title</em>, <em>Description</em>, <em>Categories</em>, <em>Status</em>,{" "}
-                      <em>Sell Prices</em>.
->>>>>>> 32b5d73d3f0e5cd188ef530307e816bdc39c2c8c
+                      <em>Categories</em>, <em>Status</em>, <em>Sell Prices</em>
+                      .
                     </p>
                   </div>
                 )}
