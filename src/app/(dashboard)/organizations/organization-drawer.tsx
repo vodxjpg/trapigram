@@ -566,10 +566,10 @@ export function OrganizationDrawer({
                       {organization && (
                         <div className="mt-2 text-center">
                           <Link
-                            href="/organizations/change-secret-phrase"
-                            className="text-sm text-blue-600 hover:underline"
+                            href="/organizations/change-secret"
+                            className="text-sm text-black-600 hover:underline"
                           >
-                            Change / Reset secret phrase (requires password)
+                            Change / Reset secret phrase
                           </Link>
                         </div>
                       )}
