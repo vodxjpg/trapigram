@@ -41,7 +41,7 @@ export default function AnnouncementsPage() {
   /* redirect if not allowed */
   useEffect(() => {
     if (!viewLoading && !canView) {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [viewLoading, canView, router]);
 

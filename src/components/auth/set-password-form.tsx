@@ -80,12 +80,8 @@ export default function SetPasswordForm() {
 
       toast.success("Password set successfully!");
 
-      /* If the flow started from an invitation, finish it */
-      if (invitationId) {
-        router.push(`/accept-invitation/${invitationId}`);
-      } else {
-        router.push("/dashboard");
-      }
+      // Redirect to organization selection after successfully setting the password
+      router.push("/select-organization");
     } catch (err: any) {
       console.error("Error setting password:", err);
       toast.error(err.message ?? "Failed to set password");

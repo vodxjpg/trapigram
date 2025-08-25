@@ -29,7 +29,7 @@ export default function ShippingCompaniesPage() {
   // Redirect away if they don't have view permission
   useEffect(() => {
     if (!permLoading && !canView) {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [permLoading, canView, router]);
 

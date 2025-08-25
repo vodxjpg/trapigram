@@ -31,7 +31,7 @@ export default function PaymentMethodsPage() {
   /* redirect if no permission */
   useEffect(() => {
     if (!permLoading && !canView) {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [permLoading, canView, router]);
 

@@ -34,7 +34,7 @@ export default function SectionsPage() {
   /* redirect if not allowed to view */
   useEffect(() => {
     if (!permLoading && !canView) {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [permLoading, canView, router]);
 

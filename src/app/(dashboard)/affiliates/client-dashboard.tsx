@@ -29,7 +29,7 @@ export default function ClientDashboard() {
   // redirect away if no view
   useEffect(() => {
     if (!permLoading && !canView) {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [permLoading, canView, router]);
 

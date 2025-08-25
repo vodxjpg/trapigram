@@ -128,7 +128,7 @@ export function PaymentMethodsTable() {
 
   useEffect(() => {
     if (!permLoading && !canView) {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [permLoading, canView, router]);
 

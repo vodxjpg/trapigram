@@ -99,7 +99,7 @@ export function ShipmentsTable() {
 
   /* ── redirect if no view ───────────────────────────────────────── */
   useEffect(() => {
-    if (!permLoading && !canView) router.replace("/");
+    if (!permLoading && !canView) router.replace("/dashboard");
   }, [permLoading, canView, router]);
 
   /* ── fetch data ────────────────────────────────────────────────── */

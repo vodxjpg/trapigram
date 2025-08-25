@@ -123,7 +123,7 @@ export function SectionsTable() {
   // ── redirect if no view permission
   useEffect(() => {
     if (!viewLoading && !canView) {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [viewLoading, canView, router]);
 

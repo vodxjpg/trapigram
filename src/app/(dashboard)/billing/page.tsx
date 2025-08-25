@@ -24,7 +24,7 @@ export default function BillingPage() {
   }, [setHeaderTitle]);
 
   useEffect(() => {
-    if (!permLoading && !canView) router.replace("/");
+    if (!permLoading && !canView) router.replace("/dashboard");
   }, [permLoading, canView, router]);
 
   if (permLoading || !canView) {
