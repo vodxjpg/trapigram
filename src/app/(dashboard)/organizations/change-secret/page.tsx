@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic"; // avoid SSG/ISR on this client-only page
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -42,12 +42,18 @@ function generateSecurePhrase() {
   return btoa(String.fromCharCode(...rand));
 }
 
+const COOLDOWN_SECONDS = 60;
+const COOLDOWN_KEY = "changeSecretCooldownAt";
+
 export default function ChangeOrgSecretPage() {
   const router = useRouter();
 
   const [step, setStep] = useState<"request" | "verify" | "update">("request");
   const [busy, setBusy] = useState(false);
   const [ticketId, setTicketId] = useState<string | null>(null);
+
+  // resend cooldown
+  const [cooldown, setCooldown] = useState<number>(0);
 
   const codeForm = useForm<CodeValues>({
     resolver: zodResolver(codeSchema),
@@ -58,6 +64,38 @@ export default function ChangeOrgSecretPage() {
     resolver: zodResolver(updateSchema),
     defaultValues: { secretPhrase: "" },
   });
+
+  // Restore cooldown on mount (persisted in localStorage)
+  useEffect(() => {
+    try {
+      const ts = localStorage.getItem(COOLDOWN_KEY);
+      if (ts) {
+        const elapsed = Math.floor((Date.now() - Number(ts)) / 1000);
+        const left = Math.max(0, COOLDOWN_SECONDS - elapsed);
+        if (left > 0) setCooldown(left);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Tick down the cooldown
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const id = setInterval(() => {
+      setCooldown((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [cooldown]);
+
+  function startCooldown() {
+    setCooldown(COOLDOWN_SECONDS);
+    try {
+      localStorage.setItem(COOLDOWN_KEY, String(Date.now()));
+    } catch {
+      /* ignore */
+    }
+  }
 
   // ─────────────────────────────────────────────────────────────
   // Step 1: Request a code via email
@@ -73,6 +111,7 @@ export default function ChangeOrgSecretPage() {
       if (!resp.ok) throw new Error(body?.error || "Failed to send code");
 
       toast.success("Verification code sent to your email");
+      startCooldown();
       setStep("verify");
     } catch (err: any) {
       toast.error(err?.message || "Failed to send code");
@@ -102,6 +141,27 @@ export default function ChangeOrgSecretPage() {
       setStep("update");
     } catch (err: any) {
       toast.error(err?.message || "Failed to verify code");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Resend (same endpoint as initial request)
+  async function resendCode() {
+    try {
+      if (cooldown > 0) return;
+      setBusy(true);
+      const resp = await fetch("/api/organizations/change-secret/send-code", {
+        method: "POST",
+        credentials: "include",
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body?.error || "Failed to resend code");
+
+      toast.success("New code sent");
+      startCooldown();
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to resend code");
     } finally {
       setBusy(false);
     }
@@ -155,8 +215,12 @@ export default function ChangeOrgSecretPage() {
 
         {step === "request" && (
           <div className="space-y-4">
-            <Button className="w-full" onClick={requestCode} disabled={busy}>
-              Send verification code
+            <Button
+              className="w-full"
+              onClick={requestCode}
+              disabled={busy || cooldown > 0}
+            >
+              {cooldown > 0 ? `Try again in ${cooldown}s` : "Send verification code"}
             </Button>
             <Button
               type="button"
@@ -195,7 +259,7 @@ export default function ChangeOrgSecretPage() {
                   </FormItem>
                 )}
               />
-              <div className="flex justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <Button
                   type="button"
                   variant="outline"
@@ -204,9 +268,19 @@ export default function ChangeOrgSecretPage() {
                 >
                   Back
                 </Button>
-                <Button type="submit" disabled={busy}>
-                  Verify
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={resendCode}
+                    disabled={busy || cooldown > 0}
+                  >
+                    {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
+                  </Button>
+                  <Button type="submit" disabled={busy}>
+                    Verify
+                  </Button>
+                </div>
               </div>
             </form>
           </Form>
