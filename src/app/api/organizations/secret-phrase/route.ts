@@ -1,8 +1,7 @@
-export const runtime = "nodejs";
-
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
+import { auth } from "@/lib/auth";
 import crypto from "crypto";
 
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
@@ -19,20 +18,26 @@ function getKeyIv() {
 function encryptSecret(plain: string) {
   const { key, iv } = getKeyIv();
   const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-  let out = cipher.update(plain, "utf8", "base64");
-  out += cipher.final("base64");
-  return out;
+  let enc = cipher.update(plain, "utf8", "base64");
+  enc += cipher.final("base64");
+  return enc;
 }
 
+/**
+ * POST /api/organizations/secret-phrase
+ * Body: { secretPhrase: string, ticketId: string }
+ * Requires a previously verified ticketId (issued by /change-secret/verify-code).
+ */
 export async function POST(req: NextRequest) {
   try {
+    // session/org context
+    const session = await auth.api.getSession({ headers: req.headers });
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
-    const { userId, organizationId } = ctx;
-
-    if (!userId || !organizationId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { organizationId } = ctx;
+    const userId = session.user.id;
 
     const { secretPhrase, ticketId } = (await req.json()) as {
       secretPhrase?: string;
@@ -46,49 +51,59 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing verification ticket" }, { status: 400 });
     }
 
-    // Validate ticket (code row) belongs to this user+org and not used/expired
-    const { rows } = await pool.query(
-      `SELECT id, "userId", "organizationId", "expiresAt", used
-         FROM "orgSecretCode"
-        WHERE id = $1`,
-      [ticketId]
-    );
-    if (!rows.length) {
-      return NextResponse.json({ error: "Invalid ticket" }, { status: 400 });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Validate ticket (must be verified, not consumed, not expired)
+      const ticketRes = await client.query(
+        `SELECT "id", "expiresAt"
+           FROM "orgSecretCode"
+          WHERE "ticketId" = $1
+            AND "organizationId" = $2
+            AND "userId" = $3
+            AND "verifiedAt" IS NOT NULL
+            AND "consumedAt" IS NULL
+          ORDER BY "createdAt" DESC
+          LIMIT 1
+          FOR UPDATE`,
+        [ticketId, organizationId, userId]
+      );
+
+      if (ticketRes.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: "Invalid or used ticket" }, { status: 400 });
+      }
+
+      const { expiresAt } = ticketRes.rows[0];
+      if (new Date(expiresAt).getTime() < Date.now()) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: "Ticket expired" }, { status: 400 });
+      }
+
+      const encrypted = encryptSecret(secretPhrase);
+
+      // Update organization secret
+      await client.query(
+        `UPDATE "organization" SET "encryptedSecret" = $1 WHERE id = $2`,
+        [encrypted, organizationId]
+      );
+
+      // Consume ticket
+      await client.query(
+        `UPDATE "orgSecretCode" SET "consumedAt" = now() WHERE "ticketId" = $1`,
+        [ticketId]
+      );
+
+      await client.query("COMMIT");
+      return NextResponse.json({ ok: true });
+    } catch (e) {
+      await client.query("ROLLBACK");
+      console.error("[POST /api/organizations/secret-phrase] tx error:", e);
+      return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    } finally {
+      client.release();
     }
-
-    const t = rows[0] as {
-      id: string;
-      userId: string;
-      organizationId: string;
-      expiresAt: string;
-      used: boolean;
-    };
-
-    if (t.userId !== userId || t.organizationId !== organizationId) {
-      return NextResponse.json({ error: "Ticket does not match session" }, { status: 403 });
-    }
-    if (t.used) {
-      return NextResponse.json({ error: "Ticket already used" }, { status: 400 });
-    }
-    if (Date.now() > new Date(t.expiresAt).getTime()) {
-      return NextResponse.json({ error: "Ticket expired" }, { status: 400 });
-    }
-
-    // Encrypt and store on organization
-    const encrypted = encryptSecret(secretPhrase);
-    await pool.query(
-      `UPDATE "organization" SET "encryptedSecret" = $1 WHERE id = $2`,
-      [encrypted, organizationId]
-    );
-
-    // Invalidate ticket
-    await pool.query(
-      `UPDATE "orgSecretCode" SET used = true, "usedAt" = $2 WHERE id = $1`,
-      [ticketId, new Date()]
-    );
-
-    return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[POST /api/organizations/secret-phrase] error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
