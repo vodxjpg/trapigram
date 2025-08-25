@@ -18,6 +18,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
                 i."countType", 
                 i.countries, 
                 i."createdAt", 
+                i."isCompleted",
                 w.name, 
                 u.name AS username, 
                 u.email
@@ -49,7 +50,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
                 product.sku = result.sku
             }
         }
-
         return NextResponse.json({ inventory, countProduct }, { status: 201 });
     } catch (error: any) {
         console.error("[GET /api/inventory/[id]] error:", error);
@@ -109,41 +109,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         const checkInventory = checkInventoryResult.rows.length
 
         if (checkInventory === 0) {
-            const completeInventoryQuery = `UPDATE "inventoryCount" SET "isCompleted" = TRUE WHERE id = '${id}'`
+            const completeInventoryQuery = `UPDATE "inventoryCount" SET "isCounted" = TRUE WHERE id = '${id}'`
             await pool.query(completeInventoryQuery)
-
-            const checkInventoryQuery = `SELECT * FROM "inventoryCountItems" WHERE "inventoryCountId" = '${id}'`
-            const checkInventoryResult = await pool.query(checkInventoryQuery)
-            const checkInventory = checkInventoryResult.rows
-
-            const warehouseQuery = `SELECT "warehouseId" FROM "inventoryCount" WHERE id='${id}'`
-            const warehouseResult = await pool.query(warehouseQuery)
-            const warehouseId = warehouseResult.rows[0].warehouseId
-
-            for (const product of checkInventory) {
-                if (typeof product.discrepancyReason === "string") {
-                    if (typeof product.variationId === "string") {
-                        const updateStockQuery = `
-                            UPDATE "warehouseStock"
-                            SET quantity = ${product.countedQuantity}, "updatedAt" = NOW()
-                            WHERE "warehouseId" = '${warehouseId}'
-                            AND "productId" = '${product.productId}'
-                            AND country = '${product.country}'
-                            AND "variationId" = '${product.variationId}'
-                            RETURNING *`
-                        await pool.query(updateStockQuery)
-                    } else {
-                        const updateStockQuery = `
-                            UPDATE "warehouseStock"
-                            SET quantity = ${product.countedQuantity}, "updatedAt" = NOW()
-                            WHERE "warehouseId" = '${warehouseId}'
-                            AND "productId" = '${product.productId}'
-                            AND country = '${product.country}'
-                            RETURNING *`
-                        await pool.query(updateStockQuery)
-                    }
-                }
-            }
         }
         return NextResponse.json(result, { status: 200 });
     } catch (error) {

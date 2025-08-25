@@ -10,6 +10,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Table,
   TableBody,
   TableCell,
@@ -41,6 +47,8 @@ type InventoryData = {
   createdAt: string;
   username: string;
   email: string;
+  isCompleted: boolean;
+  isCounted: boolean;
 };
 
 /**
@@ -86,14 +94,18 @@ export default function InventoryDetailPage() {
   // permissions
   const { data: activeOrg } = authClient.useActiveOrganization();
   const orgId = activeOrg?.id ?? null;
-  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(orgId, { stockManagement: ["view"] });
-  const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, { stockManagement: ["update"] });
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { stockManagement: ["view"] }
+  );
+  const { hasPermission: canUpdate, isLoading: updateLoading } =
+    useHasPermission(orgId, { stockManagement: ["update"] });
   useEffect(() => {
     if (!viewLoading && !canView) router.replace("/inventory");
   }, [viewLoading, canView, router]);
   // ❌ Don’t early-return before hooks
- const permsLoading = viewLoading || updateLoading;
- const canShow = !permsLoading && canView;
+  const permsLoading = viewLoading || updateLoading;
+  const canShow = !permsLoading && canView;
   const [inventory, setInventory] = useState<InventoryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +114,9 @@ export default function InventoryDetailPage() {
     []
   );
   const [countriesCounted, setCountriesCounted] = useState<string[]>([]);
+  const [savingRows, setSavingRows] = useState<Record<string, boolean>>({});
+  const setSaving = (id: string, v: boolean) =>
+    setSavingRows((prev) => ({ ...prev, [id]: v }));
 
   const [currentPage, setCurrentPage] = useState(1);
   const [countedValues, setCountedValues] = useState<Record<string, string>>(
@@ -113,32 +128,61 @@ export default function InventoryDetailPage() {
   const [discrepancyReason, setDiscrepancyReason] = useState("");
   const [pendingProductId, setPendingProductId] = useState<string | null>(null);
 
+  // For the "to be counted" countries
+  const [tbcTab, setTbcTab] = useState<string>(""); // to-be-counted
+  const [cntTab, setCntTab] = useState<string>(""); // counted
+
+  // Check if there are any products not yet counted
+  const hasUncountedProducts = products.some((p) => !p.isCounted);
+
+  // Final condition for disabling the Continue button
+  const disableContinue =
+    hasUncountedProducts || inventory?.isCompleted === true;
+
+  useEffect(() => {
+    if (countriesToBeCounted.length === 0) {
+      setTbcTab("");
+      return;
+    }
+    if (!countriesToBeCounted.includes(tbcTab)) {
+      setTbcTab(countriesToBeCounted[0]); // pick the first available
+    }
+  }, [countriesToBeCounted, tbcTab]);
+
+  useEffect(() => {
+    if (countriesCounted.length === 0) {
+      setCntTab("");
+      return;
+    }
+    if (!countriesCounted.includes(cntTab)) {
+      setCntTab(countriesCounted[0]);
+    }
+  }, [countriesCounted, cntTab]);
+
   const fetchInventory = useCallback(async () => {
     setLoading(true);
     try {
-        if (!canView) return; // guard
-   const response = await fetch(`/api/inventory/${id}`);
+      if (!canView) return; // guard
+      const response = await fetch(`/api/inventory/${id}`);
       if (!response.ok) throw new Error("Inventory not found");
       const data = await response.json();
       const { inventory, countProduct } = data;
       console.log(inventory);
       setInventory(inventory);
 
-      const parsedProducts: Product[] = countProduct.map(
-        (p: any, i: number) => ({
-          id: `${p.sku}-${p.country}-${i}`,
-          productId: p.id,
-          name: p.title,
-          sku: p.sku,
-          expectedQuantity: p.expectedQuantity,
-          countedQuantity: p.countedQuantity,
-          country: p.country,
-          variationId: p.variationId,
-          isCounted: p.isCounted,
-          // NEW: include discrepancyReason from API
-          discrepancyReason: p.discrepancyReason ?? "",
-        })
-      );
+      // when mapping API products → UI products
+      const parsedProducts: Product[] = countProduct.map((p: any) => ({
+        id: `${p.id}:${p.variationId ?? "no-var"}:${p.country}`, // ← stable key
+        productId: p.id,
+        name: p.title,
+        sku: p.sku,
+        expectedQuantity: p.expectedQuantity,
+        countedQuantity: p.countedQuantity,
+        country: p.country,
+        variationId: p.variationId,
+        isCounted: p.isCounted,
+        discrepancyReason: p.discrepancyReason ?? "",
+      }));
       setProducts(parsedProducts);
 
       const toBeCountedCountries = parsedProducts
@@ -155,7 +199,7 @@ export default function InventoryDetailPage() {
     } finally {
       setLoading(false);
     }
- }, [id, canView]);
+  }, [id, canView]);
 
   useEffect(() => {
     if (id) fetchInventory();
@@ -165,47 +209,132 @@ export default function InventoryDetailPage() {
     setCountedValues((prev) => ({ ...prev, [productId]: value }));
   };
 
-  const confirmDiscrepancySave = async () => {
-    if (!canUpdate) return;
-    if (!pendingProductId) return;
-    const product = products.find((p) => p.id === pendingProductId);
-    const value = countedValues[pendingProductId];
-    if (!product || value == null) return;
-    const numeric = Number(value);
+  // Optimistically mark a row as counted and re-slice the country tabs
+  const applyLocalSave = (rowId: string, qty: number, reason?: string) => {
+    setProducts((prev) => {
+      const next = prev.map((p) =>
+        p.id === rowId
+          ? {
+              ...p,
+              countedQuantity: qty,
+              isCounted: true,
+              discrepancyReason: reason ?? p.discrepancyReason,
+            }
+          : p
+      );
 
-    await saveProductCount(id!, { ...product }, numeric, discrepancyReason);
-    setShowDiscrepancyModal(false);
-    setDiscrepancyReason("");
-    setPendingProductId(null);
+      // recompute the country lists from the updated products
+      const toBe = Array.from(
+        new Set(next.filter((p) => !p.isCounted).map((p) => p.country))
+      );
+      const done = Array.from(
+        new Set(next.filter((p) => p.isCounted).map((p) => p.country))
+      );
+      setCountriesToBeCounted(toBe);
+      setCountriesCounted(done);
+
+      return next;
+    });
+
+    // clear the input value for that row
     setCountedValues((prev) => {
       const copy = { ...prev };
-      delete copy[pendingProductId];
+      delete copy[rowId];
       return copy;
     });
-    await fetchInventory();
   };
 
-  const handleSave = async (productId: string) => {
-    if (!canUpdate) return;
-    const product = products.find((p) => p.id === productId);
-    const value = countedValues[productId];
-    if (!product || value == null) return;
-    const numeric = Number(value);
+  const confirmDiscrepancySave = async () => {
+    if (!canUpdate || !pendingProductId) return;
+    const product = products.find((p) => p.id === pendingProductId);
+    const raw = countedValues[pendingProductId];
+    if (!product || raw == null) return;
 
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric) || numeric < 0) return;
+
+    // Only include reason if provided
+    const reason = discrepancyReason.trim();
+    applyLocalSave(pendingProductId, numeric, reason || undefined);
+
+    // Close modal & reset UI
+    setShowDiscrepancyModal(false);
+    setDiscrepancyReason("");
+    const rowId = pendingProductId;
+    setPendingProductId(null);
+
+    // Persist in background
+    setSaving(rowId, true);
+    try {
+      await saveProductCount(id!, { ...product }, numeric, reason || undefined);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSaving(rowId, false);
+    }
+  };
+
+  const handleSave = async (rowId: string) => {
+    if (!canUpdate) return;
+    const product = products.find((p) => p.id === rowId);
+    const raw = countedValues[rowId];
+    if (!product || raw == null) return;
+
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric) || numeric < 0) return; // basic guard
+
+    // If quantities differ, open the modal (keep your existing flow)
     if (numeric !== product.expectedQuantity) {
-      setPendingProductId(productId);
+      setPendingProductId(rowId);
       setShowDiscrepancyModal(true);
       return;
     }
 
-    await saveProductCount(id!, { ...product }, numeric);
-    setCountedValues((prev) => {
-      const copy = { ...prev };
-      delete copy[productId];
-      return copy;
-    });
-    await fetchInventory();
+    // Optimistic UI update first
+    applyLocalSave(rowId, numeric);
+
+    // Send to server in the background (disable the row while saving)
+    setSaving(rowId, true);
+    try {
+      await saveProductCount(id!, { ...product }, numeric);
+    } catch (e) {
+      // If it failed, you can roll back or just inform the user.
+      // Minimal: show a toast and refetch once (optional).
+      console.error(e);
+    } finally {
+      setSaving(rowId, false);
+    }
   };
+
+  // ─── Function to complete inventory ───
+  async function completeInventory(inventoryId: string) {
+    try {
+      const res = await fetch(`/api/inventory/${inventoryId}/complete`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id: inventoryId }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to complete inventory");
+      }
+
+      const data = await res.json();
+      console.log("✅ Inventory completed:", data);
+
+      // update local state so UI reflects immediately
+      setInventory((prev) => (prev ? { ...prev, isCompleted: true } : prev));
+
+      // optional: redirect afterwards
+      // router.push("/inventory");
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Something went wrong");
+    }
+  }
 
   const getFilteredProducts = (
     country: string,
@@ -277,8 +406,7 @@ export default function InventoryDetailPage() {
                         handleCountedChange(product.id, e.target.value)
                       }
                       className="w-20"
-                      disabled={!canUpdate}
-
+                      disabled={!canUpdate || !!savingRows[product.id]}
                     />
                   )}
                 </TableCell>
@@ -294,8 +422,11 @@ export default function InventoryDetailPage() {
                     <Button
                       size="sm"
                       onClick={() => handleSave(product.id)}
-                      disabled={!countedValues[product.id] || !canUpdate}
-                    >
+                      disabled={
+                        !countedValues[product.id] ||
+                        !canUpdate ||
+                        !!savingRows[product.id]
+                      }
                     >
                       Save
                     </Button>
@@ -344,12 +475,12 @@ export default function InventoryDetailPage() {
   };
 
   // Gate AFTER hooks are declared
-if (permsLoading) {
-  return <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
-}
-if (!canShow) {
-  return null; // redirect effect runs
-}
+  if (permsLoading) {
+    return <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
+  }
+  if (!canShow) {
+    return null; // redirect effect runs
+  }
 
   if (loading) return <p className="p-4 text-sm">Loading...</p>;
   if (error) return <p className="p-4 text-sm text-red-500">{error}</p>;
@@ -473,10 +604,10 @@ if (!canShow) {
       </Card>
 
       {/* Discrepancy Modal */}
-         <Dialog
-      open={showDiscrepancyModal && canUpdate}
-      onOpenChange={setShowDiscrepancyModal}
-    >
+      <Dialog
+        open={showDiscrepancyModal && canUpdate}
+        onOpenChange={setShowDiscrepancyModal}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Discrepancy Reason</DialogTitle>
@@ -498,14 +629,36 @@ if (!canShow) {
               Cancel
             </Button>
             <Button
-                       onClick={confirmDiscrepancySave}
-           disabled={!discrepancyReason.trim() || !canUpdate}
+              onClick={confirmDiscrepancySave}
+              disabled={!canUpdate} // ⬅️ removed the `!discrepancyReason.trim()` part
             >
               Save
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* ─── Footer Actions ─── */}
+      <div className="flex justify-end gap-3 mt-8">
+        <Button
+          variant="outline"
+          onClick={() => router.push("/inventory")}
+          className="px-6"
+        >
+          Go back
+        </Button>
+
+        <Button
+          onClick={() => inventory?.id && completeInventory(inventory.id)}
+          disabled={disableContinue}
+          className={`px-6 ${
+            disableContinue
+              ? "bg-gray-200 text-gray-500 cursor-not-allowed hover:bg-gray-200"
+              : ""
+          }`}
+        >
+          Continue
+        </Button>
+      </div>
     </div>
   );
 }

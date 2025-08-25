@@ -813,7 +813,7 @@ interface DB {
     amount: string;        // numeric
   };
 
-    /** Outbox for fan-out notifications (drained by cron) */
+  /** Outbox for fan-out notifications (drained by cron) */
   notificationOutbox: {
     id: string;
     organizationId: string;
