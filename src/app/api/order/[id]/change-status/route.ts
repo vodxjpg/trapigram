@@ -1005,12 +1005,15 @@ export async function PATCH(
 
     /* 2a️⃣ no-op guard: if status didn’t change, skip all side-effects.
        This prevents duplicate Coinx PATCHes and email spam on retries. */
-    if (!statusChanged) {
-      await client.query("ROLLBACK");
-      client.release();
-      return NextResponse.json({ id, status: ord.status, warnings: ["No status change; skipped side-effects"] });
-    }
-
+      if (!statusChanged) {
+    await client.query("ROLLBACK");
+    if (!released) { client.release(); released = true; }
+    return NextResponse.json({
+      id,
+      status: ord.status,
+      warnings: ["No status change; skipped side-effects"],
+    });
+  }
     /* 6️⃣ finally update order status */
     const dateCol = DATE_COL_FOR_STATUS[newStatus];
 
@@ -1258,11 +1261,9 @@ export async function PATCH(
           AND status = 'paid'`,
           [baseKey, id],
         );
-        for (const s of sibs) {
-          void getRevenue(s.id, s.organizationId).catch((e) =>
-            console.warn("[cascade] revenue sibling failed:", s.id, e)
-          );
-        }
+              await Promise.allSettled(
+        sibs.map((s) => getRevenue(s.id, s.organizationId))
+      );
 
       }
 
@@ -1470,10 +1471,12 @@ export async function PATCH(
     // ─── trigger revenue/fee **only** on the first transition to PAID ───
     if (newStatus === "paid" && ord.status !== "paid") {
       try {
-        // 1) update revenue (fire-and-forget to avoid blocking the request)
-        void getRevenue(id, organizationId).catch((e) =>
-          console.warn("[revenue] async base failed:", e)
-        );
+              // 1) update revenue (await to ensure it actually happens before the function exits)
+      try {
+        await getRevenue(id, organizationId);
+      } catch (e) {
+        console.warn("[revenue] failed:", e);
+      }
 
         // 2) capture platform fee via internal API
         const feesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
@@ -1859,22 +1862,31 @@ export async function PATCH(
       }
     }
 
-    // Fire-and-forget: nudge the outbox drain so users see messages quickly.
-    try {
-      // Authorized POST to internal drain (don’t await; keep request fast)
-      fetch(
-        `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`,
-        {
-          method: "POST",
-          headers: {
-            "x-internal-secret": process.env.INTERNAL_API_SECRET || "",
-            // ensure this drain runs as a background invocation on Vercel
-            "x-vercel-background": "1"
-          },
-          keepalive: true,
-        }
-      ).catch(() => { });
-    } catch { }
+     // Nudge the outbox drain so messages go out immediately.
+ try {
+   if (process.env.INTERNAL_API_SECRET) {
+     // Prod path: background POST
+     await fetch(
+       `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`,
+       {
+         method: "POST",
+         headers: {
+           "x-internal-secret": process.env.INTERNAL_API_SECRET,
+           "x-vercel-background": "1",
+           accept: "application/json",
+         },
+         keepalive: true,
+       }
+     ).catch(() => {});
+   } else {
+     // Dev/staging fallback: run drain inline
+     const { drainNotificationOutbox } = await import("@/lib/notification-outbox");
+     await drainNotificationOutbox(12);
+   }
+ } catch {
+   /* best-effort */
+ }
+
 
     return NextResponse.json({ id, status: newStatus, warnings: toastWarnings });
   } catch (e) {
