@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+export const dynamic = "force-dynamic"; // avoid SSG/ISR on this client-only page
+
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import { authClient } from "@/lib/auth-client";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -19,8 +20,13 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 
+// ─────────────────────────────────────────────────────────────
+// Schemas
+// ─────────────────────────────────────────────────────────────
 const codeSchema = z.object({
-  code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code"),
+  code: z
+    .string()
+    .regex(/^\d{6}$/, "Enter the 6-digit code we emailed you"),
 });
 
 const updateSchema = z.object({
@@ -30,6 +36,7 @@ const updateSchema = z.object({
 type CodeValues = z.infer<typeof codeSchema>;
 type UpdateValues = z.infer<typeof updateSchema>;
 
+// Utility
 function generateSecurePhrase() {
   const rand = crypto.getRandomValues(new Uint8Array(16));
   return btoa(String.fromCharCode(...rand));
@@ -37,15 +44,10 @@ function generateSecurePhrase() {
 
 export default function ChangeOrgSecretPage() {
   const router = useRouter();
-  const { data: session } = authClient.useSession();
-  const email = session?.user?.email || "";
 
   const [step, setStep] = useState<"request" | "verify" | "update">("request");
   const [busy, setBusy] = useState(false);
-  const [showSecret, setShowSecret] = useState(false);
   const [ticketId, setTicketId] = useState<string | null>(null);
-  const [cooldown, setCooldown] = useState<number>(0);
-  const cooldownRef = useRef<NodeJS.Timeout | null>(null);
 
   const codeForm = useForm<CodeValues>({
     resolver: zodResolver(codeSchema),
@@ -57,72 +59,63 @@ export default function ChangeOrgSecretPage() {
     defaultValues: { secretPhrase: "" },
   });
 
-  useEffect(() => {
-    return () => {
-      if (cooldownRef.current) clearInterval(cooldownRef.current);
-    };
-  }, []);
-
-  async function sendCode() {
-    if (!email) {
-      toast.error("No email found for your session.");
-      return;
-    }
+  // ─────────────────────────────────────────────────────────────
+  // Step 1: Request a code via email
+  // ─────────────────────────────────────────────────────────────
+  async function requestCode() {
     try {
       setBusy(true);
-      const res = await fetch("/api/organizations/change-secret/send-code", {
+      const resp = await fetch("/api/organizations/change-secret/send-code", {
         method: "POST",
         credentials: "include",
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body?.error || "Failed to send code");
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body?.error || "Failed to send code");
 
       toast.success("Verification code sent to your email");
       setStep("verify");
-
-      // 60s cooldown for re-sends
-      setCooldown(60);
-      cooldownRef.current = setInterval(() => {
-        setCooldown((s) => {
-          if (s <= 1 && cooldownRef.current) clearInterval(cooldownRef.current);
-          return Math.max(0, s - 1);
-        });
-      }, 1000);
-    } catch (e: any) {
-      toast.error(e?.message || "Could not send code");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to send code");
     } finally {
       setBusy(false);
     }
   }
 
-  async function verifyCode(values: CodeValues) {
+  // ─────────────────────────────────────────────────────────────
+  // Step 2: Verify the 6-digit code → receive ticketId
+  // ─────────────────────────────────────────────────────────────
+  async function onVerify(values: CodeValues) {
     try {
       setBusy(true);
-      const res = await fetch("/api/organizations/change-secret/verify-code", {
+      const resp = await fetch("/api/organizations/change-secret/verify-code", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: values.code }),
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body?.error || "Invalid or expired code");
-
+      const body = await resp.json();
+      if (!resp.ok || !body?.ticketId) {
+        throw new Error(body?.error || "Invalid or expired code");
+      }
       setTicketId(body.ticketId);
       toast.success("Code verified");
       setStep("update");
-    } catch (e: any) {
-      toast.error(e?.message || "Invalid or expired code");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to verify code");
     } finally {
       setBusy(false);
     }
   }
 
+  // ─────────────────────────────────────────────────────────────
+  // Step 3: Submit new secret phrase with ticketId
+  // ─────────────────────────────────────────────────────────────
   async function onUpdate(values: UpdateValues) {
-    if (!ticketId) {
-      toast.error("Missing verification ticket");
-      return;
-    }
     try {
+      if (!ticketId) {
+        toast.error("Missing verification ticket");
+        return;
+      }
       setBusy(true);
       const resp = await fetch("/api/organizations/secret-phrase", {
         method: "POST",
@@ -139,7 +132,7 @@ export default function ChangeOrgSecretPage() {
       toast.success("Organization secret phrase updated");
       router.push("/organizations");
     } catch (err: any) {
-      toast.error(err?.message || "Failed to update secret");
+      toast.error(err?.message || "Failed to update secret phrase");
     } finally {
       setBusy(false);
     }
@@ -152,45 +145,57 @@ export default function ChangeOrgSecretPage() {
           Change Organization Secret Phrase
         </h1>
         <p className="text-sm text-muted-foreground mb-6">
-          {step === "request" && "We'll email you a 6-digit code to confirm it's you."}
-          {step === "verify" && `Enter the 6-digit code we sent to ${email}.`}
-          {step === "update" && "Now set your new secret phrase."}
+          {step === "request" &&
+            "We’ll email you a 6-digit code to verify this change."}
+          {step === "verify" &&
+            "Enter the 6-digit code we emailed you."}
+          {step === "update" &&
+            "Set your new secret phrase."}
         </p>
 
         {step === "request" && (
           <div className="space-y-4">
-            <div>
-              <FormLabel>Email</FormLabel>
-              <Input value={email} readOnly />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => router.back()} disabled={busy}>
-                Cancel
-              </Button>
-              <Button onClick={sendCode} disabled={busy}>
-                Send code
-              </Button>
-            </div>
+            <Button className="w-full" onClick={requestCode} disabled={busy}>
+              Send verification code
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => router.back()}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
           </div>
         )}
 
         {step === "verify" && (
           <Form {...codeForm}>
-            <form onSubmit={codeForm.handleSubmit(verifyCode)} className="space-y-4">
+            <form onSubmit={codeForm.handleSubmit(onVerify)} className="space-y-4">
               <FormField
                 control={codeForm.control}
                 name="code"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Verification code</FormLabel>
+                    <FormLabel>6-digit code</FormLabel>
                     <FormControl>
-                      <Input inputMode="numeric" placeholder="123456" maxLength={6} {...field} />
+                      <Input
+                        {...field}
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="123456"
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/\D/g, "").slice(0, 6);
+                          field.onChange(v);
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              <div className="flex items-center justify-between">
+              <div className="flex justify-between">
                 <Button
                   type="button"
                   variant="outline"
@@ -199,19 +204,9 @@ export default function ChangeOrgSecretPage() {
                 >
                   Back
                 </Button>
-                <div className="flex items-center gap-3">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={sendCode}
-                    disabled={busy || cooldown > 0}
-                  >
-                    {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
-                  </Button>
-                  <Button type="submit" disabled={busy}>
-                    Verify
-                  </Button>
-                </div>
+                <Button type="submit" disabled={busy}>
+                  Verify
+                </Button>
               </div>
             </form>
           </Form>
@@ -230,17 +225,10 @@ export default function ChangeOrgSecretPage() {
                       <FormControl>
                         <Input
                           {...field}
-                          type={showSecret ? "text" : "password"}
+                          type="password"
                           placeholder="Enter new secret phrase"
                         />
                       </FormControl>
-                      <button
-                        className="absolute right-2 top-2 text-xs text-gray-500"
-                        type="button"
-                        onClick={() => setShowSecret((s) => !s)}
-                      >
-                        {showSecret ? "Hide" : "Show"}
-                      </button>
                     </div>
                     <FormMessage />
                   </FormItem>
@@ -250,14 +238,16 @@ export default function ChangeOrgSecretPage() {
                 type="button"
                 variant="outline"
                 className="w-full"
-                onClick={() => updateForm.setValue("secretPhrase", generateSecurePhrase())}
+                onClick={() =>
+                  updateForm.setValue("secretPhrase", generateSecurePhrase())
+                }
                 disabled={busy}
               >
                 Generate Secure Phrase
               </Button>
               <p className="text-xs text-muted-foreground">
-                This phrase will be encrypted on the server and stored for your organization. Don’t
-                lose it—some actions will require it.
+                This phrase will be encrypted on the server and stored for your
+                organization. Don’t lose it—some actions will require it.
               </p>
               <div className="flex justify-between">
                 <Button
