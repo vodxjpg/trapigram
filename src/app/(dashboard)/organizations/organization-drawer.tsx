@@ -1,5 +1,5 @@
 "use client"
-
+import Link from "next/link";
 import type React from "react";
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
@@ -499,7 +499,7 @@ export function OrganizationDrawer({
                               >
                                 <ReactCountryFlag
                                   countryCode={country.code}
-                                    svg
+                                  svg
                                   className="inline-block mr-1"
                                 />
                                 <span className="mr-2 text-sm">
@@ -563,6 +563,16 @@ export function OrganizationDrawer({
                           : "Enter a secret phrase or generate one."}
                       </FormDescription>
                       <FormMessage />
+                      {organization && (
+                        <div className="mt-2 text-center">
+                          <Link
+                            href="/organizations/change-secret-phrase"
+                            className="text-sm text-blue-600 hover:underline"
+                          >
+                            Change / Reset secret phrase (requires password)
+                          </Link>
+                        </div>
+                      )}
                     </FormItem>
                   )}
                 />
