@@ -2,6 +2,7 @@
 import { db } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
+import { sql } from "kysely";
 import {
   sendNotification,
   type NotificationChannel,
@@ -124,25 +125,92 @@ export async function enqueueNotificationFanout(opts: {
   }
 }
 
+/**
+ * Atomically claim up to `limit` due jobs using row locks to prevent
+ * concurrent drains from picking the same rows (at-most-once processing).
+ *
+ * Strategy:
+ *  1) In a transaction: SELECT ids FOR UPDATE SKIP LOCKED LIMIT n
+ *  2) Immediately “claim” them by pushing nextAttemptAt into the near future
+ *     (acts like a visibility timeout)
+ *  3) RETURN the claimed rows for processing
+ */
+async function claimDueOutboxRows(limit: number): Promise<
+  Array<
+    Pick<
+      OutboxRow,
+      | "id"
+      | "organizationId"
+      | "orderId"
+      | "type"
+      | "trigger"
+      | "channel"
+      | "payload"
+      | "attempts"
+      | "maxAttempts"
+    >
+  >
+> {
+  const holdMs = 120_000; // 2 minutes visibility timeout
+  const holdUntil = new Date(Date.now() + holdMs);
+
+  return db.transaction().execute(async (trx) => {
+    // Step 1: lock a batch of due rows
+    const locked = await trx.executeQuery(
+      sql<{ id: string }>`
+        SELECT id
+        FROM "notificationOutbox"
+        WHERE status = 'pending' AND "nextAttemptAt" <= now()
+        ORDER BY "nextAttemptAt" ASC, "createdAt" ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${limit}
+      `,
+    );
+    const ids = locked.rows.map((r) => r.id);
+    if (ids.length === 0) return [];
+
+    // Step 2: claim them by moving nextAttemptAt forward
+    const claimed = await trx
+      .updateTable("notificationOutbox")
+      .set({
+        nextAttemptAt: holdUntil,
+        updatedAt: new Date(),
+      })
+      .where("id", "in", ids)
+      .returning([
+        "id",
+        "organizationId",
+        "orderId",
+        "type",
+        "trigger",
+        "channel",
+        "payload",
+        "attempts",
+        "maxAttempts",
+      ])
+      .execute();
+
+    return claimed as Array<
+      Pick<
+        OutboxRow,
+        | "id"
+        | "organizationId"
+        | "orderId"
+        | "type"
+        | "trigger"
+        | "channel"
+        | "payload"
+        | "attempts"
+        | "maxAttempts"
+      >
+    >;
+  });
+}
+
 /** Process up to `limit` due items; returns { done, sent } */
 export async function drainNotificationOutbox(limit = 10) {
-  const due = await db
-    .selectFrom("notificationOutbox")
-    .select([
-      "id",
-      "organizationId",
-      "orderId",
-      "type",
-      "trigger",
-      "channel",
-      "payload",
-      "attempts",
-      "maxAttempts",
-    ])
-    .where("status", "=", "pending")
-    .where("nextAttemptAt", "<=", new Date())
-    .limit(limit)
-    .execute();
+  // Atomically claim a batch for this worker to avoid duplicate sends
+  const due = await claimDueOutboxRows(Math.max(1, Math.min(limit, 50)));
 
   let sent = 0;
 
