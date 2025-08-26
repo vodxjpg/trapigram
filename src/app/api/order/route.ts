@@ -374,51 +374,8 @@ export async function POST(req: NextRequest) {
     await pool.query("BEGIN");
     await pool.query(updCartSQL, updCartVals);
 
-    /* ── RESERVE STOCK (unchanged) ───────────────────────────── */
-    const lineSql = `
-      SELECT cp."productId", cp.quantity, p."manageStock", p."allowBackorders"
-      FROM   "cartProducts" cp
-      JOIN   products p ON p.id = cp."productId"
-      WHERE  cp."cartId" = $1
-    `;
-    const { rows: cartLines } = await pool.query(lineSql, [cartId]);
-
-    for (const ln of cartLines) {
-      if (!ln.manageStock) continue;
-      let qtyLeft = ln.quantity;
-
-      const { rows: whRows } = await pool.query(
-        `SELECT id, quantity
-           FROM "warehouseStock"
-          WHERE "productId" = $1
-            AND country      = $2
-            AND quantity     > 0
-          ORDER BY quantity DESC
-          FOR UPDATE`,
-        [ln.productId, country],
-      );
-
-      for (const wh of whRows) {
-        const take = Math.min(wh.quantity, qtyLeft);
-        await pool.query(
-          `UPDATE "warehouseStock"
-              SET quantity  = quantity - $1,
-                  "updatedAt" = NOW()
-            WHERE id = $2`,
-          [take, wh.id],
-        );
-        qtyLeft -= take;
-        if (qtyLeft === 0) break;
-      }
-
-      if (qtyLeft > 0 && !ln.allowBackorders) {
-        await pool.query("ROLLBACK");
-        return NextResponse.json(
-          { error: "out_of_stock", productId: ln.productId },
-          { status: 400 },
-        );
-      }
-    }
+   
+    // order deduct block
 
     const r = await pool.query(insertSQL, insertValues);
     await pool.query("COMMIT");
