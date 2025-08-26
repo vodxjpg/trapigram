@@ -4,6 +4,8 @@
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
+import { createHash } from "crypto";
+import { sql } from "kysely";
 
 /** ──────────────────────────────────────────────────────────────
  * Keep this list in sync everywhere (forms, API routes, etc.)
@@ -117,11 +119,11 @@ export async function sendNotification(params: SendNotificationParams) {
   const hasUserTpl = !!tplUser;
   const hasAdminTpl = !!tplAdmin;
 
-    // Decide fan-out based on trigger  template presence
+  // Decide fan-out based on trigger + template presence
   const suppressAdminFanout = trigger === "user_only_email";
-  const suppressUserFanout  = trigger === "admin_only";
-  const shouldAdminFanout   = !suppressAdminFanout && hasAdminTpl;
-  const shouldUserFanout    = !suppressUserFanout; // user can still receive fallback content
+  const suppressUserFanout = trigger === "admin_only";
+  const shouldAdminFanout = !suppressAdminFanout && hasAdminTpl;
+  const shouldUserFanout = !suppressUserFanout; // user can still receive fallback content
 
   /* 2️⃣ subjects & bodies – generic (all channels) */
   const makeRawSub = (
@@ -222,8 +224,6 @@ export async function sendNotification(params: SendNotificationParams) {
     })
     .execute();
 
-
-
   /* 6️⃣ channel fan-out */
   /* — EMAIL — */
   if (channels.includes("email")) {
@@ -300,7 +300,6 @@ export async function sendNotification(params: SendNotificationParams) {
     }
   }
 
-
   /* — WEBHOOK — */
   if (channels.includes("webhook")) {
     if (shouldAdminFanout) {
@@ -310,15 +309,13 @@ export async function sendNotification(params: SendNotificationParams) {
 
   /* — TELEGRAM — */
   if (channels.includes("telegram")) {
-    // 🔧 Only post to admin groups on admin-only triggers.
-    // Buyer-facing notifications will DM the client (if linked) but won't hit groups,
-    // which prevents the duplicate Telegram pings you observed.
+    // Only post to admin groups on admin-only triggers.
+    // Buyer-facing notifications will DM the client (if linked) but won't hit groups by default.
     const wantAdminGroups = trigger === "admin_only";
     const wantClientDM = !suppressUserFanout; // i.e., not admin_only
 
     const bodyAdminOut = wantAdminGroups && hasAdminTpl ? bodyAdminGeneric : "";
-
-   const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
+    const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
 
     await dispatchTelegram({
       organizationId,
@@ -326,7 +323,7 @@ export async function sendNotification(params: SendNotificationParams) {
       country,
       bodyAdmin: bodyAdminOut,
       bodyUser: bodyUserOut,
-      adminUserIds: [], // keep as-is; groups handle admin broadcast
+      adminUserIds: [], // groups handle admin broadcast
       clientUserId: wantClientDM ? clientRow?.userId || null : null,
       ticketId,
     });
@@ -383,6 +380,38 @@ async function dispatchWebhook(opts: {
       }).catch(() => null),
     ),
   );
+}
+
+/* ───────── Telegram de-dupe helpers ─────────
+   Prevents duplicate sends to the same Telegram chat within a rolling window.
+   Works across processes, orgs, and even different bot tokens. */
+const TELEGRAM_DEDUP_WINDOW_MIN = 30;
+
+function normalizeTelegramText(text: string) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function bucketedHash(text: string) {
+  const bucket = Math.floor(Date.now() / (TELEGRAM_DEDUP_WINDOW_MIN * 60_000));
+  const h = createHash("sha256");
+  h.update(`${normalizeTelegramText(text)}|${bucket}`);
+  return h.digest("hex");
+}
+
+// Try to reserve this (chatId, textHash) for the current time bucket.
+// Returns true if we should send, false if a duplicate already exists.
+async function reserveTelegram(chatId: string, text: string): Promise<boolean> {
+  const textHash = bucketedHash(text);
+  // Single round-trip, race-safe: INSERT ... ON CONFLICT DO NOTHING RETURNING 1
+  const res = await db.executeQuery(
+    sql<{ one: number }>`
+      INSERT INTO "telegramDedup" ("chatId", "textHash", "createdAt")
+      VALUES (${chatId}, ${textHash}, now())
+      ON CONFLICT ("chatId", "textHash") DO NOTHING
+      RETURNING 1 as one
+    `,
+  );
+  return res.rows.length > 0;
 }
 
 async function dispatchTelegram(opts: {
@@ -488,9 +517,12 @@ async function dispatchTelegram(opts: {
     }
   }
 
+  // FINAL SEND with DB-backed idempotency per (chatId, text) in a time window
   await Promise.all(
-    targets.map((t) =>
-      fetch(BOT, {
+    targets.map(async (t) => {
+      const ok = await reserveTelegram(t.chatId, t.text);
+      if (!ok) return; // duplicate within window → skip send
+      await fetch(BOT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -500,7 +532,7 @@ async function dispatchTelegram(opts: {
           disable_web_page_preview: true,
           ...(t.markup ? { reply_markup: t.markup } : {}),
         }),
-      }).catch(() => null),
-    ),
+      }).catch(() => null);
+    }),
   );
 }
