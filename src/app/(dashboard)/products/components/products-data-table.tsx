@@ -71,7 +71,7 @@ import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
 /* ------------------------------------------------------------ */
-/*  Product type definition                                     */
+/*  Product type definition for the table                       */
 /* ------------------------------------------------------------ */
 export type Product = {
   id: string;
