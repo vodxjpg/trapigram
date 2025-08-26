@@ -135,8 +135,6 @@ async function insertOrderRevenue(
       $11,$12,$13,$14,
       NOW(),NOW(),$15
        )
-    ON CONFLICT ("orderId") DO UPDATE
-      SET "updatedAt" = NOW()
     RETURNING *`;
 
   const params = [
@@ -147,6 +145,7 @@ async function insertOrderRevenue(
     organizationId,
   ];
   const { rows } = await pool.query(sql, params);
+  console.log(rows[0])
   return rows[0];
 }
 
@@ -177,7 +176,6 @@ async function getRevenue(id: string, organizationId: string) {
       const resultOrders = await pool.query(orderQuery, [id, organizationId]);
       const order = resultOrders.rows[0]
       if (!order) throw new Error("Order not found");
-      console.log(order)
 
       const cartId = order.cartId
       const paymentType = (order.paymentMethod ?? "").toLowerCase();
@@ -493,8 +491,9 @@ async function getRevenue(id: string, organizationId: string) {
         // and parameterized to avoid SQL injection.
         const exchangeQuery = `
           SELECT "EUR","GBP" FROM "exchangeRate"
-           WHERE date <= to_timestamp($1) ORDER BY date DESC LIMIT 1`;
-        const exchangeResult = await pool.query(exchangeQuery, [to])
+           WHERE date BETWEEN to_timestamp($1) AND to_timestamp($2) ORDER BY date DESC LIMIT 1`;
+        const exchangeResult = await pool.query(exchangeQuery, [from, to])
+        console.log(exchangeResult.rows)
 
         let USDEUR = 0
         let USDGBP = 0
