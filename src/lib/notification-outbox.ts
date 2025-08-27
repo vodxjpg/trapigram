@@ -62,35 +62,35 @@ export async function enqueueNotificationFanout(opts: {
   const rows: OutboxRow[] = [];
 
   for (const ch of opts.channels) {
-     // For admin-only triggers we normalize salt so multiple admin code paths
- // (e.g., "merchant_admin:paid" vs "store_admin:paid") collapse into one
- // dedupe identity per (org, order, type, trigger, channel, message).
- const normalizedSalt =
-   (opts.trigger ?? "") === "admin_only" ? "admin" : (opts.dedupeSalt ?? "");
-   // NEW: for admin_only + (order_paid|order_completed) we use a STABLE, payload-agnostic key
-// so different code paths with slightly different messages/vars still dedupe correctly.
-const isAdminOnlyOrder =
-  (opts.trigger ?? "") === "admin_only" &&
-  (opts.type === "order_paid" || opts.type === "order_completed") &&
-  Boolean(opts.orderId);
-const dedupeKey = isAdminOnlyOrder
-  ? // payload-agnostic stable key (works across processes/instances)
-    `admin:${opts.organizationId}:${opts.orderId}:${opts.type}:${ch}`
-  : // original content-hash key for all other cases
-    makeDedupeKey({
-      org: opts.organizationId,
-      order: opts.orderId ?? null,
-      type: opts.type,
-      trigger: opts.trigger ?? null,
-      channel: ch,
-      salt: normalizedSalt,
-      clientId: opts.payload.clientId ?? null,
-      userId: opts.payload.userId ?? null,
-      vars: opts.payload.variables ?? {},
-      // keep the key compact – message/subject can be large but meaningful to dedupe by
-      subject: opts.payload.subject ?? "",
-      message: opts.payload.message ?? "",
-        });
+    // For admin-only triggers we normalize salt so multiple admin code paths
+    // (e.g., "merchant_admin:paid" vs "store_admin:paid") collapse into one
+    // dedupe identity per (org, order, type, trigger, channel, message).
+    const normalizedSalt =
+      (opts.trigger ?? "") === "admin_only" ? "admin" : (opts.dedupeSalt ?? "");
+    // NEW: for admin_only + (order_paid|order_completed) we use a STABLE, payload-agnostic key
+    // so different code paths with slightly different messages/vars still dedupe correctly.
+    const isAdminOnlyOrder =
+      (opts.trigger ?? "") === "admin_only" &&
+      (opts.type === "order_paid" || opts.type === "order_completed") &&
+      Boolean(opts.orderId);
+    const dedupeKey = isAdminOnlyOrder
+      ? // payload-agnostic stable key (works across processes/instances)
+      `admin:${opts.organizationId}:${opts.orderId}:${opts.type}:${ch}`
+      : // original content-hash key for all other cases
+      makeDedupeKey({
+        org: opts.organizationId,
+        order: opts.orderId ?? null,
+        type: opts.type,
+        trigger: opts.trigger ?? null,
+        channel: ch,
+        salt: normalizedSalt,
+        clientId: opts.payload.clientId ?? null,
+        userId: opts.payload.userId ?? null,
+        vars: opts.payload.variables ?? {},
+        // keep the key compact – message/subject can be large but meaningful to dedupe by
+        subject: opts.payload.subject ?? "",
+        message: opts.payload.message ?? "",
+      });
 
     rows.push({
       id: `out_${uuidv4()}`, // TEXT id (visibly non-UUID)
@@ -110,22 +110,22 @@ const dedupeKey = isAdminOnlyOrder
       updatedAt: new Date(),
     });
 
-     // DEBUG: show what we intend to enqueue (one per channel)
- console.log("[outbox.enqueue] prepared", {
-   id_preview: rows[rows.length - 1].id,
-   org: opts.organizationId,
-   order: opts.orderId ?? null,
-   type: opts.type,
-   trigger: opts.trigger ?? null,
-   channel: ch,
-   dedupeKey,
-   // don't print payload body (can be large); show small meta instead
-   hasSubject: Boolean(opts.payload.subject),
-   hasVars: Boolean(opts.payload.variables && Object.keys(opts.payload.variables!).length),
-   salt: opts.dedupeSalt ?? "",
-   saltNormalized: normalizedSalt,
-   dedupeStrategy: isAdminOnlyOrder ? "stable-admin-order" : "hash",
- });
+    // DEBUG: show what we intend to enqueue (one per channel)
+    console.log("[outbox.enqueue] prepared", {
+      id_preview: rows[rows.length - 1].id,
+      org: opts.organizationId,
+      order: opts.orderId ?? null,
+      type: opts.type,
+      trigger: opts.trigger ?? null,
+      channel: ch,
+      dedupeKey,
+      // don't print payload body (can be large); show small meta instead
+      hasSubject: Boolean(opts.payload.subject),
+      hasVars: Boolean(opts.payload.variables && Object.keys(opts.payload.variables!).length),
+      salt: opts.dedupeSalt ?? "",
+      saltNormalized: normalizedSalt,
+      dedupeStrategy: isAdminOnlyOrder ? "stable-admin-order" : "hash",
+    });
 
   }
 
@@ -153,21 +153,21 @@ const dedupeKey = isAdminOnlyOrder
       })
       .onConflict((oc) => oc.column("dedupeKey").doNothing())
       .execute();
-        // We can't rely on insert result for "did nothing" with all drivers; check existence for clarity.
-  const existing = await db
-    .selectFrom("notificationOutbox")
-    .select(["id", "status", "attempts"])
-    .where("dedupeKey", "=", r.dedupeKey)
-    .where("channel", "=", r.channel)
-    .execute();
-  console.log("[outbox.enqueue] upsert result", {
-    channel: r.channel,
-    dedupeKey: r.dedupeKey,
-    matchedCount: existing.length,
-    ids: existing.map((e) => e.id),
-    statuses: existing.map((e) => e.status),
-    attempts: existing.map((e) => e.attempts),
-  });
+    // We can't rely on insert result for "did nothing" with all drivers; check existence for clarity.
+    const existing = await db
+      .selectFrom("notificationOutbox")
+      .select(["id", "status", "attempts"])
+      .where("dedupeKey", "=", r.dedupeKey)
+      .where("channel", "=", r.channel)
+      .execute();
+    console.log("[outbox.enqueue] upsert result", {
+      channel: r.channel,
+      dedupeKey: r.dedupeKey,
+      matchedCount: existing.length,
+      ids: existing.map((e) => e.id),
+      statuses: existing.map((e) => e.status),
+      attempts: existing.map((e) => e.attempts),
+    });
   }
 }
 
@@ -191,7 +191,7 @@ export async function drainNotificationOutbox(limit = 10) {
     .where("nextAttemptAt", "<=", new Date())
     .limit(limit)
     .execute();
-     console.log("[outbox.drain] fetched due", { count: due.length, limit });
+  console.log("[outbox.drain] fetched due", { count: due.length, limit });
   let sent = 0;
 
   for (const row of due) {
@@ -201,17 +201,17 @@ export async function drainNotificationOutbox(limit = 10) {
       typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
 
     try {
-        console.log("[outbox.drain] sending", {
-    id,
-    org: row.organizationId,
-    order: row.orderId ?? null,
-    type: row.type,
-    trigger: row.trigger ?? null,
-    channel: row.channel,
-    attempts: row.attempts,
-    maxAttempts: row.maxAttempts,
-    dedupeKey: (row as any).dedupeKey,
-  });
+      console.log("[outbox.drain] sending", {
+        id,
+        org: row.organizationId,
+        order: row.orderId ?? null,
+        type: row.type,
+        trigger: row.trigger ?? null,
+        channel: row.channel,
+        attempts: row.attempts,
+        maxAttempts: row.maxAttempts,
+        dedupeKey: (row as any).dedupeKey,
+      });
       // Send exactly one channel
       await sendNotification({
         organizationId: row.organizationId as string, // TEXT
@@ -230,7 +230,7 @@ export async function drainNotificationOutbox(limit = 10) {
         })
         .where("id", "=", id)
         .execute();
-        console.log("[outbox.drain] marked sent", { id });
+      console.log("[outbox.drain] marked sent", { id });
       // After a SUCCESS: mark “notifiedPaidOrCompleted” for paid/completed
       if (
         row.orderId &&
@@ -241,10 +241,10 @@ export async function drainNotificationOutbox(limit = 10) {
           .set({ notifiedPaidOrCompleted: true, updatedAt: new Date() })
           .where("id", "=", row.orderId as string)
           .execute();
-            console.log("[outbox.drain] set orders.notifiedPaidOrCompleted", {
-    orderId: row.orderId,
-    type: row.type,
-  });
+        console.log("[outbox.drain] set orders.notifiedPaidOrCompleted", {
+          orderId: row.orderId,
+          type: row.type,
+        });
       }
 
       sent++;
@@ -267,13 +267,13 @@ export async function drainNotificationOutbox(limit = 10) {
         })
         .where("id", "=", id)
         .execute();
-          console.warn("[outbox.drain] send failed", {
-    id,
-    channel: row.channel,
-    attempts,
-    nextAttemptAt: next.toISOString(),
-    error: String(err?.message || err),
-  });
+      console.warn("[outbox.drain] send failed", {
+        id,
+        channel: row.channel,
+        attempts,
+        nextAttemptAt: next.toISOString(),
+        error: String(err?.message || err),
+      });
     }
   }
 

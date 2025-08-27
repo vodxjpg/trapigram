@@ -109,21 +109,46 @@ function groupByProduct(lines: Product[]) {
 }
 
 function parseCrypto(metaArr: any[]) {
-  if (!metaArr?.length) return null;
-  const last = metaArr[metaArr.length - 1];
-  const o = last.order ?? last;
-  const ev = last.event ?? last.status ?? "pending";
-  const expected = Number(o.expected ?? o.amount) || 0;
-  const received = Number(o.received ?? 0) || 0;
+  if (!Array.isArray(metaArr) || metaArr.length === 0) return null;
+
+  // Latest status/event (may not carry payment fields)
+  let latestStatus: string = "pending";
+  for (let i = metaArr.length - 1; i >= 0; i--) {
+    const item = metaArr[i];
+    const ev = item?.event ?? item?.status;
+    if (typeof ev === "string" && ev.length) {
+      latestStatus = ev;
+      break;
+    }
+  }
+
+  // Most recent snapshot that actually contains crypto payment fields
+  let snap: any | null = null;
+  for (let i = metaArr.length - 1; i >= 0; i--) {
+    const item = metaArr[i];
+    const o = (item && (item.order ?? item)) || null;
+    if (
+      o &&
+      (o.address || o.qrUrl || o.asset || o.network) // consider as a usable payment snapshot
+    ) {
+      snap = o;
+      break;
+    }
+  }
+  if (!snap) return null; // nothing to show
+
+  const expected = Number(snap.expected ?? snap.amount) || 0;
+  const received = Number(snap.received ?? 0) || 0;
+
   return {
-    asset: o.asset,
-    network: o.network,
-    address: o.address,
-    qrUrl: o.qrUrl,
+    asset: snap.asset,
+    network: snap.network,
+    address: snap.address,
+    qrUrl: snap.qrUrl,
     expected,
     received,
     pending: Math.max(0, expected - received),
-    status: ev,
+    status: latestStatus,
   };
 }
 
