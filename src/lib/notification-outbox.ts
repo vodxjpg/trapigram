@@ -67,8 +67,17 @@ export async function enqueueNotificationFanout(opts: {
  // dedupe identity per (org, order, type, trigger, channel, message).
  const normalizedSalt =
    (opts.trigger ?? "") === "admin_only" ? "admin" : (opts.dedupeSalt ?? "");
-    // include recipients & variables in the dedupe identity so we don't collapse different targets
-    const dedupeKey = makeDedupeKey({
+   // NEW: for admin_only + (order_paid|order_completed) we use a STABLE, payload-agnostic key
+// so different code paths with slightly different messages/vars still dedupe correctly.
+const isAdminOnlyOrder =
+  (opts.trigger ?? "") === "admin_only" &&
+  (opts.type === "order_paid" || opts.type === "order_completed") &&
+  Boolean(opts.orderId);
+const dedupeKey = isAdminOnlyOrder
+  ? // payload-agnostic stable key (works across processes/instances)
+    `admin:${opts.organizationId}:${opts.orderId}:${opts.type}:${ch}`
+  : // original content-hash key for all other cases
+    makeDedupeKey({
       org: opts.organizationId,
       order: opts.orderId ?? null,
       type: opts.type,
@@ -81,7 +90,7 @@ export async function enqueueNotificationFanout(opts: {
       // keep the key compact – message/subject can be large but meaningful to dedupe by
       subject: opts.payload.subject ?? "",
       message: opts.payload.message ?? "",
-    });
+        });
 
     rows.push({
       id: `out_${uuidv4()}`, // TEXT id (visibly non-UUID)
@@ -115,6 +124,7 @@ export async function enqueueNotificationFanout(opts: {
    hasVars: Boolean(opts.payload.variables && Object.keys(opts.payload.variables!).length),
    salt: opts.dedupeSalt ?? "",
    saltNormalized: normalizedSalt,
+   dedupeStrategy: isAdminOnlyOrder ? "stable-admin-order" : "hash",
  });
 
   }
