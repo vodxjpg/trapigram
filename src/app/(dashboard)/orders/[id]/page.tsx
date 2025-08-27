@@ -108,18 +108,6 @@ function groupByProduct(lines: Product[]) {
     }));
 }
 
-/** minimal parser for URIs like `ethereum:0xABC...?contract=...&amount=...` */
-function parsePaymentUri(u?: string): { scheme?: string; address?: string } {
-  if (!u || typeof u !== "string") return {};
-  const idx = u.indexOf(":");
-  if (idx <= 0) return {};
-  const scheme = u.slice(0, idx);
-  const rest = u.slice(idx  1);
-  const q = rest.indexOf("?");
-  const address = q >= 0 ? rest.slice(0, q) : rest;
-  return { scheme, address };
-}
-
 function parseCrypto(metaArr: any[]) {
   if (!Array.isArray(metaArr) || metaArr.length === 0) return null;
 
@@ -134,40 +122,67 @@ function parseCrypto(metaArr: any[]) {
     }
   }
 
-  // 2) Most recent snapshot with *any* usable crypto info
-  let snap: any | null = null;
+  // 2) Find the most recent entry that actually has an address
+  let address: string | null = null;
+  let addrSnap: any | null = null;
   for (let i = metaArr.length - 1; i >= 0; i--) {
-    const item = metaArr[i];
-    const o = (item && (item.order ?? item)) || null;
-    if (
-      o &&
-      (o.address || o.depositAddress || o.paymentUri || o.qrUrl || o.asset || o.network || o.chain)
-    ) {
-      snap = o;
+    const o = (metaArr[i] && (metaArr[i].order ?? metaArr[i])) || null;
+    if (!o) continue;
+    const uri = typeof o.paymentUri === "string" ? o.paymentUri : undefined;
+    const parsed = parsePaymentUri(uri);
+    const candidate = o.address || o.depositAddress || parsed.address || null;
+    if (candidate) {
+      address = String(candidate);
+      addrSnap = o;
       break;
     }
   }
-  if (!snap) return null;
+  if (!addrSnap) return null; // nothing to show
 
-  // 3) Field normalization & fallbacks
-  const uri = typeof snap.paymentUri === "string" ? snap.paymentUri : undefined;
-  const { scheme } = parsePaymentUri(uri);
-  const addrFromUri = parsePaymentUri(uri).address;
-  const address =
-    snap.address ||
-    snap.depositAddress ||
-    addrFromUri ||
+  // 3) Backfill other fields from newest available info
+  // Preferred sources: addrSnap → otherwise newest item that has the field
+  const pickNewest = <T,>(pick: (o: any) => T | undefined): T | undefined => {
+    for (let i = metaArr.length - 1; i >= 0; i--) {
+      const o = (metaArr[i] && (metaArr[i].order ?? metaArr[i])) || null;
+      const v = o ? pick(o) : undefined;
+      if (v !== undefined && v !== null) return v;
+    }
+    return undefined;
+  };
+
+  const uriFromSnap = typeof addrSnap.paymentUri === "string" ? addrSnap.paymentUri : undefined;
+  const schemeFromSnap = parsePaymentUri(uriFromSnap).scheme;
+
+  const network =
+    addrSnap.network ||
+    addrSnap.chain ||
+    schemeFromSnap ||
+    pickNewest<string | undefined>((o) => o.network || o.chain) ||
     null;
 
-  const network = snap.network || snap.chain || scheme || null;
-  const expected = Number(snap.expected ?? snap.amount) || 0;
-  const received = Number(snap.received ?? 0) || 0;
+  const asset =
+    addrSnap.asset ??
+    pickNewest<string | undefined>((o) => o.asset) ??
+    undefined;
+
+  const qrUrl =
+    addrSnap.qrUrl ??
+    pickNewest<string | undefined>((o) => o.qrUrl) ??
+    undefined;
+
+  const expectedRaw =
+    addrSnap.expected ?? addrSnap.amount ?? pickNewest<number | string | undefined>((o) => o.expected ?? o.amount);
+  const receivedRaw =
+    addrSnap.received ?? pickNewest<number | string | undefined>((o) => o.received);
+
+  const expected = Number(expectedRaw || 0) || 0;
+  const received = Number(receivedRaw || 0) || 0;
 
   return {
-    asset: snap.asset,
+    asset,
     network,
     address,
-    qrUrl: snap.qrUrl,
+    qrUrl,
     expected,
     received,
     pending: Math.max(0, expected - received),
@@ -177,7 +192,7 @@ function parseCrypto(metaArr: any[]) {
 
 
 const stripHtml = (html?: string) =>
-  (html ?? "").replace(/<[^>]*>/g, "").replace(/\s/g, " ").trim();
+  (html ?? "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
 
 const truncate = (text: string, max = 8) =>
   text.length <= max ? text : text.slice(0, max) + "...";
