@@ -98,6 +98,22 @@ export async function sendNotification(params: SendNotificationParams) {
     ticketId = null,
   } = params;
 
+  // ───────────────── DEBUG overview (no secrets) ─────────────────
+console.log("[notify] dispatch start", {
+  organizationId,
+  type,
+  trigger,
+  channels,
+  country,
+  hasSubject: Boolean(subject),
+  hasMessageHtml: Boolean(message && message.length),
+  userId,
+  clientId,
+  urlPresent: Boolean(url),
+  ticketId,
+});
+
+
   /* enrich variables (tracking link) */
   if (variables.tracking_number) {
     const tn = variables.tracking_number;
@@ -122,6 +138,15 @@ export async function sendNotification(params: SendNotificationParams) {
   const suppressUserFanout  = trigger === "admin_only";
   const shouldAdminFanout   = !suppressAdminFanout && hasAdminTpl;
   const shouldUserFanout    = !suppressUserFanout; // user can still receive fallback content
+  console.log("[notify] templates & fanout", {
+  hasUserTpl,
+  hasAdminTpl,
+  suppressAdminFanout,
+  suppressUserFanout,
+  shouldAdminFanout,
+  shouldUserFanout,
+});
+
 
   /* 2️⃣ subjects & bodies – generic (all channels) */
   const makeRawSub = (
@@ -162,6 +187,7 @@ export async function sendNotification(params: SendNotificationParams) {
     .limit(1)
     .executeTakeFirst();
   const supportEmail = supportRow?.email || null;
+   console.log("[notify] support email", { present: Boolean(supportEmail) });
 
   /* 4️⃣ e-mail targets */
   const adminEmails: string[] = [];
@@ -204,6 +230,14 @@ export async function sendNotification(params: SendNotificationParams) {
 
   if (!adminEmails.length && supportEmail) adminEmails.push(supportEmail);
 
+   
+console.log("[notify] resolved email targets", {
+  adminCount: adminEmails.length,
+  userCount: userEmails.length,
+  adminPreview: adminEmails.slice(0, 3),
+  userPreview: userEmails.slice(0, 3),
+});
+
   /* 5️⃣ master log */
   await db
     .insertInto("notifications")
@@ -222,11 +256,17 @@ export async function sendNotification(params: SendNotificationParams) {
     })
     .execute();
 
-
+console.log("[notify] master log inserted");
 
   /* 6️⃣ channel fan-out */
   /* — EMAIL — */
   if (channels.includes("email")) {
+      console.log("[notify] EMAIL fanout", {
+    shouldAdminFanout,
+    shouldUserFanout,
+    adminCount: adminEmails.length,
+    userCount: userEmails.length,
+  });
     const send = ({
       to,
       subject,
@@ -271,10 +311,12 @@ export async function sendNotification(params: SendNotificationParams) {
     }
 
     await Promise.all(promises);
+     console.log("[notify] EMAIL done");
   }
 
   /* — IN-APP — */
   if (channels.includes("in_app")) {
+     console.log("[notify] IN_APP fanout begin");
     const targets = new Set<string | null>();
     // user-facing
     if (shouldUserFanout) {
@@ -290,12 +332,15 @@ export async function sendNotification(params: SendNotificationParams) {
         organizationId, userId: uid, clientId, message: bodyUserGeneric, country, url,
       });
     }
+    console.log("[notify] IN_APP done", { targetCount: Array.from(targets).filter(Boolean).length });
   }
 
   /* — WEBHOOK — */
   if (channels.includes("webhook")) {
     if (shouldAdminFanout) {
+       console.log("[notify] WEBHOOK dispatch");
       await dispatchWebhook({ organizationId, type, message: bodyUserGeneric });
+       console.log("[notify] WEBHOOK done");
     }
   }
 
@@ -308,8 +353,14 @@ export async function sendNotification(params: SendNotificationParams) {
     const wantClientDM = !suppressUserFanout; // i.e., not admin_only
 
     const bodyAdminOut = wantAdminGroups && hasAdminTpl ? bodyAdminGeneric : "";
-
-   const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
+  const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
+  console.log("[notify] TELEGRAM fanout", {
+    wantAdminGroups,
+    wantClientDM,
+    hasAdminTpl,
+    bodyAdminLen: bodyAdminOut.length,
+    bodyUserLen: bodyUserOut.length,
+  });
 
     await dispatchTelegram({
       organizationId,
@@ -321,6 +372,7 @@ export async function sendNotification(params: SendNotificationParams) {
       clientUserId: wantClientDM ? clientRow?.userId || null : null,
       ticketId,
     });
+     console.log("[notify] TELEGRAM done");
   }
 }
 
@@ -445,6 +497,14 @@ async function dispatchTelegram(opts: {
   const seenChatIds = new Set<string>(); // de-dupe across everything
   const ticketSet = new Set(ticketGroupIds); // for selective Reply button
   const uniqueGroupIds = Array.from(new Set([...orderGroupIds, ...ticketGroupIds]));
+  console.log("[telegram] targets discovery", {
+  hasBodyAdmin: Boolean(bodyAdmin && bodyAdmin.trim().length),
+  hasBodyUser: Boolean(bodyUser && bodyUser.trim().length),
+  orderGroupCount: orderGroupIds.length,
+  ticketGroupCount: ticketGroupIds.length,
+  uniqueGroupCount: uniqueGroupIds.length,
+  hasClientDM: Boolean(clientUserId),
+});
 
   if (bodyAdmin.trim()) {
     const safeAdmin = toTelegramHtml(bodyAdmin);
@@ -479,6 +539,16 @@ async function dispatchTelegram(opts: {
     }
   }
 
+   // Summarize where this will go (mask chat ids)
+ const mask = (s: string) => (s.length > 6 ? `${s.slice(0, 2)}…${s.slice(-4)}` : s);
+ console.log("[telegram] final targets", {
+   count: targets.length,
+   chatIds: targets.map((t) => mask(t.chatId)),
+   kinds: targets.map((t) =>
+     ticketId && t.markup ? "group+ticket" : orderGroupIds.includes(t.chatId) ? "group" : "dm"
+   ),
+ });
+
   await Promise.all(
     targets.map((t) =>
       fetch(BOT, {
@@ -494,4 +564,5 @@ async function dispatchTelegram(opts: {
       }).catch(() => null),
     ),
   );
+  console.log("[telegram] sent", { count: targets.length });
 }

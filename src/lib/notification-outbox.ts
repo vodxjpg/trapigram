@@ -95,11 +95,27 @@ export async function enqueueNotificationFanout(opts: {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
+
+     // DEBUG: show what we intend to enqueue (one per channel)
+ console.log("[outbox.enqueue] prepared", {
+   id_preview: rows[rows.length - 1].id,
+   org: opts.organizationId,
+   order: opts.orderId ?? null,
+   type: opts.type,
+   trigger: opts.trigger ?? null,
+   channel: ch,
+   dedupeKey,
+   // don't print payload body (can be large); show small meta instead
+   hasSubject: Boolean(opts.payload.subject),
+   hasVars: Boolean(opts.payload.variables && Object.keys(opts.payload.variables!).length),
+   salt: opts.dedupeSalt ?? "",
+ });
+
   }
 
   // Upsert by dedupeKey (ignore if exists) – one row per channel
   for (const r of rows) {
-    await db
+    const res = await db
       .insertInto("notificationOutbox")
       .values({
         id: r.id, // TEXT
@@ -121,6 +137,21 @@ export async function enqueueNotificationFanout(opts: {
       })
       .onConflict((oc) => oc.column("dedupeKey").doNothing())
       .execute();
+        // We can't rely on insert result for "did nothing" with all drivers; check existence for clarity.
+  const existing = await db
+    .selectFrom("notificationOutbox")
+    .select(["id", "status", "attempts"])
+    .where("dedupeKey", "=", r.dedupeKey)
+    .where("channel", "=", r.channel)
+    .execute();
+  console.log("[outbox.enqueue] upsert result", {
+    channel: r.channel,
+    dedupeKey: r.dedupeKey,
+    matchedCount: existing.length,
+    ids: existing.map((e) => e.id),
+    statuses: existing.map((e) => e.status),
+    attempts: existing.map((e) => e.attempts),
+  });
   }
 }
 
@@ -138,12 +169,13 @@ export async function drainNotificationOutbox(limit = 10) {
       "payload",
       "attempts",
       "maxAttempts",
+      "dedupeKey",
     ])
     .where("status", "=", "pending")
     .where("nextAttemptAt", "<=", new Date())
     .limit(limit)
     .execute();
-
+     console.log("[outbox.drain] fetched due", { count: due.length, limit });
   let sent = 0;
 
   for (const row of due) {
@@ -153,6 +185,17 @@ export async function drainNotificationOutbox(limit = 10) {
       typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
 
     try {
+        console.log("[outbox.drain] sending", {
+    id,
+    org: row.organizationId,
+    order: row.orderId ?? null,
+    type: row.type,
+    trigger: row.trigger ?? null,
+    channel: row.channel,
+    attempts: row.attempts,
+    maxAttempts: row.maxAttempts,
+    dedupeKey: (row as any).dedupeKey,
+  });
       // Send exactly one channel
       await sendNotification({
         organizationId: row.organizationId as string, // TEXT
@@ -171,7 +214,7 @@ export async function drainNotificationOutbox(limit = 10) {
         })
         .where("id", "=", id)
         .execute();
-
+        console.log("[outbox.drain] marked sent", { id });
       // After a SUCCESS: mark “notifiedPaidOrCompleted” for paid/completed
       if (
         row.orderId &&
@@ -182,6 +225,10 @@ export async function drainNotificationOutbox(limit = 10) {
           .set({ notifiedPaidOrCompleted: true, updatedAt: new Date() })
           .where("id", "=", row.orderId as string)
           .execute();
+            console.log("[outbox.drain] set orders.notifiedPaidOrCompleted", {
+    orderId: row.orderId,
+    type: row.type,
+  });
       }
 
       sent++;
@@ -204,6 +251,13 @@ export async function drainNotificationOutbox(limit = 10) {
         })
         .where("id", "=", id)
         .execute();
+          console.warn("[outbox.drain] send failed", {
+    id,
+    channel: row.channel,
+    attempts,
+    nextAttemptAt: next.toISOString(),
+    error: String(err?.message || err),
+  });
     }
   }
 
