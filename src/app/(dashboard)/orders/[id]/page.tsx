@@ -108,6 +108,17 @@ function groupByProduct(lines: Product[]) {
     }));
 }
 
+ function parsePaymentUri(u?: string): { scheme?: string; address?: string } {
+   if (!u || typeof u !== "string") return {};
+   const idx = u.indexOf(":");
+   if (idx <= 0) return {};
+   const scheme = u.slice(0, idx);
+   const rest = u.slice(idx + 1);
+   const q = rest.indexOf("?");
+   const address = q >= 0 ? rest.slice(0, q) : rest;
+   return { scheme, address };
+ }
+
 function parseCrypto(metaArr: any[]) {
   if (!Array.isArray(metaArr) || metaArr.length === 0) return null;
 
