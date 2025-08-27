@@ -108,42 +108,65 @@ function groupByProduct(lines: Product[]) {
     }));
 }
 
+/** minimal parser for URIs like `ethereum:0xABC...?contract=...&amount=...` */
+function parsePaymentUri(u?: string): { scheme?: string; address?: string } {
+  if (!u || typeof u !== "string") return {};
+  const idx = u.indexOf(":");
+  if (idx <= 0) return {};
+  const scheme = u.slice(0, idx);
+  const rest = u.slice(idx  1);
+  const q = rest.indexOf("?");
+  const address = q >= 0 ? rest.slice(0, q) : rest;
+  return { scheme, address };
+}
+
 function parseCrypto(metaArr: any[]) {
   if (!Array.isArray(metaArr) || metaArr.length === 0) return null;
 
-  // Latest status/event (may not carry payment fields)
+  // 1) Latest status/event (fallback to order.status if present)
   let latestStatus: string = "pending";
   for (let i = metaArr.length - 1; i >= 0; i--) {
     const item = metaArr[i];
-    const ev = item?.event ?? item?.status;
+    const ev = item?.event ?? item?.status ?? item?.order?.status;
     if (typeof ev === "string" && ev.length) {
       latestStatus = ev;
       break;
     }
   }
 
-  // Most recent snapshot that actually contains crypto payment fields
+  // 2) Most recent snapshot with *any* usable crypto info
   let snap: any | null = null;
   for (let i = metaArr.length - 1; i >= 0; i--) {
     const item = metaArr[i];
     const o = (item && (item.order ?? item)) || null;
     if (
       o &&
-      (o.address || o.qrUrl || o.asset || o.network) // consider as a usable payment snapshot
+      (o.address || o.depositAddress || o.paymentUri || o.qrUrl || o.asset || o.network || o.chain)
     ) {
       snap = o;
       break;
     }
   }
-  if (!snap) return null; // nothing to show
+  if (!snap) return null;
 
+  // 3) Field normalization & fallbacks
+  const uri = typeof snap.paymentUri === "string" ? snap.paymentUri : undefined;
+  const { scheme } = parsePaymentUri(uri);
+  const addrFromUri = parsePaymentUri(uri).address;
+  const address =
+    snap.address ||
+    snap.depositAddress ||
+    addrFromUri ||
+    null;
+
+  const network = snap.network || snap.chain || scheme || null;
   const expected = Number(snap.expected ?? snap.amount) || 0;
   const received = Number(snap.received ?? 0) || 0;
 
   return {
     asset: snap.asset,
-    network: snap.network,
-    address: snap.address,
+    network,
+    address,
     qrUrl: snap.qrUrl,
     expected,
     received,
@@ -152,8 +175,9 @@ function parseCrypto(metaArr: any[]) {
   };
 }
 
+
 const stripHtml = (html?: string) =>
-  (html ?? "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+  (html ?? "").replace(/<[^>]*>/g, "").replace(/\s/g, " ").trim();
 
 const truncate = (text: string, max = 8) =>
   text.length <= max ? text : text.slice(0, max) + "...";
