@@ -62,6 +62,11 @@ export async function enqueueNotificationFanout(opts: {
   const rows: OutboxRow[] = [];
 
   for (const ch of opts.channels) {
+     // For admin-only triggers we normalize salt so multiple admin code paths
+ // (e.g., "merchant_admin:paid" vs "store_admin:paid") collapse into one
+ // dedupe identity per (org, order, type, trigger, channel, message).
+ const normalizedSalt =
+   (opts.trigger ?? "") === "admin_only" ? "admin" : (opts.dedupeSalt ?? "");
     // include recipients & variables in the dedupe identity so we don't collapse different targets
     const dedupeKey = makeDedupeKey({
       org: opts.organizationId,
@@ -69,7 +74,7 @@ export async function enqueueNotificationFanout(opts: {
       type: opts.type,
       trigger: opts.trigger ?? null,
       channel: ch,
-      salt: opts.dedupeSalt ?? "",
+      salt: normalizedSalt,
       clientId: opts.payload.clientId ?? null,
       userId: opts.payload.userId ?? null,
       vars: opts.payload.variables ?? {},
@@ -109,6 +114,7 @@ export async function enqueueNotificationFanout(opts: {
    hasSubject: Boolean(opts.payload.subject),
    hasVars: Boolean(opts.payload.variables && Object.keys(opts.payload.variables!).length),
    salt: opts.dedupeSalt ?? "",
+   saltNormalized: normalizedSalt,
  });
 
   }
