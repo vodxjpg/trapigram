@@ -8,20 +8,57 @@ const BASE = (process.env.NIFTIPAY_API_URL || "https://www.niftipay.com").replac
 const OAUTH_CLIENT_ID = process.env.NIFTIPAY_OAUTH_CLIENT_ID || "";
 const OAUTH_CLIENT_SECRET = process.env.NIFTIPAY_OAUTH_CLIENT_SECRET || "";
 
-/**
- * POST /api/niftipay/connect
- *
- * Steps:
- *  1) Resolve tenantId (same pattern as other Niftipay routes).
- *  2) Determine merchant email (body.email preferred, else context.user.email).
- *  3) Request token from Niftipay /oauth/token using client_credentials (Basic auth).
- *  4) Call Niftipay /api/third-party/provision with Authorization: Bearer <token>.
- *  5) Upsert "Niftipay" payment method with returned apiKey.
- */
 type OrgMeta = { tenantId?: string };
+type CurrentUserRes = {
+  user?: {
+    id: string;
+    email?: string;
+    name?: string | null;
+  };
+};
 
 function problem(msg: string, code = 400) {
   return NextResponse.json({ error: msg }, { status: code });
+}
+
+/**
+ * Resolve email (and optional name) for the current merchant:
+ * 1) body.email / body.name if provided
+ * 2) GET /api/users/current with forwarded cookies (same-origin)
+ */
+async function resolveMerchantIdentity(
+  req: NextRequest,
+  body: Record<string, unknown>,
+): Promise<{ email: string; name?: string }> {
+  const providedEmail =
+    typeof body.email === "string" && body.email.includes("@") ? (body.email as string) : undefined;
+  const providedName =
+    typeof body.name === "string" && body.name.trim() ? (body.name as string) : undefined;
+
+  if (providedEmail) {
+    return { email: providedEmail, name: providedName };
+  }
+
+  // Fallback to /api/users/current
+  const origin = new URL(req.url).origin;
+  const cookie = req.headers.get("cookie") ?? "";
+  const meRes = await fetch(`${origin}/api/users/current`, {
+    method: "GET",
+    headers: cookie ? { cookie } : {},
+  });
+
+  if (!meRes.ok) {
+    throw new Error(`Failed to resolve current user (${meRes.status})`);
+  }
+
+  const me = (await meRes.json()) as CurrentUserRes;
+  const email = me?.user?.email;
+  const name = providedName ?? (me?.user?.name || undefined);
+
+  if (!email || !email.includes("@")) {
+    throw new Error("Unable to resolve merchant email (no session email available)");
+  }
+  return { email, name };
 }
 
 export async function POST(req: NextRequest) {
@@ -32,7 +69,7 @@ export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  // 1) resolve tenantId
+  // 1) resolve tenantId (unchanged)
   const org = await db
     .selectFrom("organization")
     .select(["metadata"])
@@ -51,39 +88,27 @@ export async function POST(req: NextRequest) {
     return problem("Organization tenantId not configured", 404);
   }
 
-  // 2) merchant email
+  // 2) parse body and resolve merchant email/name
   let body: Record<string, unknown> = {};
   try {
     body = (await req.json()) ?? {};
   } catch {
     /* no body */
   }
-  const providedEmail =
-    typeof body.email === "string" && body.email.includes("@")
-      ? (body.email as string)
-      : undefined;
-  const providedName =
-    typeof body.name === "string" && body.name.trim() ? (body.name as string) : undefined;
 
-  const ctxEmail =
-    (ctx as any).user?.email && typeof (ctx as any).user.email === "string"
-      ? ((ctx as any).user.email as string)
-      : undefined;
-
-  const email = providedEmail || ctxEmail;
-  if (!email) {
-    return problem(
-      "Email is required. Send { email } in body or expose it in getContext().user.email.",
-      400,
-    );
+  let identity: { email: string; name?: string };
+  try {
+    identity = await resolveMerchantIdentity(req, body);
+  } catch (e: any) {
+    return problem(e?.message || "Email is required", 400);
   }
 
-  // 3) Token (client credentials)
+  // 3) Token (client credentials) — unchanged
   const basic = Buffer.from(`${OAUTH_CLIENT_ID}:${OAUTH_CLIENT_SECRET}`).toString("base64");
   const tokenRes = await fetch(`${BASE}/oauth/token`, {
     method: "POST",
     headers: {
-      "Authorization": `Basic ${basic}`,
+      Authorization: `Basic ${basic}`,
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({ grant_type: "client_credentials", scope: "provision:apikey" }),
@@ -99,16 +124,16 @@ export async function POST(req: NextRequest) {
     return problem("Niftipay did not return access_token", 502);
   }
 
-  // 4) Provision on Niftipay
+  // 4) Provision on Niftipay — unchanged except we pass resolved email/name
   const upstream = await fetch(`${BASE}/api/third-party/provision`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${access_token}`,
+      Authorization: `Bearer ${access_token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      email,
-      name: providedName,
+      email: identity.email,
+      name: identity.name,
       tenantId,
       keyName: "Trapigram Bridge",
     }),
@@ -124,7 +149,7 @@ export async function POST(req: NextRequest) {
     return problem("Niftipay did not return an apiKey", 502);
   }
 
-  // 5) Upsert payment method
+  // 5) Upsert payment method — unchanged
   const existing = await db
     .selectFrom("paymentMethods")
     .select(["id"])
