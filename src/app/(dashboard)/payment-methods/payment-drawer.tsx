@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/payment-methods/payment-drawer.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -62,9 +63,42 @@ export function PaymentMethodDrawer({
       setApiKey("");
       setSecretKey("");
     }
-  }, [method, mode]);
+  }, [method, mode, isNiftipay]);
 
-  /* ---------- save ---------- */
+  /* ---------- Easy Connect (Niftipay) ---------- */
+  const handleConnectNiftipay = async () => {
+    setSaving(true);
+    try {
+      // Body is optional; server resolves email from session if not provided.
+      const res = await fetch("/api/niftipay/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      // Try to surface upstream error details
+      if (!res.ok) {
+        let message = "Failed to connect Niftipay";
+        try {
+          const data = await res.json();
+          if (typeof data?.error === "string") message = data.error;
+        } catch {
+          /* ignore parse error */
+        }
+        throw new Error(message);
+      }
+
+      // On success, the API already upserts/activates the Niftipay method.
+      toast.success("Niftipay connected successfully");
+      onClose(true); // refresh table
+    } catch (err: any) {
+      toast.error(err?.message || "Niftipay connect failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /* ---------- manual save (custom / advanced) ---------- */
   const handleSave = async () => {
     if (!name.trim()) {
       toast.error("Name is required");
@@ -117,12 +151,26 @@ export function PaymentMethodDrawer({
           </DrawerTitle>
           <DrawerDescription>
             {isNiftipay
-              ? "Enter your Niftipay credentials."
+              ? "Use Easy Connect to automatically create/link your Niftipay account and generate an API key, or paste an existing key below."
               : "Fill in the details of the payment method."}
           </DrawerDescription>
         </DrawerHeader>
 
         <div className="px-4 space-y-4">
+          {/* ───────── Easy Connect CTA (Niftipay only) ───────── */}
+          {isNiftipay && (
+            <div className="rounded-lg border p-4">
+              <div className="mb-2 font-medium">Niftipay Easy Connect</div>
+              <p className="text-sm text-muted-foreground mb-3">
+                We’ll securely create/link your Niftipay account and store the API key for this
+                tenant. No copy-paste required.
+              </p>
+              <Button onClick={handleConnectNiftipay} disabled={saving}>
+                {saving ? "Connecting…" : "Connect Niftipay"}
+              </Button>
+            </div>
+          )}
+
           {/* name (hidden/locked for Niftipay) */}
           {!isNiftipay && (
             <div>
@@ -149,29 +197,31 @@ export function PaymentMethodDrawer({
             </div>
           </div>
 
-          {/* API key */}
+          {/* API key (optional manual entry / view) */}
           <div>
             <label className="block text-sm font-medium mb-1">API key</label>
             <Input
-              placeholder="Optional"
+              placeholder={isNiftipay ? "Filled automatically by Easy Connect (optional override)" : "Optional"}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               disabled={saving}
             />
           </div>
 
-          {/* secret key */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Secret key
-            </label>
-            <Input
-              placeholder="Optional"
-              value={secretKey}
-              onChange={(e) => setSecretKey(e.target.value)}
-              disabled={saving}
-            />
-          </div>
+          {/* secret key (only for custom methods) */}
+          {!isNiftipay && (
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                Secret key
+              </label>
+              <Input
+                placeholder="Optional"
+                value={secretKey}
+                onChange={(e) => setSecretKey(e.target.value)}
+                disabled={saving}
+              />
+            </div>
+          )}
         </div>
 
         <DrawerFooter className="space-x-2">
