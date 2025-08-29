@@ -1,3 +1,4 @@
+// OrderReport page – full file with Countries moved to a new row under Currency/Status/Export
 "use client";
 
 import Link from "next/link";
@@ -54,12 +55,19 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
+// React Select + flags to match Coupon view
+import ReactSelect from "react-select";
+import ReactCountryFlag from "react-country-flag";
+import countriesLib from "i18n-iso-countries";
+import enLocale from "i18n-iso-countries/langs/en.json";
+countriesLib.registerLocale(enLocale);
+
 type Order = {
   id: string;
   datePaid: string;
   orderNumber: string;
   cancelled: boolean;
-  refunded: boolean; // ← was string
+  refunded: boolean;
   userId: string;
   username: string;
   country: string;
@@ -74,29 +82,29 @@ type Order = {
 
 type CustomDateRange = { from: Date; to: Date };
 
-// Updated chartConfig to use Total and Revenue
 const chartConfig = {
   total: { label: "Total", color: "var(--color-desktop)" },
   revenue: { label: "Revenue", color: "var(--color-mobile)" },
 } satisfies ChartConfig;
 
 export default function OrderReport() {
-   const router = useRouter();
- // --- permissions ---
- const { data: activeOrg } = authClient.useActiveOrganization();
- const orgId = activeOrg?.id ?? null;
- const { hasPermission: canViewRevenue, isLoading: viewLoading } =
-   useHasPermission(orgId, { revenue: ["view"] });
- const { hasPermission: canExportRevenue, isLoading: exportLoading } =
-   useHasPermission(orgId, { revenue: ["export"] });
+  const router = useRouter();
 
- // Kick users without view access out of the page
- useEffect(() => {
-   if (!viewLoading && !canViewRevenue) router.replace("/analytics");
- }, [viewLoading, canViewRevenue, router]);
-  // ❌ do NOT return before hooks; compute flags and gate UI later
+  // permissions
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canViewRevenue, isLoading: viewLoading } =
+    useHasPermission(orgId, { revenue: ["view"] });
+  const { hasPermission: canExportRevenue, isLoading: exportLoading } =
+    useHasPermission(orgId, { revenue: ["export"] });
+
+  useEffect(() => {
+    if (!viewLoading && !canViewRevenue) router.replace("/analytics");
+  }, [viewLoading, canViewRevenue, router]);
+
   const permsLoading = viewLoading || exportLoading;
   const canShow = !permsLoading && canViewRevenue;
+
   const [currentPage, setCurrentPage] = useState(1);
   const [dateRange, setDateRange] = useState<CustomDateRange>({
     from: startOfDay(subDays(new Date(), 30)),
@@ -108,31 +116,30 @@ export default function OrderReport() {
     to: dateRange.to,
   });
 
-  // ** NEW: currency state **
   const [currency, setCurrency] = useState<"USD" | "GBP" | "EUR">("USD");
 
-  // ** NEW: state for real orders **
   const [orders, setOrders] = useState<Order[]>([]);
   const [status, setStatus] = useState<
     "all" | "paid" | "refunded" | "cancelled"
   >("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // countries from API + selected (multi)
+  const [countries, setCountries] = useState<string[]>([]);
+  const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
+
   const [chartData, setChartData] = useState<
-    {
-      date: string;
-      total: number;
-      revenue: number;
-    }[]
+    { date: string; total: number; revenue: number }[]
   >([]);
   const isMobile = useIsMobile();
 
   const rowsPerPage = 25;
 
-  // fetch whenever dateRange or currency changes
+  // fetch data (no country param; filter is client-side)
   useEffect(() => {
     async function fetchOrders() {
-       if (!canShow) return;
+      if (!canShow) return;
       setLoading(true);
       setError(null);
       try {
@@ -144,9 +151,11 @@ export default function OrderReport() {
         );
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const data = await res.json();
-        console.log(data);
         setOrders(data.orders);
         setChartData(data.chartData);
+        setCountries(
+          Array.isArray(data.countries) ? [...data.countries].sort() : []
+        );
         setCurrentPage(1);
       } catch (err: any) {
         setError(err.message || "Unknown error");
@@ -155,17 +164,24 @@ export default function OrderReport() {
       }
     }
 
-  fetchOrders();
-}, [dateRange, currency, status, canShow]);
+    fetchOrders();
+  }, [dateRange, currency, status, canShow]);
+
+  const countryOptions = useMemo(
+    () =>
+      countries.map((c) => ({
+        value: c,
+        label: countriesLib.getName(c, "en") || c,
+      })),
+    [countries]
+  );
 
   const filteredData = chartData;
 
-  // paging and filtering now uses real `orders`
   const filteredOrders = useMemo(() => {
     const matchesStatus = (o: Order) => {
       switch (status) {
         case "paid":
-          // show only orders that are neither cancelled nor refunded
           return o.cancelled === false && o.refunded === false;
         case "cancelled":
           return o.cancelled === true;
@@ -176,13 +192,16 @@ export default function OrderReport() {
           return true;
       }
     };
+    const matchesCountries = (o: Order) =>
+      selectedCountries.length === 0
+        ? true
+        : selectedCountries.includes(o.country);
 
-    const list = orders.filter(matchesStatus);
-
+    const list = orders.filter((o) => matchesStatus(o) && matchesCountries(o));
     return list.sort(
       (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
     );
-  }, [orders, status]);
+  }, [orders, status, selectedCountries]);
 
   const totalPages = Math.ceil(filteredOrders.length / rowsPerPage);
   const startIndex = (currentPage - 1) * rowsPerPage;
@@ -242,30 +261,28 @@ export default function OrderReport() {
   };
 
   const handleCustomDateCancel = () => {
-    setTempDateRange({
-      from: dateRange.from,
-      to: dateRange.to,
-    });
+    setTempDateRange({ from: dateRange.from, to: dateRange.to });
     setCustomDateOpen(false);
   };
 
-  // ** ADD: export to Excel **
+  const renderCountriesSummary = () => {
+    if (selectedCountries.length === 0) return "All countries";
+    if (selectedCountries.length <= 3) return selectedCountries.join(", ");
+    return `${selectedCountries.length} selected`;
+  };
+
   const exportToExcel = () => {
     if (!canExportRevenue) return;
-    const dataForSheet = orders.map((o) => {
-      let netProfitDisplay;
 
+    const dataForSheet = filteredOrders.map((o) => {
+      let netProfitDisplay;
       if (o.cancelled === true) {
-        // Cancelled → always zero
         netProfitDisplay = 0;
       } else if (o.refunded === true) {
-        // Refunded → prepend minus sign, ensure numeric
         netProfitDisplay = -Math.abs(Number(o.netProfit) || 0);
       } else {
-        // Paid → as-is
         netProfitDisplay = o.netProfit;
       }
-
       return {
         "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
         "Order Number": o.orderNumber,
@@ -301,17 +318,16 @@ export default function OrderReport() {
     URL.revokeObjectURL(url);
   };
 
-  // 🔒 Render gates AFTER all hooks have been called
-if (permsLoading) {
-  return (
-    <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-      <div className="px-4 lg:px-6 text-sm text-muted-foreground">Loading…</div>
-    </div>
-  );
-}
-if (!canShow) {
-  return null; // redirect effect above takes over
-}
+  if (permsLoading) {
+    return (
+      <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+        <div className="px-4 lg:px-6 text-sm text-muted-foreground">
+          Loading…
+        </div>
+      </div>
+    );
+  }
+  if (!canShow) return null;
 
   return (
     <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
@@ -321,8 +337,9 @@ if (!canShow) {
             <CardTitle>Order Report</CardTitle>
           </CardHeader>
           <CardContent>
-            {/* Controls */}
-            <div className="flex flex-col sm:flex-row gap-4 mb-6 items-start sm:items-center justify-between">
+            {/* Top Controls Row: presets/date + currency/status/export */}
+            <div className="flex flex-col sm:flex-row gap-4 mb-2 items-start sm:items-center justify-between">
+              {/* Left: date presets + custom range */}
               <div className="flex flex-wrap gap-2">
                 {[
                   "all",
@@ -369,10 +386,7 @@ if (!canShow) {
                         mode="range"
                         defaultMonth={dateRange?.from || new Date()}
                         selected={tempDateRange}
-                        onSelect={(range) => {
-                          console.log("Date range selected:", range);
-                          setTempDateRange(range);
-                        }}
+                        onSelect={(range) => setTempDateRange(range)}
                         numberOfMonths={2}
                       />
                       <div className="flex items-center justify-between pt-4 border-t mt-4">
@@ -404,8 +418,9 @@ if (!canShow) {
                   </PopoverContent>
                 </Popover>
               </div>
-              {/* Currency Select */}
-              <div className="flex items-center gap-2">
+
+              {/* Right: currency, status, export */}
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">Currency</span>
                 <Select
                   value={currency}
@@ -421,7 +436,7 @@ if (!canShow) {
                     <SelectItem value="EUR">EUR</SelectItem>
                   </SelectContent>
                 </Select>
-                {/* Status Select */}
+
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">Status</span>
                   <Select
@@ -447,11 +462,13 @@ if (!canShow) {
                   variant="default"
                   size="sm"
                   className="shrink-0"
-                                onClick={exportToExcel}
-               disabled={!canExportRevenue}
-               title={
-                 canExportRevenue ? "Export to Excel" : "You lack export permission"
-               }
+                  onClick={exportToExcel}
+                  disabled={!canExportRevenue}
+                  title={
+                    canExportRevenue
+                      ? "Export to Excel"
+                      : "You lack export permission"
+                  }
                 >
                   <DownloadIcon className="mr-2 h-4 w-4" />
                   Export to Excel
@@ -459,7 +476,47 @@ if (!canShow) {
               </div>
             </div>
 
-            {/* Status */}
+            {/* New Row: Countries multi-select (matches Coupon styling) */}
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-medium">Countries</span>
+                {selectedCountries.length > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {selectedCountries.length <= 3
+                      ? selectedCountries.join(", ")
+                      : `${selectedCountries.length} selected`}
+                  </span>
+                )}
+              </div>
+              <div className="w-full sm:w-[640px]">
+                <ReactSelect
+                  isMulti
+                  classNamePrefix="rs"
+                  options={countryOptions}
+                  placeholder="Select country(s)"
+                  value={countryOptions.filter((o) =>
+                    selectedCountries.includes(o.value)
+                  )}
+                  onChange={(opts: any) =>
+                    setSelectedCountries(
+                      Array.isArray(opts) ? opts.map((o: any) => o.value) : []
+                    )
+                  }
+                  formatOptionLabel={(o: any) => (
+                    <div className="flex items-center gap-2">
+                      <ReactCountryFlag
+                        countryCode={o.value}
+                        svg
+                        style={{ width: 20 }}
+                      />
+                      <span>{o.label}</span>
+                    </div>
+                  )}
+                />
+              </div>
+            </div>
+
+            {/* Status / Table */}
             {loading && <div>Loading orders…</div>}
             {error && <div className="text-red-600">Error: {error}</div>}
             {!loading && !error && (
@@ -468,6 +525,9 @@ if (!canShow) {
                   Showing {filteredOrders.length} orders from{" "}
                   {format(dateRange.from, "MMM dd, yyyy")} to{" "}
                   {format(dateRange.to, "MMM dd, yyyy")}
+                  {selectedCountries.length > 0
+                    ? ` in ${renderCountriesSummary()}`
+                    : ""}
                 </div>
                 <div className="rounded-md border">
                   <Table>
@@ -542,27 +602,47 @@ if (!canShow) {
 
                             <TableCell>{o.country}</TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true ? "text-red-600" : ""}`}
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
+                                  ? "text-red-600"
+                                  : ""
+                              }`}
                             >
                               {formatCurrency(o.totalPrice)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true ? "text-red-600" : ""}`}
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
+                                  ? "text-red-600"
+                                  : ""
+                              }`}
                             >
                               {formatCurrency(o.shippingCost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true ? "text-red-600" : ""}`}
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
+                                  ? "text-red-600"
+                                  : ""
+                              }`}
                             >
                               {formatCurrency(o.discount)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true ? "text-red-600" : ""}`}
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
+                                  ? "text-red-600"
+                                  : ""
+                              }`}
                             >
                               {formatCurrency(o.cost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true ? "text-red-600" : ""}`}
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
+                                  ? "text-red-600"
+                                  : ""
+                              }`}
                             >
                               {o.coin}
                             </TableCell>
@@ -648,6 +728,7 @@ if (!canShow) {
           </CardContent>
         </Card>
       </div>
+
       <div className="px-4 lg:px-6">
         <Card className="@container/card">
           <CardHeader>

@@ -28,6 +28,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+type OrderField = "createdAt" | "updatedAt" | "title" | "sku";
+type OrderDir = "asc" | "desc";
+
+type ExportQuery = {
+  search: string;
+  status?: "published" | "draft";
+  categoryId?: string;
+  attributeTermId?: string;
+  orderBy: OrderField;
+  orderDir: OrderDir;
+};
+
 export default function ProductsPage() {
   const router = useRouter();
 
@@ -43,6 +55,16 @@ export default function ProductsPage() {
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 👇 lifted query/sort state for export
+  const [exportQuery, setExportQuery] = useState<ExportQuery>({
+    search: "",
+    status: undefined,
+    categoryId: undefined,
+    attributeTermId: undefined,
+    orderBy: "createdAt",
+    orderDir: "desc",
+  });
 
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
@@ -125,6 +147,10 @@ export default function ProductsPage() {
   };
   const handleDragOver = (e: React.DragEvent) => e.preventDefault();
 
+  /**
+   * Export ALL products matching current filters/sort by delegating to the server.
+   * We forward the lifted `exportQuery` so the API can iterate `/api/products`.
+   */
   const handleExport = async () => {
     setIsExporting(true);
     try {
@@ -132,7 +158,8 @@ export default function ProductsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          products: currentProducts,
+          exportAll: true,
+          query: exportQuery,
           userEmail: userEmail,
         }),
       });
@@ -143,6 +170,10 @@ export default function ProductsPage() {
         const result = await res.json();
         if (result.sentToEmail) {
           setShowExportDialog(true);
+          // ✅ new toast notification
+          toast.success(
+            "Your export is large and will be sent to your registered email."
+          );
           return;
         }
       }
@@ -151,7 +182,7 @@ export default function ProductsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `products-page-${page}.xlsx`;
+      a.download = `products-all.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -165,6 +196,11 @@ export default function ProductsPage() {
 
   const handleProductsLoaded = useCallback((rows: Product[]) => {
     setCurrentProducts(rows);
+  }, []);
+
+  // receive filter/sort state from table
+  const handleQueryStateChange = useCallback((q: ExportQuery) => {
+    setExportQuery(q);
   }, []);
 
   if (permLoading || !canViewProducts) {
@@ -316,6 +352,8 @@ export default function ProductsPage() {
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
           onProductsLoaded={handleProductsLoaded}
+          // 👇 NEW: lift query/sort state up
+          onQueryStateChange={handleQueryStateChange}
         />
       </Suspense>
     </div>

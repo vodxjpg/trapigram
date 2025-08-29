@@ -1,3 +1,4 @@
+// src/app/(dashboard)/products/components/products-data-table.tsx
 "use client";
 
 import {
@@ -81,8 +82,8 @@ export type Product = {
   status: "published" | "draft";
   regularPrice: Record<string, number>;
   salePrice: Record<string, number> | null;
-  maxRegularPrice: number;         // ← NEW
-  maxSalePrice: number | null;     // ← NEW
+  maxRegularPrice: number; // ← NEW
+  maxSalePrice: number | null; // ← NEW
   stockStatus: "managed" | "unmanaged";
   stockData: Record<string, Record<string, number>> | null;
   categories: string[];
@@ -106,6 +107,15 @@ export interface ProductsDataTableProps {
   onPageChange: (p: number) => void;
   onPageSizeChange: (n: number) => void;
   onProductsLoaded?: (rows: Product[]) => void;
+  /** NEW (optional): notify parent of current query/sort to enable export-all */
+  onQueryStateChange?: (q: {
+    search: string;
+    status?: "published" | "draft";
+    categoryId?: string;
+    attributeTermId?: string;
+    orderBy: OrderField;
+    orderDir: "asc" | "desc";
+  }) => void;
 }
 
 export function ProductsDataTable({
@@ -114,6 +124,7 @@ export function ProductsDataTable({
   onPageChange,
   onPageSizeChange,
   onProductsLoaded,
+  onQueryStateChange, // NEW
 }: ProductsDataTableProps) {
   /* ---------------------------------------------------------- */
   /*  1) Basic state & permissions                              */
@@ -143,7 +154,6 @@ export function ProductsDataTable({
     dir: "desc",
   });
 
-
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -165,8 +175,9 @@ export function ProductsDataTable({
   const [categoryOptions, setCategoryOptions] = useState<
     { id: string; name: string }[]
   >([]);
-  const [termOptions, setTermOptions] = useState<{ id: string; name: string }[]>(
-    []);
+  const [termOptions, setTermOptions] = useState<
+    { id: string; name: string }[]
+  >([]);
   const [attributeOptions, setAttributeOptions] = useState<
     { id: string; name: string }[]
   >([]);
@@ -201,6 +212,33 @@ export function ProductsDataTable({
     }
   }, [products, onProductsLoaded]);
 
+  // 👇 NEW: lift current query/sort to parent for export usage
+  const lastQueryJSON = useRef<string>("");
+  useEffect(() => {
+    if (!onQueryStateChange) return;
+    const payload = {
+      search: debounced,
+      status: (statusFilter || undefined) as "published" | "draft" | undefined,
+      categoryId: categoryFilter || undefined,
+      attributeTermId: attributeTermFilter || undefined,
+      orderBy: serverSort.field,
+      orderDir: serverSort.dir,
+    };
+    const json = JSON.stringify(payload);
+    if (json !== lastQueryJSON.current) {
+      onQueryStateChange(payload);
+      lastQueryJSON.current = json;
+    }
+  }, [
+    onQueryStateChange,
+    debounced,
+    statusFilter,
+    categoryFilter,
+    attributeTermFilter,
+    serverSort.field,
+    serverSort.dir,
+  ]);
+
   /* keep `page` within valid range */
   useEffect(() => {
     if (!totalPages) return;
@@ -225,7 +263,7 @@ export function ProductsDataTable({
         setCategoryMap(map);
         setCategoryOptions(categories);
       })
-      .catch(() => { });
+      .catch(() => {});
 
     fetch("/api/product-attributes?page=1&pageSize=1000", {
       headers: {
@@ -234,7 +272,7 @@ export function ProductsDataTable({
     })
       .then((r) => r.json())
       .then(({ attributes }) => setAttributeOptions(attributes))
-      .catch(() => { });
+      .catch(() => {});
   }, []);
 
   /* ---------------------------------------------------------- */
@@ -421,11 +459,11 @@ export function ProductsDataTable({
       {
         accessorKey: "price",
         accessorFn: (p) => {
-  const r = Number(p.maxRegularPrice ?? 0);
-  const s = Number(p.maxSalePrice ?? NaN);
-  const isSaleActive = Number.isFinite(s) && s > 0 && s < r;
-  return isSaleActive ? s : r;
-},
+          const r = Number(p.maxRegularPrice ?? 0);
+          const s = Number(p.maxSalePrice ?? NaN);
+          const isSaleActive = Number.isFinite(s) && s > 0 && s < r;
+          return isSaleActive ? s : r;
+        },
         header: ({ column }) => (
           <Button
             variant="ghost"
@@ -439,14 +477,14 @@ export function ProductsDataTable({
         cell: ({ row }) => {
           const p = row.original;
 
-         const reg = Number(p.maxRegularPrice ?? 0);
-  const sale = Number(p.maxSalePrice ?? NaN);
-  const isSaleActive = Number.isFinite(sale) && sale > 0 && sale < reg;
-  const display = isSaleActive ? sale : reg;
+          const reg = Number(p.maxRegularPrice ?? 0);
+          const sale = Number(p.maxSalePrice ?? NaN);
+          const isSaleActive = Number.isFinite(sale) && sale > 0 && sale < reg;
+          const display = isSaleActive ? sale : reg;
           return (
             <div className="text-left">
               {display ? `$${display.toFixed(2)}` : "-"}
-             {isSaleActive && (
+              {isSaleActive && (
                 <span className="ml-2 text-sm text-gray-500 line-through">
                   ${reg.toFixed(2)}
                 </span>
@@ -625,11 +663,10 @@ export function ProductsDataTable({
     if (!isOrderField(id)) return;
     startTransition(() => {
       setServerSort({ field: id, dir: desc ? "desc" : "asc" });
-      onPageChange(1);                     // reset to first page
+      onPageChange(1); // reset to first page
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sorting]);
-
 
   // Sync react-table page size with our prop
   useEffect(() => {
@@ -708,7 +745,7 @@ export function ProductsDataTable({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input
-            placeholder="Search products..."
+            placeholder="Search by title or SKU..."
             value={query}
             onChange={(e) => {
               const txt = e.target.value;
@@ -900,7 +937,9 @@ export function ProductsDataTable({
             {isLoading ? (
               Array.from({ length: 5 }).map((_, r) => (
                 <TableRow key={r}>
-                  {Array.from({ length: columns.length }).map((_, c) => (
+                  {Array.from({
+                    length: (columns as ColumnDef<Product>[]).length,
+                  }).map((_, c) => (
                     <TableCell key={c}>
                       <Skeleton className="h-6 w-full" />
                     </TableCell>
@@ -926,7 +965,7 @@ export function ProductsDataTable({
             ) : (
               <TableRow>
                 <TableCell
-                  colSpan={columns.length}
+                  colSpan={(columns as ColumnDef<Product>[]).length}
                   className="h-24 text-center"
                 >
                   No products found.

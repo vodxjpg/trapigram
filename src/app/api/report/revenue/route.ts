@@ -33,6 +33,20 @@ export async function GET(req: NextRequest) {
     const { organizationId } = ctx;
 
     try {
+        const distinctCountriesQuery = `
+      SELECT DISTINCT o.country
+      FROM "orderRevenue" r
+      JOIN orders o ON r."orderId" = o.id
+      WHERE r."organizationId" = $1
+        AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
+      ORDER BY o.country ASC
+    `;
+        const baseValues = [organizationId, from, to];
+        const distinctResult = await pool.query(distinctCountriesQuery, baseValues);
+        const countries: string[] = distinctResult.rows
+            .map((r) => r.country as string)
+            .filter((c) => !!c); // remove null/empty
+
         const revenueQuery = `
         SELECT
             o."datePaid",
@@ -109,8 +123,8 @@ export async function GET(req: NextRequest) {
                 revenue: byDay[key]?.revenue ?? 0,
             };
         });
-
-        return NextResponse.json({ orders: row, chartData: chartData }, { status: 200 });
+        console.log(countries)
+        return NextResponse.json({ orders: row, countries, chartData: chartData }, { status: 200 });
     } catch (err) {
         console.error("Error fetching revenue:", err);
         return NextResponse.json(

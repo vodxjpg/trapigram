@@ -113,7 +113,22 @@ export async function GET(req: NextRequest) {
       .where("organizationId", "=", organizationId)
       .where("tenantId", "=", tenantId);
 
-    if (search) idQuery = idQuery.where("title", "ilike", `%${search}%`);
+    if (search) {
+      idQuery = idQuery.where((eb) =>
+        eb.or([
+          eb("title", "ilike", `%${search}%` as any),
+          eb("sku", "ilike", `%${search}%` as any),
+          eb.exists(
+            db
+              .selectFrom("productVariations as v")
+              .select("v.id")
+              .whereRef("v.productId", "=", "products.id")
+              .where("v.sku", "ilike", `%${search}%` as any)
+          ),
+        ])
+      );
+    }
+
     if (categoryId)
       idQuery = idQuery.where(
         "id",
@@ -127,7 +142,7 @@ export async function GET(req: NextRequest) {
       idQuery = idQuery.where("status", "=", status);  // status is now the right type
 
     let idRows: Array<{ id: string }>;
-    
+
     if (attributeTermId) {
       // ⭐ JOIN path so filtering happens BEFORE LIMIT/OFFSET
       const jq = db
@@ -137,7 +152,22 @@ export async function GET(req: NextRequest) {
         .where("p.organizationId", "=", organizationId)
         .where("p.tenantId", "=", tenantId)
         .where("pav.termId", "=", attributeTermId)
-        .$if(Boolean(search), q => q.where("p.title", "ilike", `%${search}%`))
+        .$if(Boolean(search), (q) =>
+          q.where((eb) =>
+            eb.or([
+              eb("p.title", "ilike", `%${search}%` as any),
+              eb("p.sku", "ilike", `%${search}%` as any),
+              eb.exists(
+                db
+                  .selectFrom("productVariations as v")
+                  .select("v.id")
+                  .whereRef("v.productId", "=", "p.id")
+                  .where("v.sku", "ilike", `%${search}%` as any)
+              ),
+            ])
+          )
+        )
+
         .$if(Boolean(categoryId), q =>
           q.where(
             "p.id",
@@ -151,7 +181,7 @@ export async function GET(req: NextRequest) {
         .orderBy(("p." + orderBy) as any, orderDir)
         .limit(pageSize)
         .offset((page - 1) * pageSize);
-    
+
       idRows = await jq.execute();
     } else {
       // No term filter → use the original simple products query
@@ -278,37 +308,37 @@ export async function GET(req: NextRequest) {
       }
 
       // ---- price maxima (highest across all countries) ----------
-// product-level price maps (simple products)
-const prodRegular =
-  typeof p.regularPrice === "string"
-    ? JSON.parse(p.regularPrice || "{}")
-    : (p.regularPrice || {});
-const prodSale =
-  typeof p.salePrice === "string"
-    ? JSON.parse(p.salePrice || "null")
-    : (p.salePrice ?? null);
+      // product-level price maps (simple products)
+      const prodRegular =
+        typeof p.regularPrice === "string"
+          ? JSON.parse(p.regularPrice || "{}")
+          : (p.regularPrice || {});
+      const prodSale =
+        typeof p.salePrice === "string"
+          ? JSON.parse(p.salePrice || "null")
+          : (p.salePrice ?? null);
 
-let maxRegularPrice = 0;
-let maxSalePrice: number | null = null;
+      let maxRegularPrice = 0;
+      let maxSalePrice: number | null = null;
 
-if (p.productType === "simple") {
-  maxRegularPrice = maxNum(Object.values(prodRegular || {}));
-  maxSalePrice = prodSale ? maxOrNull(Object.values(prodSale)) : null;
-} else {
-  // variable → compute per-variation maxima and then the product max
-  const varMaxRegs: number[] = [];
-  const varMaxSales: number[] = [];
-  for (const v of variations) {
-    const regs = Object.values(v.prices || {}).map((pr) => pr.regular ?? 0);
-    const sales = Object.values(v.prices || {})
-      .map((pr) => pr.sale)
-      .filter((x): x is number => x != null);
-    if (regs.length) varMaxRegs.push(Math.max(...regs));
-    if (sales.length) varMaxSales.push(Math.max(...sales));
-  }
-  maxRegularPrice = varMaxRegs.length ? Math.max(...varMaxRegs) : 0;
-  maxSalePrice = varMaxSales.length ? Math.max(...varMaxSales) : null;
-}
+      if (p.productType === "simple") {
+        maxRegularPrice = maxNum(Object.values(prodRegular || {}));
+        maxSalePrice = prodSale ? maxOrNull(Object.values(prodSale)) : null;
+      } else {
+        // variable → compute per-variation maxima and then the product max
+        const varMaxRegs: number[] = [];
+        const varMaxSales: number[] = [];
+        for (const v of variations) {
+          const regs = Object.values(v.prices || {}).map((pr) => pr.regular ?? 0);
+          const sales = Object.values(v.prices || {})
+            .map((pr) => pr.sale)
+            .filter((x): x is number => x != null);
+          if (regs.length) varMaxRegs.push(Math.max(...regs));
+          if (sales.length) varMaxSales.push(Math.max(...sales));
+        }
+        maxRegularPrice = varMaxRegs.length ? Math.max(...varMaxRegs) : 0;
+        maxSalePrice = varMaxSales.length ? Math.max(...varMaxSales) : null;
+      }
 
       return {
         id: p.id,
@@ -318,10 +348,10 @@ if (p.productType === "simple") {
         sku: p.sku,
         status: p.status,
         productType: p.productType,
-             regularPrice: prodRegular,
-      salePrice: prodSale,
-      maxRegularPrice,          // ← NEW
-      maxSalePrice,             // ← NEW (null when no sale anywhere)
+        regularPrice: prodRegular,
+        salePrice: prodSale,
+        maxRegularPrice,          // ← NEW
+        maxSalePrice,             // ← NEW (null when no sale anywhere)
         cost:
           typeof p.cost === "string" ? JSON.parse(p.cost) : p.cost,
         allowBackorders: p.allowBackorders,
@@ -340,7 +370,7 @@ if (p.productType === "simple") {
 
     /* -------- STEP 5 – total count ------------------------------ */
     let total = 0;
-    
+
     if (attributeTermId) {
       // Count DISTINCT product IDs using a subquery (mirrors the ID JOIN branch)
       const sub = db
@@ -350,7 +380,22 @@ if (p.productType === "simple") {
         .where("p.organizationId", "=", organizationId)
         .where("p.tenantId", "=", tenantId)
         .where("pav.termId", "=", attributeTermId)
-        .$if(Boolean(search), q => q.where("p.title", "ilike", `%${search}%`))
+        .$if(Boolean(search), (q) =>
+          q.where((eb) =>
+            eb.or([
+              eb("p.title", "ilike", `%${search}%` as any),
+              eb("p.sku", "ilike", `%${search}%` as any),
+              eb.exists(
+                db
+                  .selectFrom("productVariations as v")
+                  .select("v.id")
+                  .whereRef("v.productId", "=", "p.id")
+                  .where("v.sku", "ilike", `%${search}%` as any)
+              ),
+            ])
+          )
+        )
+
         .$if(Boolean(categoryId), q =>
           q.where(
             "p.id",
@@ -361,12 +406,12 @@ if (p.productType === "simple") {
         .$if(!!status, q => q.where("p.status", "=", status!))
         .groupBy("p.id")
         .as("t");
-    
+
       const totalJoin = await db
         .selectFrom(sub)
         .select(db.fn.countAll<number>().as("total"))
         .executeTakeFirst();
-    
+
       total = Number(totalJoin?.total ?? 0);
     } else {
       // Simple count on products (no term filter)
@@ -375,7 +420,22 @@ if (p.productType === "simple") {
         .select(db.fn.countAll<number>().as("total"))
         .where("organizationId", "=", organizationId)
         .where("tenantId", "=", tenantId)
-        .$if(Boolean(search), q => q.where("title", "ilike", `%${search}%`))
+        .$if(Boolean(search), (q) =>
+          q.where((eb) =>
+            eb.or([
+              eb("title", "ilike", `%${search}%` as any),
+              eb("sku", "ilike", `%${search}%` as any),
+              eb.exists(
+                db
+                  .selectFrom("productVariations as v")
+                  .select("v.id")
+                  .whereRef("v.productId", "=", "products.id")
+                  .where("v.sku", "ilike", `%${search}%` as any)
+              ),
+            ])
+          )
+        )
+
         .$if(Boolean(categoryId), q =>
           q.where(
             "id",
@@ -385,12 +445,12 @@ if (p.productType === "simple") {
         )
         .$if(!!status, q => q.where("status", "=", status!))
         .executeTakeFirst();
-    
+
       total = Number(totalPlain?.total ?? 0);
     }
-    
-      
-      
+
+
+
 
     return NextResponse.json({
       products,
@@ -439,7 +499,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     let parsedProduct = productSchema.parse(body)
 
-    
+
 
     /* SKU handling */
     let finalSku = parsedProduct.sku
