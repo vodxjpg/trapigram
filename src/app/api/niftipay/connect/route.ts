@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
     return problem("Niftipay did not return an apiKey", 502);
   }
 
-  // 5) Upsert payment method — unchanged
+  // 5) Upsert payment methods
   const existing = await db
     .selectFrom("paymentMethods")
     .select(["id"])
