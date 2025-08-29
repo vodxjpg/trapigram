@@ -199,7 +199,8 @@ console.log("[notify] dispatch start", {
       .select(["email"])
       .where("id", "=", userId)
       .executeTakeFirst();
-    if (u?.email) adminEmails.push(u.email);
+    // BUGFIX: the user's email must go to userEmails, not adminEmails
+    if (u?.email) userEmails.push(u.email);
   }
 
   const ownerRows = await db
