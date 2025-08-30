@@ -23,13 +23,13 @@ export async function GET(req: NextRequest) {
     req.nextUrl.searchParams.get("dry") === "1" ||
     req.nextUrl.searchParams.get("dryRun") === "true";
 
-  // find stale "open/underpaid" older than 12h
+  // Only cancel OPEN orders older than 12h (leave UNDERPAID alone)
   const cutoffIso = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
 
   const { rows } = await pool.query(
     `SELECT id
        FROM orders
-      WHERE status IN ('open','underpaid')
+      WHERE status = 'open'
         AND "dateCreated" < $1
       ORDER BY "dateCreated" ASC
       LIMIT 200`,
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
   const ids: string[] = rows.map((r) => r.id);
   const results: Array<{ id: string; ok: boolean; status?: number }> = [];
 
-  if (!ids.length) {
+  if (ids.length === 0) {
     return NextResponse.json({ tried: 0, ok: 0, fail: 0, results: [] });
   }
 
