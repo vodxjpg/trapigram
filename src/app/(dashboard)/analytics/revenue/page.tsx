@@ -89,6 +89,8 @@ const chartConfig = {
   revenue: { label: "Revenue", color: "var(--color-mobile)" },
 } satisfies ChartConfig;
 
+const ALL_DROPSHIPPERS = "__ALL__";
+
 export default function OrderReport() {
   const router = useRouter();
 
@@ -132,7 +134,7 @@ export default function OrderReport() {
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
 
   // dropshipper filter (orgId) + options from API
-  const [dropshipperOrgId, setDropshipperOrgId] = useState<string | "">("");
+const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
   const [dropshipperOptions, setDropshipperOptions] = useState<Array<{ orgId: string; label: string }>>([]);
 
   const [chartData, setChartData] = useState<
@@ -488,16 +490,16 @@ export default function OrderReport() {
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">Dropshipper</span>
                 <Select
-                  // when state is "", show the sentinel as the selected value
-                  value={dropshipperOrgId ? dropshipperOrgId : ALL_DROPSHIPPERS}
-                  onValueChange={(v) => setDropshipperOrgId(v === ALL_DROPSHIPPERS ? "" : v)}
+                               /* When state is "", show the sentinel as the selected value */
+             value={dropshipperOrgId ? dropshipperOrgId : ALL_DROPSHIPPERS}
+             onValueChange={(v) => setDropshipperOrgId(v === ALL_DROPSHIPPERS ? "" : v)}
                 >
                   <SelectTrigger size="sm" className="min-w-[220px]">
                     <SelectValue placeholder="All dropshippers" />
                   </SelectTrigger>
                   <SelectContent>
                     {/* Use non-empty sentinel here */}
-                    <SelectItem key="__all" value={ALL_DROPSHIPPERS}>
+                 <SelectItem key="__all" value={ALL_DROPSHIPPERS}>
                       All dropshippers
                     </SelectItem>
                     {dropshipperOptions.map((d) => (
