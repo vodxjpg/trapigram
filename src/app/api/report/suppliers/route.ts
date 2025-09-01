@@ -86,7 +86,77 @@ function convertByCountry(amountLocal: number, country: string, to: "USD"|"GBP"|
 }
 
 /* --------------------------------------------------------------- */
-/* GET – list payables lines + daily chart                         */
+/* grouping                                                        */
+/* --------------------------------------------------------------- */
+type Line = {
+  orderId: string;
+  orderNumber: string;
+  datePaid: string;
+  username: string;
+  country: string;
+  cancelled: boolean;
+  refunded: boolean;
+  supplierOrgId: string | null;
+  supplierLabel: string | null;
+  productTitle: string;
+  quantity: number;
+  unitCost: number;
+  lineTotal: number;
+};
+
+type GroupedOrder = {
+  orderId: string;
+  orderNumber: string;
+  datePaid: string;
+  username: string;
+  country: string;
+  cancelled: boolean;
+  refunded: boolean;
+  supplierOrgId: string | null;
+  supplierLabel: string | null;
+  items: Array<{ productTitle: string; quantity: number; unitCost: number; lineTotal: number }>;
+  totalQty: number;
+  totalOwed: number;
+};
+
+function groupByOrderAndSupplier(lines: Line[]): GroupedOrder[] {
+  const map = new Map<string, GroupedOrder>();
+  for (const l of lines) {
+    const key = `${l.orderId}__${l.supplierOrgId ?? "none"}`;
+    let g = map.get(key);
+    if (!g) {
+      g = {
+        orderId: l.orderId,
+        orderNumber: l.orderNumber,
+        datePaid: l.datePaid,
+        username: l.username,
+        country: l.country,
+        cancelled: l.cancelled,
+        refunded: l.refunded,
+        supplierOrgId: l.supplierOrgId,
+        supplierLabel: l.supplierLabel,
+        items: [],
+        totalQty: 0,
+        totalOwed: 0,
+      };
+      map.set(key, g);
+    }
+    g.items.push({
+      productTitle: l.productTitle,
+      quantity: l.quantity,
+      unitCost: l.unitCost,
+      lineTotal: l.lineTotal,
+    });
+    g.totalQty += Number(l.quantity || 0);
+    g.totalOwed += Number(l.lineTotal || 0);
+  }
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
+  );
+}
+
+/* --------------------------------------------------------------- */
+/* GET – grouped payables (Order × Supplier) + daily chart         */
 /* --------------------------------------------------------------- */
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -116,8 +186,8 @@ export async function GET(req: NextRequest) {
       vals.push(supplierOrgIdFilter);
     }
 
-    // Only include cart lines that were created from a shared product mapping (i.e., you owe a supplier).
-    // We also join orderRevenue to read refund/cancel flags to support status filter & consistent logic.
+    // Only include cart lines created from a shared product mapping (i.e., you owe a supplier).
+    // Join orderRevenue for refund/cancel flags (status filter).
     const sql = `
       SELECT
         o.id                         AS "orderId",
@@ -173,7 +243,7 @@ export async function GET(req: NextRequest) {
     // Preload labels cache
     const labelCache = new Map<string, string>();
 
-    const lines = await Promise.all(
+    const lines: Line[] = await Promise.all(
       res.rows
         .filter(statusPass)
         .map(async (row: any) => {
@@ -223,6 +293,9 @@ export async function GET(req: NextRequest) {
         })
     );
 
+    // Group by Order × Supplier
+    const orders = groupByOrderAndSupplier(lines);
+
     // Countries (sorted)
     const countries = Array.from(countrySet).filter(Boolean).sort();
 
@@ -234,11 +307,11 @@ export async function GET(req: NextRequest) {
       }))
     );
 
-    // Chart: daily sum of lineTotal for non-cancelled & non-refunded (paid only)
-    const paidOnly = lines.filter(l => !l.cancelled && !l.refunded);
-    const byDay = paidOnly.reduce<Record<string, number>>((acc, l) => {
-      const key = new Date(l.datePaid).toISOString().split("T")[0];
-      acc[key] = (acc[key] ?? 0) + l.lineTotal;
+    // Chart: daily sum of totalOwed for non-cancelled & non-refunded (paid only)
+    const paidOrders = orders.filter(o => !o.cancelled && !o.refunded);
+    const byDay = paidOrders.reduce<Record<string, number>>((acc, o) => {
+      const key = new Date(o.datePaid).toISOString().split("T")[0];
+      acc[key] = (acc[key] ?? 0) + o.totalOwed;
       return acc;
     }, {});
     const fromDate = new Date(from);
@@ -250,7 +323,7 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json(
-      { lines, countries, suppliers, chartData },
+      { orders, countries, suppliers, chartData },
       { status: 200 },
     );
   } catch (err) {
