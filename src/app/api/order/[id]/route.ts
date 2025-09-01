@@ -71,6 +71,44 @@ async function resolveDropshipperLabel(orgId: string | null): Promise<string | n
   } catch { return null; }
 }
 
+// Fallback: infer immediate downstream org for legacy orders with empty orderMeta.
+// Strategy:
+//  1) Preferred: via sharedProductMapping using this supplier order's productIds:
+//     cp.productId -> sharedProductMapping.targetProductId -> products.organizationId (downstream)
+//  2) Last resort: if orderKey starts with "S-", strip prefix and take the base order's organizationId.
+async function inferDownstreamOrgId(orderId: string, cartId: string, orderKey: string | null): Promise<string | null> {
+  try {
+    // 1) Via product mapping (strongest)
+    const prodQ = await pool.query(
+      `SELECT DISTINCT cp."productId" AS pid
+         FROM "cartProducts" cp
+        WHERE cp."cartId" = $1
+          AND cp."productId" IS NOT NULL`,
+      [cartId],
+    );
+    for (const row of prodQ.rows as Array<{ pid: string }>) {
+      const mapQ = await pool.query(
+        `SELECT "targetProductId" FROM "sharedProductMapping"
+          WHERE "sourceProductId" = $1 LIMIT 1`,
+        [row.pid],
+      );
+      const targetId = mapQ.rows[0]?.targetProductId as string | undefined;
+      if (targetId) {
+        const orgQ = await pool.query(`SELECT "organizationId" FROM "products" WHERE id = $1 LIMIT 1`, [targetId]);
+        const orgId = orgQ.rows[0]?.organizationId as string | undefined;
+        if (orgId) return orgId;
+      }
+    }
+    // 2) Last resort by base order key (covers first hop)
+    if (orderKey && orderKey.startsWith("S-")) {
+      const base = orderKey.slice(2);
+      const baseQ = await pool.query(`SELECT "organizationId" FROM "orders" WHERE "orderKey" = $1 LIMIT 1`, [base]);
+      return (baseQ.rows[0]?.organizationId as string) ?? null;
+    }
+  } catch { /* ignore and fall through */ }
+  return null;
+}
+
 /* ================================================================= */
 /* GET – full order with both normal & affiliate products             */
 /* ================================================================= */
@@ -158,27 +196,32 @@ export async function GET(
     .reduce((sum, p) => sum + p.subtotal, 0);
 
   // 7. Build full response
-const dropshipper = extractDropshipper(order.orderMeta);
-// Backfill label for legacy orders that didn’t store a name in orderMeta
-let dropshipperName: string | null = dropshipper.name;
-if (!dropshipperName && dropshipper.orgId) {
-  try {
-    dropshipperName = await resolveDropshipperLabel(dropshipper.orgId);
-  } catch { /* ignore */ }
-}
+  const dropshipper = extractDropshipper(order.orderMeta);
+  let dropshipperOrgId: string | null = dropshipper.orgId;
+  // Infer org id if metadata absent
+  if (!dropshipperOrgId) {
+    dropshipperOrgId = await inferDownstreamOrgId(order.id, order.cartId, order.orderKey);
+  }
+  // Backfill label for legacy orders (or when stored name is missing)
+  let dropshipperName: string | null = dropshipper.name ?? null;
+  if (!dropshipperName && dropshipperOrgId) {
+    dropshipperName = await resolveDropshipperLabel(dropshipperOrgId);
+  }
 
-const normalizedMeta =
-  order.orderMeta ? (typeof order.orderMeta === "string" ? JSON.parse(order.orderMeta) : order.orderMeta) : [];
-const full = {
+  const normalizedMeta =
+    order.orderMeta
+      ? (typeof order.orderMeta === "string" ? JSON.parse(order.orderMeta) : order.orderMeta)
+      : [];
+  const full = {
     id: order.id,
     orderKey: order.orderKey,
     clientId: order.clientId,
     cartId: order.cartId,
     status: order.status,
     country: order.country,
-        orderMeta: normalizedMeta,                          // keep original meta (array of events)
-    dropshipperOrgId: dropshipper.orgId,               // immediate downstream org (if any)
-    dropshipperName: dropshipper.name,                 // filled once we wire a name source
+    orderMeta: normalizedMeta,                          // keep original meta (array of events)
+    dropshipperOrgId,                                   // immediate downstream org (if inferred)
+    dropshipperName,                                    // "organizations.name (ownerEmail)" if resolvable
     products,
     coupon: order.couponCode,
     couponType: order.couponType,
@@ -289,50 +332,50 @@ export async function PATCH(
     const current = rows[0] as { paymentMethod: string | null; orderKey: string };
 
     /* ①-b  if we’re *leaving* Niftipay → delete the old invoice    */
-      if (
-          current.paymentMethod?.toLowerCase() === "niftipay" &&
-          newPM.toLowerCase() !== "niftipay"
-        ) {
-          // lookup the tenant’s API key
-          const pmRow = await db
-            .selectFrom("paymentMethods")
-            .select("apiKey")
-            .where("tenantId", "=", ctx.tenantId)
-            .where("name", "=", "Niftipay")
-            .executeTakeFirst();
-          const nifiApiKey = pmRow?.apiKey;
-          if (!nifiApiKey) {
-            return NextResponse.json(
-              { error: "No Niftipay credentials configured" },
-              { status: 500 }
-            );
+    if (
+      current.paymentMethod?.toLowerCase() === "niftipay" &&
+      newPM.toLowerCase() !== "niftipay"
+    ) {
+      // lookup the tenant’s API key
+      const pmRow = await db
+        .selectFrom("paymentMethods")
+        .select("apiKey")
+        .where("tenantId", "=", ctx.tenantId)
+        .where("name", "=", "Niftipay")
+        .executeTakeFirst();
+      const nifiApiKey = pmRow?.apiKey;
+      if (!nifiApiKey) {
+        return NextResponse.json(
+          { error: "No Niftipay credentials configured" },
+          { status: 500 }
+        );
+      }
+
+      // attempt DELETE, but ignore 404 (already gone)
+      try {
+        const resDel = await fetch(
+          `${process.env.NIFTIPAY_API_URL ?? "https://www.niftipay.com"}/api/orders?reference=${encodeURIComponent(current.orderKey)}`,
+          {
+            method: "DELETE",
+            headers: { "x-api-key": nifiApiKey },
           }
-      
-          // attempt DELETE, but ignore 404 (already gone)
-          try {
-            const resDel = await fetch(
-              `${process.env.NIFTIPAY_API_URL ?? "https://www.niftipay.com"}/api/orders?reference=${encodeURIComponent(current.orderKey)}`,
-              {
-                method: "DELETE",
-                headers: { "x-api-key": nifiApiKey },
-              }
-            );
-            if (!resDel.ok && resDel.status !== 404) {
-              const bodyErr = await resDel.json().catch(() => ({}));
-              return NextResponse.json(
-                { error: bodyErr.error ?? "Unable to delete Niftipay order" },
-                { status: 400 }
-              );
-            }
-            // if 404 or 2xx, continue
-          } catch (err: any) {
-            return NextResponse.json(
-              { error: err.message ?? "Niftipay deletion failed" },
-              { status: 400 }
-            );
-          }
+        );
+        if (!resDel.ok && resDel.status !== 404) {
+          const bodyErr = await resDel.json().catch(() => ({}));
+          return NextResponse.json(
+            { error: bodyErr.error ?? "Unable to delete Niftipay order" },
+            { status: 400 }
+          );
         }
-   
+        // if 404 or 2xx, continue
+      } catch (err: any) {
+        return NextResponse.json(
+          { error: err.message ?? "Niftipay deletion failed" },
+          { status: 400 }
+        );
+      }
+    }
+
 
     /* ①-c  persist the new payment method                       */
     fields.push(`"paymentMethod" = $${fields.length + 1}`);

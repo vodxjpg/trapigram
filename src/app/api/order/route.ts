@@ -374,7 +374,7 @@ export async function POST(req: NextRequest) {
     await pool.query("BEGIN");
     await pool.query(updCartSQL, updCartVals);
 
-   
+
     // order deduct block
 
     const r = await pool.query(insertSQL, insertValues);
@@ -435,8 +435,8 @@ export async function POST(req: NextRequest) {
           shareLinkId: m.rows[0].shareLinkId,
           sourceProductId: m.rows[0].sourceProductId,
           targetProductId: ln.productId,
-              // For first hop, the downstream that generated the order is the original buyer org (C)
-    downstreamOrganizationId: oldOrder.rows[0].organizationId,
+          // For first hop, the downstream that generated the order is the original buyer org (C)
+          downstreamOrganizationId: oldOrder.rows[0].organizationId,
         });
       }
       return result;
@@ -464,8 +464,8 @@ export async function POST(req: NextRequest) {
           shareLinkId: m.rows[0].shareLinkId,
           sourceProductId: m.rows[0].sourceProductId,
           targetProductId: it.targetProductId, // keep C’s leaf for qty lookup
-               // For further hops, the downstream is the previous hop’s supplier org
-     downstreamOrganizationId: it.organizationId,
+          // For further hops, the downstream is the previous hop’s supplier org
+          downstreamOrganizationId: it.organizationId,
         });
       }
       return out;
@@ -485,15 +485,45 @@ export async function POST(req: NextRequest) {
         organizationId, items,
       })).filter(g => !createdSupplierOrgs.has(g.organizationId)); // only once per org
 
-          // Compute per-group downstream (dropshipper) org. In normal chains this is one value.
-    // If multiple (edge case), we pick the first deterministically.
-    const groupDownstream: Record<string, string | null> = {};
-    for (const group of groupedArray) {
-      const unique = Array.from(
-        new Set(group.items.map(i => i.downstreamOrganizationId).filter(Boolean))
-      );
-      groupDownstream[group.organizationId] = unique.length > 0 ? unique[0] : null;
-    }
+      // Helper: orgId -> "Org Name (ownerEmail)" using organization.metadata.tenantId
+      async function resolveDropshipperLabel(orgId: string | null): Promise<string | null> {
+        if (!orgId) return null;
+        try {
+          const orgQ = await pool.query(
+            `SELECT name, metadata FROM "organization" WHERE id = $1 LIMIT 1`,
+            [orgId],
+          );
+          if (!orgQ.rowCount) return null;
+          const orgName: string = orgQ.rows[0].name ?? "";
+          let email: string | null = null;
+          const rawMeta: string | null = orgQ.rows[0].metadata ?? null;
+          if (rawMeta) {
+            try {
+              const meta = JSON.parse(rawMeta);
+              const tenantId =
+                meta && typeof meta.tenantId === "string" ? meta.tenantId : null;
+              if (tenantId) {
+                const tQ = await pool.query(
+                  `SELECT "ownerEmail" FROM "tenant" WHERE id = $1 LIMIT 1`,
+                  [tenantId],
+                );
+                email = (tQ.rows[0]?.ownerEmail as string) ?? null;
+              }
+            } catch { /* ignore malformed metadata */ }
+          }
+          return email ? `${orgName} (${email})` : orgName;
+        } catch { return null; }
+      }
+
+      // Compute per-group downstream (dropshipper) org. In normal chains this is one value.
+      // If multiple (edge case), we pick the first deterministically.
+      const groupDownstream: Record<string, string | null> = {};
+      for (const group of groupedArray) {
+        const unique = Array.from(
+          new Set(group.items.map(i => i.downstreamOrganizationId).filter(Boolean))
+        );
+        groupDownstream[group.organizationId] = unique.length > 0 ? unique[0] : null;
+      }
 
       // Pre-compute per-group transfer subtotal for shipping split
       const transferSubtotals: Record<string, number> = {};
@@ -620,12 +650,19 @@ export async function POST(req: NextRequest) {
         }
 
         const newOrderIdLocal = uuidv4();
-            // Persist a lightweight marker into orderMeta so UIs can show who generated the order
-    const dropshipperOrgId = groupDownstream[group.organizationId];
-    const orderMetaArr = dropshipperOrgId
-      ? [{ type: "dropshipper", organizationId: dropshipperOrgId, at: new Date().toISOString() }]
-      : [];
-    const orderMetaJson = JSON.stringify(orderMetaArr);
+        // Persist a lightweight marker into orderMeta so UIs can show who generated the order.
+        // We also include a human label now to avoid read-time joins for new orders.
+        const dropshipperOrgId = groupDownstream[group.organizationId];
+        const dropshipperLabel = await resolveDropshipperLabel(dropshipperOrgId);
+        const orderMetaArr = dropshipperOrgId
+          ? [{
+            type: "dropshipper",
+            organizationId: dropshipperOrgId,
+            name: dropshipperLabel ?? undefined,
+            at: new Date().toISOString(),
+          }]
+          : [];
+        const orderMetaJson = JSON.stringify(orderMetaArr);
         await pool.query(
           `INSERT INTO orders
          (id, "organizationId","clientId","cartId",country,"paymentMethod",
@@ -633,7 +670,7 @@ export async function POST(req: NextRequest) {
           address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
           "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash","orderMeta")
        VALUES
-        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18,$19::jsonb)`,
+       ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18,$19::jsonb)`,
           [
             newOrderIdLocal,
             group.organizationId,
@@ -653,7 +690,7 @@ export async function POST(req: NextRequest) {
             supplierOrderKey,
             0,
             newCartHash,
-             orderMetaJson,
+            orderMetaJson,
           ],
         );
         // created a supplier order for this org
