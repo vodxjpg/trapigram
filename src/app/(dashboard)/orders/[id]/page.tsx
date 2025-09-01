@@ -65,6 +65,8 @@ interface Order {
   total: number;
   shippingInfo: ShippingInfo;
   country?: string;
+  dropshipperOrgId?: string | null;
+dropshipperName?: string | null;
 }
 interface Message {
   id: string;
@@ -255,6 +257,8 @@ export default function OrderView() {
         clientEmail: c.email ?? "",
         clientUsername: c.username,
         discountValue: o.discountValue,
+             dropshipperOrgId: (o as any).dropshipperOrgId ?? null,
+       dropshipperName: (o as any).dropshipperName ?? null,
       });
       setError(null);
     } catch (err: any) {
@@ -418,6 +422,12 @@ export default function OrderView() {
                     {order.clientUsername} ({order.clientEmail})
                   </p>
                 </div>
+                          <div>
+            <p className="text-sm text-muted-foreground">Dropshipper</p>
+            <p className="font-medium">
+              {order.dropshipperName ?? "—"}
+            </p>
+          </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Order ID</p>
                   <p className="font-medium">{order.id}</p>

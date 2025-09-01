@@ -29,6 +29,48 @@ function decryptSecretNode(enc: string): string {
   return d.update(enc, "base64", "utf8") + d.final("utf8");
 }
 
+function asArray(meta: unknown): any[] {
+  if (!meta) return [];
+  if (Array.isArray(meta)) return meta;
+  if (typeof meta === "string") {
+    try { const p = JSON.parse(meta); return Array.isArray(p) ? p : []; } catch { return []; }
+  }
+  return [];
+}
+
+function extractDropshipper(meta: unknown): { orgId: string | null; name: string | null } {
+  const arr = asArray(meta);
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const m = arr[i];
+    if (m && m.type === "dropshipper" && typeof m.organizationId === "string") {
+      return { orgId: m.organizationId, name: typeof m.name === "string" ? m.name : null };
+    }
+  }
+  return { orgId: null, name: null };
+}
+
+async function resolveDropshipperLabel(orgId: string | null): Promise<string | null> {
+  if (!orgId) return null;
+  try {
+    const orgQ = await pool.query(`SELECT name, metadata FROM "organization" WHERE id = $1 LIMIT 1`, [orgId]);
+    if (!orgQ.rowCount) return null;
+    const orgName: string = orgQ.rows[0].name ?? "";
+    let email: string | null = null;
+    const rawMeta: string | null = orgQ.rows[0].metadata ?? null;
+    if (rawMeta) {
+      try {
+        const meta = JSON.parse(rawMeta);
+        const tenantId = typeof meta?.tenantId === "string" ? meta.tenantId : null;
+        if (tenantId) {
+          const tQ = await pool.query(`SELECT "ownerEmail" FROM "tenant" WHERE id = $1 LIMIT 1`, [tenantId]);
+          email = (tQ.rows[0]?.ownerEmail as string) ?? null;
+        }
+      } catch { /* ignore malformed metadata */ }
+    }
+    return email ? `${orgName} (${email})` : orgName;
+  } catch { return null; }
+}
+
 /* ================================================================= */
 /* GET – full order with both normal & affiliate products             */
 /* ================================================================= */
@@ -116,18 +158,27 @@ export async function GET(
     .reduce((sum, p) => sum + p.subtotal, 0);
 
   // 7. Build full response
-  const full = {
+const dropshipper = extractDropshipper(order.orderMeta);
+// Backfill label for legacy orders that didn’t store a name in orderMeta
+let dropshipperName: string | null = dropshipper.name;
+if (!dropshipperName && dropshipper.orgId) {
+  try {
+    dropshipperName = await resolveDropshipperLabel(dropshipper.orgId);
+  } catch { /* ignore */ }
+}
+
+const normalizedMeta =
+  order.orderMeta ? (typeof order.orderMeta === "string" ? JSON.parse(order.orderMeta) : order.orderMeta) : [];
+const full = {
     id: order.id,
     orderKey: order.orderKey,
     clientId: order.clientId,
     cartId: order.cartId,
     status: order.status,
     country: order.country,
-    orderMeta: order.orderMeta ?                        // jsonb → JS object
-      (typeof order.orderMeta === "string"
-        ? JSON.parse(order.orderMeta)        // pg hasn’t parsed
-        : order.orderMeta)                   // pg already parsed
-      : [],
+        orderMeta: normalizedMeta,                          // keep original meta (array of events)
+    dropshipperOrgId: dropshipper.orgId,               // immediate downstream org (if any)
+    dropshipperName: dropshipper.name,                 // filled once we wire a name source
     products,
     coupon: order.couponCode,
     couponType: order.couponType,

@@ -410,6 +410,7 @@ export async function POST(req: NextRequest) {
       shareLinkId: string;         // share link used *at this hop*
       sourceProductId: string;     // supplier’s product at this hop
       targetProductId: string;     // leaf product in C’s cart (used to read qty)
+      downstreamOrganizationId: string; // the org *requesting from* this supplier at this hop
     };
 
     // hop(0): C’s product → B’s product
@@ -434,6 +435,8 @@ export async function POST(req: NextRequest) {
           shareLinkId: m.rows[0].shareLinkId,
           sourceProductId: m.rows[0].sourceProductId,
           targetProductId: ln.productId,
+              // For first hop, the downstream that generated the order is the original buyer org (C)
+    downstreamOrganizationId: oldOrder.rows[0].organizationId,
         });
       }
       return result;
@@ -461,6 +464,8 @@ export async function POST(req: NextRequest) {
           shareLinkId: m.rows[0].shareLinkId,
           sourceProductId: m.rows[0].sourceProductId,
           targetProductId: it.targetProductId, // keep C’s leaf for qty lookup
+               // For further hops, the downstream is the previous hop’s supplier org
+     downstreamOrganizationId: it.organizationId,
         });
       }
       return out;
@@ -479,6 +484,16 @@ export async function POST(req: NextRequest) {
       const groupedArray = Object.entries(groupedMap).map(([organizationId, items]) => ({
         organizationId, items,
       })).filter(g => !createdSupplierOrgs.has(g.organizationId)); // only once per org
+
+          // Compute per-group downstream (dropshipper) org. In normal chains this is one value.
+    // If multiple (edge case), we pick the first deterministically.
+    const groupDownstream: Record<string, string | null> = {};
+    for (const group of groupedArray) {
+      const unique = Array.from(
+        new Set(group.items.map(i => i.downstreamOrganizationId).filter(Boolean))
+      );
+      groupDownstream[group.organizationId] = unique.length > 0 ? unique[0] : null;
+    }
 
       // Pre-compute per-group transfer subtotal for shipping split
       const transferSubtotals: Record<string, number> = {};
@@ -605,6 +620,12 @@ export async function POST(req: NextRequest) {
         }
 
         const newOrderIdLocal = uuidv4();
+            // Persist a lightweight marker into orderMeta so UIs can show who generated the order
+    const dropshipperOrgId = groupDownstream[group.organizationId];
+    const orderMetaArr = dropshipperOrgId
+      ? [{ type: "dropshipper", organizationId: dropshipperOrgId, at: new Date().toISOString() }]
+      : [];
+    const orderMetaJson = JSON.stringify(orderMetaArr);
         await pool.query(
           `INSERT INTO orders
          (id, "organizationId","clientId","cartId",country,"paymentMethod",
@@ -612,7 +633,7 @@ export async function POST(req: NextRequest) {
           address,status,subtotal,"pointsRedeemed","pointsRedeemedAmount",
           "dateCreated","createdAt","updatedAt","orderKey","discountTotal","cartHash","orderMeta")
        VALUES
-         ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18,'[]'::jsonb)`,
+        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW(),NOW(),$16,$17,$18,$19::jsonb)`,
           [
             newOrderIdLocal,
             group.organizationId,
@@ -632,6 +653,7 @@ export async function POST(req: NextRequest) {
             supplierOrderKey,
             0,
             newCartHash,
+             orderMetaJson,
           ],
         );
         // created a supplier order for this org
