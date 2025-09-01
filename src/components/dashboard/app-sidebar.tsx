@@ -108,6 +108,7 @@ const data = {
         { title: "Categories", url: "/analytics/category-revenue" },
         { title: "Coupons", url: "/analytics/coupons/" },
         { title: "Products", url: "/analytics/products/" },
+        { title: "Dropshipping suppliers", url: "/analytics/dropshiping-suppliers/" }
       ],
     },
     {
