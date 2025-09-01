@@ -35,6 +35,8 @@ interface Product {
   unitPrice: number;
   total: number;
   isAffiliate: boolean;
+  supplierOrgId?: string | null;
+  supplierName?: string | null;
   image: string | null;
 }
 interface ShippingInfo {
@@ -83,6 +85,8 @@ function groupByProduct(lines: Product[]) {
         bucket = {
           id: l.id,
           title: l.title,
+          supplierOrgId: l.supplierOrgId ?? null,
+          supplierName: l.supplierName ?? null,
           sku: l.sku,
           description: l.description,
           image: l.image,
@@ -93,6 +97,10 @@ function groupByProduct(lines: Product[]) {
       }
       const pb = bucket.priceBuckets.find((p) => p.unitPrice === l.unitPrice);
       if (pb) pb.quantity += l.quantity;
+        // Preserve supplier info if present (first non-null wins)
+      if (bucket.supplierOrgId == null && l.supplierOrgId != null) {
+        bucket.supplierOrgId = l.supplierOrgId;
+      }
       else bucket.priceBuckets.push({ unitPrice: l.unitPrice, quantity: l.quantity });
       return acc;
     }, [] as Array<{
@@ -100,6 +108,8 @@ function groupByProduct(lines: Product[]) {
       title: string;
       sku: string;
       description: string;
+      supplierOrgId?: string | null;
+      supplierName?: string | null;
       image: string | null;
       isAffiliate: boolean;
       priceBuckets: { unitPrice: number; quantity: number }[];
@@ -496,6 +506,12 @@ export default function OrderView() {
                           </TableCell>
                           <TableCell className="font-medium">
                             {g.title}
+                                                        {/* Supplier (only when present and not affiliate) */}
+                            {!g.isAffiliate && g.supplierName && (
+                              <div className="text-xs text-muted-foreground mt-0.5">
+                                Supplier: {g.supplierName}
+                              </div>
+                            )}
                             {g.priceBuckets.length > 1 && (
                               <ul className="text-xs text-muted-foreground mt-1 space-y-1">
                                 {g.priceBuckets.map((pb) => (

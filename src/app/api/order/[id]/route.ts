@@ -1,6 +1,7 @@
 // src/app/api/order/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
+import type { QueryResult } from "pg";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { z } from "zod";
@@ -70,6 +71,33 @@ async function resolveDropshipperLabel(orgId: string | null): Promise<string | n
     return email ? `${orgName} (${email})` : orgName;
   } catch { return null; }
 }
+
+// Resolve the *immediate* upstream supplier for a buyer-visible product.
+// We look up the hop where this cart line's product is the `targetProductId`,
+// then take `sourceProductId`'s organization as the supplier.
+async function resolveImmediateSupplierForTargetProduct(targetProductId: string): Promise<{ orgId: string | null; name: string | null }> {
+  try {
+    const mapQ = await pool.query(
+      `SELECT "sourceProductId" FROM "sharedProductMapping"
+       WHERE "targetProductId" = $1
+       LIMIT 1`,
+      [targetProductId],
+    );
+    const sourceId = mapQ.rows[0]?.sourceProductId as string | undefined;
+    if (!sourceId) return { orgId: null, name: null };
+    const orgQ = await pool.query(
+      `SELECT "organizationId" FROM products WHERE id = $1 LIMIT 1`,
+      [sourceId],
+    );
+    const orgId = orgQ.rows[0]?.organizationId as string | undefined;
+    if (!orgId) return { orgId: null, name: null };
+    const label = await resolveDropshipperLabel(orgId);
+    return { orgId, name: label };
+  } catch {
+    return { orgId: null, name: null };
+  }
+}
+
 
 // Fallback: infer immediate downstream org for legacy orders with empty orderMeta.
 // Strategy:
@@ -178,7 +206,7 @@ export async function GET(
     ...affRes.rows.map((r: any) => ({ ...r, isAffiliate: true })),
   ];
 
-  const products = all.map((r: any) => ({
+let products = all.map((r: any) => ({
     id: r.id,
     title: r.title,
     description: r.description,
@@ -189,6 +217,21 @@ export async function GET(
     isAffiliate: r.isAffiliate,
     subtotal: Number(r.unitPrice) * r.quantity,
   }));
+
+   // Enrich with *immediate supplier* (only for non-affiliate lines)
+ const supplierCache = new Map<string, { orgId: string | null; name: string | null }>();
+ products = await Promise.all(
+   products.map(async (p) => {
+     if (p.isAffiliate) return { ...p, supplierOrgId: null, supplierName: null };
+     if (supplierCache.has(p.id)) {
+       const cached = supplierCache.get(p.id)!;
+       return { ...p, supplierOrgId: cached.orgId, supplierName: cached.name };
+     }
+     const sup = await resolveImmediateSupplierForTargetProduct(p.id);
+     supplierCache.set(p.id, sup);
+     return { ...p, supplierOrgId: sup.orgId, supplierName: sup.name };
+   }),
+ );
 
   // 6. Compute subtotal *only* across non-affiliate (monetary) items
   const subtotal = products
