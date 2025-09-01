@@ -86,7 +86,7 @@ function convertByCountry(amountLocal: number, country: string, to: "USD"|"GBP"|
 }
 
 /* --------------------------------------------------------------- */
-/* grouping                                                        */
+/* types + grouping                                                */
 /* --------------------------------------------------------------- */
 type Line = {
   orderId: string;
@@ -121,6 +121,7 @@ type GroupedOrder = {
 
 function groupByOrderAndSupplier(lines: Line[]): GroupedOrder[] {
   const map = new Map<string, GroupedOrder>();
+
   for (const l of lines) {
     const key = `${l.orderId}__${l.supplierOrgId ?? "none"}`;
     let g = map.get(key);
@@ -150,7 +151,20 @@ function groupByOrderAndSupplier(lines: Line[]): GroupedOrder[] {
     g.totalQty += Number(l.quantity || 0);
     g.totalOwed += Number(l.lineTotal || 0);
   }
-  return Array.from(map.values()).sort(
+
+  // Apply business rules on the grouped totals
+  const grouped = Array.from(map.values());
+  for (const g of grouped) {
+    if (g.cancelled) {
+      // not shipping => owe nothing
+      g.totalOwed = 0;
+    } else if (g.refunded) {
+      // refunded => negative owed
+      g.totalOwed = -Math.abs(g.totalOwed);
+    }
+  }
+
+  return grouped.sort(
     (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
   );
 }
@@ -188,19 +202,21 @@ export async function GET(req: NextRequest) {
 
     // Only include cart lines created from a shared product mapping (i.e., you owe a supplier).
     // Join orderRevenue for refund/cancel flags (status filter).
+    // NOTE: include cp.id so we can de-duplicate rows at the application layer if joins fan out.
     const sql = `
       SELECT
-        o.id                         AS "orderId",
-        o."orderKey"                 AS "orderNumber",
-        o."datePaid"                 AS "datePaid",
-        o.country                    AS country,
-        c.username                   AS username,
-        r.cancelled                  AS cancelled,
-        r.refunded                   AS refunded,
-        cp.quantity                  AS quantity,
-        pt.title                     AS "productTitle",
-        sp.cost                      AS "transferCostJson",
-        psrc."organizationId"        AS "supplierOrgId"
+        cp.id                       AS "cartProductId",
+        o.id                        AS "orderId",
+        o."orderKey"                AS "orderNumber",
+        o."datePaid"                AS "datePaid",
+        o.country                   AS country,
+        c.username                  AS username,
+        r.cancelled                 AS cancelled,
+        r.refunded                  AS refunded,
+        cp.quantity                 AS quantity,
+        pt.title                    AS "productTitle",
+        sp.cost                     AS "transferCostJson",
+        psrc."organizationId"       AS "supplierOrgId"
       FROM orders o
       JOIN "orderRevenue" r
         ON r."orderId" = o.id
@@ -222,7 +238,7 @@ export async function GET(req: NextRequest) {
         AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
         AND m."sourceProductId" IS NOT NULL
         ${supplierSql}
-      ORDER BY o."datePaid" DESC, o."orderKey" DESC
+      ORDER BY o."datePaid" DESC, o."orderKey" DESC, cp.id DESC
     `;
     const res = await pool.query(sql, vals);
 
@@ -243,57 +259,63 @@ export async function GET(req: NextRequest) {
     // Preload labels cache
     const labelCache = new Map<string, string>();
 
-    const lines: Line[] = await Promise.all(
-      res.rows
-        .filter(statusPass)
-        .map(async (row: any) => {
-          const country = row.country as string;
-          countrySet.add(country);
+    // De-duplicate by cartProductId to avoid counting the same cart line twice
+    const seenCartProduct = new Set<string>();
 
-          const supplierOrgId: string | null = row.supplierOrgId ?? null;
-          let supplierLabel: string | null = null;
-          if (supplierOrgId) {
-            supplierSet.add(supplierOrgId);
-            if (labelCache.has(supplierOrgId)) {
-              supplierLabel = labelCache.get(supplierOrgId)!;
-            } else {
-              supplierLabel = await resolveOrgLabel(supplierOrgId);
-              if (supplierLabel) labelCache.set(supplierOrgId, supplierLabel);
-            }
-          }
+    const lines: Line[] = [];
+    for (const row of res.rows) {
+      if (!statusPass(row)) continue;
 
-          // unit transfer in local currency
-          let unitLocal = 0;
-          if (row.transferCostJson) {
-            const j = typeof row.transferCostJson === "string"
-              ? (() => { try { return JSON.parse(row.transferCostJson); } catch { return {}; } })()
-              : row.transferCostJson;
-            const v = j?.[country];
-            unitLocal = Number(v || 0) || 0;
-          }
-          const unit = convertByCountry(unitLocal, country, currency, { USDEUR, USDGBP });
-          const qty = Number(row.quantity || 0);
-          const lineTotal = unit * qty;
+      const cpId = String(row.cartProductId);
+      if (seenCartProduct.has(cpId)) continue;
+      seenCartProduct.add(cpId);
 
-          return {
-            orderId: row.orderId as string,
-            orderNumber: row.orderNumber as string,
-            datePaid: row.datePaid as string,
-            username: row.username as string,
-            country,
-            cancelled: !!row.cancelled,
-            refunded: !!row.refunded,
-            supplierOrgId,
-            supplierLabel,
-            productTitle: row.productTitle as string,
-            quantity: qty,
-            unitCost: unit,
-            lineTotal,
-          };
-        })
-    );
+      const country = row.country as string;
+      countrySet.add(country);
 
-    // Group by Order × Supplier
+      const supplierOrgId: string | null = row.supplierOrgId ?? null;
+      let supplierLabel: string | null = null;
+      if (supplierOrgId) {
+        supplierSet.add(supplierOrgId);
+        if (labelCache.has(supplierOrgId)) {
+          supplierLabel = labelCache.get(supplierOrgId)!;
+        } else {
+          supplierLabel = await resolveOrgLabel(supplierOrgId);
+          if (supplierLabel) labelCache.set(supplierOrgId, supplierLabel);
+        }
+      }
+
+      // unit transfer in local currency
+      let unitLocal = 0;
+      if (row.transferCostJson) {
+        const j = typeof row.transferCostJson === "string"
+          ? (() => { try { return JSON.parse(row.transferCostJson); } catch { return {}; } })()
+          : row.transferCostJson;
+        const v = j?.[country];
+        unitLocal = Number(v || 0) || 0;
+      }
+      const unit = convertByCountry(unitLocal, country, currency, { USDEUR, USDGBP });
+      const qty = Number(row.quantity || 0);
+      const lineTotal = unit * qty;
+
+      lines.push({
+        orderId: row.orderId as string,
+        orderNumber: row.orderNumber as string,
+        datePaid: row.datePaid as string,
+        username: row.username as string,
+        country,
+        cancelled: !!row.cancelled,
+        refunded: !!row.refunded,
+        supplierOrgId,
+        supplierLabel,
+        productTitle: row.productTitle as string,
+        quantity: qty,
+        unitCost: unit,
+        lineTotal,
+      });
+    }
+
+    // Group by Order × Supplier and apply cancelled/refunded rules
     const orders = groupByOrderAndSupplier(lines);
 
     // Countries (sorted)
