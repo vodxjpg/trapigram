@@ -33,16 +33,23 @@ function asArray(meta: unknown): any[] {
   }
   return [];
 }
-function extractDropshipper(meta: unknown): { orgId: string | null; name: string | null } {
+
+function extractDropshipper(
+  meta: unknown,
+): { orgId: string | null; name: string | null } {
   const arr = asArray(meta);
   for (let i = arr.length - 1; i >= 0; i--) {
     const m = arr[i];
     if (m && m.type === "dropshipper" && typeof m.organizationId === "string") {
-      return { orgId: m.organizationId, name: typeof m.name === "string" ? m.name : null };
+      return {
+        orgId: m.organizationId,
+        name: typeof m.name === "string" ? m.name : null,
+      };
     }
   }
   return { orgId: null, name: null };
 }
+
 async function resolveDropshipperLabel(orgId: string | null): Promise<string | null> {
   if (!orgId) return null;
   const orgQ = await pool.query(
@@ -71,6 +78,58 @@ async function resolveDropshipperLabel(orgId: string | null): Promise<string | n
   return email ? `${orgName} (${email})` : orgName;
 }
 
+/**
+ * Fallback: infer immediate downstream org for legacy orders with empty orderMeta.
+ * Strategy:
+ *  1) Preferred: via sharedProductMapping using this supplier order's productIds:
+ *     cp.productId -> sharedProductMapping.targetProductId -> products.organizationId (downstream)
+ *  2) Last resort: if orderKey starts with "S-", strip prefix and take the base order's organizationId.
+ */
+async function inferDownstreamOrgId(
+  orderId: string,
+  cartId: string,
+  orderKey: string | null,
+): Promise<string | null> {
+  try {
+    // 1) Via product mapping (strongest)
+    const prodQ = await pool.query(
+      `SELECT DISTINCT cp."productId" AS pid
+         FROM "cartProducts" cp
+        WHERE cp."cartId" = $1
+          AND cp."productId" IS NOT NULL`,
+      [cartId],
+    );
+    for (const row of prodQ.rows as Array<{ pid: string }>) {
+      const mapQ = await pool.query(
+        `SELECT "targetProductId" FROM "sharedProductMapping"
+          WHERE "sourceProductId" = $1 LIMIT 1`,
+        [row.pid],
+      );
+      const targetId = mapQ.rows[0]?.targetProductId as string | undefined;
+      if (targetId) {
+        const orgQ = await pool.query(
+          `SELECT "organizationId" FROM "products" WHERE id = $1 LIMIT 1`,
+          [targetId],
+        );
+        const orgId = orgQ.rows[0]?.organizationId as string | undefined;
+        if (orgId) return orgId;
+      }
+    }
+    // 2) Last resort by base order key (covers first hop)
+    if (orderKey && orderKey.startsWith("S-")) {
+      const base = orderKey.slice(2);
+      const baseQ = await pool.query(
+        `SELECT "organizationId" FROM "orders" WHERE "orderKey" = $1 LIMIT 1`,
+        [base],
+      );
+      return (baseQ.rows[0]?.organizationId as string) ?? null;
+    }
+  } catch {
+    /* ignore and fall through */
+  }
+  return null;
+}
+
 /* --------------------------------------------------------------- */
 /* GET                                                             */
 /* --------------------------------------------------------------- */
@@ -79,7 +138,7 @@ export async function GET(req: NextRequest) {
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
   const currencyRaw = (url.searchParams.get("currency") || "USD").toUpperCase();
-  const dropshipperOrgIdFilter = url.searchParams.get("dropshipperOrgId");
+  const dropshipperOrgIdFilter = url.searchParams.get("dropshipperOrgId") || "";
 
   if (!from || !to) {
     return NextResponse.json(
@@ -88,7 +147,11 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const currency = ["USD", "GBP", "EUR"].includes(currencyRaw) ? currencyRaw : "USD";
+  const currency = (["USD", "GBP", "EUR"] as const).includes(
+    currencyRaw as any,
+  )
+    ? (currencyRaw as "USD" | "GBP" | "EUR")
+    : "USD";
 
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -96,54 +159,16 @@ export async function GET(req: NextRequest) {
 
   try {
     /* ------------------------------------------------------------- */
-    /* Countries (respect dropshipper filter)                        */
-    /* ------------------------------------------------------------- */
-    const baseValsCountries: any[] = [organizationId, from, to];
-    let dsFilterCountries = "";
-    if (dropshipperOrgIdFilter) {
-      dsFilterCountries = ` AND EXISTS (
-        SELECT 1
-          FROM jsonb_array_elements(COALESCE(o."orderMeta",'[]'::jsonb)) AS e
-         WHERE e->>'type' = 'dropshipper'
-           AND e->>'organizationId' = $${baseValsCountries.length + 1}
-      )`;
-      baseValsCountries.push(dropshipperOrgIdFilter);
-    }
-
-    const distinctCountriesQuery = `
-      SELECT DISTINCT o.country
-        FROM "orderRevenue" r
-        JOIN orders o ON r."orderId" = o.id
-       WHERE r."organizationId" = $1
-         AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
-         ${dsFilterCountries}
-       ORDER BY o.country ASC
-    `;
-    const distinctResult = await pool.query(distinctCountriesQuery, baseValsCountries);
-    const countries: string[] = distinctResult.rows
-      .map((r) => r.country as string)
-      .filter(Boolean);
-
-    /* ------------------------------------------------------------- */
-    /* Orders (respect dropshipper filter)                           */
+    /* Fetch orders in range (no dropshipper filter in SQL)          */
     /* ------------------------------------------------------------- */
     const baseValsOrders: any[] = [organizationId, from, to];
-    let dsFilterOrders = "";
-    if (dropshipperOrgIdFilter) {
-      dsFilterOrders = ` AND EXISTS (
-        SELECT 1
-          FROM jsonb_array_elements(COALESCE(o."orderMeta",'[]'::jsonb)) AS e
-         WHERE e->>'type' = 'dropshipper'
-           AND e->>'organizationId' = $${baseValsOrders.length + 1}
-      )`;
-      baseValsOrders.push(dropshipperOrgIdFilter);
-    }
-
     const revenueQuery = `
       SELECT
+          o.id            AS id,
+          o."cartId"      AS "cartId",
           o."datePaid",
-          o."orderKey"   AS "orderNumber",
-          o."clientId"   AS "userId",
+          o."orderKey"    AS "orderNumber",
+          o."clientId"    AS "userId",
           o.country,
           c.username,
           r."${currency}total"    AS "totalPrice",
@@ -151,7 +176,7 @@ export async function GET(req: NextRequest) {
           r."${currency}discount" AS "discount",
           r."${currency}cost"     AS "cost",
           r.cancelled, r.refunded,
-          o."orderMeta"  AS asset
+          o."orderMeta"   AS asset
       FROM "orderRevenue" r
       JOIN orders o
         ON r."orderId" = o.id
@@ -160,20 +185,18 @@ export async function GET(req: NextRequest) {
       WHERE
           r."organizationId" = $1
           AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
-          ${dsFilterOrders}
       ORDER BY o."orderKey" DESC
     `;
     const revenueRes = await pool.query(revenueQuery, baseValsOrders);
 
-    // enrich rows: coin, netProfit, dropshipper
+    // Enrich rows: coin, netProfit, dropshipper (with inference)
     const dropshipperMap = new Map<string, string>(); // orgId -> label
-    const orders = await Promise.all(
+    const enriched = await Promise.all(
       revenueRes.rows.map(async (m: any) => {
-        // coin (best-effort, based on first meta entry like current code)
+        // coin (best-effort)
         if (Array.isArray(m.asset) && m.asset.length > 0) {
           m.coin = m.asset[0]?.order?.asset ?? "";
         } else {
-          // try to scan from the end for a recent 'order.asset'
           const arr = asArray(m.asset);
           let found = "";
           for (let i = arr.length - 1; i >= 0; i--) {
@@ -188,16 +211,23 @@ export async function GET(req: NextRequest) {
 
         // net profit
         m.netProfit =
-          Number(m.totalPrice) - Number(m.shippingCost) - Number(m.discount) - Number(m.cost);
+          Number(m.totalPrice) -
+          Number(m.shippingCost) -
+          Number(m.discount) -
+          Number(m.cost);
 
-        // dropshipper fields
+        // dropshipper fields (fallback inference like order detail page)
         const drop = extractDropshipper(m.asset);
-        let label = drop.name;
-        if (!label && drop.orgId) {
-          label = await resolveDropshipperLabel(drop.orgId);
+        let dsOrgId: string | null = drop.orgId ?? null;
+        if (!dsOrgId) {
+          dsOrgId = await inferDownstreamOrgId(m.id, m.cartId, m.orderNumber);
         }
-        m.dropshipperOrgId = drop.orgId ?? null;
-        m.dropshipperLabel = label ?? null;
+        let dsLabel: string | null = drop.name ?? null;
+        if (!dsLabel && dsOrgId) {
+          dsLabel = await resolveDropshipperLabel(dsOrgId);
+        }
+        m.dropshipperOrgId = dsOrgId;
+        m.dropshipperLabel = dsLabel;
 
         if (m.dropshipperOrgId && m.dropshipperLabel) {
           dropshipperMap.set(m.dropshipperOrgId, m.dropshipperLabel);
@@ -206,43 +236,23 @@ export async function GET(req: NextRequest) {
       }),
     );
 
-    /* ------------------------------------------------------------- */
-    /* Chart data (respect dropshipper filter)                       */
-    /* ------------------------------------------------------------- */
-    const baseValsChart: any[] = [organizationId, from, to];
-    let dsFilterChart = "";
-    if (dropshipperOrgIdFilter) {
-      dsFilterChart = ` AND EXISTS (
-        SELECT 1
-          FROM jsonb_array_elements(COALESCE(o."orderMeta",'[]'::jsonb)) AS e
-         WHERE e->>'type' = 'dropshipper'
-           AND e->>'organizationId' = $${baseValsChart.length + 1}
-      )`;
-      baseValsChart.push(dropshipperOrgIdFilter);
-    }
+    // Apply dropshipper filter in-memory (works for legacy orders too)
+    const orders = dropshipperOrgIdFilter
+      ? enriched.filter((m: any) => m.dropshipperOrgId === dropshipperOrgIdFilter)
+      : enriched;
 
-    const chartQuery = `
-      SELECT
-        DATE(o."datePaid")                           AS date,
-        r."${currency}total"    AS total,
-        r."${currency}shipping" AS shipping,
-        r."${currency}discount" AS discount,
-        r."${currency}cost"     AS cost
-      FROM "orderRevenue" r
-      JOIN orders o ON r."orderId" = o.id
-      WHERE r."organizationId" = $1
-        AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
-        AND r.cancelled = FALSE
-        AND r.refunded  = FALSE
-        ${dsFilterChart}
-      ORDER BY o."datePaid" DESC
-    `;
-    const chartRes = await pool.query(chartQuery, baseValsChart);
-    const byDay = chartRes.rows.reduce((acc: any, o: any) => {
-      const key = new Date(o.date).toISOString().split("T")[0];
-      const total = Number(o.total) || 0;
+    // Countries based on filtered orders
+    const countries = Array.from(
+      new Set(orders.map((o: any) => o.country).filter(Boolean)),
+    ).sort();
+
+    // Build chart data from filtered orders (paid only)
+    const byDay = orders.reduce((acc: any, o: any) => {
+      if (o.cancelled || o.refunded) return acc;
+      const key = new Date(o.datePaid).toISOString().split("T")[0];
+      const total = Number(o.totalPrice) || 0;
       const discount = Number(o.discount) || 0;
-      const shipping = Number(o.shipping) || 0;
+      const shipping = Number(o.shippingCost) || 0;
       const cost = Number(o.cost) || 0;
       const revenue = total - discount - shipping - cost;
       if (!acc[key]) acc[key] = { total: 0, revenue: 0 };
@@ -263,11 +273,13 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // options for the UI dropdown
-    const dropshippers = Array.from(dropshipperMap.entries()).map(([orgId, label]) => ({
-      orgId,
-      label,
-    }));
+    // options for the UI dropdown (from all enriched orders within the range)
+    const dropshippers = Array.from(dropshipperMap.entries()).map(
+      ([orgId, label]) => ({
+        orgId,
+        label,
+      }),
+    );
 
     return NextResponse.json(
       {
