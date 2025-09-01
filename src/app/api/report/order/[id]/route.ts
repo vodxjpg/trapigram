@@ -3,7 +3,54 @@ import { pgPool, pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 
-// nothing
+// ────────────────────────────────────────────────────────────────
+// Dropshipper helpers (mirror logic from /api/order/[id])
+// ────────────────────────────────────────────────────────────────
+function asArray(meta: unknown): any[] {
+  if (!meta) return [];
+  if (Array.isArray(meta)) return meta;
+  if (typeof meta === "string") {
+    try { const p = JSON.parse(meta); return Array.isArray(p) ? p : []; } catch { return []; }
+  }
+  return [];
+}
+function extractDropshipper(meta: unknown): { orgId: string | null; name: string | null } {
+  const arr = asArray(meta);
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const m = arr[i];
+    if (m && m.type === "dropshipper" && typeof m.organizationId === "string") {
+      return { orgId: m.organizationId, name: typeof m.name === "string" ? m.name : null };
+    }
+  }
+  return { orgId: null, name: null };
+}
+async function resolveDropshipperLabel(orgId: string | null): Promise<string | null> {
+  if (!orgId) return null;
+  const orgQ = await pool.query(
+    `SELECT name, metadata FROM "organization" WHERE id = $1 LIMIT 1`,
+    [orgId],
+  );
+  if (!orgQ.rowCount) return null;
+  const orgName: string = orgQ.rows[0].name ?? "";
+  let email: string | null = null;
+  const rawMeta: string | null = orgQ.rows[0].metadata ?? null;
+  if (rawMeta) {
+    try {
+      const meta = JSON.parse(rawMeta);
+      const tenantId = typeof meta?.tenantId === "string" ? meta.tenantId : null;
+      if (tenantId) {
+        const tQ = await pool.query(
+          `SELECT "ownerEmail" FROM "tenant" WHERE id = $1 LIMIT 1`,
+          [tenantId],
+        );
+        email = (tQ.rows[0]?.ownerEmail as string) ?? null;
+      }
+    } catch {}
+  }
+  return email ? `${orgName} (${email})` : orgName;
+}
+
+
 const apiKey = process.env.CURRENCY_LAYER_API_KEY
 const dbg  = (...a: any[]) => console.log("[orderRevenue]", ...a);
 if (!process.env.CURRENCY_LAYER_API_KEY)
@@ -90,11 +137,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // ✅ Revenue already stored → short‑circuit
     if (check.length > 0) {
-      console.log("[orderRevenue] revenue‑already‑exists", {
-        orderId: id,
-        rows: check.length,
-      });
-      return NextResponse.json(check[0], { status: 200 });
+      // enrich with dropshipper (derived from order)
+const ordQ = await pool.query(`SELECT "orderMeta" FROM orders WHERE id = $1 LIMIT 1`, [id]);
+const drops = extractDropshipper(ordQ.rows[0]?.orderMeta);
+const label = drops.name ?? (await resolveDropshipperLabel(drops.orgId));
+return NextResponse.json(
+  {
+    ...check[0],
+    dropshipperOrgId: drops.orgId ?? null,
+    dropshipperLabel: label ?? null,
+  },
+  { status: 200 },
+);
     }
 
     // ❌ No revenue yet → proceed to creation

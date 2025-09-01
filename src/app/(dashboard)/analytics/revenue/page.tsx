@@ -78,6 +78,8 @@ type Order = {
   asset: string;
   coin: string;
   netProfit: number;
+  dropshipperOrgId?: string | null;
+dropshipperLabel?: string | null;
 };
 
 type CustomDateRange = { from: Date; to: Date };
@@ -129,6 +131,10 @@ export default function OrderReport() {
   const [countries, setCountries] = useState<string[]>([]);
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
 
+  // dropshipper filter (orgId) + options from API
+const [dropshipperOrgId, setDropshipperOrgId] = useState<string | "">("");
+const [dropshipperOptions, setDropshipperOptions] = useState<Array<{ orgId: string; label: string }>>([]);
+
   const [chartData, setChartData] = useState<
     { date: string; total: number; revenue: number }[]
   >([]);
@@ -145,9 +151,10 @@ export default function OrderReport() {
       try {
         const from = encodeURIComponent(dateRange.from.toISOString());
         const to = encodeURIComponent(dateRange.to.toISOString());
+        const dsParam = dropshipperOrgId ? `&dropshipperOrgId=${encodeURIComponent(dropshipperOrgId)}` : "";
 
         const res = await fetch(
-          `/api/report/revenue?from=${from}&to=${to}&currency=${currency}&status=${status}`
+          `/api/report/revenue?from=${from}&to=${to}&currency=${currency}&status=${status}${dsParam}`
         );
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const data = await res.json();
@@ -156,6 +163,7 @@ export default function OrderReport() {
         setCountries(
           Array.isArray(data.countries) ? [...data.countries].sort() : []
         );
+        setDropshipperOptions(Array.isArray(data.dropshippers) ? data.dropshippers : []);
         setCurrentPage(1);
       } catch (err: any) {
         setError(err.message || "Unknown error");
@@ -164,8 +172,8 @@ export default function OrderReport() {
       }
     }
 
-    fetchOrders();
-  }, [dateRange, currency, status, canShow]);
+     fetchOrders();
+}, [dateRange, currency, status, dropshipperOrgId, canShow]);
 
   const countryOptions = useMemo(
     () =>
@@ -294,6 +302,7 @@ export default function OrderReport() {
               : "Paid",
         "User ID": o.userId,
         Country: o.country,
+        Dropshipper: o.dropshipperLabel ?? "",
         "Total Price": o.totalPrice,
         "Shipping Cost": o.shippingCost,
         Discount: o.discount,
@@ -436,6 +445,7 @@ export default function OrderReport() {
                     <SelectItem value="EUR">EUR</SelectItem>
                   </SelectContent>
                 </Select>
+                
 
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">Status</span>
@@ -474,6 +484,28 @@ export default function OrderReport() {
                   Export to Excel
                 </Button>
               </div>
+                 {/* Dropshipper filter */}
+   <div className="flex items-center gap-2">
+     <span className="text-sm font-medium">Dropshipper</span>
+     <Select
+       value={dropshipperOrgId || ""}
+       onValueChange={(v) => setDropshipperOrgId(v)}
+     >
+       <SelectTrigger size="sm" className="min-w-[220px]">
+         <SelectValue placeholder="All dropshippers" />
+       </SelectTrigger>
+       <SelectContent>
+         <SelectItem key="__all" value="">
+           All dropshippers
+         </SelectItem>
+         {dropshipperOptions.map((d) => (
+           <SelectItem key={d.orgId} value={d.orgId}>
+             {d.label}
+           </SelectItem>
+         ))}
+       </SelectContent>
+     </Select>
+   </div>
             </div>
 
             {/* New Row: Countries multi-select (matches Coupon styling) */}
@@ -538,6 +570,7 @@ export default function OrderReport() {
                           "Order Number",
                           "Status",
                           "Username",
+                          "Dropshipper",
                           "Country",
                           "Total Price",
                           "Shipping Cost",
@@ -599,6 +632,10 @@ export default function OrderReport() {
                                 {o.username || o.userId}
                               </Link>
                             </TableCell>
+
+                             <TableCell className="max-w-[280px]">
+                            {o.dropshipperLabel ?? "—"}
+                          </TableCell>
 
                             <TableCell>{o.country}</TableCell>
                             <TableCell
