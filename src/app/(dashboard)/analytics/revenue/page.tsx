@@ -79,7 +79,7 @@ type Order = {
   coin: string;
   netProfit: number;
   dropshipperOrgId?: string | null;
-dropshipperLabel?: string | null;
+  dropshipperLabel?: string | null;
 };
 
 type CustomDateRange = { from: Date; to: Date };
@@ -132,8 +132,8 @@ export default function OrderReport() {
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
 
   // dropshipper filter (orgId) + options from API
-const [dropshipperOrgId, setDropshipperOrgId] = useState<string | "">("");
-const [dropshipperOptions, setDropshipperOptions] = useState<Array<{ orgId: string; label: string }>>([]);
+  const [dropshipperOrgId, setDropshipperOrgId] = useState<string | "">("");
+  const [dropshipperOptions, setDropshipperOptions] = useState<Array<{ orgId: string; label: string }>>([]);
 
   const [chartData, setChartData] = useState<
     { date: string; total: number; revenue: number }[]
@@ -172,8 +172,8 @@ const [dropshipperOptions, setDropshipperOptions] = useState<Array<{ orgId: stri
       }
     }
 
-     fetchOrders();
-}, [dateRange, currency, status, dropshipperOrgId, canShow]);
+    fetchOrders();
+  }, [dateRange, currency, status, dropshipperOrgId, canShow]);
 
   const countryOptions = useMemo(
     () =>
@@ -445,7 +445,7 @@ const [dropshipperOptions, setDropshipperOptions] = useState<Array<{ orgId: stri
                     <SelectItem value="EUR">EUR</SelectItem>
                   </SelectContent>
                 </Select>
-                
+
 
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">Status</span>
@@ -484,28 +484,31 @@ const [dropshipperOptions, setDropshipperOptions] = useState<Array<{ orgId: stri
                   Export to Excel
                 </Button>
               </div>
-                 {/* Dropshipper filter */}
-   <div className="flex items-center gap-2">
-     <span className="text-sm font-medium">Dropshipper</span>
-     <Select
-       value={dropshipperOrgId || ""}
-       onValueChange={(v) => setDropshipperOrgId(v)}
-     >
-       <SelectTrigger size="sm" className="min-w-[220px]">
-         <SelectValue placeholder="All dropshippers" />
-       </SelectTrigger>
-       <SelectContent>
-         <SelectItem key="__all" value="">
-           All dropshippers
-         </SelectItem>
-         {dropshipperOptions.map((d) => (
-           <SelectItem key={d.orgId} value={d.orgId}>
-             {d.label}
-           </SelectItem>
-         ))}
-       </SelectContent>
-     </Select>
-   </div>
+              {/* Dropshipper filter */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">Dropshipper</span>
+                <Select
+                  // when state is "", show the sentinel as the selected value
+                  value={dropshipperOrgId ? dropshipperOrgId : ALL_DROPSHIPPERS}
+                  onValueChange={(v) => setDropshipperOrgId(v === ALL_DROPSHIPPERS ? "" : v)}
+                >
+                  <SelectTrigger size="sm" className="min-w-[220px]">
+                    <SelectValue placeholder="All dropshippers" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Use non-empty sentinel here */}
+                    <SelectItem key="__all" value={ALL_DROPSHIPPERS}>
+                      All dropshippers
+                    </SelectItem>
+                    {dropshipperOptions.map((d) => (
+                      <SelectItem key={d.orgId} value={d.orgId}>
+                        {d.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
             </div>
 
             {/* New Row: Countries multi-select (matches Coupon styling) */}
@@ -633,64 +636,58 @@ const [dropshipperOptions, setDropshipperOptions] = useState<Array<{ orgId: stri
                               </Link>
                             </TableCell>
 
-                             <TableCell className="max-w-[280px]">
-                            {o.dropshipperLabel ?? "—"}
-                          </TableCell>
+                            <TableCell className="max-w-[280px]">
+                              {o.dropshipperLabel ?? "—"}
+                            </TableCell>
 
                             <TableCell>{o.country}</TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                              }`}
+                                }`}
                             >
                               {formatCurrency(o.totalPrice)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                              }`}
+                                }`}
                             >
                               {formatCurrency(o.shippingCost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                              }`}
+                                }`}
                             >
                               {formatCurrency(o.discount)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                              }`}
+                                }`}
                             >
                               {formatCurrency(o.cost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                              }`}
+                                }`}
                             >
                               {o.coin}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled || o.refunded
+                              className={`text-right font-medium ${o.cancelled || o.refunded
                                   ? "text-red-600"
                                   : o.netProfit >= 0
                                     ? "text-green-600"
                                     : "text-red-600"
-                              }`}
+                                }`}
                             >
                               {o.cancelled ? "0" : formatCurrency(o.netProfit)}
                             </TableCell>
