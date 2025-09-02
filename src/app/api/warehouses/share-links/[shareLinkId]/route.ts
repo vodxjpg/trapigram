@@ -229,7 +229,7 @@ export async function PUT(
         baseCost = typeof variation.cost === "string" ? JSON.parse(variation.cost) : variation.cost;
       }
 
-      const stockQuery = db
+     /* const stockQuery = db
         .selectFrom("warehouseStock")
         .select(["country", "quantity"])
         .where("warehouseId", "=", warehouseId)
@@ -245,7 +245,7 @@ export async function PUT(
           },
           { status: 400 },
         );
-      }
+      } */
 
       if (cost) {
         for (const [country, sharedCost] of Object.entries(cost)) {
@@ -267,7 +267,7 @@ export async function PUT(
               { status: 400 },
             );
           }
-          if (!stock.some((s) => s.country === country && s.quantity > 0)) {
+          /*if (!stock.some((s) => s.country === country && s.quantity > 0)) {
             return NextResponse.json(
               {
                 error: `No stock available for ${country} for product ${productId}${
@@ -276,7 +276,7 @@ export async function PUT(
               },
               { status: 400 },
             );
-          }
+          } */
         }
       }
     }

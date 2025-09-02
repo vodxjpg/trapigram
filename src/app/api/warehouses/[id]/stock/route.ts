@@ -108,7 +108,7 @@ export async function GET(
         "productCategories.name           as catName",
       ])
       .where("warehouseStock.warehouseId", "=", warehouseId)
-      .where("warehouseStock.quantity", ">", 0)
+      /*.where("warehouseStock.quantity", ">", 0)*/
       .execute();
 
     /* ── 2. affiliate-products query ─────────────────────────── */
@@ -132,7 +132,7 @@ export async function GET(
         sql`NULL`.as("catName"),
       ])
       .where("warehouseStock.warehouseId", "=", warehouseId)
-      .where("warehouseStock.quantity", ">", 0)
+      /* .where("warehouseStock.quantity", ">", 0) */
       .execute();
 
     const rows = [...moneyRows, ...affRows];

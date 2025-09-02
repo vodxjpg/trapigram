@@ -108,7 +108,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
         baseCost = typeof variation.cost === "string" ? JSON.parse(variation.cost) : variation.cost;
       }
 
-      // Validate stock
+      /*Validate stock
       const stockQuery = db
         .selectFrom("warehouseStock")
         .select(["country", "quantity"])
@@ -125,7 +125,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
           { error: `No stock available for product ${productId}${variationId ? ` variation ${variationId}` : ""}` },
           { status: 400 }
         );
-      }
+      } */
 
       // Validate cost (only for provided countries)
       if (cost) {
@@ -142,7 +142,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
               { status: 400 }
             );
           }
-          if (!stock.some((s) => s.country === country && s.quantity > 0)) {
+         /* if (!stock.some((s) => s.country === country && s.quantity > 0)) {
             return NextResponse.json(
               { error: `No stock available for ${country} for product ${productId}${variationId ? ` variation ${variationId}` : ""}` },
               { status: 400 }
@@ -156,7 +156,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
             { error: `No stock available for product ${productId}${variationId ? ` variation ${variationId}` : ""}` },
             { status: 400 }
           );
-        }
+        } */
       }
     }
 

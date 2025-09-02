@@ -1,7 +1,6 @@
 /* -------------------------------------------------------------------------- */
 /*  /src/app/(dashboard)/warehouses/[id]/share/page.tsx                       */
 /* -------------------------------------------------------------------------- */
-/* -------------------------------------------------------------------------- */
 "use client";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
@@ -54,11 +53,17 @@ type StockItem = {
   title: string;
   status: string;
   cost: Record<string, number>;
-  country: string;
-  quantity: number;
+  country: string; // only meaningful for stock rows
+  quantity: number; // only meaningful for stock rows
   productType: "simple" | "variable";
   categoryId: string | null;
   categoryName: string;
+};
+
+type ProductRow = {
+  productId: string;
+  variationId: string | null;
+  cost: Record<string, number> | undefined;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -74,12 +79,10 @@ const productSchema = z
     variationId: z.string().nullable(),
     cost: costSchema,
   })
-  .superRefine(() => { }); // dynamic validation handled in onSubmit
+  .superRefine(() => {}); // dynamic validation handled in onSubmit
 
 const formSchema = z.object({
-  recipientUserIds: z
-    .array(z.string())
-    .min(1, "Select at least one recipient"),
+  recipientUserIds: z.array(z.string()).min(1, "Select at least one recipient"),
   products: z.array(productSchema).min(1, "Select at least one product"),
 });
 
@@ -110,7 +113,6 @@ export default function ShareWarehousePage() {
   const router = useRouter();
   const { id: warehouseId } = useParams() as { id: string };
 
-
   // ── permissions ───────────────────────────────────────────────────────
   const { data: activeOrg } = authClient.useActiveOrganization();
   const orgId = activeOrg?.id ?? null;
@@ -133,6 +135,7 @@ export default function ShareWarehousePage() {
   /* ------------------------------ local state --------------------------- */
   const [users, setUsers] = useState<User[]>([]);
   const [stock, setStock] = useState<StockItem[]>([]);
+  const [catalog, setCatalog] = useState<StockItem[]>([]);
   const [countries, setCountries] = useState<string[]>([]);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [emailSearch, setEmailSearch] = useState("");
@@ -185,6 +188,81 @@ export default function ShareWarehousePage() {
     })();
   }, [warehouseId]);
 
+  /* ------------------------------ fetch full catalog (all products) ---- */
+  useEffect(() => {
+    let cancelled = false;
+    async function loadAllProducts() {
+      try {
+        const merged: StockItem[] = [];
+        let p = 1;
+        let totalPages = 1;
+        do {
+          const r = await fetch(
+            `/api/products?page=${p}&pageSize=50&status=published`,
+          );
+          if (!r.ok) throw new Error(`Products fetch failed: ${r.status}`);
+          const body = await r.json();
+          totalPages = Number(body?.pagination?.totalPages ?? 1);
+          const items = Array.isArray(body?.products) ? body.products : [];
+          for (const prod of items) {
+            const productId: string = prod.id;
+            const productTitle: string = prod.title;
+            const productStatus: string = prod.status;
+            const productType: "simple" | "variable" = prod.productType;
+            const baseCost: Record<string, number> =
+              typeof prod.cost === "string"
+                ? JSON.parse(prod.cost)
+                : prod.cost ?? {};
+            // parent row
+            merged.push({
+              productId,
+              variationId: null,
+              title: productTitle,
+              status: productStatus,
+              cost: baseCost,
+              country: "",
+              quantity: 0,
+              productType,
+              categoryId: null,
+              categoryName: "All Products",
+            });
+            // variations
+            if (productType === "variable" && Array.isArray(prod.variations)) {
+              for (const v of prod.variations) {
+                const vCost: Record<string, number> =
+                  typeof v.cost === "string"
+                    ? JSON.parse(v.cost)
+                    : v.cost ?? {};
+                const vLabel = v.sku || v.id;
+                merged.push({
+                  productId,
+                  variationId: v.id,
+                  title: `${productTitle} - ${vLabel}`,
+                  status: productStatus,
+                  cost: vCost,
+                  country: "",
+                  quantity: 0,
+                  productType,
+                  categoryId: null,
+                  categoryName: "All Products",
+                });
+              }
+            }
+          }
+          p += 1;
+        } while (p <= totalPages && !cancelled);
+        if (!cancelled) setCatalog(merged);
+      } catch (e) {
+        console.error(e);
+        // Non-fatal; UI still works with stock-only fallback
+      }
+    }
+    loadAllProducts();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   /* ------------------------------ generic helpers ---------------------- */
   const uniqBy = <T, K>(arr: T[], key: (t: T) => K) =>
     arr.filter((v, i, a) => a.findIndex((t) => key(t) === key(v)) === i);
@@ -215,15 +293,21 @@ export default function ShareWarehousePage() {
     }
   };
 
-  /* ------------------------------ stock-derived helpers ---------------- */
-  const nonDraft = stock.filter((s) => s.status !== "draft");
+  /* ------------------------------ selection dataset -------------------- */
+  const dataset = [...stock, ...catalog];
+  const nonDraft = dataset.filter((s) => s.status !== "draft");
   const uniqStock = uniqBy(nonDraft, pvKey);
-  const groupedStock = uniqStock.reduce<Record<string, StockItem[]>>((acc, it) => {
-    const cat = it.categoryName || "Uncategorized";
-    ; (acc[cat] ??= []).push(it);
-    return acc;
-  }, {});
 
+  const groupedStock = uniqStock.reduce<Record<string, StockItem[]>>(
+    (acc, it) => {
+      const cat = it.categoryName || "Uncategorized";
+      (acc[cat] ??= []).push(it);
+      return acc;
+    },
+    {},
+  );
+
+  // map of stock quantities by product+variation & country (only from stock)
   const stockByProduct = stock.reduce((acc, it) => {
     const k = pvKey(it);
     acc[k] ??= {};
@@ -256,32 +340,34 @@ export default function ShareWarehousePage() {
   const selectAllProducts = () => {
     const existing = form.getValues("products");
 
-    // Only non-draft, prefer parent (variationId === null) when present; otherwise any single variation
-    const parentsOrSingle = uniqueParents(uniqStock.filter((it) => it.status !== "draft"));
+    // Only non-draft, prefer parent rows; otherwise a single variation
+    const parentsOrSingle = uniqueParents(
+      uniqStock.filter((it) => it.status !== "draft"),
+    );
 
-    // Build new rows, ensuring: not already selected, and only include countries with stock AND a base cost
-    const additions: { productId: string; variationId: string | null; cost: Record<string, number> }[] = [];
+    // Build new rows, ensuring: not already selected; include countries that have base cost (stock optional)
+    const additions: ProductRow[] = [];
     for (const it of parentsOrSingle) {
       const already = existing.some(
         (p) => p.productId === it.productId && p.variationId === it.variationId,
       );
       if (already) continue;
 
-      const key = pvKey({ productId: it.productId, variationId: it.variationId });
-      const stockMap = stockByProduct[key] ?? {};
-
-      // Countries valid for this item: must have stock > 0 and a base cost defined
+      // Countries valid for this item: require base cost; stock is NOT required
       const allowedCountries = countries.filter(
-        (c) => (stockMap[c] ?? 0) > 0 && typeof it.cost[c] === "number",
+        (c) => typeof it.cost[c] === "number",
       );
-
       if (!allowedCountries.length) continue; // nothing to share safely
 
-      // Server requires sharedCost > baseCost; keep your existing +10 rule
+      // Server requires sharedCost > baseCost; use base+10
       const cost: Record<string, number> = {};
       for (const c of allowedCountries) cost[c] = (it.cost[c] ?? 0) + 10;
 
-      additions.push({ productId: it.productId, variationId: it.variationId, cost });
+      additions.push({
+        productId: it.productId,
+        variationId: it.variationId,
+        cost,
+      });
     }
 
     if (!additions.length) {
@@ -290,16 +376,21 @@ export default function ShareWarehousePage() {
     }
 
     const baseIndex = existing.length;
-    form.setValue("products", [...existing, ...additions], { shouldDirty: true, shouldTouch: false });
+    form.setValue("products", [...existing, ...additions], {
+      shouldDirty: true,
+      shouldTouch: false,
+    });
     setSelectedCountries((prev) => {
       const next: Record<number, string[]> = { ...prev };
       additions.forEach((row, i) => {
         // only the allowed countries for this row (aligns with server validation)
-        next[baseIndex + i] = Object.keys(row.cost);
+        next[baseIndex + i] = Object.keys(row.cost ?? {});
       });
       return next;
     });
-    toast.success(`Added ${additions.length} product${additions.length > 1 ? "s" : ""}.`);
+    toast.success(
+      `Added ${additions.length} product${additions.length > 1 ? "s" : ""}.`,
+    );
   };
 
   /* ------------------------------ country helpers ---------------------- */
@@ -326,7 +417,7 @@ export default function ShareWarehousePage() {
   // ────────────────────────────────────────────────────────────────
   const onSubmit = async (values: FormValues) => {
     try {
-      // — optional dynamic validation that uses live stock data —
+      // — dynamic validation that ensures at least one country cost per row —
       for (const [i, p] of values.products.entries()) {
         const selCountries = Object.keys(p.cost ?? {});
         if (!selCountries.length) {
@@ -334,17 +425,17 @@ export default function ShareWarehousePage() {
             type: "manual",
             message: "Add at least one country cost",
           });
-          throw new Error("validation‑failed");
+          throw new Error("validation-failed");
         }
       }
 
-      // — call your API to create the share link —
+      // — call API to create the share link —
       const res = await fetch(`/api/warehouses/${warehouseId}/share-links`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-internal-secret": process.env
-            .NEXT_PUBLIC_INTERNAL_API_SECRET as string,
+          "x-internal-secret":
+            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET as string,
         },
         body: JSON.stringify(values),
       });
@@ -352,7 +443,6 @@ export default function ShareWarehousePage() {
       const body = await res.json();
 
       if (!res.ok) {
-        // show the server-side message
         toast.error(body.error || "Failed to create share link");
         return;
       }
@@ -360,7 +450,7 @@ export default function ShareWarehousePage() {
       setShareUrl(body.url);
       toast.success("Share link created!");
     } catch (err) {
-      if ((err as any).message !== "validation‑failed") {
+      if ((err as any).message !== "validation-failed") {
         console.error(err);
         toast.error("Failed to create share link");
       }
@@ -458,7 +548,11 @@ export default function ShareWarehousePage() {
                     {/* pagination controls */}
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-muted-foreground">
-                        Page {page} of {Math.max(1, Math.ceil(Math.max(1, fields.length) / pageSize))}
+                        Page {page} of{" "}
+                        {Math.max(
+                          1,
+                          Math.ceil(Math.max(1, fields.length) / pageSize),
+                        )}
                       </span>
                       <Button
                         type="button"
@@ -475,9 +569,23 @@ export default function ShareWarehousePage() {
                         variant="outline"
                         size="sm"
                         onClick={() =>
-                          setPage((p) => Math.min(Math.max(1, Math.ceil(Math.max(1, fields.length) / pageSize)), p + 1))
+                          setPage((p) =>
+                            Math.min(
+                              Math.max(
+                                1,
+                                Math.ceil(Math.max(1, fields.length) / pageSize),
+                              ),
+                              p + 1,
+                            )
+                          )
                         }
-                        disabled={page >= Math.max(1, Math.ceil(Math.max(1, fields.length) / pageSize))}
+                        disabled={
+                          page >=
+                          Math.max(
+                            1,
+                            Math.ceil(Math.max(1, fields.length) / pageSize),
+                          )
+                        }
                         aria-label="Next page"
                       >
                         Next
@@ -504,7 +612,7 @@ export default function ShareWarehousePage() {
                       type="button"
                       variant="outline"
                       onClick={selectAllProducts}
-                      disabled={!stock.length}
+                      disabled={!uniqStock.length}
                     >
                       Select All Products
                     </Button>
@@ -512,7 +620,7 @@ export default function ShareWarehousePage() {
                       type="button"
                       variant="outline"
                       onClick={addProduct}
-                      disabled={!stock.length}
+                      disabled={!uniqStock.length}
                     >
                       <Plus className="h-4 w-4 mr-2" />
                       Add Product
@@ -537,32 +645,69 @@ export default function ShareWarehousePage() {
                       const visible = fields.slice(start, end);
                       return visible.map((f, localIdx) => {
                         const idx = start + localIdx; // global index
-                        const selProdId = form.watch(`products.${idx}.productId`);
+
+                        const selProdId = form.watch(
+                          `products.${idx}.productId`,
+                        );
                         const selVarId = form.watch(
                           `products.${idx}.variationId`,
                         );
 
-                        const selProd = stock.find((s) => s.productId === selProdId);
-                        const isVariable = selProd?.productType === "variable";
+                        // find product entry (from merged dataset) for type/title/costs
+                        const prodEntry =
+                          uniqStock.find(
+                            (s) =>
+                              s.productId === selProdId &&
+                              s.variationId === null,
+                          ) ||
+                          uniqStock.find((s) => s.productId === selProdId);
+
+                        const isVariable =
+                          prodEntry?.productType === "variable";
 
                         const variations = isVariable
                           ? uniqStock.filter(
-                            (s) =>
-                              s.productId === selProdId &&
-                              s.variationId &&
-                              s.status !== "draft"
-                          )
+                              (s) =>
+                                s.productId === selProdId &&
+                                s.variationId &&
+                                s.status !== "draft",
+                            )
                           : [];
 
-                        const stockKey = `${selProdId}-${selVarId ?? "null"}`;
+                        const stockKey = pvKey({
+                          productId: selProdId,
+                          variationId: selVarId,
+                        });
                         const prodStock = stockByProduct[stockKey] || {};
 
-                        const prodCountries = selectedCountries[idx] || countries;
+                        // Default allowed countries: those with a base cost
+                        const baseCostSource =
+                          selVarId
+                            ? uniqStock.find(
+                                (s) =>
+                                  s.productId === selProdId &&
+                                  s.variationId === selVarId,
+                              )?.cost ?? {}
+                            : uniqStock.find(
+                                (s) =>
+                                  s.productId === selProdId &&
+                                  s.variationId === null,
+                              )?.cost ?? {};
+
+                        const defaultAllowed = countries.filter(
+                          (c) => typeof baseCostSource[c] === "number",
+                        );
+                        const prodCountries =
+                          selectedCountries[idx] ??
+                          (defaultAllowed.length ? defaultAllowed : countries);
+
                         const availableCountries = countries.filter(
                           (c) => !prodCountries.includes(c),
                         );
 
-                        const baseTitle = stripVariation(selProd?.title ?? "");
+                        const baseTitle = stripVariation(
+                          prodEntry?.title ?? "",
+                        );
 
                         return (
                           <TableRow key={f.id}>
@@ -581,24 +726,29 @@ export default function ShareWarehousePage() {
                                             value: "",
                                             disabled: true,
                                           },
-                                          ...Object.entries(groupedStock).map(([cat, items]) => ({
-                                            label: cat,
-                                            options: uniqueParents(items /* already non-draft */).map((s) => ({
-                                              value: s.productId,
-                                              label: stripVariation(s.title),
-                                            })),
-                                          })),
+                                          ...Object.entries(groupedStock).map(
+                                            ([cat, items]) => ({
+                                              label: cat,
+                                              options: uniqueParents(
+                                                items /* already non-draft */,
+                                              ).map((s) => ({
+                                                value: s.productId,
+                                                label: stripVariation(s.title),
+                                              })),
+                                            }),
+                                          ),
                                         ]}
                                         value={
                                           field.value
                                             ? {
-                                              value: field.value,
-                                              label: baseTitle,
-                                            }
+                                                value: field.value,
+                                                label: baseTitle,
+                                              }
                                             : null
                                         }
                                         onChange={(opt) => {
-                                          field.onChange(opt?.value || "");
+                                          const nextId = opt?.value || "";
+                                          field.onChange(nextId);
                                           form.setValue(
                                             `products.${idx}.variationId`,
                                             null,
@@ -607,13 +757,25 @@ export default function ShareWarehousePage() {
                                             `products.${idx}.cost`,
                                             {},
                                           );
+                                          // default to countries that have base cost
+                                          const base =
+                                            uniqStock.find(
+                                              (s) =>
+                                                s.productId === nextId &&
+                                                s.variationId === null,
+                                            )?.cost ?? {};
+                                          const allowed = countries.filter(
+                                            (c) => typeof base[c] === "number",
+                                          );
                                           setSelectedCountries((p) => ({
                                             ...p,
-                                            [idx]: [...countries],
+                                            [idx]: allowed.length
+                                              ? allowed
+                                              : [...countries],
                                           }));
                                         }}
                                         placeholder="Select product"
-                                        isDisabled={!stock.length}
+                                        isDisabled={!uniqStock.length}
                                       />
                                     </FormControl>
                                     <FormMessage />
@@ -636,46 +798,61 @@ export default function ShareWarehousePage() {
                                             value: v.variationId!,
                                             label: v.title.includes(" - ")
                                               ? v.title
-                                                .split(" - ")
-                                                .slice(1)
-                                                .join(" - ")
-                                                .trim()
+                                                  .split(" - ")
+                                                  .slice(1)
+                                                  .join(" - ")
+                                                  .trim()
                                               : v.title,
                                           }))}
                                           value={
                                             field.value
                                               ? (() => {
-                                                const v = variations.find(
-                                                  (x) =>
-                                                    x.variationId ===
-                                                    field.value,
-                                                );
-                                                if (!v) return null;
-                                                const lbl = v.title.includes(
-                                                  " - ",
-                                                )
-                                                  ? v.title
-                                                    .split(" - ")
-                                                    .slice(1)
-                                                    .join(" - ")
-                                                    .trim()
-                                                  : v.title;
-                                                return {
-                                                  value: v.variationId!,
-                                                  label: lbl,
-                                                };
-                                              })()
+                                                  const v = variations.find(
+                                                    (x) =>
+                                                      x.variationId ===
+                                                      field.value,
+                                                  );
+                                                  if (!v) return null;
+                                                  const lbl = v.title.includes(
+                                                    " - ",
+                                                  )
+                                                    ? v.title
+                                                        .split(" - ")
+                                                        .slice(1)
+                                                        .join(" - ")
+                                                        .trim()
+                                                    : v.title;
+                                                  return {
+                                                    value: v.variationId!,
+                                                    label: lbl,
+                                                  };
+                                                })()
                                               : null
                                           }
                                           onChange={(opt) => {
-                                            field.onChange(opt?.value || null);
+                                            const nextVar =
+                                              opt?.value || null;
+                                            field.onChange(nextVar);
                                             form.setValue(
                                               `products.${idx}.cost`,
                                               {},
                                             );
+                                            // default to countries that have base cost on the selected variation
+                                            const base =
+                                              uniqStock.find(
+                                                (s) =>
+                                                  s.productId === selProdId &&
+                                                  s.variationId === nextVar,
+                                              )?.cost ?? {};
+                                            const allowed = countries.filter(
+                                              (c) =>
+                                                typeof base[c] === "number",
+                                            );
                                             setSelectedCountries((p) => ({
                                               ...p,
-                                              [idx]: [...countries],
+                                              [idx]: allowed.length
+                                                ? allowed
+                                                : [...countries],
                                             }));
                                           }}
                                           placeholder="Select variation"
@@ -698,7 +875,8 @@ export default function ShareWarehousePage() {
                                   <FormItem>
                                     <div className="space-y-2">
                                       {prodCountries.map((c) => {
-                                        const baseCost = selProd?.cost[c] ?? 0;
+                                        const baseCost =
+                                          baseCostSource[c] ?? 0;
                                         const qty = prodStock[c] ?? 0;
                                         return (
                                           <div
@@ -736,7 +914,7 @@ export default function ShareWarehousePage() {
                                                         placeholder={`Cost for ${c}`}
                                                         value={
                                                           field.value !==
-                                                            undefined
+                                                          undefined
                                                             ? field.value
                                                             : ""
                                                         }
@@ -744,8 +922,9 @@ export default function ShareWarehousePage() {
                                                           field.onChange(
                                                             e.target.value
                                                               ? Number(
-                                                                e.target.value,
-                                                              )
+                                                                  e.target
+                                                                    .value,
+                                                                )
                                                               : undefined,
                                                           );
                                                           if (e.target.value)
@@ -772,6 +951,7 @@ export default function ShareWarehousePage() {
                                                 prodCountries.length <= 1 &&
                                                 !availableCountries.length
                                               }
+                                              aria-label={`Remove ${c}`}
                                             >
                                               <X className="h-4 w-4" />
                                             </Button>
@@ -787,8 +967,10 @@ export default function ShareWarehousePage() {
                                               (c) => ({
                                                 value: c,
                                                 label:
-                                                  countriesLib.getName(c, "en") ??
-                                                  c,
+                                                  countriesLib.getName(
+                                                    c,
+                                                    "en",
+                                                  ) ?? c,
                                               }),
                                             )}
                                             onChange={(opt) =>
@@ -813,8 +995,10 @@ export default function ShareWarehousePage() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => {
+                                  remove(idx);
                                   reindexSelectedCountriesAfterRemove(idx);
                                 }}
+                                aria-label="Remove row"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -831,8 +1015,8 @@ export default function ShareWarehousePage() {
                     {fields.length === 0
                       ? 0
                       : (page - 1) * pageSize + 1}{" "}
-                    –{" "}
-                    {Math.min(page * pageSize, fields.length)} of {fields.length}
+                    – {Math.min(page * pageSize, fields.length)} of{" "}
+                    {fields.length}
                   </span>
                 </div>
               </div>
@@ -862,7 +1046,10 @@ export default function ShareWarehousePage() {
 
               {/* Submit */}
               <div className="flex gap-4">
-                <Button type="submit" disabled={!!shareUrl || !stock.length}>
+                <Button
+                  type="submit"
+                  disabled={!!shareUrl || !uniqStock.length}
+                >
                   Create Share Link
                 </Button>
                 <Button
