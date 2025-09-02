@@ -10,8 +10,6 @@ import { getContext } from "@/lib/context";
 
 const cartSchema = z.object({
   clientId: z.string().min(1, { message: "Name is required." }),
-  // allow frontend to send country; we still resolve from DB for authority
-  country: z.string().length(2).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -42,24 +40,18 @@ export async function POST(req: NextRequest) {
     const resultClient = await pool.query(clientQ, [clientId]);
     const country = resultClient.rows[0].country as string;
 
-    // 2) fetch a default *shipment* (pricing method) for this org
-    //    NOTE: previously this queried "shippingMethods" (shipping companies) by mistake.
-    //          We should pick from "shipments" here to avoid false "no shipping methods" errors.
-    const shipSelect = `
-      SELECT id
-        FROM shipments
-       WHERE "organizationId" = $1
-       ORDER BY "createdAt" ASC
-       LIMIT 1
+    // 2) fetch a default shipping method for this org
+    const shipMethQ = `
+      SELECT id FROM "shippingMethods"
+      WHERE "organizationId" = $1
+      ORDER BY "createdAt" ASC
+      LIMIT 1
     `;
-    const shipPick = await pool.query(shipSelect, [organizationId]);
-    if (shipPick.rows.length === 0) {
-      return NextResponse.json(
-        { error: "No shipping methods available" },
-        { status: 400 }
-      );
+    const shipRes = await pool.query(shipMethQ, [organizationId]);
+    if (shipRes.rows.length === 0) {
+      return NextResponse.json({ error: "No shipping methods available" }, { status: 400 });
     }
-    const shippingMethod = shipPick.rows[0].id as string;
+    const shippingMethod = shipRes.rows[0].id;
 
     // 3) initial cart hash for empty items
     const initialProducts: any[] = [];

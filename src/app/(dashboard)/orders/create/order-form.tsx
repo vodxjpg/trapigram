@@ -358,7 +358,7 @@ export default function OrderForm() {
           country: clientInfo?.country || "", // ← rename
         }),
       });
-      if (!resC.ok) throw new Error("Failed to create cart");
+      if (!resC.ok) throw new Error("Failed to create cart.");
       const dataC = await resC.json();
       const { newCart } = dataC;
       setCartId(newCart.id);
