@@ -90,6 +90,11 @@ export function PaymentMethodDrawer({
 
       // On success, the API already upserts/activates the Niftipay method.
       toast.success("Niftipay connected successfully");
+
+      // Notify the page to show a verification dialog (5s lockout).
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("niftipay-connected"));
+      }
       onClose(true); // refresh table
     } catch (err: any) {
       toast.error(err?.message || "Niftipay connect failed");
