@@ -172,7 +172,7 @@ export default function ShareLinksPage() {
                         ))}
                       </TableCell>
                       <TableCell>
-                        {link.products.map((p) => (
+                        {link.products.slice(0, 3).map((p) => (
                           <Badge
                             key={`${p.productId}-${p.variationId ?? "none"}`}
                             variant="outline"
@@ -181,6 +181,9 @@ export default function ShareLinksPage() {
                             {p.title}
                           </Badge>
                         ))}
+                        {link.products.length > 3 && (
+                          <Badge variant="outline" className="mr-1">…</Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         {new Date(link.createdAt).toLocaleDateString()}
