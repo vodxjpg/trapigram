@@ -194,7 +194,6 @@ export function PaymentMethodsTable() {
 
   const deleteRow = async (pm: PaymentMethod) => {
     if (!canDelete) return;
-    if (pm.name.toLowerCase() === "niftipay") return;
     if (!confirm("Delete this payment method?")) return;
     try {
       await fetch(`/api/payment-methods/${pm.id}`, { method: "DELETE" });
