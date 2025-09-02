@@ -121,7 +121,7 @@ function showFriendlyCreateOrderError(raw?: string | null): boolean {
   }
   return false;
 }
- 
+
 
 /* ─── helpers (new) ───────────────────────────────────────────── */
 
@@ -416,7 +416,7 @@ export default function OrderForm() {
         if (!compRes.ok) throw new Error("Failed to fetch shipping companies");
         const comps: { companies: ShippingCompany[] } = await compRes.json();
         setShippingCompanies(comps.shippingMethods);
-       } catch (err: any) {
+      } catch (err: any) {
         if (!showFriendlyCreateOrderError(err?.message)) {
           toast.error(err?.message || "Failed to load shipping/payout methods");
         }
@@ -690,7 +690,12 @@ export default function OrderForm() {
   /* ─── Niftipay network fetch whenever the PM select changes ───── */
   useEffect(() => {
     const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
-    if (!pm || !/niftipay/i.test(pm.name || "")) {
+    // 🔧 also bail if Niftipay is inactive / misconfigured
+    if (
+      !pm ||
+      !/niftipay/i.test(pm.name || "") ||
+      pm.active === false
+    ) {
       setNiftipayNetworks([]);
       setSelectedNiftipay("");
       return;
@@ -704,10 +709,10 @@ export default function OrderForm() {
         if (!selectedNiftipay && nets[0]) {
           setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
         }
-     } catch (err: any) {
-  if (!showFriendlyCreateOrderError(err?.message)) {
-    toast.error(err?.message || "Niftipay networks load error");
-  }
+      } catch (err: any) {
+        if (!showFriendlyCreateOrderError(err?.message)) {
+          toast.error(err?.message || "Niftipay networks load error");
+        }
         setNiftipayNetworks([]);
       } finally {
         setNiftipayLoading(false);
@@ -715,13 +720,15 @@ export default function OrderForm() {
     })();
   }, [selectedPaymentMethod, paymentMethods, selectedNiftipay]);
 
-  // Optional: auto-select Niftipay to actually trigger the effect in UIs
+  // 🔧 Smart default selection – prefer active, non-Niftipay methods
   useEffect(() => {
-    if (!selectedPaymentMethod) {
-      const n = paymentMethods.find((m) => /niftipay/i.test(m.name || ""));
-      if (n) setSelectedPaymentMethod(n.id);
-    }
+    if (selectedPaymentMethod) return;
+    const active = paymentMethods.filter((m) => m.active !== false);
+    const nonNifti = active.find((m) => !/niftipay/i.test(m.name || ""));
+    const pick = nonNifti ?? active[0] ?? paymentMethods[0];
+    if (pick) setSelectedPaymentMethod(pick.id);
   }, [paymentMethods, selectedPaymentMethod]);
+
   // — Add product
   // — Add product  (CREATE form)
   const addProduct = async () => {
@@ -869,8 +876,8 @@ export default function OrderForm() {
         const err = await res.json().catch(() => ({}));
         throw new Error(
           err?.error ||
-            err?.message ||
-            (typeof err === "string" ? err : "Could not apply coupon")
+          err?.message ||
+          (typeof err === "string" ? err : "Could not apply coupon")
         );
       }
 
@@ -950,6 +957,14 @@ export default function OrderForm() {
   const totalBeforeShipping = Math.max(0, itemsSubtotal - discountTotal);
   const total = totalBeforeShipping + shippingCost;
 
+  // 🔧 helpers for Niftipay gating
+  const pmSelected = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+  const isNiftipaySelected =
+    !!pmSelected && /niftipay/i.test(pmSelected.name || "");
+  // only require network selection if tenant is actually configured (networks loaded)
+  const mustChooseNiftipayNetwork =
+    isNiftipaySelected && niftipayNetworks.length > 0;
+
   // Shipping cost
   useEffect(() => {
     if (!selectedShippingMethod) return;
@@ -996,9 +1011,10 @@ export default function OrderForm() {
       toast.error("Select a payment method");
       return;
     }
-    /* ensure crypto network chosen */
-    const isNiftipay = payment.toLowerCase() === "niftipay";
-    if (isNiftipay && !selectedNiftipay) {
+    /* ensure crypto network chosen only if configured */
+    const isNiftipay = pmObj?.name?.toLowerCase() === "niftipay";
+    const niftipayConfigured = niftipayNetworks.length > 0;
+    if (isNiftipay && niftipayConfigured && !selectedNiftipay) {
       toast.error("Select the crypto network/asset");
       return;
     }
@@ -1037,9 +1053,9 @@ export default function OrderForm() {
       // ⬇️ NEW: coupon types in the same order as couponCode
       couponType: appliedCodes.length
         ? appliedCodes
-            .map((c) => couponTypeByCode[c] || "")
-            .filter(Boolean)
-            .join(",")
+          .map((c) => couponTypeByCode[c] || "")
+          .filter(Boolean)
+          .join(",")
         : null,
       discountValue: couponValues.length ? couponValues : [],
       shippingCompany: shippingCompanyName,
@@ -1060,16 +1076,16 @@ export default function OrderForm() {
           });
           setStockErrors(errs);
         }
-            // Friendly mapping for common backend messages
-      const rawMsg = data?.error || data?.message;
-      if (!showFriendlyCreateOrderError(rawMsg)) {
-        toast.error(rawMsg || "Failed to create order");
-      }
-      return;
+        // Friendly mapping for common backend messages
+        const rawMsg = data?.error || data?.message;
+        if (!showFriendlyCreateOrderError(rawMsg)) {
+          toast.error(rawMsg || "Failed to create order");
+        }
+        return;
       }
       toast.success("Order created successfully!");
       /* ── extra: create Niftipay invoice & store meta ───────── */
-      if (isNiftipay) {
+      if (isNiftipay && niftipayConfigured) {
         const [chain, asset] = selectedNiftipay.split(":");
         const client = clients.find((c) => c.id === selectedClient)!;
         const safeEmail = client.email?.trim() || "user@trapyfy.com";
@@ -1092,14 +1108,14 @@ export default function OrderForm() {
           }),
         });
 
-          if (!nRes.ok) {
-     const msg = await nRes.text();
-     console.error("[Niftipay] ", msg);
-     if (!showFriendlyCreateOrderError(msg)) {
-       toast.error(`Niftipay: ${msg}`);
-     }
-     return;
-   }
+        if (!nRes.ok) {
+          const msg = await nRes.text();
+          console.error("[Niftipay] ", msg);
+          if (!showFriendlyCreateOrderError(msg)) {
+            toast.error(`Niftipay: ${msg}`);
+          }
+          return;
+        }
 
         const meta = await nRes.json();
         await fetch(`/api/order/${data.id}`, {
@@ -1115,10 +1131,10 @@ export default function OrderForm() {
       cancelOrder();
       router.push(`/orders/${data.id}`);
     } catch (err: any) {
-   console.error("createOrder error:", err);
-   if (!showFriendlyCreateOrderError(err?.message)) {
-     toast.error(err?.message || "Could not create order");
-   }
+      console.error("createOrder error:", err);
+      if (!showFriendlyCreateOrderError(err?.message)) {
+        toast.error(err?.message || "Could not create order");
+      }
     }
   };
 
@@ -1647,33 +1663,33 @@ export default function OrderForm() {
                   p.id === selectedPaymentMethod &&
                   p.name.toLowerCase() === "niftipay"
               ) && (
-                <div className="mt-4">
-                  <Label>Select Crypto Network</Label>
-                  <Select
-                    value={selectedNiftipay}
-                    onValueChange={setSelectedNiftipay}
-                    disabled={niftipayLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue
-                        placeholder={
-                          niftipayLoading ? "Loading…" : "Select network"
-                        }
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {niftipayNetworks.map((n) => (
-                        <SelectItem
-                          key={`${n.chain}:${n.asset}`}
-                          value={`${n.chain}:${n.asset}`}
-                        >
-                          {n.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+                  <div className="mt-4">
+                    <Label>Select Crypto Network</Label>
+                    <Select
+                      value={selectedNiftipay}
+                      onValueChange={setSelectedNiftipay}
+                      disabled={niftipayLoading}
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={
+                            niftipayLoading ? "Loading…" : "Select network"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {niftipayNetworks.map((n) => (
+                          <SelectItem
+                            key={`${n.chain}:${n.asset}`}
+                            value={`${n.chain}:${n.asset}`}
+                          >
+                            {n.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
             </CardContent>
           </Card>
         </div>
@@ -1739,13 +1755,8 @@ export default function OrderForm() {
                   !orderGenerated ||
                   orderItems.length === 0 ||
                   !selectedPaymentMethod ||
-                  (paymentMethods.find(
-                    (p) =>
-                      p.id === selectedPaymentMethod &&
-                      p.name.toLowerCase() === "niftipay"
-                  )
-                    ? !selectedNiftipay
-                    : false) ||
+                  // 🔧 only force a network when Niftipay is selected *and* configured
+                  (mustChooseNiftipayNetwork ? !selectedNiftipay : false) ||
                   !selectedShippingMethod ||
                   !selectedShippingCompany
                 }

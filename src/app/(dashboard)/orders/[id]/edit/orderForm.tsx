@@ -88,8 +88,8 @@ interface OrderItemLine {
 }
 
 const NIFTIPAY_BASE =
- (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com")
-   .replace(/\/+$/, ""); // strip trailing “/” just in case
+  (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com")
+    .replace(/\/+$/, ""); // strip trailing “/” just in case
 const DEBOUNCE_MS = 400;
 type NiftipayNet = { chain: string; asset: string; label: string };
 
@@ -477,57 +477,64 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
    Fetch payment methods + (if Niftipay) chains/assets
 ──────────────────────────────────────────────────────────── */
   useEffect(() => {
-  (async () => {
-    try {
-      const pmRes = await fetch("/api/payment-methods");
-      const { methods } = await pmRes.json();
-      setPaymentMethods(methods);
-      const init = methods.find(
-        (m: any) =>
-          m.name?.toLowerCase?.() === orderData?.shippingInfo?.payment?.toLowerCase()
-      )?.id;
-      if (init) setSelectedPaymentMethod(init);
-    } catch {
-      toast.error("Failed loading payment methods");
-    }
-  })();
-}, [orderData]);
-
-// Load Niftipay networks the same way as the create form (via backend proxy)
-useEffect(() => {
-  const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
-  if (!pm || !/niftipay/i.test(pm.name || "")) {
-    setNiftipayNetworks([]);
-    setSelectedNiftipay("");
-    return;
-  }
-  (async () => {
-    setNiftipayLoading(true);
-    try {
-      const nets = await fetchNiftipayNetworks();
-      setNiftipayNetworks(nets);
-      // auto-pick first option if none selected (parity with create form)
-      if (!selectedNiftipay && nets[0]) {
-        setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
+    (async () => {
+      try {
+        const pmRes = await fetch("/api/payment-methods");
+        const { methods } = await pmRes.json();
+        setPaymentMethods(methods);
+        const init = methods.find(
+          (m: any) =>
+            m.name?.toLowerCase?.() === orderData?.shippingInfo?.payment?.toLowerCase()
+        )?.id;
+        if (init) setSelectedPaymentMethod(init);
+      } catch {
+        toast.error("Failed loading payment methods");
       }
-     } catch (err: any) {
-    if (!showFriendlyCreateOrderError(err?.message)) {
-      toast.error(err?.message || "Niftipay networks load error");
-    }
-      setNiftipayNetworks([]);
-    } finally {
-      setNiftipayLoading(false);
-    }
-  })();
-}, [selectedPaymentMethod, paymentMethods, selectedNiftipay]);
+    })();
+  }, [orderData]);
 
-// Optional: if nothing is selected (e.g., editing an old order), preselect Niftipay
-useEffect(() => {
-  if (!selectedPaymentMethod) {
-    const n = paymentMethods.find((m) => /niftipay/i.test(m.name || ""));
-    if (n) setSelectedPaymentMethod(n.id);
-  }
-}, [paymentMethods, selectedPaymentMethod]);
+  // Load Niftipay networks the same way as the create form (via backend proxy)
+  useEffect(() => {
+    const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+    // 🔧 also bail if Niftipay is inactive / misconfigured
+    if (
+      !pm ||
+      !/niftipay/i.test(pm.name || "") ||
+      (pm as any).active === false
+    ) {
+      setNiftipayNetworks([]);
+      setSelectedNiftipay("");
+      return;
+    }
+    (async () => {
+      setNiftipayLoading(true);
+      try {
+        const nets = await fetchNiftipayNetworks();
+        setNiftipayNetworks(nets);
+        // auto-pick first option if none selected (parity with create form)
+        if (!selectedNiftipay && nets[0]) {
+          setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
+        }
+      } catch (err: any) {
+        if (!showFriendlyCreateOrderError(err?.message)) {
+          toast.error(err?.message || "Niftipay networks load error");
+        }
+        setNiftipayNetworks([]);
+      } finally {
+        setNiftipayLoading(false);
+      }
+    })();
+  }, [selectedPaymentMethod, paymentMethods, selectedNiftipay]);
+
+  // Optional: if nothing is selected (e.g., editing an old order), preselect Niftipay
+  // 🔧 Smart default selection – prefer active, non-Niftipay methods
+  useEffect(() => {
+    if (selectedPaymentMethod) return;
+    const active = (paymentMethods as any[]).filter((m) => m.active !== false);
+    const nonNifti = active.find((m) => !/niftipay/i.test(m.name || ""));
+    const pick = nonNifti ?? active[0] ?? paymentMethods[0];
+    if (pick) setSelectedPaymentMethod(pick.id);
+  }, [paymentMethods, selectedPaymentMethod]);
 
 
   /* ─── country-aware catalogue (affiliates always pass) ─── */
@@ -613,15 +620,15 @@ useEffect(() => {
       const shipData = await shipRes.json();
       const compData = await compRes.json();
       setShippingMethods(shipData.shipments);
-        // Proactively guide when none exist
-  if (!shipData?.shipments?.length) {
-    toast.error("You need to create a shipping method first");
-  }
+      // Proactively guide when none exist
+      if (!shipData?.shipments?.length) {
+        toast.error("You need to create a shipping method first");
+      }
       setShippingCompanies(compData.shippingMethods);
-     } catch (err: any) {
-     if (!showFriendlyCreateOrderError(err?.message)) {
-       toast.error(err?.message || "Shipping load error");
-     }
+    } catch (err: any) {
+      if (!showFriendlyCreateOrderError(err?.message)) {
+        toast.error(err?.message || "Shipping load error");
+      }
     } finally {
       setShippingLoading(false);
     }
@@ -882,47 +889,47 @@ useEffect(() => {
             selectedNiftipay !== prevNA)  // … and it changed
         );
 
-     if (needDelete) {
-  const niftipayMethod = paymentMethods.find(p => p.name.toLowerCase() === "niftipay");
-  const key = niftipayMethod?.apiKey;
-  if (!key) {
-    toast.error("Niftipay API key missing");
-    return;
-  }
+      if (needDelete) {
+        const niftipayMethod = paymentMethods.find(p => p.name.toLowerCase() === "niftipay");
+        const key = niftipayMethod?.apiKey;
+        if (!key) {
+          toast.error("Niftipay API key missing");
+          return;
+        }
 
-  // 0a) look up the invoice id by reference
-  const findRes = await fetchJsonVerbose(
-    `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-    { credentials: "omit", headers: { "x-api-key": key } },
-    "Niftipay FIND by reference"
-  );
-  if (!findRes.ok) {
-    toast.error("Could not look up Niftipay invoice");
-    return;
-  }
-  const { orders: found = [] } = await findRes.clone().json().catch(() => ({ orders: [] }));
-  const existing = found.find((o: any) => o.reference === orderData.orderKey);
+        // 0a) look up the invoice id by reference
+        const findRes = await fetchJsonVerbose(
+          `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+          { credentials: "omit", headers: { "x-api-key": key } },
+          "Niftipay FIND by reference"
+        );
+        if (!findRes.ok) {
+          toast.error("Could not look up Niftipay invoice");
+          return;
+        }
+        const { orders: found = [] } = await findRes.clone().json().catch(() => ({ orders: [] }));
+        const existing = found.find((o: any) => o.reference === orderData.orderKey);
 
-  // 0b) cancel it if not already cancelled (fires webhook)
-  if (existing && existing.status !== "cancelled") {
-    const patch = await fetchJsonVerbose(
-      `${NIFTIPAY_BASE}/api/orders/${existing.id}`,
-      {
-        method: "PATCH",
-        credentials: "omit",
-        headers: { "Content-Type": "application/json", "x-api-key": key },
-        body: JSON.stringify({ status: "cancelled" }),
-      },
-      "Niftipay CANCEL"
-    );
-    if (!patch.ok) {
-      const err = await patch.json().catch(() => ({}));
-      toast.error(err.error || "Failed to cancel previous Niftipay invoice");
-      return;
-    }
-    toast.success("Previous crypto invoice cancelled");
-  }
-}
+        // 0b) cancel it if not already cancelled (fires webhook)
+        if (existing && existing.status !== "cancelled") {
+          const patch = await fetchJsonVerbose(
+            `${NIFTIPAY_BASE}/api/orders/${existing.id}`,
+            {
+              method: "PATCH",
+              credentials: "omit",
+              headers: { "Content-Type": "application/json", "x-api-key": key },
+              body: JSON.stringify({ status: "cancelled" }),
+            },
+            "Niftipay CANCEL"
+          );
+          if (!patch.ok) {
+            const err = await patch.json().catch(() => ({}));
+            toast.error(err.error || "Failed to cancel previous Niftipay invoice");
+            return;
+          }
+          toast.success("Previous crypto invoice cancelled");
+        }
+      }
 
       /* --- 1. Patch the order itself --- */
       const selectedAddressText = addresses.find(a => a.id === selectedAddressId)?.address ?? null;
@@ -950,16 +957,21 @@ useEffect(() => {
         });
 
       if (!res.ok) {
-              const err = await res.json().catch(() => ({}));
-      const rawMsg = err?.error ?? `Request failed (${res.status})`;
-      if (!showFriendlyCreateOrderError(rawMsg)) {
-        toast.error(rawMsg);
-      }
-      return;
+        const err = await res.json().catch(() => ({}));
+        const rawMsg = err?.error ?? `Request failed (${res.status})`;
+        if (!showFriendlyCreateOrderError(rawMsg)) {
+          toast.error(rawMsg);
+        }
+        return;
       }
 
       /* --- 2. (Re-)create Niftipay invoice if it’s the chosen method --- */
       if (newPM === "niftipay") {
+        // 🔧 If Niftipay isn't configured (no networks), don't block other methods
+        if (!niftipayNetworks.length) {
+          toast.error("Niftipay isn’t configured. Choose another payment method.");
+          return;
+        }
         const key = pmObj?.apiKey;
 
         if (!key) {
@@ -972,15 +984,15 @@ useEffect(() => {
 
         const [chain, asset] = selectedNiftipay.split(":");
         // 2a) Always delete any existing invoice first to avoid duplicates
-             await fetchJsonVerbose(
-                 `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-                 {
-                   credentials: "omit",
-                   method: "DELETE",
-                   headers: { "x-api-key": key },
-                 },
-                 "DELETE OLD Niftipay",
-               );
+        await fetchJsonVerbose(
+          `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+          {
+            credentials: "omit",
+            method: "DELETE",
+            headers: { "x-api-key": key },
+          },
+          "DELETE OLD Niftipay",
+        );
         console.log("[Trapigram] Old Niftipay invoice deleted (if existed)");
 
         // 2b) Now create the new one
@@ -1031,10 +1043,10 @@ useEffect(() => {
             status: niftipayRes.status,
             error: errorBody.error,
           });
-              const rawMsg = errorBody?.error;
-     if (!showFriendlyCreateOrderError(rawMsg)) {
-       toast.error(rawMsg || "Failed to create new Niftipay order");
-     }
+          const rawMsg = errorBody?.error;
+          if (!showFriendlyCreateOrderError(rawMsg)) {
+            toast.error(rawMsg || "Failed to create new Niftipay order");
+          }
           return;
         }
 
@@ -1054,10 +1066,10 @@ useEffect(() => {
 
       toast.success("Order updated!");
       router.push("/orders");
-      } catch (err: any) {
-     if (!showFriendlyCreateOrderError(err?.message)) {
-       toast.error(err?.message || "Update failed");
-     }
+    } catch (err: any) {
+      if (!showFriendlyCreateOrderError(err?.message)) {
+        toast.error(err?.message || "Update failed");
+      }
     }
   };
 
@@ -1370,18 +1382,18 @@ useEffect(() => {
                       onChange={() => setSelectedAddressId(addr.id)}
                       className="h-4 w-4"
                     />
-                   <span className="text-sm whitespace-pre-line break-words">{addr.address}</span>
+                    <span className="text-sm whitespace-pre-line break-words">{addr.address}</span>
                   </label>
                 ))}
               </div>
               <Separator className="my-3" />
               <div className="flex gap-4">
-                          <Textarea
-              className="flex-1 min-h-[140px] whitespace-pre-line"
-              placeholder="New address (multi-line)"
-              value={newAddress}
-              onChange={(e) => setNewAddress(e.target.value)}
-            />
+                <Textarea
+                  className="flex-1 min-h-[140px] whitespace-pre-line"
+                  placeholder="New address (multi-line)"
+                  value={newAddress}
+                  onChange={(e) => setNewAddress(e.target.value)}
+                />
                 <Button onClick={handleAddAddress} disabled={!newAddress}>
                   Add Address
                 </Button>
