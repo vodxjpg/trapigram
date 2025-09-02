@@ -81,7 +81,12 @@ type OrderRow = {
   refunded: boolean;
   supplierOrgId: string | null;
   supplierLabel: string | null;
-  items: Array<{ productTitle: string; quantity: number; unitCost: number; lineTotal: number }>;
+  items: Array<{
+    productTitle: string;
+    quantity: number;
+    unitCost: number;
+    lineTotal: number;
+  }>;
   totalQty: number;
   totalOwed: number;
 };
@@ -95,38 +100,49 @@ const chartConfig = {
 const ALL_SUPPLIERS = "__ALL__";
 
 type DatePreset =
-  | "all" | "today" | "yesterday"
-  | "this-week" | "last-week"
-  | "this-month" | "last-month"
-  | "this-year" | "last-year"
+  | "all"
+  | "today"
+  | "yesterday"
+  | "this-week"
+  | "last-week"
+  | "this-month"
+  | "last-month"
+  | "this-year"
+  | "last-year"
   | "custom";
 
 function getPresetRange(preset: DatePreset): { from: Date; to: Date } {
   const now = new Date();
   switch (preset) {
-    case "today": return { from: startOfDay(now), to: endOfDay(now) };
+    case "today":
+      return { from: startOfDay(now), to: endOfDay(now) };
     case "yesterday": {
       const y = subDays(now, 1);
       return { from: startOfDay(y), to: endOfDay(y) };
     }
-    case "this-week": return { from: startOfWeek(now), to: endOfWeek(now) };
+    case "this-week":
+      return { from: startOfWeek(now), to: endOfWeek(now) };
     case "last-week": {
       const lw = subWeeks(now, 1);
       return { from: startOfWeek(lw), to: endOfWeek(lw) };
     }
-    case "this-month": return { from: startOfMonth(now), to: endOfMonth(now) };
+    case "this-month":
+      return { from: startOfMonth(now), to: endOfMonth(now) };
     case "last-month": {
       const lm = subMonths(now, 1);
       return { from: startOfMonth(lm), to: endOfMonth(lm) };
     }
-    case "this-year": return { from: startOfYear(now), to: endOfYear(now) };
+    case "this-year":
+      return { from: startOfYear(now), to: endOfYear(now) };
     case "last-year": {
       const ly = subYears(now, 1);
       return { from: startOfYear(ly), to: endOfYear(ly) };
     }
-    case "all": return { from: new Date(0), to: endOfDay(new Date(2099, 11, 31)) };
+    case "all":
+      return { from: new Date(0), to: endOfDay(new Date(2099, 11, 31)) };
     case "custom":
-    default: return { from: startOfDay(subDays(now, 30)), to: endOfDay(now) };
+    default:
+      return { from: startOfDay(subDays(now, 30)), to: endOfDay(now) };
   }
 }
 
@@ -139,8 +155,10 @@ export default function SupplierPayables() {
   // permissions
   const { data: activeOrg } = authClient.useActiveOrganization();
   const orgId = activeOrg?.id ?? null;
-  const { hasPermission: canView, isLoading: viewLoading } =
-    useHasPermission(orgId, { revenue: ["view"] }); // reuse same permission gate
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { revenue: ["view"] }
+  ); // reuse same permission gate
   const { hasPermission: canExport, isLoading: exportLoading } =
     useHasPermission(orgId, { revenue: ["export"] });
 
@@ -153,7 +171,9 @@ export default function SupplierPayables() {
 
   // date preset + custom
   const [datePreset, setDatePreset] = useState<DatePreset>("last-month");
-  const [dateRange, setDateRange] = useState<CustomDateRange>(getPresetRange("last-month"));
+  const [dateRange, setDateRange] = useState<CustomDateRange>(
+    getPresetRange("last-month")
+  );
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const [tempDateRange, setTempDateRange] = useState<DateRange | undefined>({
     from: dateRange.from,
@@ -163,7 +183,9 @@ export default function SupplierPayables() {
   // table / filters
   const [currentPage, setCurrentPage] = useState(1);
   const [currency, setCurrency] = useState<"USD" | "GBP" | "EUR">("USD");
-  const [status, setStatus] = useState<"all" | "paid" | "refunded" | "cancelled">("all");
+  const [status, setStatus] = useState<
+    "all" | "paid" | "refunded" | "cancelled"
+  >("all");
 
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -175,9 +197,13 @@ export default function SupplierPayables() {
 
   // supplier filter (orgId) + options from API
   const [supplierOrgId, setSupplierOrgId] = useState<string>("");
-  const [supplierOptions, setSupplierOptions] = useState<Array<{ orgId: string; label: string }>>([]);
+  const [supplierOptions, setSupplierOptions] = useState<
+    Array<{ orgId: string; label: string }>
+  >([]);
 
-  const [chartData, setChartData] = useState<{ date: string; owed: number }[]>([]);
+  const [chartData, setChartData] = useState<{ date: string; owed: number }[]>(
+    []
+  );
   const isMobile = useIsMobile();
 
   const rowsPerPage = 25;
@@ -217,7 +243,9 @@ export default function SupplierPayables() {
       try {
         const from = encodeURIComponent(dateRange.from.toISOString());
         const to = encodeURIComponent(dateRange.to.toISOString());
-        const supParam = supplierOrgId ? `&supplierOrgId=${encodeURIComponent(supplierOrgId)}` : "";
+        const supParam = supplierOrgId
+          ? `&supplierOrgId=${encodeURIComponent(supplierOrgId)}`
+          : "";
         const res = await fetch(
           `/api/report/suppliers?from=${from}&to=${to}&currency=${currency}&status=${status}${supParam}`
         );
@@ -225,7 +253,9 @@ export default function SupplierPayables() {
         const data = await res.json();
         setOrders(Array.isArray(data.orders) ? data.orders : []);
         setChartData(data.chartData);
-        setCountries(Array.isArray(data.countries) ? [...data.countries].sort() : []);
+        setCountries(
+          Array.isArray(data.countries) ? [...data.countries].sort() : []
+        );
         setSupplierOptions(Array.isArray(data.suppliers) ? data.suppliers : []);
         setCurrentPage(1);
       } catch (err: any) {
@@ -238,15 +268,34 @@ export default function SupplierPayables() {
   }, [dateRange, currency, status, supplierOrgId, canShow]);
 
   const countryOptions = useMemo(
-    () => countries.map((c) => ({ value: c, label: countriesLib.getName(c, "en") || c })),
+    () =>
+      countries.map((c) => ({
+        value: c,
+        label: countriesLib.getName(c, "en") || c,
+      })),
     [countries]
+  );
+  const SELECT_ALL = "__ALL__";
+  const DESELECT_ALL = "__NONE__";
+
+  const selectOptions = useMemo(
+    () => [
+      { value: SELECT_ALL, label: "SELECT ALL" },
+      { value: DESELECT_ALL, label: "DESELECT ALL" },
+      ...countryOptions,
+    ],
+    [countryOptions]
   );
 
   const filteredOrders = useMemo(() => {
     const byCountry = (o: OrderRow) =>
-      selectedCountries.length === 0 ? true : selectedCountries.includes(o.country);
+      selectedCountries.length === 0
+        ? true
+        : selectedCountries.includes(o.country);
     const list = orders.filter(byCountry);
-    return list.sort((a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime());
+    return list.sort(
+      (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
+    );
   }, [orders, selectedCountries]);
 
   const totalPages = Math.ceil(filteredOrders.length / rowsPerPage);
@@ -273,7 +322,7 @@ export default function SupplierPayables() {
       Supplier: o.supplierLabel ?? "",
       "Total Qty": o.totalQty,
       "Total Owed": o.totalOwed,
-      Items: o.items.map(i => `${i.productTitle} × ${i.quantity}`).join("; "),
+      Items: o.items.map((i) => `${i.productTitle} × ${i.quantity}`).join("; "),
       Country: o.country,
     }));
     const ws = XLSX.utils.json_to_sheet(dataForSheet);
@@ -294,7 +343,9 @@ export default function SupplierPayables() {
   if (permsLoading) {
     return (
       <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-        <div className="px-4 lg:px-6 text-sm text-muted-foreground">Loading…</div>
+        <div className="px-4 lg:px-6 text-sm text-muted-foreground">
+          Loading…
+        </div>
       </div>
     );
   }
@@ -313,7 +364,10 @@ export default function SupplierPayables() {
               {/* Left: date preset dropdown + (custom picker) */}
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">Date</span>
-                <Select value={datePreset} onValueChange={(v) => handleDatePreset(v as DatePreset)}>
+                <Select
+                  value={datePreset}
+                  onValueChange={(v) => handleDatePreset(v as DatePreset)}
+                >
                   <SelectTrigger size="sm" className="min-w-[200px]">
                     <SelectValue placeholder="Select range" />
                   </SelectTrigger>
@@ -333,12 +387,16 @@ export default function SupplierPayables() {
 
                 {datePreset !== "custom" && (
                   <div className="text-xs text-muted-foreground">
-                    {format(dateRange.from, "MMM dd, yyyy")} – {format(dateRange.to, "MMM dd, yyyy")}
+                    {format(dateRange.from, "MMM dd, yyyy")} –{" "}
+                    {format(dateRange.to, "MMM dd, yyyy")}
                   </div>
                 )}
 
                 {datePreset === "custom" && (
-                  <Popover open={customDateOpen} onOpenChange={setCustomDateOpen}>
+                  <Popover
+                    open={customDateOpen}
+                    onOpenChange={setCustomDateOpen}
+                  >
                     <PopoverTrigger asChild>
                       <Button
                         variant="outline"
@@ -371,18 +429,24 @@ export default function SupplierPayables() {
                             {tempDateRange?.from && tempDateRange?.to
                               ? `${format(tempDateRange.from, "MMM dd, yyyy")} - ${format(
                                   tempDateRange.to,
-                                  "MMM dd, yyyy",
+                                  "MMM dd, yyyy"
                                 )}`
                               : "Select date range"}
                           </div>
                           <div className="flex gap-2">
-                            <Button size="sm" variant="outline" onClick={handleCustomDateCancel}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleCustomDateCancel}
+                            >
                               Cancel
                             </Button>
                             <Button
                               size="sm"
                               onClick={handleCustomDateApply}
-                              disabled={!tempDateRange?.from || !tempDateRange?.to}
+                              disabled={
+                                !tempDateRange?.from || !tempDateRange?.to
+                              }
                             >
                               Apply
                             </Button>
@@ -397,7 +461,11 @@ export default function SupplierPayables() {
               {/* Right: currency, status, export */}
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">Currency</span>
-                <Select value={currency} onValueChange={(v) => setCurrency(v as "USD"|"GBP"|"EUR")} className="w-24">
+                <Select
+                  value={currency}
+                  onValueChange={(v) => setCurrency(v as "USD" | "GBP" | "EUR")}
+                  className="w-24"
+                >
                   <SelectTrigger size="sm">
                     <SelectValue placeholder="Currency" />
                   </SelectTrigger>
@@ -412,7 +480,9 @@ export default function SupplierPayables() {
                   <span className="text-sm font-medium">Status</span>
                   <Select
                     value={status}
-                    onValueChange={(v) => setStatus(v as "all" | "paid" | "cancelled" | "refunded")}
+                    onValueChange={(v) =>
+                      setStatus(v as "all" | "paid" | "cancelled" | "refunded")
+                    }
                     className="w-32"
                   >
                     <SelectTrigger size="sm">
@@ -433,7 +503,9 @@ export default function SupplierPayables() {
                   className="shrink-0"
                   onClick={exportToExcel}
                   disabled={!canExport}
-                  title={canExport ? "Export to Excel" : "You lack export permission"}
+                  title={
+                    canExport ? "Export to Excel" : "You lack export permission"
+                  }
                 >
                   <DownloadIcon className="mr-2 h-4 w-4" />
                   Export to Excel
@@ -445,15 +517,21 @@ export default function SupplierPayables() {
                 <span className="text-sm font-medium">Supplier</span>
                 <Select
                   value={supplierOrgId ? supplierOrgId : ALL_SUPPLIERS}
-                  onValueChange={(v) => setSupplierOrgId(v === ALL_SUPPLIERS ? "" : v)}
+                  onValueChange={(v) =>
+                    setSupplierOrgId(v === ALL_SUPPLIERS ? "" : v)
+                  }
                 >
                   <SelectTrigger size="sm" className="min-w-[220px]">
                     <SelectValue placeholder="All suppliers" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem key="__all" value={ALL_SUPPLIERS}>All suppliers</SelectItem>
+                    <SelectItem key="__all" value={ALL_SUPPLIERS}>
+                      All suppliers
+                    </SelectItem>
                     {supplierOptions.map((s) => (
-                      <SelectItem key={s.orgId} value={s.orgId}>{s.label}</SelectItem>
+                      <SelectItem key={s.orgId} value={s.orgId}>
+                        {s.label}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -475,19 +553,56 @@ export default function SupplierPayables() {
               <div className="w-full sm:w-[640px]">
                 <ReactSelect
                   isMulti
+                  closeMenuOnSelect={false}
+                  hideSelectedOptions={false}
                   classNamePrefix="rs"
-                  options={countryOptions}
+                  options={selectOptions}
                   placeholder="Select country(s)"
-                  value={countryOptions.filter((o) => selectedCountries.includes(o.value))}
-                  onChange={(opts: any) =>
-                    setSelectedCountries(Array.isArray(opts) ? opts.map((o: any) => o.value) : [])
-                  }
-                  formatOptionLabel={(o: any) => (
-                    <div className="flex items-center gap-2">
-                      <ReactCountryFlag countryCode={o.value} svg style={{ width: 20 }} />
-                      <span>{o.label}</span>
-                    </div>
+                  value={countryOptions.filter((o) =>
+                    selectedCountries.includes(o.value)
                   )}
+                  onChange={(opts: any, actionMeta: any) => {
+                    const clicked = actionMeta?.option as
+                      | { value: string }
+                      | undefined;
+
+                    // Handle special options
+                    if (actionMeta?.action === "select-option" && clicked) {
+                      if (clicked.value === SELECT_ALL) {
+                        setSelectedCountries(countries); // all available from API
+                        return;
+                      }
+                      if (clicked.value === DESELECT_ALL) {
+                        setSelectedCountries([]);
+                        return;
+                      }
+                    }
+
+                    // Normal multi-select behavior
+                    const next = Array.isArray(opts) ? opts : [];
+                    setSelectedCountries(
+                      next
+                        .filter(
+                          (o) =>
+                            o.value !== SELECT_ALL && o.value !== DESELECT_ALL
+                        )
+                        .map((o) => o.value)
+                    );
+                  }}
+                  formatOptionLabel={(o: any) =>
+                    o.value === SELECT_ALL || o.value === DESELECT_ALL ? (
+                      <div className="text-xs font-medium">{o.label}</div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <ReactCountryFlag
+                          countryCode={o.value}
+                          svg
+                          style={{ width: 20 }}
+                        />
+                        <span>{o.label}</span>
+                      </div>
+                    )
+                  }
                 />
               </div>
             </div>
@@ -501,7 +616,9 @@ export default function SupplierPayables() {
                   Showing {filteredOrders.length} orders from{" "}
                   {format(dateRange.from, "MMM dd, yyyy")} to{" "}
                   {format(dateRange.to, "MMM dd, yyyy")}
-                  {selectedCountries.length > 0 ? ` in ${renderCountriesSummary()}` : ""}
+                  {selectedCountries.length > 0
+                    ? ` in ${renderCountriesSummary()}`
+                    : ""}
                 </div>
 
                 <div className="rounded-md border">
@@ -535,7 +652,10 @@ export default function SupplierPayables() {
                     <TableBody>
                       {currentRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                          <TableCell
+                            colSpan={9}
+                            className="text-center py-8 text-muted-foreground"
+                          >
                             No payables found for the selected filters.
                           </TableCell>
                         </TableRow>
@@ -544,15 +664,33 @@ export default function SupplierPayables() {
                           const isRed = o.cancelled || o.refunded;
                           const itemsPreview = o.items
                             .slice(0, 3)
-                            .map(i => `${i.productTitle} × ${i.quantity}`)
+                            .map((i) => `${i.productTitle} × ${i.quantity}`)
                             .join(", ");
-                          const more = o.items.length > 3 ? ` +${o.items.length - 3} more` : "";
+                          const more =
+                            o.items.length > 3
+                              ? ` +${o.items.length - 3} more`
+                              : "";
 
                           return (
-                            <TableRow key={`${o.orderId}-${o.supplierOrgId ?? "none"}-${idx}`}>
-                              <TableCell>{format(new Date(o.datePaid), "MMM dd, yyyy HH:mm")}</TableCell>
-                              <TableCell className="font-medium">{o.orderNumber}</TableCell>
-                              <TableCell>{o.cancelled ? "Cancelled" : o.refunded ? "Refunded" : "Paid"}</TableCell>
+                            <TableRow
+                              key={`${o.orderId}-${o.supplierOrgId ?? "none"}-${idx}`}
+                            >
+                              <TableCell>
+                                {format(
+                                  new Date(o.datePaid),
+                                  "MMM dd, yyyy HH:mm"
+                                )}
+                              </TableCell>
+                              <TableCell className="font-medium">
+                                {o.orderNumber}
+                              </TableCell>
+                              <TableCell>
+                                {o.cancelled
+                                  ? "Cancelled"
+                                  : o.refunded
+                                    ? "Refunded"
+                                    : "Paid"}
+                              </TableCell>
                               <TableCell>
                                 <Link href={`/clients/${o.orderId}/info`}>
                                   {o.username}
@@ -563,14 +701,23 @@ export default function SupplierPayables() {
                               </TableCell>
                               <TableCell
                                 className="max-w-[520px] truncate"
-                                title={o.items.map(i => `${i.productTitle} × ${i.quantity}`).join(", ")}
+                                title={o.items
+                                  .map(
+                                    (i) => `${i.productTitle} × ${i.quantity}`
+                                  )
+                                  .join(", ")}
                               >
-                                {itemsPreview}{more}
+                                {itemsPreview}
+                                {more}
                               </TableCell>
-                              <TableCell className={`text-right font-medium ${isRed ? "text-red-600" : ""}`}>
+                              <TableCell
+                                className={`text-right font-medium ${isRed ? "text-red-600" : ""}`}
+                              >
                                 {o.totalQty}
                               </TableCell>
-                              <TableCell className={`text-right font-medium ${isRed ? "text-red-600" : ""}`}>
+                              <TableCell
+                                className={`text-right font-medium ${isRed ? "text-red-600" : ""}`}
+                              >
                                 {fmtMoney(o.totalOwed)}
                               </TableCell>
                               <TableCell>{o.country}</TableCell>
@@ -585,44 +732,55 @@ export default function SupplierPayables() {
                 {totalPages > 1 && (
                   <div className="flex items-center justify-between mt-4">
                     <div className="text-sm text-muted-foreground">
-                      Showing {startIndex + 1} to {Math.min(endIndex, filteredOrders.length)} of {filteredOrders.length} orders
+                      Showing {startIndex + 1} to{" "}
+                      {Math.min(endIndex, filteredOrders.length)} of{" "}
+                      {filteredOrders.length} orders
                     </div>
                     <div className="flex items-center space-x-2">
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                        onClick={() =>
+                          setCurrentPage((p) => Math.max(p - 1, 1))
+                        }
                         disabled={currentPage === 1}
                       >
                         <ChevronLeftIcon className="h-4 w-4" /> Previous
                       </Button>
                       <div className="flex items-center space-x-1">
-                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                          const num =
-                            totalPages <= 5
-                              ? i + 1
-                              : currentPage <= 3
+                        {Array.from(
+                          { length: Math.min(5, totalPages) },
+                          (_, i) => {
+                            const num =
+                              totalPages <= 5
                                 ? i + 1
-                                : currentPage >= totalPages - 2
-                                  ? totalPages - 4 + i
-                                  : currentPage - 2 + i;
-                          return (
-                            <Button
-                              key={num}
-                              size="sm"
-                              variant={currentPage === num ? "default" : "outline"}
-                              className="w-8 h-8 p-0"
-                              onClick={() => setCurrentPage(num)}
-                            >
-                              {num}
-                            </Button>
-                          );
-                        })}
+                                : currentPage <= 3
+                                  ? i + 1
+                                  : currentPage >= totalPages - 2
+                                    ? totalPages - 4 + i
+                                    : currentPage - 2 + i;
+                            return (
+                              <Button
+                                key={num}
+                                size="sm"
+                                variant={
+                                  currentPage === num ? "default" : "outline"
+                                }
+                                className="w-8 h-8 p-0"
+                                onClick={() => setCurrentPage(num)}
+                              >
+                                {num}
+                              </Button>
+                            );
+                          }
+                        )}
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+                        onClick={() =>
+                          setCurrentPage((p) => Math.min(p + 1, totalPages))
+                        }
                         disabled={currentPage === totalPages}
                       >
                         Next <ChevronRightIcon className="h-4 w-4" />
@@ -643,12 +801,26 @@ export default function SupplierPayables() {
             <CardTitle>Amount Owed (Daily)</CardTitle>
           </CardHeader>
           <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
-            <ChartContainer config={chartConfig} className="aspect-auto h-[250px] w-full">
-              <AreaChart data={chartData} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
+            <ChartContainer
+              config={chartConfig}
+              className="aspect-auto h-[250px] w-full"
+            >
+              <AreaChart
+                data={chartData}
+                margin={{ top: 20, right: 0, left: 0, bottom: 0 }}
+              >
                 <defs>
                   <linearGradient id="fillOwed" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--color-mobile)" stopOpacity={0.8} />
-                    <stop offset="95%" stopColor="var(--color-mobile)" stopOpacity={0.1} />
+                    <stop
+                      offset="5%"
+                      stopColor="var(--color-mobile)"
+                      stopOpacity={0.8}
+                    />
+                    <stop
+                      offset="95%"
+                      stopColor="var(--color-mobile)"
+                      stopOpacity={0.1}
+                    />
                   </linearGradient>
                 </defs>
                 <CartesianGrid vertical={false} />
@@ -660,7 +832,10 @@ export default function SupplierPayables() {
                   minTickGap={32}
                   tickFormatter={(value) => {
                     const dt = new Date(`${value}T00:00:00`);
-                    return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                    return dt.toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    });
                   }}
                 />
                 <ChartTooltip
@@ -670,7 +845,10 @@ export default function SupplierPayables() {
                     <ChartTooltipContent
                       labelFormatter={(value) => {
                         const dt = new Date(`${value}T00:00:00`);
-                        return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                        return dt.toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        });
                       }}
                       indicator="dot"
                     />

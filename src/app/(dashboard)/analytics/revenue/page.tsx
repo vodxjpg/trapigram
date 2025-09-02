@@ -21,11 +21,11 @@ import {
   startOfDay,
   endOfDay,
   startOfWeek,
-endOfWeek,
-startOfMonth,
-endOfMonth,
-startOfYear,
-endOfYear,
+  endOfWeek,
+  startOfMonth,
+  endOfMonth,
+  startOfYear,
+  endOfYear,
 } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { Button } from "@/components/ui/button";
@@ -116,62 +116,62 @@ export default function OrderReport() {
   const canShow = !permsLoading && canViewRevenue;
 
   // ─────────────────────────────────────────────────────────────
-// Date preset handling (dropdown + custom popover)
-// ─────────────────────────────────────────────────────────────
-type DatePreset =
-  | "all"
-  | "today"
-  | "yesterday"
-  | "this-week"
-  | "last-week"
-  | "this-month"
-  | "last-month"
-  | "this-year"
-  | "last-year"
-  | "custom";
+  // Date preset handling (dropdown + custom popover)
+  // ─────────────────────────────────────────────────────────────
+  type DatePreset =
+    | "all"
+    | "today"
+    | "yesterday"
+    | "this-week"
+    | "last-week"
+    | "this-month"
+    | "last-month"
+    | "this-year"
+    | "last-year"
+    | "custom";
 
-function getPresetRange(preset: DatePreset): { from: Date; to: Date } {
-  const now = new Date();
-  switch (preset) {
-    case "today":
-      return { from: startOfDay(now), to: endOfDay(now) };
-    case "yesterday": {
-      const y = subDays(now, 1);
-      return { from: startOfDay(y), to: endOfDay(y) };
+  function getPresetRange(preset: DatePreset): { from: Date; to: Date } {
+    const now = new Date();
+    switch (preset) {
+      case "today":
+        return { from: startOfDay(now), to: endOfDay(now) };
+      case "yesterday": {
+        const y = subDays(now, 1);
+        return { from: startOfDay(y), to: endOfDay(y) };
+      }
+      case "this-week":
+        return { from: startOfWeek(now), to: endOfWeek(now) };
+      case "last-week": {
+        const lw = subWeeks(now, 1);
+        return { from: startOfWeek(lw), to: endOfWeek(lw) };
+      }
+      case "this-month":
+        return { from: startOfMonth(now), to: endOfMonth(now) };
+      case "last-month": {
+        const lm = subMonths(now, 1);
+        return { from: startOfMonth(lm), to: endOfMonth(lm) };
+      }
+      case "this-year":
+        return { from: startOfYear(now), to: endOfYear(now) };
+      case "last-year": {
+        const ly = subYears(now, 1);
+        return { from: startOfYear(ly), to: endOfYear(ly) };
+      }
+      case "all":
+        return { from: new Date(0), to: endOfDay(new Date(2099, 11, 31)) };
+      case "custom":
+      default:
+        // Caller will manage range when preset is custom
+        return { from: startOfDay(subDays(now, 30)), to: endOfDay(now) };
     }
-    case "this-week":
-      return { from: startOfWeek(now), to: endOfWeek(now) };
-    case "last-week": {
-      const lw = subWeeks(now, 1);
-      return { from: startOfWeek(lw), to: endOfWeek(lw) };
-    }
-    case "this-month":
-      return { from: startOfMonth(now), to: endOfMonth(now) };
-    case "last-month": {
-      const lm = subMonths(now, 1);
-      return { from: startOfMonth(lm), to: endOfMonth(lm) };
-    }
-    case "this-year":
-      return { from: startOfYear(now), to: endOfYear(now) };
-    case "last-year": {
-      const ly = subYears(now, 1);
-      return { from: startOfYear(ly), to: endOfYear(ly) };
-    }
-    case "all":
-      return { from: new Date(0), to: endOfDay(new Date(2099, 11, 31)) };
-    case "custom":
-    default:
-      // Caller will manage range when preset is custom
-      return { from: startOfDay(subDays(now, 30)), to: endOfDay(now) };
   }
-}
 
-const [datePreset, setDatePreset] = useState<DatePreset>("last-month");
+  const [datePreset, setDatePreset] = useState<DatePreset>("last-month");
 
   const [currentPage, setCurrentPage] = useState(1);
   const [dateRange, setDateRange] = useState<CustomDateRange>(
-  getPresetRange("last-month"),
-);
+    getPresetRange("last-month")
+  );
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const [tempDateRange, setTempDateRange] = useState<DateRange | undefined>({
     from: dateRange.from,
@@ -192,8 +192,10 @@ const [datePreset, setDatePreset] = useState<DatePreset>("last-month");
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
 
   // dropshipper filter (orgId) + options from API
-const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
-  const [dropshipperOptions, setDropshipperOptions] = useState<Array<{ orgId: string; label: string }>>([]);
+  const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
+  const [dropshipperOptions, setDropshipperOptions] = useState<
+    Array<{ orgId: string; label: string }>
+  >([]);
 
   const [chartData, setChartData] = useState<
     { date: string; total: number; revenue: number }[]
@@ -211,7 +213,9 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
       try {
         const from = encodeURIComponent(dateRange.from.toISOString());
         const to = encodeURIComponent(dateRange.to.toISOString());
-        const dsParam = dropshipperOrgId ? `&dropshipperOrgId=${encodeURIComponent(dropshipperOrgId)}` : "";
+        const dsParam = dropshipperOrgId
+          ? `&dropshipperOrgId=${encodeURIComponent(dropshipperOrgId)}`
+          : "";
 
         const res = await fetch(
           `/api/report/revenue?from=${from}&to=${to}&currency=${currency}&status=${status}${dsParam}`
@@ -223,7 +227,9 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
         setCountries(
           Array.isArray(data.countries) ? [...data.countries].sort() : []
         );
-        setDropshipperOptions(Array.isArray(data.dropshippers) ? data.dropshippers : []);
+        setDropshipperOptions(
+          Array.isArray(data.dropshippers) ? data.dropshippers : []
+        );
         setCurrentPage(1);
       } catch (err: any) {
         setError(err.message || "Unknown error");
@@ -243,7 +249,17 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
       })),
     [countries]
   );
+  const SELECT_ALL = "__ALL__";
+  const DESELECT_ALL = "__NONE__";
 
+  const selectOptions = useMemo(
+    () => [
+      { value: SELECT_ALL, label: "SELECT ALL" },
+      { value: DESELECT_ALL, label: "DESELECT ALL" },
+      ...countryOptions,
+    ],
+    [countryOptions]
+  );
   const filteredData = chartData;
 
   const filteredOrders = useMemo(() => {
@@ -283,16 +299,16 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
     }).format(amount);
 
   function handleDatePreset(preset: DatePreset) {
-  setDatePreset(preset);
-  if (preset === "custom") {
-    // open the date-picker popover; range will be set on Apply
-    setTempDateRange({ from: dateRange.from, to: dateRange.to });
-    setCustomDateOpen(true);
-    return;
+    setDatePreset(preset);
+    if (preset === "custom") {
+      // open the date-picker popover; range will be set on Apply
+      setTempDateRange({ from: dateRange.from, to: dateRange.to });
+      setCustomDateOpen(true);
+      return;
+    }
+    const range = getPresetRange(preset);
+    setDateRange(range);
   }
-  const range = getPresetRange(preset);
-  setDateRange(range);
-}
 
   const handleCustomDateApply = () => {
     if (tempDateRange?.from && tempDateRange?.to) {
@@ -300,7 +316,7 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
         from: startOfDay(tempDateRange.from),
         to: endOfDay(tempDateRange.to),
       });
-       setDatePreset("custom");
+      setDatePreset("custom");
       setCustomDateOpen(false);
     }
   };
@@ -383,94 +399,104 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
             <CardTitle>Order Report</CardTitle>
           </CardHeader>
           <CardContent>
-           {/* Top Controls Row: date preset + (custom picker) + currency/status/export */}
+            {/* Top Controls Row: date preset + (custom picker) + currency/status/export */}
             <div className="flex flex-col sm:flex-row gap-4 mb-2 items-start sm:items-center justify-between">
-                 {/* Left: date preset dropdown + optional custom range picker */}
-     <div className="flex flex-wrap items-center gap-2">
-       <span className="text-sm font-medium">Date</span>
-       <Select
-         value={datePreset}
-         onValueChange={(v) => handleDatePreset(v as DatePreset)}
-       >
-         <SelectTrigger size="sm" className="min-w-[200px]">
-           <SelectValue placeholder="Select range" />
-         </SelectTrigger>
-         <SelectContent>
-           <SelectItem value="all">All</SelectItem>
-           <SelectItem value="today">Today</SelectItem>
-           <SelectItem value="yesterday">Yesterday</SelectItem>
-           <SelectItem value="this-week">This week</SelectItem>
-           <SelectItem value="last-week">Last week</SelectItem>
-           <SelectItem value="this-month">This month</SelectItem>
-           <SelectItem value="last-month">Last month</SelectItem>
-           <SelectItem value="this-year">This year</SelectItem>
-           <SelectItem value="last-year">Last year</SelectItem>
-           <SelectItem value="custom">Custom…</SelectItem>
-         </SelectContent>
-       </Select>
-       {/* Show the currently active range for non-custom presets */}
-       {datePreset !== "custom" && (
-         <div className="text-xs text-muted-foreground">
-           {format(dateRange.from, "MMM dd, yyyy")} – {format(dateRange.to, "MMM dd, yyyy")}
-         </div>
-       )}
-       {/* When "custom" is selected, show the date picker popover */}
-       {datePreset === "custom" && (
-         <Popover open={customDateOpen} onOpenChange={setCustomDateOpen}>
-           <PopoverTrigger asChild>
-             <Button
-               variant="outline"
-               size="sm"
-               className="justify-start text-left min-w-[240px] bg-transparent"
-             >
-               <CalendarIcon className="mr-2 h-4 w-4" />
-               {dateRange?.from && dateRange?.to ? (
-                 <>
-                   {format(dateRange.from, "MMM dd, yyyy")} -{" "}
-                   {format(dateRange.to, "MMM dd, yyyy")}
-                 </>
-               ) : (
-                 <span>Pick a date range</span>
-               )}
-             </Button>
-           </PopoverTrigger>
-           <PopoverContent className="w-auto p-0" align="start">
-             <div className="p-4">
-               <Calendar
-                 initialFocus
-                 mode="range"
-                 defaultMonth={dateRange?.from || new Date()}
-                 selected={tempDateRange}
-                 onSelect={(range) => setTempDateRange(range)}
-                 numberOfMonths={2}
-               />
-               <div className="flex items-center justify-between pt-4 border-t mt-4">
-                 <div className="text-sm text-muted-foreground">
-                   {tempDateRange?.from && tempDateRange?.to
-                     ? `${format(tempDateRange.from, "MMM dd, yyyy")} - ${format(
-                         tempDateRange.to,
-                         "MMM dd, yyyy",
-                       )}`
-                     : "Select date range"}
-                 </div>
-                 <div className="flex gap-2">
-                   <Button size="sm" variant="outline" onClick={handleCustomDateCancel}>
-                     Cancel
-                   </Button>
-                   <Button
-                     size="sm"
-                     onClick={handleCustomDateApply}
-                     disabled={!tempDateRange?.from || !tempDateRange?.to}
-                   >
-                     Apply
-                   </Button>
-                 </div>
-               </div>
-             </div>
-           </PopoverContent>
-         </Popover>
-       )}
-     </div>
+              {/* Left: date preset dropdown + optional custom range picker */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">Date</span>
+                <Select
+                  value={datePreset}
+                  onValueChange={(v) => handleDatePreset(v as DatePreset)}
+                >
+                  <SelectTrigger size="sm" className="min-w-[200px]">
+                    <SelectValue placeholder="Select range" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="today">Today</SelectItem>
+                    <SelectItem value="yesterday">Yesterday</SelectItem>
+                    <SelectItem value="this-week">This week</SelectItem>
+                    <SelectItem value="last-week">Last week</SelectItem>
+                    <SelectItem value="this-month">This month</SelectItem>
+                    <SelectItem value="last-month">Last month</SelectItem>
+                    <SelectItem value="this-year">This year</SelectItem>
+                    <SelectItem value="last-year">Last year</SelectItem>
+                    <SelectItem value="custom">Custom…</SelectItem>
+                  </SelectContent>
+                </Select>
+                {/* Show the currently active range for non-custom presets */}
+                {datePreset !== "custom" && (
+                  <div className="text-xs text-muted-foreground">
+                    {format(dateRange.from, "MMM dd, yyyy")} –{" "}
+                    {format(dateRange.to, "MMM dd, yyyy")}
+                  </div>
+                )}
+                {/* When "custom" is selected, show the date picker popover */}
+                {datePreset === "custom" && (
+                  <Popover
+                    open={customDateOpen}
+                    onOpenChange={setCustomDateOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="justify-start text-left min-w-[240px] bg-transparent"
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {dateRange?.from && dateRange?.to ? (
+                          <>
+                            {format(dateRange.from, "MMM dd, yyyy")} -{" "}
+                            {format(dateRange.to, "MMM dd, yyyy")}
+                          </>
+                        ) : (
+                          <span>Pick a date range</span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <div className="p-4">
+                        <Calendar
+                          initialFocus
+                          mode="range"
+                          defaultMonth={dateRange?.from || new Date()}
+                          selected={tempDateRange}
+                          onSelect={(range) => setTempDateRange(range)}
+                          numberOfMonths={2}
+                        />
+                        <div className="flex items-center justify-between pt-4 border-t mt-4">
+                          <div className="text-sm text-muted-foreground">
+                            {tempDateRange?.from && tempDateRange?.to
+                              ? `${format(tempDateRange.from, "MMM dd, yyyy")} - ${format(
+                                  tempDateRange.to,
+                                  "MMM dd, yyyy"
+                                )}`
+                              : "Select date range"}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleCustomDateCancel}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={handleCustomDateApply}
+                              disabled={
+                                !tempDateRange?.from || !tempDateRange?.to
+                              }
+                            >
+                              Apply
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                )}
+              </div>
 
               {/* Right: currency, status, export */}
               <div className="flex flex-wrap items-center gap-2">
@@ -489,7 +515,6 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
                     <SelectItem value="EUR">EUR</SelectItem>
                   </SelectContent>
                 </Select>
-
 
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">Status</span>
@@ -532,16 +557,18 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">Dropshipper</span>
                 <Select
-                               /* When state is "", show the sentinel as the selected value */
-             value={dropshipperOrgId ? dropshipperOrgId : ALL_DROPSHIPPERS}
-             onValueChange={(v) => setDropshipperOrgId(v === ALL_DROPSHIPPERS ? "" : v)}
+                  /* When state is "", show the sentinel as the selected value */
+                  value={dropshipperOrgId ? dropshipperOrgId : ALL_DROPSHIPPERS}
+                  onValueChange={(v) =>
+                    setDropshipperOrgId(v === ALL_DROPSHIPPERS ? "" : v)
+                  }
                 >
                   <SelectTrigger size="sm" className="min-w-[220px]">
                     <SelectValue placeholder="All dropshippers" />
                   </SelectTrigger>
                   <SelectContent>
                     {/* Use non-empty sentinel here */}
-                 <SelectItem key="__all" value={ALL_DROPSHIPPERS}>
+                    <SelectItem key="__all" value={ALL_DROPSHIPPERS}>
                       All dropshippers
                     </SelectItem>
                     {dropshipperOptions.map((d) => (
@@ -552,7 +579,6 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
                   </SelectContent>
                 </Select>
               </div>
-
             </div>
 
             {/* New Row: Countries multi-select (matches Coupon styling) */}
@@ -570,27 +596,56 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
               <div className="w-full sm:w-[640px]">
                 <ReactSelect
                   isMulti
+                  closeMenuOnSelect={false}
+                  hideSelectedOptions={false}
                   classNamePrefix="rs"
-                  options={countryOptions}
+                  options={selectOptions}
                   placeholder="Select country(s)"
                   value={countryOptions.filter((o) =>
                     selectedCountries.includes(o.value)
                   )}
-                  onChange={(opts: any) =>
+                  onChange={(opts: any, actionMeta: any) => {
+                    const clicked = actionMeta?.option as
+                      | { value: string }
+                      | undefined;
+
+                    // Handle special options
+                    if (actionMeta?.action === "select-option" && clicked) {
+                      if (clicked.value === SELECT_ALL) {
+                        setSelectedCountries(countries); // all available from API
+                        return;
+                      }
+                      if (clicked.value === DESELECT_ALL) {
+                        setSelectedCountries([]);
+                        return;
+                      }
+                    }
+
+                    // Normal multi-select behavior
+                    const next = Array.isArray(opts) ? opts : [];
                     setSelectedCountries(
-                      Array.isArray(opts) ? opts.map((o: any) => o.value) : []
+                      next
+                        .filter(
+                          (o) =>
+                            o.value !== SELECT_ALL && o.value !== DESELECT_ALL
+                        )
+                        .map((o) => o.value)
+                    );
+                  }}
+                  formatOptionLabel={(o: any) =>
+                    o.value === SELECT_ALL || o.value === DESELECT_ALL ? (
+                      <div className="text-xs font-medium">{o.label}</div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <ReactCountryFlag
+                          countryCode={o.value}
+                          svg
+                          style={{ width: 20 }}
+                        />
+                        <span>{o.label}</span>
+                      </div>
                     )
                   }
-                  formatOptionLabel={(o: any) => (
-                    <div className="flex items-center gap-2">
-                      <ReactCountryFlag
-                        countryCode={o.value}
-                        svg
-                        style={{ width: 20 }}
-                      />
-                      <span>{o.label}</span>
-                    </div>
-                  )}
                 />
               </div>
             </div>
@@ -686,52 +741,58 @@ const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
 
                             <TableCell>{o.country}</TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                                }`}
+                              }`}
                             >
                               {formatCurrency(o.totalPrice)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                                }`}
+                              }`}
                             >
                               {formatCurrency(o.shippingCost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                                }`}
+                              }`}
                             >
                               {formatCurrency(o.discount)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                                }`}
+                              }`}
                             >
                               {formatCurrency(o.cost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                                }`}
+                              }`}
                             >
                               {o.coin}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled || o.refunded
+                              className={`text-right font-medium ${
+                                o.cancelled || o.refunded
                                   ? "text-red-600"
                                   : o.netProfit >= 0
                                     ? "text-green-600"
                                     : "text-red-600"
-                                }`}
+                              }`}
                             >
                               {o.cancelled ? "0" : formatCurrency(o.netProfit)}
                             </TableCell>
