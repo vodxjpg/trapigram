@@ -281,12 +281,59 @@ export async function GET(req: NextRequest) {
       }),
     );
 
+    const toNum = (x: unknown) => {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    // Gross totals over ALL returned orders (includes cancelled/refunded)
+    const totalsAll = orders.reduce(
+      (acc: { totalPrice: number; shippingCost: number; discount: number; cost: number; netProfit: number }, o: any) => {
+        const total = toNum(o.totalPrice);
+        const ship = toNum(o.shippingCost);
+        const disc = toNum(o.discount);
+        const cost = toNum(o.cost);
+        acc.totalPrice += total;
+        acc.shippingCost += ship;
+        acc.discount += disc;
+        acc.cost += cost;
+        // Same formula you use elsewhere (not excluding canc/ref here)
+        acc.netProfit += total - disc - ship - cost;
+        return acc;
+      },
+      { totalPrice: 0, shippingCost: 0, discount: 0, cost: 0, netProfit: 0 }
+    );
+
+    // Totals over PAID orders only (exclude cancelled/refunded)
+    const totalsPaid = orders.reduce(
+      (acc: { totalPrice: number; shippingCost: number; discount: number; cost: number; revenue: number }, o: any) => {
+        if (o.cancelled || o.refunded) return acc;
+        const total = toNum(o.totalPrice);
+        const ship = toNum(o.shippingCost);
+        const disc = toNum(o.discount);
+        const cost = toNum(o.cost);
+        acc.totalPrice += total;
+        acc.shippingCost += ship;
+        acc.discount += disc;
+        acc.cost += cost;
+        // This “revenue” mirrors your chart calculation exactly
+        acc.revenue += total - disc - ship - cost;
+        return acc;
+      },
+      { totalPrice: 0, shippingCost: 0, discount: 0, cost: 0, revenue: 0 }
+    );
+
     return NextResponse.json(
       {
         orders,
         countries,
         chartData,
         dropshippers,
+        totals: {                 // ★ NEW
+          currency,               // "USD" | "GBP" | "EUR"
+          all: totalsAll,         // { totalPrice, shippingCost, discount, cost, netProfit }
+          paid: totalsPaid,       // { totalPrice, shippingCost, discount, cost, revenue }
+        },
       },
       { status: 200 },
     );

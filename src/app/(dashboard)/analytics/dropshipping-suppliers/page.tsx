@@ -91,6 +91,16 @@ type OrderRow = {
   totalOwed: number;
 };
 
+// under types
+type Totals = {
+  allOrdersNet: number;
+  paidOrdersNet: number;
+  totalQty: number;
+  counts: { total: number; paid: number; refunded: number; cancelled: number };
+  currency: "USD" | "GBP" | "EUR";
+  currencySymbol: string;
+};
+
 type CustomDateRange = { from: Date; to: Date };
 
 const chartConfig = {
@@ -204,6 +214,9 @@ export default function SupplierPayables() {
   const [chartData, setChartData] = useState<{ date: string; owed: number }[]>(
     []
   );
+
+  // state
+  const [totals, setTotals] = useState<Totals | null>(null);
   const isMobile = useIsMobile();
 
   const rowsPerPage = 25;
@@ -234,6 +247,8 @@ export default function SupplierPayables() {
     setCustomDateOpen(false);
   };
 
+  const moneyClass = (n: number) => (n < 0 ? "text-red-600" : "");
+
   // fetch data
   useEffect(() => {
     async function fetchData() {
@@ -257,6 +272,7 @@ export default function SupplierPayables() {
           Array.isArray(data.countries) ? [...data.countries].sort() : []
         );
         setSupplierOptions(Array.isArray(data.suppliers) ? data.suppliers : []);
+        setTotals(data.totals ?? null); // ← add this
         setCurrentPage(1);
       } catch (err: any) {
         setError(err.message || "Unknown error");
@@ -612,6 +628,34 @@ export default function SupplierPayables() {
                 />
               </div>
             </div>
+
+            {totals && (
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {/* All Orders Net (includes cancelled=0, refunded=negative) */}
+                <div className="rounded-md border p-4">
+                  <div className="text-xs text-muted-foreground">
+                    All Orders Net
+                  </div>
+                  <div
+                    className={`text-2xl font-semibold ${moneyClass(totals.allOrdersNet)}`}
+                  >
+                    {fmtMoney(totals.allOrdersNet)}
+                  </div>
+                </div>
+
+                {/* Paid Orders Net (paid only) */}
+                <div className="rounded-md border p-4">
+                  <div className="text-xs text-muted-foreground">
+                    Paid Orders Net
+                  </div>
+                  <div
+                    className={`text-2xl font-semibold ${moneyClass(totals.paidOrdersNet)}`}
+                  >
+                    {fmtMoney(totals.paidOrdersNet)}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Table */}
             {loading && <div>Loading payables…</div>}

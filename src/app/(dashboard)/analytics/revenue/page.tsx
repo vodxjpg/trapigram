@@ -88,6 +88,24 @@ type Order = {
   dropshipperLabel?: string | null;
 };
 
+type Totals = {
+  currency: "USD" | "GBP" | "EUR";
+  all: {
+    totalPrice: number;
+    shippingCost: number;
+    discount: number;
+    cost: number;
+    netProfit: number;
+  };
+  paid: {
+    totalPrice: number;
+    shippingCost: number;
+    discount: number;
+    cost: number;
+    revenue: number;
+  };
+};
+
 type CustomDateRange = { from: Date; to: Date };
 
 const chartConfig = {
@@ -197,6 +215,8 @@ export default function OrderReport() {
     Array<{ orgId: string; label: string }>
   >([]);
 
+  const [totals, setTotals] = useState<Totals | null>(null);
+
   const [chartData, setChartData] = useState<
     { date: string; total: number; revenue: number }[]
   >([]);
@@ -224,6 +244,8 @@ export default function OrderReport() {
         const data = await res.json();
         setOrders(data.orders);
         setChartData(data.chartData);
+        console.log(data.totals);
+        setTotals(data.totals ?? null);
         setCountries(
           Array.isArray(data.countries) ? [...data.countries].sort() : []
         );
@@ -293,13 +315,10 @@ export default function OrderReport() {
   const currentOrders = filteredOrders.slice(startIndex, endIndex);
 
   // ⬇️ keep this inside the component so it "sees" the `currency` state
-  const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency, // ← USD | GBP | EUR (from the Select)
-      currencyDisplay: "symbol",
-      maximumFractionDigits: 2,
-    }).format(amount);
+  const fmtMoney = (amount: number) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency }).format(
+      Number(amount || 0)
+    );
 
   function handleDatePreset(preset: DatePreset) {
     setDatePreset(preset);
@@ -653,6 +672,38 @@ export default function OrderReport() {
               </div>
             </div>
 
+            {totals && (
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                {/* Paid (chart-aligned) */}
+                <div className="rounded-md border p-4">
+                  <div className="text-xs text-muted-foreground">
+                    Paid Total (Gross)
+                  </div>
+                  <div className="text-xl font-semibold">
+                    {fmtMoney(totals.paid.totalPrice)}
+                  </div>
+                </div>
+                <div className="rounded-md border p-4">
+                  <div className="text-xs text-muted-foreground">
+                    Paid Revenue
+                  </div>
+                  <div className="text-xl font-semibold">
+                    {fmtMoney(totals.paid.revenue)}
+                  </div>
+                </div>
+
+                {/* All orders (includes cancelled/refunded) */}
+                <div className="rounded-md border p-4">
+                  <div className="text-xs text-muted-foreground">
+                    All Orders Total
+                  </div>
+                  <div className="text-xl font-semibold">
+                    {fmtMoney(totals.all.totalPrice)}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Status / Table */}
             {loading && <div>Loading orders…</div>}
             {error && <div className="text-red-600">Error: {error}</div>}
@@ -750,7 +801,7 @@ export default function OrderReport() {
                                   : ""
                               }`}
                             >
-                              {formatCurrency(o.totalPrice)}
+                              {fmtMoney(o.totalPrice)}
                             </TableCell>
                             <TableCell
                               className={`text-right font-medium ${
@@ -759,7 +810,7 @@ export default function OrderReport() {
                                   : ""
                               }`}
                             >
-                              {formatCurrency(o.shippingCost)}
+                              {fmtMoney(o.shippingCost)}
                             </TableCell>
                             <TableCell
                               className={`text-right font-medium ${
@@ -768,7 +819,7 @@ export default function OrderReport() {
                                   : ""
                               }`}
                             >
-                              {formatCurrency(o.discount)}
+                              {fmtMoney(o.discount)}
                             </TableCell>
                             <TableCell
                               className={`text-right font-medium ${
@@ -777,7 +828,7 @@ export default function OrderReport() {
                                   : ""
                               }`}
                             >
-                              {formatCurrency(o.cost)}
+                              {fmtMoney(o.cost)}
                             </TableCell>
                             <TableCell
                               className={`text-right font-medium ${
@@ -797,7 +848,9 @@ export default function OrderReport() {
                                     : "text-red-600"
                               }`}
                             >
-                              {o.cancelled ? "0" : formatCurrency(o.netProfit)}
+                              {o.cancelled
+                                ? fmtMoney(0)
+                                : fmtMoney(o.netProfit)}
                             </TableCell>
                           </TableRow>
                         ))

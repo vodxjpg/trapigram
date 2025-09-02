@@ -20,7 +20,7 @@ function eachDay(from: Date, to: Date) {
 }
 
 const EURO_COUNTRIES = new Set([
-  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE","IT","LV","LT","LU","MT","NL","PT","SK","SI","ES"
+  "AT", "BE", "HR", "CY", "EE", "FI", "FR", "DE", "GR", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PT", "SK", "SI", "ES"
 ]);
 
 async function resolveOrgLabel(orgId: string | null): Promise<string | null> {
@@ -63,7 +63,7 @@ async function getLatestRates(): Promise<Rates> {
   return { USDEUR, USDGBP };
 }
 
-function convertByCountry(amountLocal: number, country: string, to: "USD"|"GBP"|"EUR", rates: Rates) {
+function convertByCountry(amountLocal: number, country: string, to: "USD" | "GBP" | "EUR", rates: Rates) {
   const { USDEUR, USDGBP } = rates;
   if (country === "GB") {
     // base = GBP
@@ -176,9 +176,9 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
-  const currencyRaw = (url.searchParams.get("currency") || "USD").toUpperCase() as "USD"|"GBP"|"EUR";
+  const currencyRaw = (url.searchParams.get("currency") || "USD").toUpperCase() as "USD" | "GBP" | "EUR";
   const supplierOrgIdFilter = url.searchParams.get("supplierOrgId") || ""; // optional
-  const statusFilter = (url.searchParams.get("status") || "all") as "all"|"paid"|"cancelled"|"refunded";
+  const statusFilter = (url.searchParams.get("status") || "all") as "all" | "paid" | "cancelled" | "refunded";
 
   if (!from || !to) {
     return NextResponse.json(
@@ -186,7 +186,7 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   }
-  const currency: "USD"|"GBP"|"EUR" = (["USD","GBP","EUR"] as const).includes(currencyRaw) ? currencyRaw : "USD";
+  const currency: "USD" | "GBP" | "EUR" = (["USD", "GBP", "EUR"] as const).includes(currencyRaw) ? currencyRaw : "USD";
 
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -344,10 +344,38 @@ export async function GET(req: NextRequest) {
       return { date: k, owed: byDay[k] ?? 0 };
     });
 
+    const counts = {
+      total: orders.length,
+      paid: orders.filter(o => !o.cancelled && !o.refunded).length,
+      refunded: orders.filter(o => o.refunded).length,
+      cancelled: orders.filter(o => o.cancelled).length,
+    };
+
+    const sums = orders.reduce(
+      (acc, o) => {
+        const owed = Number(o.totalOwed) || 0;
+        acc.allOrdersNet += owed; // includes negatives for refunded, zero for cancelled
+        acc.totalQty += Number(o.totalQty) || 0;
+        if (!o.cancelled && !o.refunded) acc.paidOrdersNet += owed;
+        return acc;
+      },
+      { allOrdersNet: 0, paidOrdersNet: 0, totalQty: 0 }
+    );
+
+    const currencySymbol = currency === "USD" ? "$" : currency === "GBP" ? "£" : "€";
+
+    const totals = {
+      ...sums,           // { allOrdersNet, paidOrdersNet, totalQty }
+      counts,            // { total, paid, refunded, cancelled }
+      currency,          // "USD" | "GBP" | "EUR"
+      currencySymbol,    // "$" | "£" | "€"
+    };
+
     return NextResponse.json(
-      { orders, countries, suppliers, chartData },
+      { orders, countries, suppliers, chartData, totals },
       { status: 200 },
     );
+
   } catch (err) {
     console.error("Error fetching supplier payables:", err);
     return NextResponse.json({ error: "Internal server error." }, { status: 500 });
