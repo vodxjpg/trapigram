@@ -311,9 +311,7 @@ export default function InventoryDetailPage() {
     try {
       const res = await fetch(`/api/inventory/${inventoryId}/complete`, {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: inventoryId }),
       });
 
@@ -322,14 +320,13 @@ export default function InventoryDetailPage() {
         throw new Error(err.error || "Failed to complete inventory");
       }
 
-      const data = await res.json();
-      console.log("✅ Inventory completed:", data);
+      await res.json();
 
       // update local state so UI reflects immediately
       setInventory((prev) => (prev ? { ...prev, isCompleted: true } : prev));
 
-      // optional: redirect afterwards
-      // router.push("/inventory");
+      // 🔁 redirect to /inventory
+      router.replace("/inventory");
     } catch (err: any) {
       console.error(err);
       alert(err.message || "Something went wrong");
