@@ -171,9 +171,11 @@ export async function GET(req: NextRequest) {
         email: o.email,
         shippingCompany: o.shippingService ?? null,
         referralAwarded: !!o.referralAwarded,
-        referredBy: o.referredBy ?? null, // from clients join
+        referredBy: o.referredBy ?? null,
+        country: o.country // from clients join
       }));
       const projected = fields ? orders.map(o => pickFields(o, fields)) : orders;
+      console.log(projected)
       return NextResponse.json(projected, { status: 200 });
     }
 
@@ -224,7 +226,8 @@ export async function GET(req: NextRequest) {
       email: o.email,
       shippingCompany: o.shippingService ?? null,
       referralAwarded: !!o.referralAwarded,
-      referredBy: o.referredBy ?? null, // from clients join
+      referredBy: o.referredBy ?? null,
+      country: o.country // from clients join
     }));
     const projected = fields ? orders.map(o => pickFields(o, fields)) : orders;
     return NextResponse.json(projected, { status: 200 });

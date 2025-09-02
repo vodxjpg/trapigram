@@ -8,42 +8,62 @@ import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Edit, Mail, MoreVertical,
-  Search, Truck, CalendarIcon
+  Edit,
+  Mail,
+  MoreVertical,
+  Search,
+  Truck,
+  CalendarIcon,
 } from "lucide-react";
 import {
-  Select, SelectContent, SelectItem,
-  SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  DropdownMenu, DropdownMenuContent,
-  DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Popover, PopoverContent, PopoverTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import {
-  Table, TableBody, TableCell,
-  TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle }
-  from "@/components/ui/card";
-import {
-  format, startOfDay, endOfDay,
-  subWeeks, subMonths
-} from "date-fns";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 import { toast } from "sonner";
 import {
-  Dialog, DialogContent, DialogHeader,
-  DialogTitle, DialogFooter,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
 /* ------------------------------------------------------------------ */
-type OrderStatus = "open" | "underpaid" | "paid" | "cancelled" | "refunded" | "completed";
+type OrderStatus =
+  | "open"
+  | "underpaid"
+  | "paid"
+  | "cancelled"
+  | "refunded"
+  | "completed";
 
 interface Order {
   id: string;
@@ -57,9 +77,80 @@ interface Order {
   total: number;
   shippingCompany?: string;
   trackingNumber?: string;
+  country?: string;
 }
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
 type ShippingCompany = { id: string; name: string };
+
+// Show EUR for eurozone, GBP for UK, and USD for everything else
+const EUROZONE = new Set([
+  "AT",
+  "BE",
+  "CY",
+  "DE",
+  "EE",
+  "ES",
+  "FI",
+  "FR",
+  "GR",
+  "IE",
+  "IT",
+  "LT",
+  "LU",
+  "LV",
+  "MT",
+  "NL",
+  "PT",
+  "SI",
+  "SK",
+  "AD",
+  "MC",
+  "SM",
+  "VA",
+  "ME",
+  "XK",
+]);
+const STERLING = new Set(["GB", "UK", "GG", "JE", "IM"]);
+const USD_ZONES = new Set(["US", "PR", "GU", "AS", "MP", "VI"]);
+
+// Common aliases → ISO2
+const COUNTRY_ALIAS: Record<string, string> = {
+  UK: "GB",
+  UNITEDKINGDOM: "GB",
+  ENGLAND: "GB",
+  SCOTLAND: "GB",
+  WALES: "GB",
+  NORTHERNIRELAND: "GB",
+  USA: "US",
+  UNITEDSTATES: "US",
+  UNITEDSTATESOFAMERICA: "US",
+};
+
+type SupportedCcy = "EUR" | "GBP" | "USD";
+
+const norm = (s?: string) =>
+  (s ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "");
+
+const currencyForCountry = (country?: string): SupportedCcy => {
+  if (!country) return "USD";
+  const raw = norm(country);
+  const c = COUNTRY_ALIAS[raw] ?? raw;
+
+  if (EUROZONE.has(c)) return "EUR";
+  if (STERLING.has(c)) return "GBP";
+  if (USD_ZONES.has(c)) return "USD";
+  // ✅ all other countries → USD
+  return "USD";
+};
+
+export const formatMoneyByCountry = (amount: number, country?: string) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currencyForCountry(country),
+  }).format(amount);
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                         */
@@ -72,14 +163,21 @@ export default function OrdersPage() {
   const organizationId = activeOrg?.id ?? null;
 
   /* ── permission flags (new hook) ───────────────────────────────── */
-  const { hasPermission: canViewDetail } = useHasPermission(organizationId, { order: ["view"] });
-  const { hasPermission: canViewPricing } = useHasPermission(organizationId, { order: ["view_pricing"] });
-  const { hasPermission: canUpdate } = useHasPermission(organizationId, { order: ["update"] });
-  const { hasPermission: canUpdateTracking } = useHasPermission(organizationId, { order: ["update_tracking"] });
-  const {
-    hasPermission: canUpdateStatus,
-    isLoading: permissionsLoading,
-  } = useHasPermission(organizationId, { order: ["update_status"] });
+  const { hasPermission: canViewDetail } = useHasPermission(organizationId, {
+    order: ["view"],
+  });
+  const { hasPermission: canViewPricing } = useHasPermission(organizationId, {
+    order: ["view_pricing"],
+  });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, {
+    order: ["update"],
+  });
+  const { hasPermission: canUpdateTracking } = useHasPermission(
+    organizationId,
+    { order: ["update_tracking"] }
+  );
+  const { hasPermission: canUpdateStatus, isLoading: permissionsLoading } =
+    useHasPermission(organizationId, { order: ["update_status"] });
 
   /* ── orders & ui state ────────────────────────────────────────── */
   const [orders, setOrders] = useState<Order[]>([]);
@@ -93,14 +191,16 @@ export default function OrdersPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [dateFilter, setDateFilter] = useState<DateFilterOption>("all");
-  const [dateRange, setDateRange] = useState<DateRange>();  // ← correct type
+  const [dateRange, setDateRange] = useState<DateRange>(); // ← correct type
 
   /* pagination */
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
   /* shipping companies */
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
+    []
+  );
   const [shippingLoading, setShippingLoading] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState<string>();
 
@@ -114,10 +214,14 @@ export default function OrdersPage() {
         if (!res.ok) throw new Error("Failed to fetch orders");
         return res.json();
       })
-      .then((data: Order[]) => { setOrders(data); setError(null); })
+      .then((data: Order[]) => {
+        setOrders(data);
+        setError(null);
+      })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
+  console.log(orders);
 
   /* ---------------------------------------------------------------- */
   /*  Memoised filtering (no state writes → no render loop)           */
@@ -128,11 +232,12 @@ export default function OrdersPage() {
     /* text search ---------------------------------------------------*/
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
-      result = result.filter((o) =>
-        String(o.orderKey).toLowerCase().includes(q) ||            // order #
-        (o.email ?? "").toLowerCase().includes(q) ||             // e-mail
-        `${o.firstName} ${o.lastName}`.toLowerCase().includes(q) ||// full name
-        (o.username ?? "").toLowerCase().includes(q),              // username
+      result = result.filter(
+        (o) =>
+          String(o.orderKey).toLowerCase().includes(q) || // order #
+          (o.email ?? "").toLowerCase().includes(q) || // e-mail
+          `${o.firstName} ${o.lastName}`.toLowerCase().includes(q) || // full name
+          (o.username ?? "").toLowerCase().includes(q) // username
       );
     }
 
@@ -159,7 +264,7 @@ export default function OrdersPage() {
         const from = startOfDay(dateRange.from);
         const to = dateRange.to ? endOfDay(dateRange.to) : endOfDay(now);
         result = result.filter(
-          (o) => created(o.createdAt) >= from && created(o.createdAt) <= to,
+          (o) => created(o.createdAt) >= from && created(o.createdAt) <= to
         );
       }
     }
@@ -168,9 +273,9 @@ export default function OrdersPage() {
   }, [orders, searchQuery, statusFilter, dateFilter, dateRange]);
 
   /* keep pagination sane when filters change ------------------------*/
-  useEffect(() => { setCurrentPage(1); }, [
-    searchQuery, statusFilter, dateFilter, dateRange,
-  ]);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter, dateFilter, dateRange]);
 
   /* helper to collapse the custom-range picker when needed ----------*/
   const handleDateFilterChange = (opt: DateFilterOption) => {
@@ -182,13 +287,19 @@ export default function OrdersPage() {
   /* ---------------------------------------------------------------- */
   const getStatusColor = (s: OrderStatus) => {
     switch (s) {
-      case "open": return "bg-blue-500";
-      case "paid": return "bg-green-500";
+      case "open":
+        return "bg-blue-500";
+      case "paid":
+        return "bg-green-500";
       case "cancelled":
-      case "refunded": return "bg-red-500";
-      case "underpaid": return "bg-orange-500";
-      case "completed": return "bg-purple-500";
-      default: return "bg-gray-500";
+      case "refunded":
+        return "bg-red-500";
+      case "underpaid":
+        return "bg-orange-500";
+      case "completed":
+        return "bg-purple-500";
+      default:
+        return "bg-gray-500";
     }
   };
   /* fetch shipping companies when the dialog opens */
@@ -198,7 +309,9 @@ export default function OrdersPage() {
       setShippingLoading(true);
       try {
         const res = await fetch("/api/shipping-companies", {
-          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
         });
         if (!res.ok) throw new Error("Failed to fetch shipping companies");
 
@@ -218,16 +331,18 @@ export default function OrdersPage() {
   /* ------------------------------------------------------------- */
   useEffect(() => {
     /* dialog not visible yet, or companies not loaded → skip */
-    if (!dialogOpen || !selectedOrderId || shippingCompanies.length === 0) return;
+    if (!dialogOpen || !selectedOrderId || shippingCompanies.length === 0)
+      return;
 
-    const order = orders.find(o => o.id === selectedOrderId);
+    const order = orders.find((o) => o.id === selectedOrderId);
     if (!order?.shippingCompany) return;
 
     /* find the option whose *name* matches what we stored */
-    const match = shippingCompanies.find(c => c.name === order.shippingCompany);
+    const match = shippingCompanies.find(
+      (c) => c.name === order.shippingCompany
+    );
     if (match) setSelectedCompany(match.id);
   }, [dialogOpen, selectedOrderId, shippingCompanies, orders]);
-
 
   /* ---------------------------------------------------------------- */
   /*  Render guards                                                   */
@@ -256,12 +371,15 @@ export default function OrdersPage() {
   const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
   const paginatedOrders = filteredOrders.slice(
     (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage,
+    currentPage * itemsPerPage
   );
   const formatDate = (d: string) => format(new Date(d), "MMM dd, yyyy");
 
   /* status / tracking helpers (unchanged) */
-  const handleStatusChange = async (orderId: string, newStatus: OrderStatus) => {
+  const handleStatusChange = async (
+    orderId: string,
+    newStatus: OrderStatus
+  ) => {
     try {
       const res = await fetch(`/api/order/${orderId}/change-status`, {
         method: "PATCH",
@@ -273,7 +391,7 @@ export default function OrdersPage() {
         throw new Error(payload?.error || "Failed to update status");
       }
       setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)),
+        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
       );
       if (Array.isArray(payload?.warnings) && payload.warnings.length) {
         payload.warnings.forEach((msg: string) => {
@@ -286,11 +404,13 @@ export default function OrdersPage() {
     }
   };
   const handleTracking = (orderId: string) => {
-    const order = orders.find(o => o.id === orderId)!;
+    const order = orders.find((o) => o.id === orderId)!;
     setSelectedOrderId(orderId);
     setDraftTracking(order.trackingNumber ?? "");
     // find the company ID for the previously saved name (if any):
-    const prevCompany = shippingCompanies.find(c => c.name === order.shippingCompany);
+    const prevCompany = shippingCompanies.find(
+      (c) => c.name === order.shippingCompany
+    );
     setSelectedCompany(prevCompany?.id);
     setDialogOpen(true);
   };
@@ -314,11 +434,11 @@ export default function OrdersPage() {
         prev.map((o) =>
           o.id === selectedOrderId
             ? {
-              ...o,
-              trackingNumber: draftTracking,
-              shippingCompany: company.name,
-              status: "completed",
-            }
+                ...o,
+                trackingNumber: draftTracking,
+                shippingCompany: company.name,
+                status: "completed",
+              }
             : o
         )
       );
@@ -419,7 +539,7 @@ export default function OrdersPage() {
                   <Calendar
                     mode="range"
                     selected={dateRange}
-                    onSelect={(range) => setDateRange(range)}   // react-day-picker already returns DateRange|undefined
+                    onSelect={(range) => setDateRange(range)} // react-day-picker already returns DateRange|undefined
                     initialFocus
                   />
                 </PopoverContent>
@@ -544,8 +664,11 @@ export default function OrdersPage() {
 
                       <TableCell>{formatDate(order.createdAt)}</TableCell>
                       {canViewPricing && (
-                        <TableCell>${order.total.toFixed(2)}</TableCell>
+                        <TableCell>
+                          {formatMoneyByCountry(order.total, order.country)}
+                        </TableCell>
                       )}
+
                       {/* Shipping Company */}
                       <TableCell>
                         {order.shippingCompany ?? (
@@ -555,7 +678,9 @@ export default function OrdersPage() {
                       {/* Tracking Number */}
                       <TableCell>
                         {order.trackingNumber ? (
-                          <code className="font-mono">{order.trackingNumber}</code>
+                          <code className="font-mono">
+                            {order.trackingNumber}
+                          </code>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
@@ -584,7 +709,11 @@ export default function OrdersPage() {
                                 onClick={() => handleTracking(order.id)}
                               >
                                 <Truck className="mr-2 h-4 w-4" />
-                                <span>{order.trackingNumber ? "Update tracking number" : "Set tracking number"}</span>
+                                <span>
+                                  {order.trackingNumber
+                                    ? "Update tracking number"
+                                    : "Set tracking number"}
+                                </span>
                               </DropdownMenuItem>
                             )}
                           </DropdownMenuContent>
@@ -646,7 +775,7 @@ export default function OrdersPage() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>
-                {orders.find(o => o.id === selectedOrderId)?.trackingNumber
+                {orders.find((o) => o.id === selectedOrderId)?.trackingNumber
                   ? "Update Tracking Number"
                   : "Set Tracking Number"}
               </DialogTitle>
