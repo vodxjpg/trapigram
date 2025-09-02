@@ -315,7 +315,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Group by Order × Supplier and apply cancelled/refunded rules
+    // Group by Order × Supplier and apply cancelled/refunded rules to orders
     const orders = groupByOrderAndSupplier(lines);
 
     // Countries (sorted)
