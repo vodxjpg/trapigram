@@ -107,6 +107,24 @@ async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
   }));
 }
 
+/* ─── friendly error helper ───────────────────────────────────────────── */
+// Map common backend messages → clearer toasts for the user.
+function showFriendlyCreateOrderError(raw?: string | null): boolean {
+  const msg = (raw || "").toLowerCase();
+
+  // Shipping
+  if (msg.includes("no shipping methods available")) {
+    toast.error("You need to create a shipping method first");
+    return true;
+  }
+  // Niftipay
+  if (msg.includes("niftipay not configured for tenant")) {
+    toast.error("You need to configure Niftipay or another payment method");
+    return true;
+  }
+  return false;
+}
+
 function mergeLinesByProduct(
   lines: Array<{
     id: string;
@@ -492,8 +510,10 @@ useEffect(() => {
       if (!selectedNiftipay && nets[0]) {
         setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
       }
-    } catch (err: any) {
-      toast.error(err.message || "Niftipay networks load error");
+     } catch (err: any) {
+    if (!showFriendlyCreateOrderError(err?.message)) {
+      toast.error(err?.message || "Niftipay networks load error");
+    }
       setNiftipayNetworks([]);
     } finally {
       setNiftipayLoading(false);
@@ -593,9 +613,15 @@ useEffect(() => {
       const shipData = await shipRes.json();
       const compData = await compRes.json();
       setShippingMethods(shipData.shipments);
+        // Proactively guide when none exist
+  if (!shipData?.shipments?.length) {
+    toast.error("You need to create a shipping method first");
+  }
       setShippingCompanies(compData.shippingMethods);
-    } catch (e) {
-      toast.error("Shipping load error");
+     } catch (err: any) {
+     if (!showFriendlyCreateOrderError(err?.message)) {
+       toast.error(err?.message || "Shipping load error");
+     }
     } finally {
       setShippingLoading(false);
     }
@@ -924,8 +950,12 @@ useEffect(() => {
         });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ?? `Request failed (${res.status})`);
+              const err = await res.json().catch(() => ({}));
+      const rawMsg = err?.error ?? `Request failed (${res.status})`;
+      if (!showFriendlyCreateOrderError(rawMsg)) {
+        toast.error(rawMsg);
+      }
+      return;
       }
 
       /* --- 2. (Re-)create Niftipay invoice if it’s the chosen method --- */
@@ -1001,7 +1031,10 @@ useEffect(() => {
             status: niftipayRes.status,
             error: errorBody.error,
           });
-          toast.error(errorBody.error || "Failed to create new Niftipay order");
+              const rawMsg = errorBody?.error;
+     if (!showFriendlyCreateOrderError(rawMsg)) {
+       toast.error(rawMsg || "Failed to create new Niftipay order");
+     }
           return;
         }
 
@@ -1021,8 +1054,10 @@ useEffect(() => {
 
       toast.success("Order updated!");
       router.push("/orders");
-    } catch (err: any) {
-      toast.error(err.message || "Update failed");
+      } catch (err: any) {
+     if (!showFriendlyCreateOrderError(err?.message)) {
+       toast.error(err?.message || "Update failed");
+     }
     }
   };
 

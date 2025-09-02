@@ -103,6 +103,26 @@ interface PaymentMethod {
   apiKey?: string | null;
 }
 
+
+/* ─── friendly error helper ───────────────────────────────────────────── */
+// Map common backend messages → clearer toasts for the user.
+function showFriendlyCreateOrderError(raw?: string | null): boolean {
+  const msg = (raw || "").toLowerCase();
+
+  // Shipping
+  if (msg.includes("no shipping methods available")) {
+    toast.error("You need to create a shipping method first");
+    return true;
+  }
+  // Niftipay
+  if (msg.includes("niftipay not configured for tenant")) {
+    toast.error("You need to configure Niftipay or another payment method");
+    return true;
+  }
+  return false;
+}
+ 
+
 /* ─── helpers (new) ───────────────────────────────────────────── */
 
 /* ─── currency map helpers ─────────────────────────────────────── */
@@ -383,6 +403,10 @@ export default function OrderForm() {
         if (!shipRes.ok) throw new Error("Failed to fetch shipping methods");
         const methods: { shipments: ShippingMethod[] } = await shipRes.json();
         setShippingMethods(methods.shipments);
+        // If none available, guide the user proactively
+        if (!methods.shipments?.length) {
+          toast.error("You need to create a shipping method first");
+        }
 
         const compRes = await fetch("/api/shipping-companies", {
           headers: {
@@ -392,8 +416,10 @@ export default function OrderForm() {
         if (!compRes.ok) throw new Error("Failed to fetch shipping companies");
         const comps: { companies: ShippingCompany[] } = await compRes.json();
         setShippingCompanies(comps.shippingMethods);
-      } catch (err: any) {
-        toast.error(err.message);
+       } catch (err: any) {
+        if (!showFriendlyCreateOrderError(err?.message)) {
+          toast.error(err?.message || "Failed to load shipping/payout methods");
+        }
       } finally {
         setShippingLoading(false);
       }
@@ -678,8 +704,10 @@ export default function OrderForm() {
         if (!selectedNiftipay && nets[0]) {
           setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
         }
-      } catch (err: any) {
-        toast.error(err.message || "Niftipay networks load error");
+     } catch (err: any) {
+  if (!showFriendlyCreateOrderError(err?.message)) {
+    toast.error(err?.message || "Niftipay networks load error");
+  }
         setNiftipayNetworks([]);
       } finally {
         setNiftipayLoading(false);
@@ -1032,7 +1060,12 @@ export default function OrderForm() {
           });
           setStockErrors(errs);
         }
-        throw new Error(data.error || "Failed to create order");
+            // Friendly mapping for common backend messages
+      const rawMsg = data?.error || data?.message;
+      if (!showFriendlyCreateOrderError(rawMsg)) {
+        toast.error(rawMsg || "Failed to create order");
+      }
+      return;
       }
       toast.success("Order created successfully!");
       /* ── extra: create Niftipay invoice & store meta ───────── */
@@ -1059,12 +1092,14 @@ export default function OrderForm() {
           }),
         });
 
-        if (!nRes.ok) {
-          const msg = await nRes.text();
-          console.error("[Niftipay] ", msg);
-          toast.error(`Niftipay: ${msg}`);
-          return;
-        }
+          if (!nRes.ok) {
+     const msg = await nRes.text();
+     console.error("[Niftipay] ", msg);
+     if (!showFriendlyCreateOrderError(msg)) {
+       toast.error(`Niftipay: ${msg}`);
+     }
+     return;
+   }
 
         const meta = await nRes.json();
         await fetch(`/api/order/${data.id}`, {
@@ -1080,8 +1115,10 @@ export default function OrderForm() {
       cancelOrder();
       router.push(`/orders/${data.id}`);
     } catch (err: any) {
-      console.error("createOrder error:", err);
-      toast.error(err.message || "Could not create order");
+   console.error("createOrder error:", err);
+   if (!showFriendlyCreateOrderError(err?.message)) {
+     toast.error(err?.message || "Could not create order");
+   }
     }
   };
 
