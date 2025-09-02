@@ -292,10 +292,13 @@ export default function OrderReport() {
   const endIndex = startIndex + rowsPerPage;
   const currentOrders = filteredOrders.slice(startIndex, endIndex);
 
+  // ⬇️ keep this inside the component so it "sees" the `currency` state
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: "USD",
+      currency, // ← USD | GBP | EUR (from the Select)
+      currencyDisplay: "symbol",
+      maximumFractionDigits: 2,
     }).format(amount);
 
   function handleDatePreset(preset: DatePreset) {
@@ -674,12 +677,12 @@ export default function OrderReport() {
                           "Username",
                           "Dropshipper",
                           "Country",
-                          "Total Price",
-                          "Shipping Cost",
-                          "Discount",
-                          "Cost",
+                          `Total Price (${currency})`,
+                          `Shipping Cost (${currency})`,
+                          `Discount (${currency})`,
+                          `Cost (${currency})`,
                           "Asset",
-                          "Net Profit",
+                          `Net Profit (${currency})`,
                         ].map((h) => (
                           <TableHead
                             key={h}
@@ -935,10 +938,12 @@ export default function OrderReport() {
                           day: "numeric",
                         });
                       }}
+                      valueFormatter={(v) => formatCurrency(Number(v))} // ← add this if supported
                       indicator="dot"
                     />
                   }
                 />
+
                 <Area
                   dataKey="total"
                   type="natural"

@@ -304,7 +304,12 @@ export default function SupplierPayables() {
   const currentRows = filteredOrders.slice(startIndex, endIndex);
 
   const fmtMoney = (n: number) =>
-    new Intl.NumberFormat("en-US", { style: "currency", currency }).format(n);
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency, // USD | GBP | EUR (from the Select)
+      currencyDisplay: "symbol",
+      maximumFractionDigits: 2,
+    }).format(n);
 
   const renderCountriesSummary = () => {
     if (selectedCountries.length === 0) return "All countries";
@@ -316,15 +321,16 @@ export default function SupplierPayables() {
     if (!canExport) return;
     const dataForSheet = filteredOrders.map((o) => ({
       "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
-      "Order Number": o.orderNumber,
+      Order: o.orderNumber,
       Status: o.cancelled ? "Cancelled" : o.refunded ? "Refunded" : "Paid",
       Username: o.username,
       Supplier: o.supplierLabel ?? "",
       "Total Qty": o.totalQty,
-      "Total Owed": o.totalOwed,
+      [`Total Owed (${currency})`]: o.totalOwed, // keep as number; header carries the currency
       Items: o.items.map((i) => `${i.productTitle} × ${i.quantity}`).join("; "),
       Country: o.country,
     }));
+
     const ws = XLSX.utils.json_to_sheet(dataForSheet);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Payables (Orders)");
@@ -633,13 +639,16 @@ export default function SupplierPayables() {
                           "Supplier",
                           "Items",
                           "Total Qty",
-                          "Total Owed",
+                          `Total Owed (${currency})`, // ← here
                           "Country",
                         ].map((h) => (
                           <TableHead
                             key={h}
                             className={
-                              ["Total Qty", "Total Owed"].includes(h)
+                              [
+                                "Total Qty",
+                                `Total Owed (${currency})`,
+                              ].includes(h)
                                 ? "text-right"
                                 : ""
                             }
@@ -850,10 +859,12 @@ export default function SupplierPayables() {
                           day: "numeric",
                         });
                       }}
+                      valueFormatter={(v) => fmtMoney(Number(v))} // ← add this
                       indicator="dot"
                     />
                   }
                 />
+
                 <Area
                   dataKey="owed"
                   type="natural"
