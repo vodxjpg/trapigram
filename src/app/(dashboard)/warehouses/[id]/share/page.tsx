@@ -74,7 +74,7 @@ const productSchema = z
     variationId: z.string().nullable(),
     cost: costSchema,
   })
-  .superRefine(() => {}); // dynamic validation handled in onSubmit
+  .superRefine(() => { }); // dynamic validation handled in onSubmit
 
 const formSchema = z.object({
   recipientUserIds: z
@@ -110,13 +110,13 @@ export default function ShareWarehousePage() {
   const router = useRouter();
   const { id: warehouseId } = useParams() as { id: string };
 
-  
+
   // ── permissions ───────────────────────────────────────────────────────
   const { data: activeOrg } = authClient.useActiveOrganization();
   const orgId = activeOrg?.id ?? null;
   const {
     hasPermission: canShareWarehouse,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(orgId, { warehouses: ["sharing"] });
 
   useEffect(() => {
@@ -140,6 +140,9 @@ export default function ShareWarehousePage() {
   const [selectedCountries, setSelectedCountries] = useState<
     Record<number, string[]>
   >({});
+  // pagination state for the selected-products table
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
 
   /* ------------------------------ react-hook-form ---------------------- */
   const form = useForm<FormValues>({
@@ -150,6 +153,14 @@ export default function ShareWarehousePage() {
     control: form.control,
     name: "products",
   });
+
+  // keep current page in range if selection size changes or pageSize changes
+  useEffect(() => {
+    const total = fields.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    if (page > totalPages) setPage(totalPages);
+    if (page < 1) setPage(1);
+  }, [fields.length, page, pageSize]);
 
   /* ------------------------------ fetch stock -------------------------- */
   useEffect(() => {
@@ -209,7 +220,7 @@ export default function ShareWarehousePage() {
   const uniqStock = uniqBy(nonDraft, pvKey);
   const groupedStock = uniqStock.reduce<Record<string, StockItem[]>>((acc, it) => {
     const cat = it.categoryName || "Uncategorized";
-    ;(acc[cat] ??= []).push(it);
+    ; (acc[cat] ??= []).push(it);
     return acc;
   }, {});
 
@@ -220,6 +231,21 @@ export default function ShareWarehousePage() {
     return acc;
   }, {} as Record<string, Record<string, number>>);
 
+  // helper to reindex selectedCountries after removing a row (field indices shift)
+  const reindexSelectedCountriesAfterRemove = (removedIndex: number) => {
+    setSelectedCountries((prev) => {
+      const next: Record<number, string[]> = {};
+      Object.entries(prev)
+        .map(([k, v]) => [Number(k), v] as [number, string[]])
+        .sort((a, b) => a[0] - b[0])
+        .forEach(([k, v]) => {
+          if (k < removedIndex) next[k] = v;
+          else if (k > removedIndex) next[k - 1] = v;
+        });
+      return next;
+    });
+  };
+
   /* ------------------------------ add / select-all products ------------ */
   const addProduct = () => {
     const idx = fields.length;
@@ -229,39 +255,51 @@ export default function ShareWarehousePage() {
 
   const selectAllProducts = () => {
     const existing = form.getValues("products");
-    const toAdd = uniqStock
-    .filter(it => it.status !== "draft")
-    .filter(
-      (it) =>
-        !existing.some(
-          (p) =>
-            p.productId === it.productId &&
-            p.variationId === it.variationId
-        )
-    );
 
-    if (!toAdd.length) {
-      toast.info("No more non-draft products to select.");
+    // Only non-draft, prefer parent (variationId === null) when present; otherwise any single variation
+    const parentsOrSingle = uniqueParents(uniqStock.filter((it) => it.status !== "draft"));
+
+    // Build new rows, ensuring: not already selected, and only include countries with stock AND a base cost
+    const additions: { productId: string; variationId: string | null; cost: Record<string, number> }[] = [];
+    for (const it of parentsOrSingle) {
+      const already = existing.some(
+        (p) => p.productId === it.productId && p.variationId === it.variationId,
+      );
+      if (already) continue;
+
+      const key = pvKey({ productId: it.productId, variationId: it.variationId });
+      const stockMap = stockByProduct[key] ?? {};
+
+      // Countries valid for this item: must have stock > 0 and a base cost defined
+      const allowedCountries = countries.filter(
+        (c) => (stockMap[c] ?? 0) > 0 && typeof it.cost[c] === "number",
+      );
+
+      if (!allowedCountries.length) continue; // nothing to share safely
+
+      // Server requires sharedCost > baseCost; keep your existing +10 rule
+      const cost: Record<string, number> = {};
+      for (const c of allowedCountries) cost[c] = (it.cost[c] ?? 0) + 10;
+
+      additions.push({ productId: it.productId, variationId: it.variationId, cost });
+    }
+
+    if (!additions.length) {
+      toast.info("No more eligible products to select.");
       return;
     }
 
-    const newProds = toAdd.map((it) => ({
-      productId: it.productId,
-      variationId: it.variationId,
-      cost: Object.fromEntries(
-        countries.map((c) => [c, (it.cost[c] ?? 0) + 10]),
-      ),
-    }));
-
-    form.setValue("products", [...existing, ...newProds]);
+    const baseIndex = existing.length;
+    form.setValue("products", [...existing, ...additions], { shouldDirty: true, shouldTouch: false });
     setSelectedCountries((prev) => {
       const next: Record<number, string[]> = { ...prev };
-      const start = Object.keys(prev).length;
-      newProds.forEach((_, i) => {
-        next[start + i] = [...countries];
+      additions.forEach((row, i) => {
+        // only the allowed countries for this row (aligns with server validation)
+        next[baseIndex + i] = Object.keys(row.cost);
       });
       return next;
     });
+    toast.success(`Added ${additions.length} product${additions.length > 1 ? "s" : ""}.`);
   };
 
   /* ------------------------------ country helpers ---------------------- */
@@ -285,7 +323,7 @@ export default function ShareWarehousePage() {
     form.clearErrors(`products.${idx}.cost`);
   };
 
-   // ────────────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────
   const onSubmit = async (values: FormValues) => {
     try {
       // — optional dynamic validation that uses live stock data —
@@ -318,7 +356,7 @@ export default function ShareWarehousePage() {
         toast.error(body.error || "Failed to create share link");
         return;
       }
-  
+
       setShareUrl(body.url);
       toast.success("Share link created!");
     } catch (err) {
@@ -369,17 +407,17 @@ export default function ShareWarehousePage() {
                     <FormItem>
                       <FormLabel>Recipients</FormLabel>
                       <div className="flex gap-2">
-                      <Input
-                         placeholder="Search user by email"
-                         value={emailSearch}
-                         onChange={(e) => setEmailSearch(e.target.value)}
-                         onKeyDown={(e) => {
-                           if (e.key === "Enter") {
-                             e.preventDefault();
-                             handleEmailSearch();
-                           }
-                         }}
-                       />
+                        <Input
+                          placeholder="Search user by email"
+                          value={emailSearch}
+                          onChange={(e) => setEmailSearch(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleEmailSearch();
+                            }
+                          }}
+                        />
                         <Button type="button" onClick={handleEmailSearch}>
                           Search
                         </Button>
@@ -416,7 +454,52 @@ export default function ShareWarehousePage() {
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <FormLabel>Products</FormLabel>
-                  <div className="flex gap-2">
+                  <div className="flex gap-3 items-center">
+                    {/* pagination controls */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">
+                        Page {page} of {Math.max(1, Math.ceil(Math.max(1, fields.length) / pageSize))}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        disabled={page <= 1}
+                        aria-label="Previous page"
+                      >
+                        Prev
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setPage((p) => Math.min(Math.max(1, Math.ceil(Math.max(1, fields.length) / pageSize)), p + 1))
+                        }
+                        disabled={page >= Math.max(1, Math.ceil(Math.max(1, fields.length) / pageSize))}
+                        aria-label="Next page"
+                      >
+                        Next
+                      </Button>
+                      <label className="text-sm text-muted-foreground">
+                        &nbsp;| Per page:&nbsp;
+                        <select
+                          className="border rounded-md px-2 py-1 text-sm"
+                          value={pageSize}
+                          onChange={(e) => {
+                            const newSize = Number(e.target.value);
+                            setPageSize(newSize);
+                            setPage(1);
+                          }}
+                        >
+                          <option value={5}>5</option>
+                          <option value={10}>10</option>
+                          <option value={25}>25</option>
+                          <option value={50}>50</option>
+                        </select>
+                      </label>
+                    </div>
                     <Button
                       type="button"
                       variant="outline"
@@ -448,115 +531,120 @@ export default function ShareWarehousePage() {
                   </TableHeader>
 
                   <TableBody>
-                    {fields.map((f, idx) => {
-                      const selProdId = form.watch(`products.${idx}.productId`);
-                      const selVarId = form.watch(
-                        `products.${idx}.variationId`,
-                      );
+                    {(() => {
+                      const start = (page - 1) * pageSize;
+                      const end = start + pageSize;
+                      const visible = fields.slice(start, end);
+                      return visible.map((f, localIdx) => {
+                        const idx = start + localIdx; // global index
+                        const selProdId = form.watch(`products.${idx}.productId`);
+                        const selVarId = form.watch(
+                          `products.${idx}.variationId`,
+                        );
 
-                      const selProd = stock.find((s) => s.productId === selProdId);
-                      const isVariable = selProd?.productType === "variable";
+                        const selProd = stock.find((s) => s.productId === selProdId);
+                        const isVariable = selProd?.productType === "variable";
 
-                      const variations = isVariable
-                        ? uniqStock.filter(
+                        const variations = isVariable
+                          ? uniqStock.filter(
                             (s) =>
                               s.productId === selProdId &&
                               s.variationId &&
                               s.status !== "draft"
                           )
-                        : [];
+                          : [];
 
-                      const stockKey = `${selProdId}-${selVarId ?? "null"}`;
-                      const prodStock = stockByProduct[stockKey] || {};
+                        const stockKey = `${selProdId}-${selVarId ?? "null"}`;
+                        const prodStock = stockByProduct[stockKey] || {};
 
-                      const prodCountries = selectedCountries[idx] || countries;
-                      const availableCountries = countries.filter(
-                        (c) => !prodCountries.includes(c),
-                      );
+                        const prodCountries = selectedCountries[idx] || countries;
+                        const availableCountries = countries.filter(
+                          (c) => !prodCountries.includes(c),
+                        );
 
-                      const baseTitle = stripVariation(selProd?.title ?? "");
+                        const baseTitle = stripVariation(selProd?.title ?? "");
 
-                      return (
-                        <TableRow key={f.id}>
-                          {/* Product */}
-                          <TableCell>
-                            <FormField
-                              control={form.control}
-                              name={`products.${idx}.productId`}
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormControl>
-                                    <Select
-                                      options={[
-                                        {
-                                          label: "Select a product",
-                                          value: "",
-                                          disabled: true,
-                                        },
-                                        ...Object.entries(groupedStock).map(([cat, items]) => ({
-                                          label: cat,
-                                          options: uniqueParents(items /* already non-draft */ ).map((s) => ({
-                                            value: s.productId,
-                                            label: stripVariation(s.title),
-                                          })),
-                                        })),
-                                      ]}
-                                      value={
-                                        field.value
-                                          ? {
-                                              value: field.value,
-                                              label: baseTitle,
-                                            }
-                                          : null
-                                      }
-                                      onChange={(opt) => {
-                                        field.onChange(opt?.value || "");
-                                        form.setValue(
-                                          `products.${idx}.variationId`,
-                                          null,
-                                        );
-                                        form.setValue(
-                                          `products.${idx}.cost`,
-                                          {},
-                                        );
-                                        setSelectedCountries((p) => ({
-                                          ...p,
-                                          [idx]: [...countries],
-                                        }));
-                                      }}
-                                      placeholder="Select product"
-                                      isDisabled={!stock.length}
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </TableCell>
-
-                          {/* Variation */}
-                          <TableCell>
-                            {isVariable && (
+                        return (
+                          <TableRow key={f.id}>
+                            {/* Product */}
+                            <TableCell>
                               <FormField
                                 control={form.control}
-                                name={`products.${idx}.variationId`}
+                                name={`products.${idx}.productId`}
                                 render={({ field }) => (
                                   <FormItem>
                                     <FormControl>
                                       <Select
-                                        options={variations.map((v) => ({
-                                          value: v.variationId!,
-                                          label: v.title.includes(" - ")
-                                            ? v.title
+                                        options={[
+                                          {
+                                            label: "Select a product",
+                                            value: "",
+                                            disabled: true,
+                                          },
+                                          ...Object.entries(groupedStock).map(([cat, items]) => ({
+                                            label: cat,
+                                            options: uniqueParents(items /* already non-draft */).map((s) => ({
+                                              value: s.productId,
+                                              label: stripVariation(s.title),
+                                            })),
+                                          })),
+                                        ]}
+                                        value={
+                                          field.value
+                                            ? {
+                                              value: field.value,
+                                              label: baseTitle,
+                                            }
+                                            : null
+                                        }
+                                        onChange={(opt) => {
+                                          field.onChange(opt?.value || "");
+                                          form.setValue(
+                                            `products.${idx}.variationId`,
+                                            null,
+                                          );
+                                          form.setValue(
+                                            `products.${idx}.cost`,
+                                            {},
+                                          );
+                                          setSelectedCountries((p) => ({
+                                            ...p,
+                                            [idx]: [...countries],
+                                          }));
+                                        }}
+                                        placeholder="Select product"
+                                        isDisabled={!stock.length}
+                                      />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </TableCell>
+
+                            {/* Variation */}
+                            <TableCell>
+                              {isVariable && (
+                                <FormField
+                                  control={form.control}
+                                  name={`products.${idx}.variationId`}
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormControl>
+                                        <Select
+                                          options={variations.map((v) => ({
+                                            value: v.variationId!,
+                                            label: v.title.includes(" - ")
+                                              ? v.title
                                                 .split(" - ")
                                                 .slice(1)
                                                 .join(" - ")
                                                 .trim()
-                                            : v.title,
-                                        }))}
-                                        value={
-                                          field.value
-                                            ? (() => {
+                                              : v.title,
+                                          }))}
+                                          value={
+                                            field.value
+                                              ? (() => {
                                                 const v = variations.find(
                                                   (x) =>
                                                     x.variationId ===
@@ -567,180 +655,186 @@ export default function ShareWarehousePage() {
                                                   " - ",
                                                 )
                                                   ? v.title
-                                                      .split(" - ")
-                                                      .slice(1)
-                                                      .join(" - ")
-                                                      .trim()
+                                                    .split(" - ")
+                                                    .slice(1)
+                                                    .join(" - ")
+                                                    .trim()
                                                   : v.title;
                                                 return {
                                                   value: v.variationId!,
                                                   label: lbl,
                                                 };
                                               })()
-                                            : null
-                                        }
-                                        onChange={(opt) => {
-                                          field.onChange(opt?.value || null);
-                                          form.setValue(
-                                            `products.${idx}.cost`,
-                                            {},
-                                          );
-                                          setSelectedCountries((p) => ({
-                                            ...p,
-                                            [idx]: [...countries],
-                                          }));
-                                        }}
-                                        placeholder="Select variation"
-                                        isDisabled={!selProdId}
-                                      />
-                                    </FormControl>
+                                              : null
+                                          }
+                                          onChange={(opt) => {
+                                            field.onChange(opt?.value || null);
+                                            form.setValue(
+                                              `products.${idx}.cost`,
+                                              {},
+                                            );
+                                            setSelectedCountries((p) => ({
+                                              ...p,
+                                              [idx]: [...countries],
+                                            }));
+                                          }}
+                                          placeholder="Select variation"
+                                          isDisabled={!selProdId}
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              )}
+                            </TableCell>
+
+                            {/* Costs */}
+                            <TableCell>
+                              <FormField
+                                control={form.control}
+                                name={`products.${idx}.cost`}
+                                render={() => (
+                                  <FormItem>
+                                    <div className="space-y-2">
+                                      {prodCountries.map((c) => {
+                                        const baseCost = selProd?.cost[c] ?? 0;
+                                        const qty = prodStock[c] ?? 0;
+                                        return (
+                                          <div
+                                            key={c}
+                                            className="flex items-center gap-2"
+                                          >
+                                            <div className="flex-1">
+                                              <FormField
+                                                control={form.control}
+                                                name={`products.${idx}.cost.${c}`}
+                                                render={({ field }) => (
+                                                  <FormItem>
+                                                    <FormLabel className="flex items-center">
+                                                      <ReactCountryFlag
+                                                        countryCode={c}
+                                                        svg
+                                                        style={{
+                                                          width: "1em",
+                                                          height: "1em",
+                                                          marginRight: "8px",
+                                                        }}
+                                                      />
+                                                      {countriesLib.getName(
+                                                        c,
+                                                        "en",
+                                                      ) || c}{" "}
+                                                      (Base {baseCost}, Stock{" "}
+                                                      {qty})
+                                                    </FormLabel>
+                                                    <FormControl>
+                                                      <Input
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.01"
+                                                        placeholder={`Cost for ${c}`}
+                                                        value={
+                                                          field.value !==
+                                                            undefined
+                                                            ? field.value
+                                                            : ""
+                                                        }
+                                                        onChange={(e) => {
+                                                          field.onChange(
+                                                            e.target.value
+                                                              ? Number(
+                                                                e.target.value,
+                                                              )
+                                                              : undefined,
+                                                          );
+                                                          if (e.target.value)
+                                                            form.clearErrors(
+                                                              `products.${idx}.cost`,
+                                                            );
+                                                        }}
+                                                        disabled={!selProdId}
+                                                      />
+                                                    </FormControl>
+                                                    <FormMessage />
+                                                  </FormItem>
+                                                )}
+                                              />
+                                            </div>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={() =>
+                                                removeCountry(idx, c)
+                                              }
+                                              disabled={
+                                                prodCountries.length <= 1 &&
+                                                !availableCountries.length
+                                              }
+                                            >
+                                              <X className="h-4 w-4" />
+                                            </Button>
+                                          </div>
+                                        );
+                                      })}
+
+                                      {availableCountries.length > 0 && (
+                                        <FormItem>
+                                          <FormLabel>Add Country</FormLabel>
+                                          <Select
+                                            options={availableCountries.map(
+                                              (c) => ({
+                                                value: c,
+                                                label:
+                                                  countriesLib.getName(c, "en") ??
+                                                  c,
+                                              }),
+                                            )}
+                                            onChange={(opt) =>
+                                              opt && addCountry(idx, opt.value)
+                                            }
+                                            placeholder="Select a country"
+                                            isDisabled={!selProdId}
+                                          />
+                                        </FormItem>
+                                      )}
+                                    </div>
                                     <FormMessage />
                                   </FormItem>
                                 )}
                               />
-                            )}
-                          </TableCell>
+                            </TableCell>
 
-                          {/* Costs */}
-                          <TableCell>
-                            <FormField
-                              control={form.control}
-                              name={`products.${idx}.cost`}
-                              render={() => (
-                                <FormItem>
-                                  <div className="space-y-2">
-                                    {prodCountries.map((c) => {
-                                      const baseCost = selProd?.cost[c] ?? 0;
-                                      const qty = prodStock[c] ?? 0;
-                                      return (
-                                        <div
-                                          key={c}
-                                          className="flex items-center gap-2"
-                                        >
-                                          <div className="flex-1">
-                                            <FormField
-                                              control={form.control}
-                                              name={`products.${idx}.cost.${c}`}
-                                              render={({ field }) => (
-                                                <FormItem>
-                                                  <FormLabel className="flex items-center">
-                                                    <ReactCountryFlag
-                                                      countryCode={c}
-                                                      svg
-                                                      style={{
-                                                        width: "1em",
-                                                        height: "1em",
-                                                        marginRight: "8px",
-                                                      }}
-                                                    />
-                                                    {countriesLib.getName(
-                                                      c,
-                                                      "en",
-                                                    ) || c}{" "}
-                                                    (Base {baseCost}, Stock{" "}
-                                                    {qty})
-                                                  </FormLabel>
-                                                  <FormControl>
-                                                    <Input
-                                                      type="number"
-                                                      min="0"
-                                                      step="0.01"
-                                                      placeholder={`Cost for ${c}`}
-                                                      value={
-                                                        field.value !==
-                                                        undefined
-                                                          ? field.value
-                                                          : ""
-                                                      }
-                                                      onChange={(e) => {
-                                                        field.onChange(
-                                                          e.target.value
-                                                            ? Number(
-                                                                e.target.value,
-                                                              )
-                                                            : undefined,
-                                                        );
-                                                        if (e.target.value)
-                                                          form.clearErrors(
-                                                            `products.${idx}.cost`,
-                                                          );
-                                                      }}
-                                                      disabled={!selProdId}
-                                                    />
-                                                  </FormControl>
-                                                  <FormMessage />
-                                                </FormItem>
-                                              )}
-                                            />
-                                          </div>
-                                          <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() =>
-                                              removeCountry(idx, c)
-                                            }
-                                            disabled={
-                                              prodCountries.length <= 1 &&
-                                              !availableCountries.length
-                                            }
-                                          >
-                                            <X className="h-4 w-4" />
-                                          </Button>
-                                        </div>
-                                      );
-                                    })}
-
-                                    {availableCountries.length > 0 && (
-                                      <FormItem>
-                                        <FormLabel>Add Country</FormLabel>
-                                        <Select
-                                          options={availableCountries.map(
-                                            (c) => ({
-                                              value: c,
-                                              label:
-                                                countriesLib.getName(c, "en") ??
-                                                c,
-                                            }),
-                                          )}
-                                          onChange={(opt) =>
-                                            opt && addCountry(idx, opt.value)
-                                          }
-                                          placeholder="Select a country"
-                                          isDisabled={!selProdId}
-                                        />
-                                      </FormItem>
-                                    )}
-                                  </div>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </TableCell>
-
-                          {/* Actions */}
-                          <TableCell className="text-right">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                remove(idx);
-                                setSelectedCountries((p) => {
-                                  const n = { ...p };
-                                  delete n[idx];
-                                  return n;
-                                });
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                            {/* Actions */}
+                            <TableCell className="text-right">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  reindexSelectedCountriesAfterRemove(idx);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      });
+                    })()}
                   </TableBody>
                 </Table>
+                <div className="flex items-center justify-between mt-2 text-sm text-muted-foreground">
+                  <span>
+                    Showing{" "}
+                    {fields.length === 0
+                      ? 0
+                      : (page - 1) * pageSize + 1}{" "}
+                    –{" "}
+                    {Math.min(page * pageSize, fields.length)} of {fields.length}
+                  </span>
+                </div>
               </div>
 
               {/* Share Link output */}
