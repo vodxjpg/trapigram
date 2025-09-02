@@ -49,7 +49,10 @@ export async function POST(req: NextRequest) {
     `;
     const shipRes = await pool.query(shipMethQ, [organizationId]);
     if (shipRes.rows.length === 0) {
-      return NextResponse.json({ error: "No shipping methods available" }, { status: 400 });
+      // This query checks the "shippingMethods" table (shipping companies),
+     // so return an explicit message to drive the correct front-end toast.
+     return NextResponse.json(
+       { error: "No shipping companies configured" }, { status: 400 });
     }
     const shippingMethod = shipRes.rows[0].id;
 

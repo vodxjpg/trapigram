@@ -360,7 +360,6 @@ export function PaymentMethodsTable() {
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 onClick={() => deleteRow(pm)}
-                                disabled={pm.name.toLowerCase() === "niftipay"}
                                 className="text-destructive focus:text-destructive"
                               >
                                 <Trash2 className="mr-2 h-4 w-4" />

@@ -19,15 +19,19 @@ export async function GET(req: NextRequest, { params }: Params) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
+    const { tenantId } = ctx;
+  if (!tenantId)
+    return NextResponse.json({ error: "No tenant found for the current credentials" }, { status: 404 });
+
   try {
     const { id } = await params;                     // ← await here
     const sql = `
       SELECT id, "tenantId", name, active, "apiKey", "secretKey",
              "createdAt", "updatedAt"
       FROM "paymentMethods"
-      WHERE id = $1
+      WHERE id = $1 AND "tenantId" = $2
     `;
-    const result = await pool.query(sql, [id]);
+    const result = await pool.query(sql, [id, tenantId]);
     console.log("[PM/:id] row:", JSON.stringify(result.rows[0], null, 2));
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
@@ -44,10 +48,18 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
+    const { tenantId } = ctx;
+  if (!tenantId)
+    return NextResponse.json({ error: "No tenant found for the current credentials" }, { status: 404 });
+
   try {
     const { id } = await params;                     // ← await here too
     const body = await req.json();
     const parsed = paymentUpdateSchema.parse(body);
+
+     // quick existence/ownership check
+ const check = await pool.query(`SELECT id FROM "paymentMethods" WHERE id = $1 AND "tenantId" = $2`, [id, tenantId]);
+ if (!check.rowCount) return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -66,10 +78,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const sql = `
       UPDATE "paymentMethods"
       SET ${updates.join(", ")}, "updatedAt" = NOW()
-      WHERE id = $${idx}
+      WHERE id = $${idx} AND "tenantId" = $${idx + 1}
       RETURNING *
     `;
-    const res = await pool.query(sql, values);
+    const res = await pool.query(sql, [...values, tenantId]);
     if (!res.rows.length) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
     }
@@ -88,18 +100,26 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
+   const { tenantId } = ctx;
+ if (!tenantId)
+   return NextResponse.json({ error: "No tenant found for the current credentials" }, { status: 404 });
+
   try {
     const { id } = await params;                     // ← await here too
+   
+        // Delete is tenant-scoped and allowed for any method, including Niftipay.
     const sql = `
       DELETE FROM "paymentMethods"
-      WHERE id = $1
+      WHERE id = $1 AND "tenantId" = $2
       RETURNING *
     `;
-    const res = await pool.query(sql, [id]);
+    const res = await pool.query(sql, [id, tenantId]);
     if (!res.rows.length) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
     }
-    return NextResponse.json({ message: "Payment method deleted" });
+      const deletedName = (res.rows[0]?.name as string | undefined) ?? "Payment method";
+  // Give a stable, friendly message your UI can show directly.
+  return NextResponse.json({ message: `${deletedName} deleted` });
   } catch (err) {
     console.error("[DELETE /api/payment-methods/[id]]", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
