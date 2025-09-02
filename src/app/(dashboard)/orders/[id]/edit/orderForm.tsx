@@ -117,9 +117,27 @@ function showFriendlyCreateOrderError(raw?: string | null): boolean {
     toast.error("You need to create a shipping method first");
     return true;
   }
+  if (
+    msg.includes("no shipping companies") ||
+    msg.includes("shipping company required") ||
+    msg.includes("missing shipping company")
+  ) {
+    toast.error("You need to set up a shipping company first");
+    return true;
+  }
   // Niftipay
   if (msg.includes("niftipay not configured for tenant")) {
     toast.error("You need to configure Niftipay or another payment method");
+    return true;
+  }
+
+  if (
+    msg.includes("no payment methods") ||
+    msg.includes("payment method required") ||
+    msg.includes("missing payment method") ||
+    msg.includes("payment methods not configured")
+  ) {
+    toast.error("You need to set up a payment method first");
     return true;
   }
   return false;
@@ -481,7 +499,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       try {
         const pmRes = await fetch("/api/payment-methods");
         const { methods } = await pmRes.json();
-        setPaymentMethods(methods);
+        if (!Array.isArray(methods) || methods.length === 0) {
+          // Proactive guidance for edit flow as well
+          toast.error("You need to set up a payment method first");
+        }
         const init = methods.find(
           (m: any) =>
             m.name?.toLowerCase?.() === orderData?.shippingInfo?.payment?.toLowerCase()
@@ -624,7 +645,17 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       if (!shipData?.shipments?.length) {
         toast.error("You need to create a shipping method first");
       }
-      setShippingCompanies(compData.shippingMethods);
+      {
+        const companies: ShippingCompany[] =
+          compData?.companies ?? compData?.shippingMethods ?? [];
+        setShippingCompanies(companies);
+        if (!companies.length) {
+          toast.error("You need to set up a shipping company first");
+        }
+      }
+      if (!shipData?.shipments?.length) {
+        toast.error("You need to create a shipping method first");
+      }
     } catch (err: any) {
       if (!showFriendlyCreateOrderError(err?.message)) {
         toast.error(err?.message || "Shipping load error");

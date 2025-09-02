@@ -114,9 +114,26 @@ function showFriendlyCreateOrderError(raw?: string | null): boolean {
     toast.error("You need to create a shipping method first");
     return true;
   }
+  if (
+    msg.includes("no shipping companies") ||
+    msg.includes("shipping company required") ||
+    msg.includes("missing shipping company")
+  ) {
+    toast.error("You need to set up a shipping company first");
+    return true;
+  }
   // Niftipay
   if (msg.includes("niftipay not configured for tenant")) {
     toast.error("You need to configure Niftipay or another payment method");
+    return true;
+  }
+  if (
+    msg.includes("no payment methods") ||
+    msg.includes("payment method required") ||
+    msg.includes("missing payment method") ||
+    msg.includes("payment methods not configured")
+  ) {
+    toast.error("You need to set up a payment method first");
     return true;
   }
   return false;
@@ -414,8 +431,14 @@ export default function OrderForm() {
           },
         });
         if (!compRes.ok) throw new Error("Failed to fetch shipping companies");
-        const comps: { companies: ShippingCompany[] } = await compRes.json();
-        setShippingCompanies(comps.shippingMethods);
+        const comps: any = await compRes.json();
+        // Some backends use {shippingMethods:[...]} for companies (legacy). Support both.
+        const companies: ShippingCompany[] =
+          comps?.companies ?? comps?.shippingMethods ?? [];
+        setShippingCompanies(companies);
+        if (!companies.length) {
+          toast.error("You need to set up a shipping company first");
+        }
       } catch (err: any) {
         if (!showFriendlyCreateOrderError(err?.message)) {
           toast.error(err?.message || "Failed to load shipping/payout methods");
@@ -645,6 +668,10 @@ export default function OrderForm() {
         });
         const data = await res.json();
         setPaymentMethods(data.methods);
+        if (!Array.isArray(data.methods) || data.methods.length === 0) {
+          // Proactive guidance when tenant has nothing configured
+          toast.error("You need to set up a payment method first");
+        }
       } catch (e) {
         toast.error("Payments load error");
       } finally {
@@ -670,7 +697,17 @@ export default function OrderForm() {
         const shipData = await shipRes.json();
         const compData = await compRes.json();
         setShippingMethods(shipData.shipments);
-        setShippingCompanies(compData.shippingMethods);
+        {
+          const companies: ShippingCompany[] =
+            compData?.companies ?? compData?.shippingMethods ?? [];
+          setShippingCompanies(companies);
+          if (!companies.length) {
+            toast.error("You need to set up a shipping company first");
+          }
+        }
+        if (!shipData?.shipments?.length) {
+          toast.error("You need to create a shipping method first");
+        }
       } catch (e) {
         toast.error("Shipping load error");
       } finally {
@@ -1003,6 +1040,20 @@ export default function OrderForm() {
   const createOrder = async () => {
     if (!orderGenerated) {
       toast.error("Generate your cart first!");
+      return;
+    }
+
+    // Pre-flight config guards (clear guidance)
+    if (!Array.isArray(paymentMethods) || paymentMethods.length === 0) {
+      toast.error("You need to set up a payment method first");
+      return;
+    }
+    if (!Array.isArray(shippingMethods) || shippingMethods.length === 0) {
+      toast.error("You need to create a shipping method first");
+      return;
+    }
+    if (!Array.isArray(shippingCompanies) || shippingCompanies.length === 0) {
+      toast.error("You need to set up a shipping company first");
       return;
     }
     const pmObj = paymentMethods.find((m) => m.id === selectedPaymentMethod);
