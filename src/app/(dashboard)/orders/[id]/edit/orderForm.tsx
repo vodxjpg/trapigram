@@ -253,8 +253,12 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [productsLoading, setProductsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
-  const [quantity, setQuantity] = useState(1);
-
+  // keep text while typing; coerce on blur/use
+  const [quantityText, setQuantityText] = useState("1");
+  const parseQty = (s: string) => {
+    const n = parseInt(s, 10);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  };
   /* ▼ product-search state (local + remote) */
   const [prodTerm, setProdTerm] = useState("");
   const [prodSearching, setProdSearching] = useState(false);
@@ -768,45 +772,59 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   };
 
   // — Add product
-  const addProduct = async () => {
-    if (!selectedProduct || !cartId)
-      return toast.error("Cart hasn’t been created yet!");
+// — Add product
+const addProduct = async () => {
+  if (!selectedProduct || !cartId) {
+    toast.error("Cart hasn’t been created yet!");
+    return;
+  }
 
-    const product = products.find((p) => p.id === selectedProduct);
-    if (!product) return;
-    const unitPrice = product.regularPrice[clientCountry] ?? product.price;
+  const product = products.find((p) => p.id === selectedProduct);
+  if (!product) return;
 
-    try {
-      const res = await fetch(`/api/cart/${cartId}/add-product`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          productId: selectedProduct,
-          quantity,
-          price: unitPrice,
-          country: clientCountry,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        const msg =
-          (body.error as string) ??
-          (body.message as string) ??
-          "Failed to add product";
-        throw new Error(msg);
-      }
-      const { product: added, quantity: qty } = await res.json();
-      const subtotalRow = calcRowSubtotal(added, qty);
+  const unitPrice = product.regularPrice[clientCountry] ?? product.price;
+  const qty = parseQty(quantityText); // <— local qty for request
 
-      await loadCart();
-      setSelectedProduct("");
-      setQuantity(1);
-      toast.success("Product added to cart!");
-    } catch (error: any) {
-      console.error("addProduct error:", error);
-      toast.error(error.message || "Could not add product");
+  try {
+    const res: Response = await fetch(`/api/cart/${cartId}/add-product`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        productId: selectedProduct,
+        quantity: qty,
+        price: unitPrice,
+        country: clientCountry,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const msg =
+        (body.error as string) ??
+        (body.message as string) ??
+        "Failed to add product";
+      throw new Error(msg);
     }
-  };
+
+    type AddProductResponse = { product: Product; quantity: number };
+    const {
+      product: added,
+      quantity: returnedQty, // <— rename to avoid shadowing
+    } = (await res.json()) as AddProductResponse;
+
+    // If you don’t use subtotalRow elsewhere, you can remove this line.
+    // const subtotalRow = calcRowSubtotal(added, returnedQty);
+
+    await loadCart();
+    setSelectedProduct("");
+    setQuantityText("1");
+    toast.success("Product added to cart!");
+  } catch (error: any) {
+    console.error("addProduct error:", error);
+    toast.error(error.message || "Could not add product");
+  }
+};
+
 
   // — Remove Product
   const removeProduct = async (productId: string, idx: number) => {
@@ -1330,10 +1348,14 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                   <Input
                     type="number"
                     min={1}
-                    value={quantity}
-                    onChange={(e) =>
-                      setQuantity(Math.max(1, parseInt(e.target.value) || 1))
-                    }
+                                   inputMode="numeric"
+                pattern="[0-9]*"
+                value={quantityText}
+                onChange={(e) => {
+                  const v = e.target.value.replace(/[^0-9]/g, "");
+                  setQuantityText(v);
+                }}
+                onBlur={() => setQuantityText(String(parseQty(quantityText)))}
                   />
                 </div>
 

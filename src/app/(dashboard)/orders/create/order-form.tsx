@@ -270,7 +270,12 @@ export default function OrderForm() {
   const [selectedProduct, setSelectedProduct] = useState("");
 
   const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
-  const [quantity, setQuantity] = useState(1);
+  // keep text while typing; coerce on blur/use
+  const [quantityText, setQuantityText] = useState("1");
+  const parseQty = (s: string) => {
+    const n = parseInt(s, 10);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  };
   const [productsLoading, setProductsLoading] = useState(true);
 
   const [couponCode, setCouponCode] = useState("");
@@ -777,12 +782,13 @@ export default function OrderForm() {
     const unitPrice = product.regularPrice[clientCountry] ?? product.price;
 
     try {
+      const qty = parseQty(quantityText);
       const res = await fetch(`/api/cart/${cartId}/add-product`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           productId: selectedProduct,
-          quantity,
+          quantity: qty,
           unitPrice,
           country: clientCountry,
         }),
@@ -800,8 +806,9 @@ export default function OrderForm() {
       }
       /* ▲▲ ——— patch ends here ——— ▲▲ */
 
-      const { product: added, quantity: qty } = await res.json();
-      const subtotalRow = calcRowSubtotal(added, qty);
+      const { product: added, quantity: qtyResp } = await res.json();
+      const subtotalRow = calcRowSubtotal(added, qtyResp);
+
 
       setOrderItems((prev) => {
         if (prev.some((it) => it.product.id === added.id)) {
@@ -818,7 +825,7 @@ export default function OrderForm() {
       });
 
       setSelectedProduct("");
-      setQuantity(1);
+      setQuantityText("1");
       toast.success("Product added to cart!");
     } catch (err: any) {
       console.error("addProduct error:", err);
@@ -1475,10 +1482,15 @@ export default function OrderForm() {
                   <Input
                     type="number"
                     min={1}
-                    value={quantity}
-                    onChange={(e) =>
-                      setQuantity(Math.max(1, parseInt(e.target.value) || 1))
-                    }
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={quantityText}
+                    onChange={(e) => {
+                      // allow empty while typing; strip non-digits
+                      const v = e.target.value.replace(/[^0-9]/g, "");
+                      setQuantityText(v);
+                    }}
+                    onBlur={() => setQuantityText(String(parseQty(quantityText)))}
                   />
                 </div>
 
