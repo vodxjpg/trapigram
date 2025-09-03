@@ -30,6 +30,9 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  SelectGroup,
+  SelectLabel,
+  SelectSeparator,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -55,6 +58,7 @@ interface Product {
   stockData: Record<string, { [countryCode: string]: number }>;
   subtotal: number;
   isAffiliate?: boolean;
+  categories?: string[];
 }
 interface OrderItem {
   product: Product;
@@ -249,6 +253,36 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [cartId, setCartId] = useState("");
 
   const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
+const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
+useEffect(() => {
+  (async () => {
+    try {
+      const res = await fetch("/api/product-categories").catch(() => null);
+      if (!res || !res.ok) return;
+      const data = await res.json();
+      const list: Array<{ id: string; name: string }> =
+        data.categories ?? data.items ?? [];
+      const map = Object.fromEntries(list.map((c) => [c.id, c.name]));
+      setCategoryMap(map);
+    } catch {}
+  })();
+}, []);
+
+const categoryLabel = (id?: string) =>
+  id ? (categoryMap[id] || id) : "Uncategorized";
+
+const groupByCategory = (arr: Product[]) => {
+  const buckets: Record<string, Product[]> = {};
+  for (const p of arr) {
+    if (p.isAffiliate) continue;
+    const firstCat = p.categories?.[0];
+    const label = categoryLabel(firstCat);
+    (buckets[label] ??= []).push(p);
+  }
+  return Object.entries(buckets)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([label, items]) => [label, items.sort((x, y) => x.title.localeCompare(y.title))] as const);
+};
 
   const [productsLoading, setProductsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
@@ -453,6 +487,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           stockData: p.stockData,
           isAffiliate: false,
           subtotal: 0,
+          categories: p.categories ?? [],
         })),
 
         // 2) affiliate products
@@ -482,6 +517,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             stockData: a.stock ?? {},
             isAffiliate: true,
             subtotal: 0,
+            categories: [],
           };
         }),
       ];
@@ -605,6 +641,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           stockData: p.stockData,
           subtotal: 0,
           isAffiliate: false,
+          categories: p.categories ?? []
         });
         const mapAff = (a: any): Product => ({
           id: a.id,
@@ -619,6 +656,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           stockData: a.stock ?? {},
           subtotal: 0,
           isAffiliate: true,
+          categories: [],
         });
 
         setProdResults([...shop.map(mapShop), ...aff.map(mapAff)]);
@@ -1300,45 +1338,81 @@ const addProduct = async () => {
                       </div>
 
                       <ScrollArea className="max-h-72">
-                        {/* shop products */}
-                        {filteredProducts
-                          .filter(p => !p.isAffiliate)
-                          .map(p => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.title} — ${p.regularPrice[clientCountry] ?? p.price}
-                            </SelectItem>
-                          ))}
+  {groupByCategory(filteredProducts.filter((p) => !p.isAffiliate)).map(
+    ([label, items]) => (
+      <SelectGroup key={label}>
+        <SelectLabel>{label}</SelectLabel>
+        {items.map((p) => (
+          <SelectItem key={p.id} value={p.id}>
+            {p.title} — ${p.regularPrice[clientCountry] ?? p.price}
+          </SelectItem>
+        ))}
+        <SelectSeparator />
+      </SelectGroup>
+    )
+  )}
 
-                        {/* divider before affiliates */}
-                        {filteredProducts.some(p => p.isAffiliate) && <Separator className="my-2" />}
+  {filteredProducts.some((p) => p.isAffiliate) && (
+    <SelectGroup>
+      <SelectLabel>Affiliate</SelectLabel>
+      {filteredProducts
+        .filter((p) => p.isAffiliate)
+        .map((p) => (
+          <SelectItem key={p.id} value={p.id}>
+            {p.title} — {p.price} pts
+          </SelectItem>
+        ))}
+      <SelectSeparator />
+    </SelectGroup>
+  )}
 
-                        {/* affiliate products (local) */}
-                        {filteredProducts
-                          .filter(p => p.isAffiliate)
-                          .map(p => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.title} — {p.price} pts
-                            </SelectItem>
-                          ))}
+  {prodResults.length > 0 && (
+    <>
+      {groupByCategory(
+        prodResults.filter(
+          (p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id)
+        )
+      ).map(([label, items]) => (
+        <SelectGroup key={`remote-${label}`}>
+          <SelectLabel>{label} — search</SelectLabel>
+          {items.map((p) => (
+            <SelectItem key={p.id} value={p.id}>
+              {p.title} — ${p.price}
+              <span className="ml-1 text-xs text-muted-foreground">
+                (remote)
+              </span>
+            </SelectItem>
+          ))}
+          <SelectSeparator />
+        </SelectGroup>
+      ))}
 
-                        {/* remote results (not yet cached) */}
-                        {prodResults.length > 0 && <Separator className="my-2" />}
-                        {prodResults
-                          .filter(p => !products.some(lp => lp.id === p.id))
-                          .map(p => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.title} — {p.isAffiliate ? `${p.price} pts` : `$${p.price}`}
-                              <span className="ml-1 text-xs text-muted-foreground">(remote)</span>
-                            </SelectItem>
-                          ))}
+      {prodResults.some((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)) && (
+        <SelectGroup>
+          <SelectLabel>Affiliate — search</SelectLabel>
+          {prodResults
+            .filter((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id))
+            .map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.title} — {p.price} pts
+                <span className="ml-1 text-xs text-muted-foreground">
+                  (remote)
+                </span>
+              </SelectItem>
+            ))}
+        </SelectGroup>
+      )}
+    </>
+  )}
 
-                        {prodSearching && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
-                        )}
-                        {!prodSearching && prodTerm && prodResults.length === 0 && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
-                        )}
-                      </ScrollArea>
+  {prodSearching && (
+    <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
+  )}
+  {!prodSearching && prodTerm && prodResults.length === 0 && (
+    <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
+  )}
+</ScrollArea>
+
                     </SelectContent>
                   </Select>
                 </div>

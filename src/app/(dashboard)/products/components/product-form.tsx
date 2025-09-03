@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import Image from "next/image";
-import { Loader2, Upload, X } from "lucide-react";
+import { Loader2, Upload, X, Search } from "lucide-react";
 import dynamic from "next/dynamic";
 import { mutate as swrMutate } from "swr";
 import useSWR from "swr";
@@ -44,6 +44,8 @@ import {
 } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Product } from "@/hooks/use-products";
 import type { Attribute, Variation, Warehouse } from "@/types/product";
 import { StockManagement } from "./stock-management";
@@ -51,6 +53,8 @@ import { ProductAttributes } from "./product-attributes";
 import { ProductVariations } from "./product-variations";
 import { PriceManagement } from "./price-management";
 
+
+const DEBOUNCE_MS = 400;
 // --------------------------------------------------
 //  helpers / types
 // --------------------------------------------------
@@ -162,6 +166,22 @@ export function ProductForm({
   );
   const isShared = raw?.shared === true;
 
+  // ────────────────────────────────────────────────────────────────
+  // Category search (local + remote)
+  // ────────────────────────────────────────────────────────────────
+  const [catTerm, setCatTerm] = useState("");
+  const [catSearching, setCatSearching] = useState(false);
+  const [catResults, setCatResults] = useState<
+    Array<{ id: string; name: string; slug: string }>
+  >([]);
+  const filteredCategories = useMemo(() => {
+    if (catTerm.trim().length < 3) return categories;
+    const q = catTerm.toLowerCase();
+    return categories.filter(
+      (c) => c.name.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q)
+    );
+  }, [categories, catTerm]);
+
   const submitSafely = () => {
     // blur the currently focused element (often the Quill editor)
     if (typeof document !== "undefined") {
@@ -226,27 +246,27 @@ export function ProductForm({
     resolver: zodResolver(productSchema),
     defaultValues: initialData
       ? {
-          title: initialData.title ?? "",
-          description: initialData.description ?? "",
-          image: initialData.image ?? null,
-          sku: initialData.sku ?? "",
-          status: initialData.status ?? "draft",
-          productType: initialData.productType ?? "simple",
-          categories: initialData.categories ?? [],
-          allowBackorders: initialData.allowBackorders ?? false,
-          manageStock: initialData.manageStock ?? false,
-        }
+        title: initialData.title ?? "",
+        description: initialData.description ?? "",
+        image: initialData.image ?? null,
+        sku: initialData.sku ?? "",
+        status: initialData.status ?? "draft",
+        productType: initialData.productType ?? "simple",
+        categories: initialData.categories ?? [],
+        allowBackorders: initialData.allowBackorders ?? false,
+        manageStock: initialData.manageStock ?? false,
+      }
       : {
-          title: "",
-          description: "",
-          image: null,
-          sku: "",
-          status: "draft",
-          productType: "simple",
-          categories: [],
-          allowBackorders: false,
-          manageStock: false,
-        },
+        title: "",
+        description: "",
+        image: null,
+        sku: "",
+        status: "draft",
+        productType: "simple",
+        categories: [],
+        allowBackorders: false,
+        manageStock: false,
+      },
   });
 
   // reset form when initialData changes (edit mode)
@@ -309,13 +329,79 @@ export function ProductForm({
   // --------------------------------------------------
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/product-categories");
+      // Prefer server-side "all" switch (no pagination)
+      const res = await fetch("/api/product-categories?all=1");
       if (res.ok) {
-        const { categories } = await res.json();
-        setCategories(categories);
+        const { categories: rows } = await res.json();
+        setCategories(
+          (rows || []).map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            slug: c.slug,
+          }))
+        );
+        return;
       }
+      // Fallback: client-side pagination loop (defensive)
+      let page = 1;
+      const pageSize = 200;
+      const acc: Array<{ id: string; name: string; slug: string }> = [];
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const r = await fetch(
+          `/api/product-categories?page=${page}&pageSize=${pageSize}`
+        );
+        if (!r.ok) break;
+        const data = await r.json().catch(() => ({}));
+        const rows = Array.isArray(data.categories) ? data.categories : [];
+        acc.push(
+          ...rows.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            slug: c.slug,
+          }))
+        );
+        const totalPages = Number(data.totalPages || 1);
+        if (page >= totalPages) break;
+        page += 1;
+      }
+      if (acc.length) setCategories(acc);
     })();
   }, []);
+
+  // Debounced remote category search (≥ 3 chars)
+  useEffect(() => {
+    const q = catTerm.trim();
+    if (q.length < 3) {
+      setCatResults([]);
+      setCatSearching(false);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        setCatSearching(true);
+        const r = await fetch(
+          `/api/product-categories?search=${encodeURIComponent(q)}&page=1&pageSize=50`
+        );
+        if (!r.ok) throw new Error("Category search failed");
+        const { categories: rows } = await r.json();
+        const mapped =
+          Array.isArray(rows)
+            ? rows.map((c: any) => ({ id: c.id, name: c.name, slug: c.slug }))
+            : [];
+        setCatResults(mapped);
+      } catch {
+        setCatResults([]);
+      } finally {
+        setCatSearching(false);
+      }
+    }, DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [catTerm]);
+
+  const pickCategory = (id: string, obj: { id: string; name: string; slug: string }) => {
+    if (!categories.some((c) => c.id === id)) setCategories((prev) => [...prev, obj]);
+  };
 
   useEffect(() => {
     (async () => {
@@ -619,13 +705,17 @@ export function ProductForm({
                           <Select
                             onValueChange={(value) => {
                               const currentValues = field.value || [];
+                              const obj = [...categories, ...catResults].find(
+                                (c) => c.id === value
+                              );
                               if (currentValues.includes(value)) {
                                 field.onChange(
-                                  currentValues.filter((v) => v !== value)
+                                  currentValues.filter((v: string) => v !== value)
                                 );
                               } else {
                                 field.onChange([...currentValues, value]);
                               }
+                              if (obj) pickCategory(value, obj);
                             }}
                           >
                             <FormControl>
@@ -633,15 +723,63 @@ export function ProductForm({
                                 <SelectValue placeholder="Select categories" />
                               </SelectTrigger>
                             </FormControl>
-                            <SelectContent>
-                              {categories.map((category) => (
-                                <SelectItem
-                                  key={category.id}
-                                  value={category.id}
-                                >
-                                  {category.name}
-                                </SelectItem>
-                              ))}
+                            <SelectContent className="w-[420px]">
+                              {/* Search bar */}
+                              <div className="p-3 border-b flex items-center gap-2">
+                                <Search className="h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  value={catTerm}
+                                  onChange={(e) => setCatTerm(e.target.value)}
+                                  placeholder="Search categories (min 3 chars)"
+                                  className="h-8"
+                                />
+                              </div>
+
+                              <ScrollArea className="max-h-72">
+                                {/* Local (immediate) */}
+                                {filteredCategories.map((category) => (
+                                  <SelectItem
+                                    key={category.id}
+                                    value={category.id}
+                                  >
+                                    {category.name}
+                                  </SelectItem>
+                                ))}
+
+                                {/* Remote results divider (only when present) */}
+                                {catResults.length > 0 && (
+                                  <Separator className="my-2" />
+                                )}
+
+                                {/* Remote (exclude ones we already have locally) */}
+                                {catResults
+                                  .filter(
+                                    (c) => !categories.some((lc) => lc.id === c.id)
+                                  )
+                                  .map((category) => (
+                                    <SelectItem
+                                      key={category.id}
+                                      value={category.id}
+                                    >
+                                      {category.name}
+                                      <span className="ml-1 text-xs text-muted-foreground">
+                                        (remote)
+                                      </span>
+                                    </SelectItem>
+                                  ))}
+
+                                {/* Status rows */}
+                                {catSearching && (
+                                  <div className="px-3 py-2 text-sm text-muted-foreground">
+                                    Searching…
+                                  </div>
+                                )}
+                                {!catSearching && catTerm && catResults.length === 0 && (
+                                  <div className="px-3 py-2 text-sm text-muted-foreground">
+                                    No matches
+                                  </div>
+                                )}
+                              </ScrollArea>
                             </SelectContent>
                           </Select>
                           <div className="flex flex-wrap gap-2 mt-2">
