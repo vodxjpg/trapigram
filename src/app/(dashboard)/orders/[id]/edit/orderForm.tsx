@@ -57,6 +57,7 @@ interface Product {
   image: string;
   stockData: Record<string, { [countryCode: string]: number }>;
   subtotal: number;
+  allowBackorders?: boolean;
   isAffiliate?: boolean;
   categories?: string[];
 }
@@ -253,36 +254,62 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [cartId, setCartId] = useState("");
 
   const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
-const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
-useEffect(() => {
-  (async () => {
-    try {
-      const res = await fetch("/api/product-categories").catch(() => null);
-      if (!res || !res.ok) return;
-      const data = await res.json();
-      const list: Array<{ id: string; name: string }> =
-        data.categories ?? data.items ?? [];
-      const map = Object.fromEntries(list.map((c) => [c.id, c.name]));
-      setCategoryMap(map);
-    } catch {}
-  })();
-}, []);
+  const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    (async () => {
+      try {
+        // Try all-at-once endpoint
+        const res = await fetch("/api/product-categories?all=1").catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          const rows: Array<{ id: string; name: string }> =
+            data.categories ?? data.items ?? [];
+          setCategoryMap(Object.fromEntries(rows.map((c) => [c.id, c.name])));
+          return;
+        }
+        // Fallback: client-side pagination
+        let page = 1;
+        const pageSize = 200;
+        const acc: Array<{ id: string; name: string }> = [];
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const r = await fetch(
+            `/api/product-categories?page=${page}&pageSize=${pageSize}`
+          ).catch(() => null);
+          if (!r || !r.ok) break;
+          const data = await r.json().catch(() => ({}));
+          const rows = Array.isArray(data.categories) ? data.categories : [];
+          acc.push(
+            ...rows.map((c: any) => ({ id: c.id, name: c.name }))
+          );
+          const totalPages = Number(data.totalPages || 1);
+          if (page >= totalPages) break;
+          page += 1;
+        }
+        if (acc.length) {
+          setCategoryMap(Object.fromEntries(acc.map((c) => [c.id, c.name])));
+        }
+      } catch {
+        // noop; will fall back to showing raw IDs
+      }
+    })();
+  }, []);
 
-const categoryLabel = (id?: string) =>
-  id ? (categoryMap[id] || id) : "Uncategorized";
+  const categoryLabel = (id?: string) =>
+    id ? (categoryMap[id] || id) : "Uncategorized";
 
-const groupByCategory = (arr: Product[]) => {
-  const buckets: Record<string, Product[]> = {};
-  for (const p of arr) {
-    if (p.isAffiliate) continue;
-    const firstCat = p.categories?.[0];
-    const label = categoryLabel(firstCat);
-    (buckets[label] ??= []).push(p);
-  }
-  return Object.entries(buckets)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([label, items]) => [label, items.sort((x, y) => x.title.localeCompare(y.title))] as const);
-};
+  const groupByCategory = (arr: Product[]) => {
+    const buckets: Record<string, Product[]> = {};
+    for (const p of arr) {
+      if (p.isAffiliate) continue;
+      const firstCat = p.categories?.[0];
+      const label = categoryLabel(firstCat);
+      (buckets[label] ??= []).push(p);
+    }
+    return Object.entries(buckets)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([label, items]) => [label, items.sort((x, y) => x.title.localeCompare(y.title))] as const);
+  };
 
   const [productsLoading, setProductsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
@@ -477,6 +504,7 @@ const groupByCategory = (arr: Product[]) => {
         // 1) real products
         ...norm.map((p) => ({
           id: p.id,
+          allowBackorders: !!p.allowBackorders,
           title: p.title,
           sku: p.sku,
           description: p.description,
@@ -509,6 +537,7 @@ const groupByCategory = (arr: Product[]) => {
           return {
             id: a.id,
             title: a.title,
+            allowBackorders: false,
             sku: a.sku,
             description: a.description,
             image: a.image,
@@ -598,15 +627,18 @@ const groupByCategory = (arr: Product[]) => {
   }, [paymentMethods, selectedPaymentMethod]);
 
 
-  /* ─── country-aware catalogue (affiliates always pass) ─── */
-  const countryProducts = products.filter(p =>
-    p.isAffiliate
-      ? true
-      : Object.values(p.stockData).reduce(
-        (sum, e) => sum + (e[clientCountry] || 0),
-        0,
-      ) > 0,
-  );
+  /* ─── country-aware catalogue (affiliates always pass; backorders allowed) ─── */
+  const countryProducts = products.filter((p) => {
+    if (p.isAffiliate) return true; // affiliates always visible
+    // stock in client's country across warehouses
+    const totalStock = Object.values(p.stockData).reduce(
+      (sum, e) => sum + (e[clientCountry] || 0),
+      0
+    );
+    if (totalStock > 0) return true;
+    // show when backorders are enabled
+    return p.allowBackorders === true;
+  });
 
   /* ─── instant local filter while typing ─────────────────── */
   const filteredProducts = useMemo(() => {
@@ -637,6 +669,7 @@ const groupByCategory = (arr: Product[]) => {
 
         const mapShop = (p: any): Product => ({
           ...p,
+          allowBackorders: !!p.allowBackorders,
           price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
           stockData: p.stockData,
           subtotal: 0,
@@ -810,58 +843,58 @@ const groupByCategory = (arr: Product[]) => {
   };
 
   // — Add product
-// — Add product
-const addProduct = async () => {
-  if (!selectedProduct || !cartId) {
-    toast.error("Cart hasn’t been created yet!");
-    return;
-  }
-
-  const product = products.find((p) => p.id === selectedProduct);
-  if (!product) return;
-
-  const unitPrice = product.regularPrice[clientCountry] ?? product.price;
-  const qty = parseQty(quantityText); // <— local qty for request
-
-  try {
-    const res: Response = await fetch(`/api/cart/${cartId}/add-product`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        productId: selectedProduct,
-        quantity: qty,
-        price: unitPrice,
-        country: clientCountry,
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      const msg =
-        (body.error as string) ??
-        (body.message as string) ??
-        "Failed to add product";
-      throw new Error(msg);
+  // — Add product
+  const addProduct = async () => {
+    if (!selectedProduct || !cartId) {
+      toast.error("Cart hasn’t been created yet!");
+      return;
     }
 
-    type AddProductResponse = { product: Product; quantity: number };
-    const {
-      product: added,
-      quantity: returnedQty, // <— rename to avoid shadowing
-    } = (await res.json()) as AddProductResponse;
+    const product = products.find((p) => p.id === selectedProduct);
+    if (!product) return;
 
-    // If you don’t use subtotalRow elsewhere, you can remove this line.
-    // const subtotalRow = calcRowSubtotal(added, returnedQty);
+    const unitPrice = product.regularPrice[clientCountry] ?? product.price;
+    const qty = parseQty(quantityText); // <— local qty for request
 
-    await loadCart();
-    setSelectedProduct("");
-    setQuantityText("1");
-    toast.success("Product added to cart!");
-  } catch (error: any) {
-    console.error("addProduct error:", error);
-    toast.error(error.message || "Could not add product");
-  }
-};
+    try {
+      const res: Response = await fetch(`/api/cart/${cartId}/add-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: selectedProduct,
+          quantity: qty,
+          price: unitPrice,
+          country: clientCountry,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const msg =
+          (body.error as string) ??
+          (body.message as string) ??
+          "Failed to add product";
+        throw new Error(msg);
+      }
+
+      type AddProductResponse = { product: Product; quantity: number };
+      const {
+        product: added,
+        quantity: returnedQty, // <— rename to avoid shadowing
+      } = (await res.json()) as AddProductResponse;
+
+      // If you don’t use subtotalRow elsewhere, you can remove this line.
+      // const subtotalRow = calcRowSubtotal(added, returnedQty);
+
+      await loadCart();
+      setSelectedProduct("");
+      setQuantityText("1");
+      toast.success("Product added to cart!");
+    } catch (error: any) {
+      console.error("addProduct error:", error);
+      toast.error(error.message || "Could not add product");
+    }
+  };
 
 
   // — Remove Product
@@ -1338,80 +1371,85 @@ const addProduct = async () => {
                       </div>
 
                       <ScrollArea className="max-h-72">
-  {groupByCategory(filteredProducts.filter((p) => !p.isAffiliate)).map(
-    ([label, items]) => (
-      <SelectGroup key={label}>
-        <SelectLabel>{label}</SelectLabel>
-        {items.map((p) => (
-          <SelectItem key={p.id} value={p.id}>
-            {p.title} — ${p.regularPrice[clientCountry] ?? p.price}
-          </SelectItem>
-        ))}
-        <SelectSeparator />
-      </SelectGroup>
-    )
-  )}
+                        {groupByCategory(filteredProducts.filter((p) => !p.isAffiliate)).map(
+                          ([label, items]) => (
+                            <SelectGroup key={label}>
+                              <SelectLabel>{label}</SelectLabel>
+                              {items.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.title}
+                                  {" — $"}
+                                  {p.regularPrice[clientCountry] ?? p.price}
+                                  {Object.values(p.stockData).reduce((s, e) => s + (e[clientCountry] || 0), 0) === 0 &&
+                                    p.allowBackorders ? " (backorder)" : ""}
+                                </SelectItem>
 
-  {filteredProducts.some((p) => p.isAffiliate) && (
-    <SelectGroup>
-      <SelectLabel>Affiliate</SelectLabel>
-      {filteredProducts
-        .filter((p) => p.isAffiliate)
-        .map((p) => (
-          <SelectItem key={p.id} value={p.id}>
-            {p.title} — {p.price} pts
-          </SelectItem>
-        ))}
-      <SelectSeparator />
-    </SelectGroup>
-  )}
+                              ))}
+                              <SelectSeparator />
+                            </SelectGroup>
+                          )
+                        )}
 
-  {prodResults.length > 0 && (
-    <>
-      {groupByCategory(
-        prodResults.filter(
-          (p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id)
-        )
-      ).map(([label, items]) => (
-        <SelectGroup key={`remote-${label}`}>
-          <SelectLabel>{label} — search</SelectLabel>
-          {items.map((p) => (
-            <SelectItem key={p.id} value={p.id}>
-              {p.title} — ${p.price}
-              <span className="ml-1 text-xs text-muted-foreground">
-                (remote)
-              </span>
-            </SelectItem>
-          ))}
-          <SelectSeparator />
-        </SelectGroup>
-      ))}
+                        {filteredProducts.some((p) => p.isAffiliate) && (
+                          <SelectGroup>
+                            <SelectLabel>Affiliate</SelectLabel>
+                            {filteredProducts
+                              .filter((p) => p.isAffiliate)
+                              .map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.title} — {p.price} pts
+                                </SelectItem>
+                              ))}
+                            <SelectSeparator />
+                          </SelectGroup>
+                        )}
 
-      {prodResults.some((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)) && (
-        <SelectGroup>
-          <SelectLabel>Affiliate — search</SelectLabel>
-          {prodResults
-            .filter((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id))
-            .map((p) => (
-              <SelectItem key={p.id} value={p.id}>
-                {p.title} — {p.price} pts
-                <span className="ml-1 text-xs text-muted-foreground">
-                  (remote)
-                </span>
-              </SelectItem>
-            ))}
-        </SelectGroup>
-      )}
-    </>
-  )}
+                        {prodResults.length > 0 && (
+                          <>
+                            {groupByCategory(
+                              prodResults.filter(
+                                (p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id)
+                              )
+                            ).map(([label, items]) => (
+                              <SelectGroup key={`remote-${label}`}>
+                                <SelectLabel>{label} — search</SelectLabel>
+                                {items.map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>
+                                    {p.title} — ${p.price}
+                                    <span className="ml-1 text-xs text-muted-foreground">
+                                      (remote)
+                                    </span>
+                                  </SelectItem>
+                                ))}
+                                <SelectSeparator />
+                              </SelectGroup>
+                            ))}
 
-  {prodSearching && (
-    <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
-  )}
-  {!prodSearching && prodTerm && prodResults.length === 0 && (
-    <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
-  )}
-</ScrollArea>
+                            {prodResults.some((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)) && (
+                              <SelectGroup>
+                                <SelectLabel>Affiliate — search</SelectLabel>
+                                {prodResults
+                                  .filter((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id))
+                                  .map((p) => (
+                                    <SelectItem key={p.id} value={p.id}>
+                                      {p.title} — {p.price} pts
+                                      <span className="ml-1 text-xs text-muted-foreground">
+                                        (remote)
+                                      </span>
+                                    </SelectItem>
+                                  ))}
+                              </SelectGroup>
+                            )}
+                          </>
+                        )}
+
+                        {prodSearching && (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
+                        )}
+                        {!prodSearching && prodTerm && prodResults.length === 0 && (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
+                        )}
+                      </ScrollArea>
 
                     </SelectContent>
                   </Select>
@@ -1422,14 +1460,14 @@ const addProduct = async () => {
                   <Input
                     type="number"
                     min={1}
-                                   inputMode="numeric"
-                pattern="[0-9]*"
-                value={quantityText}
-                onChange={(e) => {
-                  const v = e.target.value.replace(/[^0-9]/g, "");
-                  setQuantityText(v);
-                }}
-                onBlur={() => setQuantityText(String(parseQty(quantityText)))}
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={quantityText}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9]/g, "");
+                      setQuantityText(v);
+                    }}
+                    onBlur={() => setQuantityText(String(parseQty(quantityText)))}
                   />
                 </div>
 

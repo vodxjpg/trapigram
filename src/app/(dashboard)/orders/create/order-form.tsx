@@ -73,6 +73,7 @@ interface Product {
   image: string;
   stockData: Record<string, { [countryCode: string]: number }>;
   subtotal: number;
+   allowBackorders?: boolean;
   isAffiliate?: boolean; // ← new
   categories?: string[]; // ← NEW
 }
@@ -295,19 +296,44 @@ export default function OrderForm() {
   // Category label cache: { [id]: name }
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
 
+    // Load ALL categories → build {id → name} map (no pagination gaps).
   useEffect(() => {
     (async () => {
       try {
-        // Try a categories endpoint if you have one. Fallbacks won’t break anything.
-        const res = await fetch("/api/product-categories").catch(() => null);
-        if (!res || !res.ok) return; // silently fall back to IDs/Uncategorized
-        const data = await res.json();
-        const list: Array<{ id: string; name: string }> =
-          data.categories ?? data.items ?? [];
-        const map = Object.fromEntries(list.map((c) => [c.id, c.name]));
-        setCategoryMap(map);
+        // Preferred: server supports ?all=1
+        const res = await fetch("/api/product-categories?all=1").catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          const rows: Array<{ id: string; name: string }> =
+            data.categories ?? data.items ?? [];
+          setCategoryMap(Object.fromEntries(rows.map((c) => [c.id, c.name])));
+          return;
+        }
+
+        // Fallback: client-side pagination loop
+        let page = 1;
+        const pageSize = 200;
+        const acc: Array<{ id: string; name: string }> = [];
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const r = await fetch(
+            `/api/product-categories?page=${page}&pageSize=${pageSize}`
+          ).catch(() => null);
+          if (!r || !r.ok) break;
+          const data = await r.json().catch(() => ({}));
+          const rows = Array.isArray(data.categories) ? data.categories : [];
+          acc.push(
+            ...rows.map((c: any) => ({ id: c.id, name: c.name }))
+          );
+          const totalPages = Number(data.totalPages || 1);
+          if (page >= totalPages) break;
+          page += 1;
+        }
+        if (acc.length) {
+          setCategoryMap(Object.fromEntries(acc.map((c) => [c.id, c.name])));
+        }
       } catch {
-        /* noop – we’ll just use IDs/Uncategorized */
+        // noop – we’ll fall back to showing raw IDs if needed
       }
     })();
   }, []);
@@ -525,6 +551,7 @@ export default function OrderForm() {
         ...norm.map((p: any) => ({
           id: p.id,
           title: p.title,
+          allowBackorders: !!p.allowBackorders,
           sku: p.sku,
           description: p.description,
           image: p.image,
@@ -579,7 +606,10 @@ export default function OrderForm() {
       (sum, e) => sum + (e[clientCountry] || 0),
       0
     );
-    return totalStock > 0;
+     if (totalStock > 0) return true;
+
+    // …or allow it when backorders are enabled
+    return p.allowBackorders === true;
   });
 
   const [prodTerm, setProdTerm] = useState("");
@@ -633,6 +663,7 @@ export default function OrderForm() {
         /* map ➜ our <Product> shape, tagging affiliates */
         const mapShop = (p: any): Product => ({
           ...p,
+           allowBackorders: !!p.allowBackorders,   // ← ensure flag present
           price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
           stockData: p.stockData,
           isAffiliate: false,
@@ -1473,9 +1504,14 @@ export default function OrderForm() {
                             <SelectGroup key={label}>
                               <SelectLabel>{label}</SelectLabel>
                               {items.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.title} — ${p.regularPrice[clientCountry] ?? p.price}
-                                </SelectItem>
+                              <SelectItem key={p.id} value={p.id}>
+  {p.title}
+  {" — $"}
+  {p.regularPrice[clientCountry] ?? p.price}
+  {Object.values(p.stockData).reduce((s, e) => s + (e[clientCountry] || 0), 0) === 0 &&
+   p.allowBackorders ? " (backorder)" : ""}
+</SelectItem>
+
                               ))}
                               <SelectSeparator />
                             </SelectGroup>
