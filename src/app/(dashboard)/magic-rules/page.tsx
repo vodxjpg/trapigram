@@ -14,8 +14,6 @@ export default function MagicRulesPage() {
   const { hasPermission, isLoading } = useHasPermission(organizationId, { rule: ["view"] });
 
   useEffect(() => setHeaderTitle("Magic Rules"), [setHeaderTitle]);
-  useEffect(() => { if (!isLoading && !hasPermission) router.replace("/dashboard"); }, [isLoading, hasPermission, router]);
-  if (isLoading || !hasPermission) return null;
 
   return (
     <div className="flex flex-col gap-6 p-6">
