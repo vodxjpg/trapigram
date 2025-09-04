@@ -1,9 +1,8 @@
+// src/app/api/tickets/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";;
 import { z } from "zod";
 import { getContext } from "@/lib/context";
-
-
 
 /* ---------- validation helpers ---------- */
 const uuid = z.string().uuid("Invalid ticketId");
@@ -16,7 +15,27 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   try {
     const { id } = await params;
-    /* 3 · fetch ticket header + user name */
+
+    // ─────────────────────────────────────────────────────────────
+    // Lazy close this ticket if the *last message* is > 24h ago
+    // ─────────────────────────────────────────────────────────────
+    await pool.query(
+      `
+      UPDATE tickets t
+         SET status = 'closed', "updatedAt" = NOW()
+       WHERE t.id = $1
+         AND t."organizationId" = $2
+         AND t.status <> 'closed'
+         AND EXISTS (SELECT 1 FROM "ticketMessages" tm WHERE tm."ticketId" = t.id)
+         AND (
+           SELECT MAX(tm."createdAt") FROM "ticketMessages" tm
+            WHERE tm."ticketId" = t.id
+         ) < NOW() - INTERVAL '24 hours'
+      `,
+      [id, organizationId],
+    );
+
+    /* 3 · fetch ticket header + user name */
     const ticketQuery = `
     SELECT tickets.id,
            tickets."organizationId",
@@ -34,7 +53,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   `;
     const ticketVals = [id, organizationId];
 
-    /* 4 · fetch messages for that ticket */
+    /* 4 · fetch messages for that ticket */
     const msgQuery = `
     SELECT id,
            "ticketId",
@@ -46,7 +65,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     WHERE  "ticketId" = $1
     ORDER  BY "createdAt" ASC;
   `;
-
 
     const tRes = await pool.query(ticketQuery, ticketVals);
     if (tRes.rows.length === 0)

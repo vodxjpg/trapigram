@@ -44,6 +44,27 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Invalid clientId" }, { status: 400 });
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // Lazy sweep: close tickets whose *last message* is > 24h ago
+    // ─────────────────────────────────────────────────────────────
+    await pool.query(
+      `
+      WITH last AS (
+        SELECT "ticketId", MAX("createdAt") AS last_at
+          FROM "ticketMessages"
+         GROUP BY "ticketId"
+      )
+      UPDATE tickets t
+         SET status = 'closed', "updatedAt" = NOW()
+        FROM last
+       WHERE t.id = last."ticketId"
+         AND t."organizationId" = $1
+         AND t.status <> 'closed'
+         AND last.last_at < NOW() - INTERVAL '24 hours'
+      `,
+      [organizationId],
+    );
+
     // build WHERE
     const where: string[] = [`"organizationId" = $1`];
     const values: any[] = [organizationId];

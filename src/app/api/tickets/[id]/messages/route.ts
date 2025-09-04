@@ -1,11 +1,12 @@
 /* ------------------------------------------------------------------ *\
-|  /api/tickets/[id]/messages – create a new ticket message           |
-|                                                                     |
-|  • Persists the message in Postgrs                                 |
-|  • Broadcasts to dashboard / SSE / worker listeners                 |
-|  • Sends internal (staff→user) replies to the Telegram bot          |
-|  • Notifies the customer on public replies via e‑mail + in‑app      |
-|  • Auto‑bumps ticket status                                         |
+|  src/app/api/tickets/[id]/messages/route.ts                          |
+|  /api/tickets/[id]/messages – create a new ticket message            |
+|                                                                      |
+|  • Persists the message in Postgres                                  |
+|  • Broadcasts to dashboard / SSE / worker listeners                  |
+|  • Sends internal (staff→user) replies to the Telegram bot           |
+|  • Notifies the customer on public replies via e-mail + in-app       |
+|  • Auto-bumps ticket status                                          |
 \* ------------------------------------------------------------------ */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -23,7 +24,7 @@ import { pusher } from "@/lib/pusher-server";
 /* ──────────────── validation schema ──────────────────────────────── */
 const messagesSchema = z.object({
   message:     z.string().min(1, "Message is required."),
-  attachments: z.string(),     // JSON‑stringified array
+  attachments: z.string(),     // JSON-stringified array
   isInternal:  z.boolean(),
 });
 
@@ -60,7 +61,7 @@ export async function POST(
         ? raw.attachments
         : JSON.stringify(raw.attachments ?? []);
 
-    /* header fallback lets web‑dashboard POST without tweaking JSON */
+    /* header fallback lets web-dashboard POST without tweaking JSON */
     const isInternal =
       typeof raw.isInternal === "boolean"
         ? raw.isInternal
@@ -88,7 +89,7 @@ export async function POST(
     saved.attachments = JSON.parse(saved.attachments);   // convert back to JS
 
     /* ------------------------------------------------------------------ */
-    /* 2️⃣  Realtime fan‑out (dashboard & SSE consumers)                  */
+    /* 2️⃣  Realtime fan-out (dashboard & SSE consumers)                  */
     /* ------------------------------------------------------------------ */
     await publish(`ticket:${ticketId}`, saved);                       // Upstash
     await pusher.trigger(`ticket-${ticketId}`, "new-message", saved); // Dashboard
@@ -109,18 +110,18 @@ export async function POST(
         `org-${organizationId}-client-${clientId}`,
         "admin-message",
         {
-          id:          saved.id,           // 👈 add this
+          id:          saved.id,
           text:        saved.message,
           ticketId,
           ticketTitle,
           attachments: saved.attachments,
-          createdAt:   saved.createdAt,    // optional; nice to have
+          createdAt:   saved.createdAt,
         },
       );
     }
 
     /* ------------------------------------------------------------------ */
-    /* 4️⃣  PostgreSQL NOTIFY – wake up any in‑process workers            */
+    /* 4️⃣  PostgreSQL NOTIFY – wake up any in-process workers            */
     /* ------------------------------------------------------------------ */
     const chan = `ticket_${ticketId.replace(/-/g, "")}`;
     await pool.query("SELECT pg_notify($1, $2)", [chan, JSON.stringify(saved)]);
@@ -161,21 +162,16 @@ export async function POST(
     }
 
     /* ------------------------------------------------------------------ */
-    /* 6️⃣  Auto‑bump ticket status after customer reply                  */
+    /* 6️⃣  Auto-bump ticket status when *admin* (internal) replies       */
     /* ------------------------------------------------------------------ */
-    if (!parsed.isInternal) {
-      const {
-        rows: [{ count }],
-      } = await pool.query(
-        `SELECT COUNT(*) FROM "ticketMessages" WHERE "ticketId" = $1`,
+    if (parsed.isInternal) {
+      await pool.query(
+        `UPDATE tickets
+            SET status = 'in-progress', "updatedAt" = NOW()
+          WHERE id = $1
+            AND status <> 'closed'`,
         [ticketId],
       );
-      if (Number(count) > 1) {
-        await pool.query(
-          `UPDATE tickets SET status = 'in-progress' WHERE id = $1`,
-          [ticketId],
-        );
-      }
     }
 
     /* ---------------- SUCCESS ---------------- */
