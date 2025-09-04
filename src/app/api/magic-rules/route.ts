@@ -11,14 +11,18 @@ import { getContext } from "@/lib/context";
 const ConditionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("always") }),
   z.object({
+    kind: z.literal("customer_inactive_for_days"),
+    days: z.number().int().min(1),
+  }),
+  z.object({
     kind: z.literal("purchased_product_in_list"),
-    productIds: z.array(z.string().min(1)).min(1)
+    productIds: z.array(z.string().min(1)).min(1),
   }),
   z.object({
     kind: z.literal("purchase_time_in_window"),
     fromHour: z.number().int().min(0).max(23),
     toHour: z.number().int().min(0).max(23),
-    inclusive: z.boolean().default(true),
+    // inclusive locked ON in engine (no toggle here)
   }),
 ]);
 
@@ -27,11 +31,11 @@ const ActionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("send_message_with_coupon"),
     subject: z.string().min(1),
     htmlTemplate: z.string().min(1),
-    channels: z.array(z.enum(["email","in_app","webhook","telegram"] as const)).min(1),
+    channels: z.array(z.enum(["email", "telegram"] as const)).min(1),
     coupon: z.object({
       name: z.string().min(1),
       description: z.string().min(1),
-      discountType: z.enum(["fixed","percentage"]),
+      discountType: z.enum(["fixed", "percentage"]),
       discountAmount: z.number().positive(),
       usageLimit: z.number().int().min(0),
       expendingLimit: z.number().int().min(0),
@@ -47,7 +51,7 @@ const ActionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("recommend_product"),
     subject: z.string().min(1),
     htmlTemplate: z.string().min(1),
-    channels: z.array(z.enum(["email","in_app","webhook","telegram"] as const)).min(1),
+    channels: z.array(z.enum(["email", "telegram"] as const)).min(1),
     productId: z.string().min(1),
   }),
   z.object({
@@ -67,15 +71,10 @@ const ActionSchema = z.discriminatedUnion("kind", [
 const CreateSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional().nullable(),
-  // UX is fixed; we force these on save:
-  event: z.literal("order_paid").optional(),
-  scope: z.literal("base").optional(),
-  priority: z.number().int().min(0).default(100),
-  runOncePerOrder: z.boolean().default(true),
-  stopOnMatch: z.boolean().default(false),
+  // event/scope are locked server-side
   isEnabled: z.boolean().default(true),
-  startDate: z.string().datetime().optional().nullable(),
-  endDate: z.string().datetime().optional().nullable(),
+  startDate: z.string().optional().nullable(), // allow datetime-local strings
+  endDate: z.string().optional().nullable(),
   conditions: z.array(ConditionSchema).default([]),
   actions: z.array(ActionSchema).min(1),
 });
@@ -97,13 +96,13 @@ export async function GET(req: NextRequest) {
   }
 
   const sql = `
-    SELECT id, name, event, scope, priority,
-           "runOncePerOrder","stopOnMatch","isEnabled",
+    SELECT id, name, event, scope,
+           "isEnabled",
            "startDate","endDate",
            "updatedAt"
       FROM "magicRules"
       ${where}
-      ORDER BY priority ASC, "updatedAt" DESC
+      ORDER BY "updatedAt" DESC
       LIMIT 200`;
 
   const { rows } = await pool.query(sql, params);
@@ -134,7 +133,7 @@ export async function POST(req: NextRequest) {
         "runOncePerOrder","stopOnMatch",scope,"isEnabled","startDate","endDate",
         "createdAt","updatedAt")
      VALUES
-       ($1,$2,$3,$4,'order_paid',$5,$6,$7,$8,$9,'base',$10,$11,$12,$13,$13)
+       ($1,$2,$3,$4,'order_paid',$5,$6,100,TRUE,TRUE,'base',$7,$8,$9,$10,$10)
      RETURNING *`,
     [
       id,
@@ -143,9 +142,6 @@ export async function POST(req: NextRequest) {
       body.description ?? null,
       JSON.stringify(body.conditions ?? []),
       JSON.stringify(body.actions ?? []),
-      body.priority ?? 100,
-      body.runOncePerOrder ?? true,
-      body.stopOnMatch ?? false,
       body.isEnabled ?? true,
       body.startDate ? new Date(body.startDate) : null,
       body.endDate ? new Date(body.endDate) : null,

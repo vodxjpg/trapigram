@@ -2,16 +2,12 @@
 /**
  * Magic Rules – core engine
  * ---------------------------------------------------------------
- * Evaluates rule conditions against an event payload and executes
- * actions by calling your existing subsystems:
- *  - Notifications: via enqueueNotificationFanout (email/telegram/in_app/webhook)
- *  - Coupons:       inserts into coupons table (same schema as /api/coupons)
- *  - Affiliate:     inserts into affiliatePointLogs and updates balances
- *
- * IMPORTANT:
- *  - We do NOT guess DB shapes for "last purchase" lookups. If you want to
- *    run inactivity campaigns, compute daysSinceLastPurchase externally and
- *    pass it in the event facts (see EventPayload).
+ * - Event locked to: order_paid
+ * - Scope locked to: base
+ * - Stop on match: ALWAYS TRUE (stop evaluating after first match)
+ * - Run once per order: ALWAYS TRUE
+ * - Hours are always inclusive
+ * - Channels limited to: email | telegram
  */
 
 import { z } from "zod";
@@ -19,6 +15,7 @@ import { randomBytes } from "crypto";
 import { pgPool as pool } from "@/lib/db";
 import { enqueueNotificationFanout } from "@/lib/notification-outbox";
 import type { NotificationChannel, NotificationType } from "@/lib/notifications";
+
 /* ─────────────────────────────── Types ─────────────────────────────── */
 
 export type MagicEventType = "order_paid" | "manual" | "sweep";
@@ -28,7 +25,6 @@ export interface EventPayloadBase {
   clientId: string;                 // target client
   userId?: string | null;           // optional userId (account)
   country?: string | null;          // two-letter country, optional
-  /* The event "type" and event-specific facts are below */
 }
 
 export interface OrderPaidFacts {
@@ -36,29 +32,21 @@ export interface OrderPaidFacts {
   orderId: string;
   purchasedProductIds: string[];
   purchasedAtISO: string;           // ISO string
-  baseAffiliatePointsAwarded?: number; // if your order flow already computed it
+  baseAffiliatePointsAwarded?: number;
+  /** computed for inactivity rule */
+  daysSinceLastPurchase?: number;
 }
 
-export interface ManualFacts {
-  type: "manual";
-  /* arbitrary manual trigger; no extra required facts */
-}
-
-export interface SweepFacts {
-  type: "sweep";
-  daysSinceLastPurchase?: number;   // provide this if running inactivity rules
-}
+export interface ManualFacts { type: "manual" }
+export interface SweepFacts { type: "sweep"; daysSinceLastPurchase?: number }
 
 export type EventFacts = OrderPaidFacts | ManualFacts | SweepFacts;
-
 export type EventPayload = EventPayloadBase & EventFacts;
 
 /* ─────────────────────────────── Rules ─────────────────────────────── */
 
 export const ConditionSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("always"),
-  }),
+  z.object({ kind: z.literal("always") }),
   z.object({
     kind: z.literal("customer_inactive_for_days"),
     days: z.number().int().min(1),
@@ -71,7 +59,7 @@ export const ConditionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("purchase_time_in_window"),
     fromHour: z.number().int().min(0).max(23),
     toHour: z.number().int().min(0).max(23),
-    inclusive: z.boolean().default(true),
+    // inclusive is always ON; no toggle
   }),
 ]);
 
@@ -82,7 +70,7 @@ export const ActionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("send_message_with_coupon"),
     subject: z.string().min(1),
     htmlTemplate: z.string().min(1), // supports {coupon_code}, {client_id}, {order_id}
-    channels: z.array(z.enum(["email", "in_app", "webhook", "telegram"] as const)),
+    channels: z.array(z.enum(["email", "telegram"] as const)).min(1),
     coupon: z.object({
       name: z.string().min(1),
       description: z.string().min(1),
@@ -91,7 +79,7 @@ export const ActionSchema = z.discriminatedUnion("kind", [
       usageLimit: z.number().int().min(0),
       expendingLimit: z.number().int().min(0),
       expendingMinimum: z.number().int().min(0).default(0),
-      countries: z.array(z.string().min(2)).min(1), // must match your schema: at least one
+      countries: z.array(z.string().min(2)).min(1),
       visibility: z.boolean(),
       stackable: z.boolean(),
       startDateISO: z.string().nullable().optional(),     // ISO or null
@@ -102,7 +90,7 @@ export const ActionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("recommend_product"),
     subject: z.string().min(1),
     htmlTemplate: z.string().min(1), // supports {product_id}, {client_id}, {order_id}
-    channels: z.array(z.enum(["email", "in_app", "webhook", "telegram"] as const)),
+    channels: z.array(z.enum(["email", "telegram"] as const)).min(1),
     productId: z.string().min(1),
   }),
   z.object({
@@ -130,11 +118,10 @@ export const RuleSchema = z.object({
   }),
   conditions: z.array(ConditionSchema).default([]),
   actions: z.array(ActionSchema).min(1),
-  stopAfterMatch: z.boolean().default(false),
+  stopAfterMatch: z.boolean().default(true), // enforced as TRUE
 });
 
 export type MagicRule = z.infer<typeof RuleSchema>;
-
 export const RulesPayloadSchema = z.array(RuleSchema).min(1);
 
 /* ───────────────────── helper: variables in templates ─────────────── */
@@ -154,8 +141,12 @@ function checkCondition(cond: Condition, event: EventPayload): boolean {
       return true;
 
     case "customer_inactive_for_days": {
-      if (event.type !== "sweep") return false; // we only honor this in sweeps unless facts included
-      const days = (event as SweepFacts).daysSinceLastPurchase ?? undefined;
+      const days =
+        event.type === "sweep"
+          ? (event as SweepFacts).daysSinceLastPurchase
+          : event.type === "order_paid"
+          ? (event as OrderPaidFacts).daysSinceLastPurchase
+          : undefined;
       return typeof days === "number" && days >= cond.days;
     }
 
@@ -171,24 +162,19 @@ function checkCondition(cond: Condition, event: EventPayload): boolean {
       const hour = new Date(iso).getHours();
       const from = cond.fromHour;
       const to = cond.toHour;
-      const inclusive = cond.inclusive;
-      if (from === to) return inclusive; // whole-day if inclusive, else never
-      // handle wrap-around windows (e.g., 22 → 3)
+      const inclusive = true; // locked ON
+      if (from === to) return inclusive; // whole-day if inclusive
       if (from < to) {
         return inclusive ? hour >= from && hour <= to : hour > from && hour < to;
       } else {
         return inclusive ? hour >= from || hour <= to : hour > from || hour < to;
       }
     }
-
-    default:
-      return false;
   }
 }
 
 /* ───────────────────── Actions – implementations ──────────────────── */
 
-/** Coupon code generator – 8 alphanumeric uppercase, collision-safe via DB check */
 async function generateUniqueCouponCode(organizationId: string): Promise<string> {
   while (true) {
     const candidate = randomBytes(6).toString("base64").replace(/[^A-Z0-9]/gi, "").slice(0, 8).toUpperCase();
@@ -200,11 +186,7 @@ async function generateUniqueCouponCode(organizationId: string): Promise<string>
   }
 }
 
-type CreatedCoupon = {
-  id: string;
-  code: string;
-  expirationDate: string | null;
-};
+type CreatedCoupon = { id: string; code: string; expirationDate: string | null };
 
 async function createCouponForOrg(
   organizationId: string,
@@ -251,14 +233,9 @@ async function createCouponForOrg(
     ],
   );
   const row = insert.rows[0];
-  return {
-    id: row.id,
-    code: row.code,
-    expirationDate: row.expirationDate,
-  };
+  return { id: row.id, code: row.code, expirationDate: row.expirationDate };
 }
 
-/** Affiliate helpers: mirror your /api/affiliate/points logic safely */
 async function applyBalanceDelta(
   clientId: string,
   organizationId: string,
@@ -301,24 +278,12 @@ async function grantAffiliatePointsOnce(opts: {
       VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,NULL,NOW(),NOW())
       RETURNING *
       `,
-      [
-        opts.organizationId,
-        opts.clientId,
-        opts.points,
-        opts.action,
-        opts.description ?? null,
-      ],
+      [opts.organizationId, opts.clientId, opts.points, opts.action, opts.description ?? null],
     );
     const inserted = rows[0];
     const deltaCurrent = inserted.points;
     const deltaSpent = inserted.points < 0 ? Math.abs(inserted.points) : 0;
-    await applyBalanceDelta(
-      opts.clientId,
-      opts.organizationId,
-      deltaCurrent,
-      deltaSpent,
-      client,
-    );
+    await applyBalanceDelta(opts.clientId, opts.organizationId, deltaCurrent, deltaSpent, client);
     await client.query("COMMIT");
     return inserted;
   } catch (e) {
@@ -329,7 +294,6 @@ async function grantAffiliatePointsOnce(opts: {
   }
 }
 
-/** Notification via Outbox fanout (single call with our message & channels) */
 async function notifyViaOutbox(opts: {
   organizationId: string;
   type: NotificationType;
@@ -369,7 +333,6 @@ export async function runMagicRules(
   event: EventPayload,
   rules: MagicRule[],
 ): Promise<RuleExecutionResult[]> {
-  const now = new Date();
   const results: RuleExecutionResult[] = [];
 
   for (const rule of rules) {
@@ -377,13 +340,11 @@ export async function runMagicRules(
       results.push({ ruleId: rule.id, ruleName: rule.name, matched: false, actionsExecuted: [] });
       continue;
     }
-    // Event filter
     if (!rule.match.anyOfEvents.includes(event.type)) {
       results.push({ ruleId: rule.id, ruleName: rule.name, matched: false, actionsExecuted: [] });
       continue;
     }
 
-    // Conditions
     const ok = (rule.conditions || []).every((c) => checkCondition(c, event));
     if (!ok) {
       results.push({ ruleId: rule.id, ruleName: rule.name, matched: false, actionsExecuted: [] });
@@ -392,7 +353,6 @@ export async function runMagicRules(
 
     const executed: string[] = [];
 
-    // Actions
     for (const action of rule.actions) {
       switch (action.kind) {
         case "send_message_with_coupon": {
@@ -403,17 +363,14 @@ export async function runMagicRules(
             client_id: event.clientId,
             order_id: (event as any).orderId ?? "",
           };
-          const subject = applyVars(action.subject, vars);
-          const html = applyVars(action.htmlTemplate, vars);
-
           await notifyViaOutbox({
             organizationId: event.organizationId,
-            type: "order_message", // generic user-facing message type
+            type: "order_message",
             trigger: null,
             channels: action.channels as NotificationChannel[],
             payload: {
-              subject,
-              message: html,
+              subject: applyVars(action.subject, vars),
+              message: applyVars(action.htmlTemplate, vars),
               variables: vars,
               country: event.country ?? null,
               userId: event.userId ?? null,
@@ -432,17 +389,14 @@ export async function runMagicRules(
             client_id: event.clientId,
             order_id: (event as any).orderId ?? "",
           };
-          const subject = applyVars(action.subject, vars);
-          const html = applyVars(action.htmlTemplate, vars);
-
           await notifyViaOutbox({
             organizationId: event.organizationId,
             type: "order_message",
             trigger: null,
             channels: action.channels as NotificationChannel[],
             payload: {
-              subject,
-              message: html,
+              subject: applyVars(action.subject, vars),
+              message: applyVars(action.htmlTemplate, vars),
               variables: vars,
               country: event.country ?? null,
               userId: event.userId ?? null,
@@ -468,7 +422,7 @@ export async function runMagicRules(
         }
 
         case "multiply_affiliate_points_for_order": {
-          const base = (event.type === "order_paid" ? (event.baseAffiliatePointsAwarded ?? 0) : 0);
+          const base = event.type === "order_paid" ? (event.baseAffiliatePointsAwarded ?? 0) : 0;
           if (base > 0 && action.multiplier !== 1) {
             const extra = Math.round(base * (action.multiplier - 1));
             if (extra !== 0) {
@@ -484,33 +438,29 @@ export async function runMagicRules(
           executed.push(`multiply_affiliate_points_for_order:x${action.multiplier}`);
           break;
         }
-
-        default:
-          // no-op
-          break;
       }
     }
 
     results.push({ ruleId: rule.id, ruleName: rule.name, matched: true, actionsExecuted: executed });
 
-    if (rule.stopAfterMatch) break;
+    // STOP ON MATCH is always true now
+    break;
   }
 
   return results;
 }
 
+/* ───────────── Helper: load rules & run engine for an order ───────────── */
 
-// Helper: load rules from DB (UI table shape) and run engine for an order
-// Helper: load rules from DB (UI table shape) and run engine for an order
 export async function evaluateRulesForOrder(opts: {
   organizationId: string;
   orderId: string;
-  event: MagicEventType; // "order_paid" only for now
+  event: MagicEventType; // "order_paid" only
 }) {
   const { organizationId, orderId, event } = opts;
   if (event !== "order_paid") return [];
 
-  // 1) Load minimal order info
+  // 1) Load order
   const { rows: [o] } = await pool.query(
     `SELECT id,"clientId",country,"datePaid","dateCreated","cartId"
        FROM orders
@@ -520,15 +470,31 @@ export async function evaluateRulesForOrder(opts: {
   );
   if (!o) return [];
 
-  // 2) Product ids from cart
+  // 2) Product ids
   const { rows: pRows } = await pool.query(
     `SELECT COALESCE("productId","affiliateProductId") AS pid
        FROM "cartProducts"
       WHERE "cartId" = $1`,
     [o.cartId],
   );
-  const purchasedProductIds = pRows.map(r => String(r.pid)).filter(Boolean);
-  const purchasedAtISO = new Date(o.datePaid ?? o.dateCreated).toISOString();
+  const purchasedProductIds = pRows.map((r) => String(r.pid)).filter(Boolean);
+
+  // 3) Compute inactivity (days since previous order before/at this time)
+  const purchasedAt = new Date(o.datePaid ?? o.dateCreated);
+  const purchasedAtISO = purchasedAt.toISOString();
+  const { rows: [prev] } = await pool.query(
+    `SELECT MAX(COALESCE("datePaid","dateCreated")) AS last
+       FROM orders
+      WHERE "organizationId" = $1
+        AND "clientId" = $2
+        AND id <> $3
+        AND COALESCE("datePaid","dateCreated") <= $4`,
+    [organizationId, o.clientId, orderId, purchasedAt],
+  );
+  const last = prev?.last ? new Date(prev.last) : null;
+  const daysSinceLastPurchase = last
+    ? Math.floor((purchasedAt.getTime() - last.getTime()) / (1000 * 60 * 60 * 24))
+    : undefined;
 
   const eventPayload: EventPayload = {
     organizationId,
@@ -538,29 +504,29 @@ export async function evaluateRulesForOrder(opts: {
     orderId,
     purchasedProductIds,
     purchasedAtISO,
+    daysSinceLastPurchase,
   };
 
   const now = new Date();
 
-  // 3) Load rules (scope/event are fixed to base/order_paid)
+  // 4) Load rules for base/order_paid only
   const { rows: ruleRows } = await pool.query(
     `SELECT id, name, description, event, scope,
             "isEnabled" AS enabled,
-            "stopOnMatch",
             "runOncePerOrder",
             "startDate","endDate",
-            conditions, actions, priority
+            conditions, actions
        FROM "magicRules"
       WHERE "organizationId" = $1
         AND event = 'order_paid'
         AND scope = 'base'
-      ORDER BY priority ASC, "updatedAt" DESC
+      ORDER BY "updatedAt" DESC
       LIMIT 500`,
     [organizationId],
   );
 
-  // 3a) Filter by schedule window and once-per-order
-  const rulesToRun: { rule: MagicRule; meta: { id: string; runOnce: boolean } }[] = [];
+  // 5) Filter by schedule window and run-once
+  const rulesToRun: { rule: MagicRule; meta: { id: string } }[] = [];
   for (const r of ruleRows) {
     const startOk = !r.startDate || new Date(r.startDate) <= now;
     const notExpired = !r.endDate || new Date(r.endDate) >= now;
@@ -568,23 +534,19 @@ export async function evaluateRulesForOrder(opts: {
     // auto-disable if expired
     if (r.endDate && new Date(r.endDate) < now && r.enabled) {
       await pool.query(
-        `UPDATE "magicRules" SET "isEnabled" = FALSE, "updatedAt" = NOW()
-          WHERE id = $1`,
+        `UPDATE "magicRules" SET "isEnabled" = FALSE, "updatedAt" = NOW() WHERE id = $1`,
         [r.id],
       );
     }
 
-    // Skip if disabled or outside window
     if (!r.enabled || !startOk || !notExpired) continue;
 
-    // Skip if once-per-order already executed
-    if (r.runOncePerOrder) {
-      const { rowCount } = await pool.query(
-        `SELECT 1 FROM "magicRuleExecutions" WHERE "ruleId" = $1 AND "orderId" = $2 LIMIT 1`,
-        [r.id, orderId],
-      );
-      if (rowCount > 0) continue;
-    }
+    // ALWAYS run once per order → skip if already executed
+    const { rowCount } = await pool.query(
+      `SELECT 1 FROM "magicRuleExecutions" WHERE "ruleId" = $1 AND "orderId" = $2 LIMIT 1`,
+      [r.id, orderId],
+    );
+    if (rowCount > 0) continue;
 
     const rule: MagicRule = {
       id: r.id,
@@ -593,32 +555,32 @@ export async function evaluateRulesForOrder(opts: {
       match: { anyOfEvents: ["order_paid"] },
       conditions: Array.isArray(r.conditions) ? r.conditions : JSON.parse(r.conditions ?? "[]"),
       actions: Array.isArray(r.actions) ? r.actions : JSON.parse(r.actions ?? "[]"),
-      stopAfterMatch: Boolean(r.stopOnMatch),
+      stopAfterMatch: true,
     };
 
-    rulesToRun.push({ rule, meta: { id: r.id, runOnce: !!r.runOncePerOrder } });
+    rulesToRun.push({ rule, meta: { id: r.id } });
   }
 
   if (!rulesToRun.length) return [];
 
-  // 4) Run the engine
-  const results = await runMagicRules(eventPayload, rulesToRun.map(x => x.rule));
+  // 6) Run engine (will stop after first match)
+  const results = await runMagicRules(eventPayload, rulesToRun.map((x) => x.rule));
 
-  // 5) Persist execution for run-once rules that actually executed actions
+  // 7) Persist execution for the matched rule (if it fired)
   for (let i = 0; i < results.length; i++) {
     const res = results[i];
     const meta = rulesToRun[i]?.meta;
     if (!meta) continue;
     const fired = res.matched && res.actionsExecuted.length > 0;
-    if (fired && meta.runOnce) {
+    if (fired) {
       await pool.query(
         `INSERT INTO "magicRuleExecutions" ("ruleId","orderId","organizationId","createdAt")
          VALUES ($1,$2,$3,NOW())
          ON CONFLICT ("ruleId","orderId") DO NOTHING`,
         [meta.id, orderId, organizationId],
       );
+      break; // stop after recording the first (only) match
     }
-    // stopAfterMatch is honored inside runMagicRules; nothing extra here
   }
 
   return results;
