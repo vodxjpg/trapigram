@@ -1,3 +1,5 @@
+// /home/zodx/Desktop/trapigram/src/app/api/order/[id]/route.ts
+
 // src/app/api/order/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
@@ -206,7 +208,7 @@ export async function GET(
     ...affRes.rows.map((r: any) => ({ ...r, isAffiliate: true })),
   ];
 
-let products = all.map((r: any) => ({
+  let products = all.map((r: any) => ({
     id: r.id,
     title: r.title,
     description: r.description,
@@ -218,34 +220,38 @@ let products = all.map((r: any) => ({
     subtotal: Number(r.unitPrice) * r.quantity,
   }));
 
-   // Enrich with *immediate supplier* (only for non-affiliate lines)
- const supplierCache = new Map<string, { orgId: string | null; name: string | null }>();
- products = await Promise.all(
-   products.map(async (p) => {
-     if (p.isAffiliate) return { ...p, supplierOrgId: null, supplierName: null };
-     if (supplierCache.has(p.id)) {
-       const cached = supplierCache.get(p.id)!;
-       return { ...p, supplierOrgId: cached.orgId, supplierName: cached.name };
-     }
-     const sup = await resolveImmediateSupplierForTargetProduct(p.id);
-     supplierCache.set(p.id, sup);
-     return { ...p, supplierOrgId: sup.orgId, supplierName: sup.name };
-   }),
- );
+  // Enrich with *immediate supplier* (only for non-affiliate lines)
+  const supplierCache = new Map<string, { orgId: string | null; name: string | null }>();
+  products = await Promise.all(
+    products.map(async (p) => {
+      if (p.isAffiliate) return { ...p, supplierOrgId: null, supplierName: null };
+      if (supplierCache.has(p.id)) {
+        const cached = supplierCache.get(p.id)!;
+        return { ...p, supplierOrgId: cached.orgId, supplierName: cached.name };
+      }
+      const sup = await resolveImmediateSupplierForTargetProduct(p.id);
+      supplierCache.set(p.id, sup);
+      return { ...p, supplierOrgId: sup.orgId, supplierName: sup.name };
+    }),
+  );
 
   // 6. Compute subtotal *only* across non-affiliate (monetary) items
   const subtotal = products
     .filter(p => !p.isAffiliate)
     .reduce((sum, p) => sum + p.subtotal, 0);
 
-  // 7. Build full response
+  // 7. Build subtotal and dropshipper fields (fix: only infer for S- orders)
   const dropshipper = extractDropshipper(order.orderMeta);
+  const isSupplierOrder = String(order.orderKey ?? "").startsWith("S-");
   let dropshipperOrgId: string | null = dropshipper.orgId;
-  // Infer org id if metadata absent
-  if (!dropshipperOrgId) {
+
+  // ✅ Only infer a dropshipper for supplier orders (S-xxxx).
+  //    Normal base orders must NOT be attributed a dropshipper via mapping.
+  if (!dropshipperOrgId && isSupplierOrder) {
     dropshipperOrgId = await inferDownstreamOrgId(order.id, order.cartId, order.orderKey);
   }
-  // Backfill label for legacy orders (or when stored name is missing)
+
+  // Backfill label only when we have a dropshipper org
   let dropshipperName: string | null = dropshipper.name ?? null;
   if (!dropshipperName && dropshipperOrgId) {
     dropshipperName = await resolveDropshipperLabel(dropshipperOrgId);
@@ -263,7 +269,7 @@ let products = all.map((r: any) => ({
     status: order.status,
     country: order.country,
     orderMeta: normalizedMeta,                          // keep original meta (array of events)
-    dropshipperOrgId,                                   // immediate downstream org (if inferred)
+    dropshipperOrgId,                                   // now present only on S-orders or when explicitly stored
     dropshipperName,                                    // "organizations.name (ownerEmail)" if resolvable
     products,
     coupon: order.couponCode,
