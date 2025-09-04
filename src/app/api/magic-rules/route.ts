@@ -66,12 +66,18 @@ const ActionSchema = z.discriminatedUnion("kind", [
     action: z.string().default("promo_multiplier"),
     description: z.string().nullable().optional(),
   }),
+  z.object({
+    kind: z.literal("queue_next_order_points"),
+    points: z.number().int().positive(),
+    expiresAtISO: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+  }),
 ]);
 
 const CreateSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional().nullable(),
-  // event/scope are locked server-side
+  // event/scope locked server-side; stopOnMatch & runOncePerOrder forced
   isEnabled: z.boolean().default(true),
   startDate: z.string().optional().nullable(), // allow datetime-local strings
   endDate: z.string().optional().nullable(),

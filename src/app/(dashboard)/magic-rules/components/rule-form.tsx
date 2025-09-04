@@ -18,7 +18,6 @@ import { X } from "lucide-react";
 const hours = Array.from({ length: 24 }, (_, i) => i);
 
 const ConditionKinds = [
-  { value: "always", label: "Always" },
   { value: "customer_inactive_for_days", label: "Hasn’t ordered for… days" },
   { value: "purchased_product_in_list", label: "Purchased product is one of…" },
   { value: "purchase_time_in_window", label: "Purchase time is between…" },
@@ -31,6 +30,7 @@ const actionKindOptions = [
   { value: "recommend_product", label: "Recommend a product" },
   { value: "grant_affiliate_points", label: "Grant affiliate points" },
   { value: "multiply_affiliate_points_for_order", label: "Multiply affiliate points (this order)" },
+  { value: "queue_next_order_points", label: "Grant extra points on NEXT order" },
 ] as const;
 
 const schema = z.object({
@@ -55,27 +55,29 @@ export function RuleForm({ rule }: { rule?: any }) {
       isEnabled: true,
       startDate: null,
       endDate: null,
-      conditions: [{ kind: "always" }],
+      conditions: [],
       actions: [],
     },
   });
 
   // Local builders keep the UI snappy and structured
-  const [conditions, setConditions] = useState<any[]>([{ kind: "always" }]);
+  const [conditions, setConditions] = useState<any[]>([]);
   const [actions, setActions] = useState<any[]>([]);
 
   useEffect(() => {
     if (rule) {
+      // filter out 'always' from existing data so it doesn't appear in the UI
+      const incomingConds = Array.isArray(rule.conditions) ? rule.conditions.filter((c: any) => c?.kind !== "always") : [];
       form.reset({
         name: rule.name ?? "",
         description: rule.description ?? "",
         isEnabled: !!rule.isEnabled,
         startDate: rule.startDate ? new Date(rule.startDate).toISOString().slice(0, 16) : null,
         endDate: rule.endDate ? new Date(rule.endDate).toISOString().slice(0, 16) : null,
-        conditions: Array.isArray(rule.conditions) ? rule.conditions : [],
+        conditions: incomingConds,
         actions: Array.isArray(rule.actions) ? rule.actions : [],
       });
-      setConditions(Array.isArray(rule.conditions) ? rule.conditions : []);
+      setConditions(incomingConds);
       setActions(Array.isArray(rule.actions) ? rule.actions : []);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -83,10 +85,9 @@ export function RuleForm({ rule }: { rule?: any }) {
 
   // ——— Condition builder ———
   const addCondition = (kind: string) => {
-    if (kind === "always") setConditions(prev => [...prev, { kind }]);
     if (kind === "customer_inactive_for_days") setConditions(prev => [...prev, { kind, days: 30 }]);
     if (kind === "purchased_product_in_list") setConditions(prev => [...prev, { kind, productIds: [] }]);
-    if (kind === "purchase_time_in_window") setConditions(prev => [...prev, { kind, fromHour: 0, toHour: 23 }]); // inclusive is enforced in engine
+    if (kind === "purchase_time_in_window") setConditions(prev => [...prev, { kind, fromHour: 0, toHour: 23 }]); // inclusive enforced in engine
   };
   const removeCondition = (idx: number) => setConditions(prev => prev.filter((_, i) => i !== idx));
 
@@ -145,6 +146,16 @@ export function RuleForm({ rule }: { rule?: any }) {
           multiplier: 2,
           action: "promo_multiplier",
           description: "",
+        },
+      ]);
+    } else if (kind === "queue_next_order_points") {
+      setActions(prev => [
+        ...prev,
+        {
+          kind,
+          points: 100,
+          expiresAtISO: null,
+          description: "Come back bonus",
         },
       ]);
     }
@@ -300,10 +311,10 @@ export function RuleForm({ rule }: { rule?: any }) {
                   <div key={idx} className="rounded-lg border p-3 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="font-medium">
-                        {c.kind === "always" && "Always"}
                         {c.kind === "customer_inactive_for_days" && "Hasn’t ordered for… days"}
                         {c.kind === "purchased_product_in_list" && "Purchased product is one of"}
                         {c.kind === "purchase_time_in_window" && "Purchase time is between"}
+                        {!["customer_inactive_for_days","purchased_product_in_list","purchase_time_in_window"].includes(c.kind) && c.kind}
                       </div>
                       <Button type="button" variant="ghost" size="sm" onClick={() => removeCondition(idx)}>
                         <X className="h-4 w-4" />
@@ -412,6 +423,9 @@ export function RuleForm({ rule }: { rule?: any }) {
                     )}
                   </div>
                 ))}
+                {conditions.length === 0 && (
+                  <p className="text-sm text-muted-foreground">Add at least one condition or leave empty to target all paid orders.</p>
+                )}
               </div>
             </div>
 
@@ -784,6 +798,55 @@ export function RuleForm({ rule }: { rule?: any }) {
                             }
                           />
                         </div>
+                      </div>
+                    )}
+
+                    {a.kind === "queue_next_order_points" && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <FormLabel>Points</FormLabel>
+                          <Input
+                            type="number"
+                            value={a.points}
+                            onChange={(e) =>
+                              setActions(prev =>
+                                prev.map((p, i) =>
+                                  i === idx ? ({ ...p, points: Math.max(1, Number(e.target.value || 1)) }) : p
+                                )
+                              )
+                            }
+                          />
+                        </div>
+                        <div>
+                          <FormLabel>Expires (optional)</FormLabel>
+                          <Input
+                            type="datetime-local"
+                            value={a.expiresAtISO ?? ""}
+                            onChange={(e) =>
+                              setActions(prev =>
+                                prev.map((p, i) =>
+                                  i === idx ? ({ ...p, expiresAtISO: e.target.value || null }) : p
+                                )
+                              )
+                            }
+                          />
+                        </div>
+                        <div>
+                          <FormLabel>Description</FormLabel>
+                          <Input
+                            value={a.description ?? ""}
+                            onChange={(e) =>
+                              setActions(prev =>
+                                prev.map((p, i) =>
+                                  i === idx ? ({ ...p, description: e.target.value }) : p
+                                )
+                              )
+                            }
+                          />
+                        </div>
+                        <p className="md:col-span-3 text-xs text-muted-foreground">
+                          Queues a one-time points bonus that will be automatically applied to the customer’s next paid order (before rules run).
+                        </p>
                       </div>
                     )}
                   </div>

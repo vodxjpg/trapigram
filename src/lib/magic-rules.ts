@@ -8,6 +8,7 @@
  * - Run once per order: ALWAYS TRUE
  * - Hours are always inclusive
  * - Channels limited to: email | telegram
+ * - Supports combined conditions (AND) and multiple actions per rule
  */
 
 import { z } from "zod";
@@ -105,6 +106,12 @@ export const ActionSchema = z.discriminatedUnion("kind", [
     action: z.string().default("promo_multiplier"),
     description: z.string().nullable().optional(),
   }),
+  z.object({
+    kind: z.literal("queue_next_order_points"),
+    points: z.number().int().positive(),
+    expiresAtISO: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+  }),
 ]);
 
 export type Action = z.infer<typeof ActionSchema>;
@@ -171,6 +178,7 @@ function checkCondition(cond: Condition, event: EventPayload): boolean {
       }
     }
   }
+  return false;
 }
 
 /* ───────────────────── Actions – implementations ──────────────────── */
@@ -292,6 +300,30 @@ async function grantAffiliatePointsOnce(opts: {
   } finally {
     client.release();
   }
+}
+
+async function queueNextOrderPoints(opts: {
+  organizationId: string;
+  clientId: string;
+  points: number;
+  description?: string | null;
+  expiresAtISO?: string | null;
+}) {
+  await pool.query(
+    `
+    INSERT INTO "affiliatePointBoosters"(
+      "organizationId","clientId",points,"expiresAt","createdAt","updatedAt",description
+    )
+    VALUES($1,$2,$3,$4,NOW(),NOW(),$5)
+    `,
+    [
+      opts.organizationId,
+      opts.clientId,
+      opts.points,
+      opts.expiresAtISO ? new Date(opts.expiresAtISO) : null,
+      opts.description ?? null,
+    ],
+  );
 }
 
 async function notifyViaOutbox(opts: {
@@ -438,6 +470,18 @@ export async function runMagicRules(
           executed.push(`multiply_affiliate_points_for_order:x${action.multiplier}`);
           break;
         }
+
+        case "queue_next_order_points": {
+          await queueNextOrderPoints({
+            organizationId: event.organizationId,
+            clientId: event.clientId,
+            points: action.points,
+            description: action.description ?? null,
+            expiresAtISO: action.expiresAtISO ?? null,
+          });
+          executed.push(`queue_next_order_points:${action.points}`);
+          break;
+        }
       }
     }
 
@@ -508,6 +552,76 @@ export async function evaluateRulesForOrder(opts: {
   };
 
   const now = new Date();
+
+  // 3b) Auto-consume any queued boosters on THIS order
+  {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows: boosters } = await client.query(
+        `
+        SELECT id, points, description
+          FROM "affiliatePointBoosters"
+         WHERE "organizationId" = $1
+           AND "clientId" = $2
+           AND "consumedAt" IS NULL
+           AND ("expiresAt" IS NULL OR "expiresAt" >= $3)
+        FOR UPDATE
+        `,
+        [organizationId, o.clientId, purchasedAt],
+      );
+
+      if (boosters.length) {
+        const total = boosters.reduce((s, b) => s + (b.points || 0), 0);
+        // award in one go
+        await client.query(
+          `
+          INSERT INTO "affiliatePointLogs"(
+            id,"organizationId","clientId",points,action,description,"sourceClientId",
+            "createdAt","updatedAt"
+          )
+          VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,NULL,NOW(),NOW())
+          `,
+          [
+            organizationId,
+            o.clientId,
+            total,
+            "next_order_bonus",
+            `Auto-applied ${boosters.length} booster(s) on order ${orderId}`,
+          ],
+        );
+        // update balances
+        await client.query(
+          `
+          INSERT INTO "affiliatePointBalances"(
+            "clientId","organizationId","pointsCurrent","pointsSpent","createdAt","updatedAt"
+          )
+          VALUES($1,$2,$3,0,NOW(),NOW())
+          ON CONFLICT("clientId","organizationId") DO UPDATE SET
+            "pointsCurrent" = "affiliatePointBalances"."pointsCurrent" + EXCLUDED."pointsCurrent",
+            "updatedAt"     = NOW()
+          `,
+          [o.clientId, organizationId, total],
+        );
+        // mark boosters consumed
+        await client.query(
+          `
+          UPDATE "affiliatePointBoosters"
+             SET "consumedAt" = NOW(), "consumedOrderId" = $1, "updatedAt" = NOW()
+           WHERE id = ANY($2::uuid[])
+          `,
+          [orderId, boosters.map((b: any) => b.id)],
+        );
+      }
+
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
 
   // 4) Load rules for base/order_paid only
   const { rows: ruleRows } = await pool.query(

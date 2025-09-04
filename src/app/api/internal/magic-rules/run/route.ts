@@ -14,24 +14,7 @@ import {
 /**
  * POST /api/internal/magic-rules/run
  * Secure internal endpoint to evaluate Magic Rules for a single event.
- *
- * Auth: same as your other internal routes – requires x-internal-secret OR a logged-in context.
- * We accept either:
- *  - Header "x-internal-secret" === process.env.INTERNAL_API_SECRET, OR
- *  - Standard session context via getContext(req)
- *
- * Body:
- * {
- *   event: {
- *     organizationId: string,
- *     clientId: string,
- *     userId?: string | null,
- *     country?: string | null,
- *     type: "order_paid" | "manual" | "sweep",
- *     // facts per type (see lib)
- *   },
- *   rules: MagicRule[]                      // use the schema we defined
- * }
+ * Accepts either session context or x-internal-secret.
  */
 
 const EventBase = z.object({
@@ -47,6 +30,8 @@ const EventOrderPaid = EventBase.extend({
   purchasedProductIds: z.array(z.string().min(1)).min(1),
   purchasedAtISO: z.string().min(1),
   baseAffiliatePointsAwarded: z.number().int().optional(),
+  // allow injecting inactivity days for testing
+  daysSinceLastPurchase: z.number().int().optional(),
 });
 
 const EventManual = EventBase.extend({
@@ -70,7 +55,6 @@ const BodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  // Allow either internal-secret or normal ctx (owner hitting from dashboard).
   const hdrSecret = req.headers.get("x-internal-secret") || "";
   const envSecret = process.env.INTERNAL_API_SECRET || "";
 
@@ -94,7 +78,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
 
-  // Enforce organizationId if we do have a valid ctx
   if (ctxOk) {
     const { organizationId } = ctx;
     if (body.event.organizationId !== organizationId) {
