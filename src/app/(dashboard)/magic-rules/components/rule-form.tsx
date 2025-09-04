@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { X } from "lucide-react";
+import { Plus, Minus } from "lucide-react";
 
 const hours = Array.from({ length: 24 }, (_, i) => i);
 
@@ -66,8 +66,10 @@ export function RuleForm({ rule }: { rule?: any }) {
 
   useEffect(() => {
     if (rule) {
-      // filter out 'always' from existing data so it doesn't appear in the UI
-      const incomingConds = Array.isArray(rule.conditions) ? rule.conditions.filter((c: any) => c?.kind !== "always") : [];
+      // filter out 'always' if present from legacy data
+      const incomingConds = Array.isArray(rule.conditions)
+        ? rule.conditions.filter((c: any) => c?.kind !== "always")
+        : [];
       form.reset({
         name: rule.name ?? "",
         description: rule.description ?? "",
@@ -87,7 +89,7 @@ export function RuleForm({ rule }: { rule?: any }) {
   const addCondition = (kind: string) => {
     if (kind === "customer_inactive_for_days") setConditions(prev => [...prev, { kind, days: 30 }]);
     if (kind === "purchased_product_in_list") setConditions(prev => [...prev, { kind, productIds: [] }]);
-    if (kind === "purchase_time_in_window") setConditions(prev => [...prev, { kind, fromHour: 0, toHour: 23 }]); // inclusive enforced in engine
+    if (kind === "purchase_time_in_window") setConditions(prev => [...prev, { kind, fromHour: 9, toHour: 17 }]);
   };
   const removeCondition = (idx: number) => setConditions(prev => prev.filter((_, i) => i !== idx));
 
@@ -287,10 +289,14 @@ export function RuleForm({ rule }: { rule?: any }) {
             </div>
 
             {/* Conditions */}
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">When should this run?</h3>
+                <div>
+                  <h3 className="text-lg font-semibold">When should this run?</h3>
+                  <p className="text-xs text-muted-foreground">Rule runs when <strong>ALL</strong> conditions below are true (AND).</p>
+                </div>
                 <div className="flex items-center gap-2">
+                  <Plus className="h-4 w-4 text-muted-foreground" />
                   <Select onValueChange={(v) => addCondition(v)}>
                     <SelectTrigger className="w-[260px]">
                       <SelectValue placeholder="Add condition…" />
@@ -306,125 +312,180 @@ export function RuleForm({ rule }: { rule?: any }) {
                 </div>
               </div>
 
-              <div className="space-y-2">
+              {/* Condition list with visual AND connectors */}
+              <div className="space-y-4">
                 {conditions.map((c, idx) => (
-                  <div key={idx} className="rounded-lg border p-3 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="font-medium">
-                        {c.kind === "customer_inactive_for_days" && "Hasn’t ordered for… days"}
-                        {c.kind === "purchased_product_in_list" && "Purchased product is one of"}
-                        {c.kind === "purchase_time_in_window" && "Purchase time is between"}
-                        {!["customer_inactive_for_days","purchased_product_in_list","purchase_time_in_window"].includes(c.kind) && c.kind}
+                  <div key={idx} className="space-y-4">
+                    {/* connector (for all but first) */}
+                    {idx > 0 && (
+                      <div className="flex items-center gap-2">
+                        <div className="h-px flex-1 border-t border-dashed" />
+                        <span className="text-[10px] uppercase tracking-wider bg-background border rounded-full px-2 py-0.5">
+                          AND
+                        </span>
+                        <div className="h-px flex-1 border-t border-dashed" />
                       </div>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => removeCondition(idx)}>
-                        <X className="h-4 w-4" />
-                      </Button>
+                    )}
+
+                    <div className="rounded-lg border p-3 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="font-medium">
+                          {c.kind === "customer_inactive_for_days" && "Hasn’t ordered for… days"}
+                          {c.kind === "purchased_product_in_list" && "Purchased product is one of"}
+                          {c.kind === "purchase_time_in_window" && "Purchase time is between"}
+                          {!["customer_inactive_for_days","purchased_product_in_list","purchase_time_in_window"].includes(c.kind) && c.kind}
+                        </div>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => removeCondition(idx)}>
+                          <Minus className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      {c.kind === "customer_inactive_for_days" && (
+                        <div className="space-y-2">
+                          <FormLabel>Days of inactivity</FormLabel>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={c.days ?? 30}
+                            onChange={(e) =>
+                              setConditions((prev) =>
+                                prev.map((p, i) =>
+                                  i === idx ? { ...p, days: Math.max(1, Number(e.target.value || 1)) } : p,
+                                ),
+                              )
+                            }
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Matches when the last order was at least this many days ago.
+                          </p>
+                        </div>
+                      )}
+
+                      {c.kind === "purchased_product_in_list" && (
+                        <div className="space-y-2">
+                          <FormLabel>Product IDs (comma separated)</FormLabel>
+                          <Input
+                            placeholder="prod_123, prod_456"
+                            value={(c.productIds || []).join(", ")}
+                            onChange={(e) =>
+                              setConditions((prev) =>
+                                prev.map((p, i) =>
+                                  i === idx
+                                    ? {
+                                        ...p,
+                                        productIds: e.target.value
+                                          .split(",")
+                                          .map((s) => s.trim())
+                                          .filter(Boolean),
+                                      }
+                                    : p,
+                                ),
+                              )
+                            }
+                          />
+                          <p className="text-xs text-muted-foreground">Paste IDs for now; product search can be added later.</p>
+                        </div>
+                      )}
+
+                      {c.kind === "purchase_time_in_window" && (
+                        <div className="grid grid-cols-2 gap-3 items-end">
+                          <div>
+                            <FormLabel>From hour</FormLabel>
+                            <Select
+                              value={String(c.fromHour)}
+                              onValueChange={(v) =>
+                                setConditions((prev) =>
+                                  prev.map((p, i) => (i === idx ? { ...p, fromHour: Number(v) } : p)),
+                                )
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {hours.map((h) => (
+                                  <SelectItem key={h} value={String(h)}>
+                                    {h}:00
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <FormLabel>To hour</FormLabel>
+                            <Select
+                              value={String(c.toHour)}
+                              onValueChange={(v) =>
+                                setConditions((prev) =>
+                                  prev.map((p, i) => (i === idx ? { ...p, toHour: Number(v) } : p)),
+                                )
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {hours.map((h) => (
+                                  <SelectItem key={h} value={String(h)}>
+                                    {h}:00
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <p className="col-span-2 text-xs text-muted-foreground">
+                            Hours are <strong>inclusive</strong> (e.g. 09 and 17 both match).
+                          </p>
+                        </div>
+                      )}
                     </div>
-
-                    {c.kind === "customer_inactive_for_days" && (
-                      <div className="space-y-2">
-                        <FormLabel>Days of inactivity</FormLabel>
-                        <Input
-                          type="number"
-                          min={1}
-                          value={c.days ?? 30}
-                          onChange={(e) =>
-                            setConditions((prev) =>
-                              prev.map((p, i) =>
-                                i === idx ? { ...p, days: Math.max(1, Number(e.target.value || 1)) } : p,
-                              ),
-                            )
-                          }
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Rule matches when the last order was at least this many days ago.
-                        </p>
-                      </div>
-                    )}
-
-                    {c.kind === "purchased_product_in_list" && (
-                      <div className="space-y-2">
-                        <FormLabel>Product IDs (comma separated)</FormLabel>
-                        <Input
-                          placeholder="prod_123, prod_456"
-                          value={(c.productIds || []).join(", ")}
-                          onChange={(e) =>
-                            setConditions((prev) =>
-                              prev.map((p, i) =>
-                                i === idx
-                                  ? {
-                                      ...p,
-                                      productIds: e.target.value
-                                        .split(",")
-                                        .map((s) => s.trim())
-                                        .filter(Boolean),
-                                    }
-                                  : p,
-                              ),
-                            )
-                          }
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Tip: paste IDs for now; product search can be wired later.
-                        </p>
-                      </div>
-                    )}
-
-                    {c.kind === "purchase_time_in_window" && (
-                      <div className="grid grid-cols-2 gap-3 items-end">
-                        <div>
-                          <FormLabel>From hour</FormLabel>
-                          <Select
-                            value={String(c.fromHour)}
-                            onValueChange={(v) =>
-                              setConditions((prev) =>
-                                prev.map((p, i) => (i === idx ? { ...p, fromHour: Number(v) } : p)),
-                              )
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {hours.map((h) => (
-                                <SelectItem key={h} value={String(h)}>
-                                  {h}:00
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <FormLabel>To hour</FormLabel>
-                          <Select
-                            value={String(c.toHour)}
-                            onValueChange={(v) =>
-                              setConditions((prev) =>
-                                prev.map((p, i) => (i === idx ? { ...p, toHour: Number(v) } : p)),
-                              )
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {hours.map((h) => (
-                                <SelectItem key={h} value={String(h)}>
-                                  {h}:00
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <p className="col-span-2 text-xs text-muted-foreground">
-                          Hours are <strong>inclusive</strong> (e.g. 09:00 and 17:00 both count).
-                        </p>
-                      </div>
-                    )}
                   </div>
                 ))}
+
+                {/* Empty state */}
                 {conditions.length === 0 && (
-                  <p className="text-sm text-muted-foreground">Add at least one condition or leave empty to target all paid orders.</p>
+                  <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground flex items-center justify-between">
+                    No conditions yet — this rule will target <em>all</em> paid orders.
+                    <div className="flex items-center gap-2">
+                      <Plus className="h-4 w-4" />
+                      <Select onValueChange={(v) => addCondition(v)}>
+                        <SelectTrigger className="w-[240px]">
+                          <SelectValue placeholder="Add a condition…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ConditionKinds.map((c) => (
+                            <SelectItem key={c.value} value={c.value}>
+                              {c.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+
+                {/* add another condition CTA */}
+                {conditions.length > 0 && (
+                  <div className="flex justify-center">
+                    <div className="flex items-center gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => {}}>
+                        {/* just a visual separator; button disabled */}
+                        <span className="text-xs text-muted-foreground">Add another</span>
+                      </Button>
+                      <Select onValueChange={(v) => addCondition(v)}>
+                        <SelectTrigger className="w-[220px]">
+                          <SelectValue placeholder="Add condition…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ConditionKinds.map((c) => (
+                            <SelectItem key={c.value} value={c.value}>
+                              {c.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -433,18 +494,21 @@ export function RuleForm({ rule }: { rule?: any }) {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold">What should happen?</h3>
-                <Select onValueChange={(v) => addAction(v)}>
-                  <SelectTrigger className="w-[260px]">
-                    <SelectValue placeholder="Add action…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {actionKindOptions.map((a) => (
-                      <SelectItem key={a.value} value={a.value}>
-                        {a.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-2">
+                  <Plus className="h-4 w-4 text-muted-foreground" />
+                  <Select onValueChange={(v) => addAction(v)}>
+                    <SelectTrigger className="w-[260px]">
+                      <SelectValue placeholder="Add action…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {actionKindOptions.map((a) => (
+                        <SelectItem key={a.value} value={a.value}>
+                          {a.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div className="space-y-4">
@@ -455,7 +519,7 @@ export function RuleForm({ rule }: { rule?: any }) {
                         {actionKindOptions.find((k) => k.value === a.kind)?.label || a.kind}
                       </div>
                       <Button type="button" variant="ghost" size="sm" onClick={() => removeAction(idx)}>
-                        <X className="h-4 w-4" />
+                        <Minus className="h-4 w-4" />
                       </Button>
                     </div>
 
