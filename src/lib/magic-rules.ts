@@ -501,19 +501,16 @@ export async function runMagicRules(
 
 
 // Helper: load rules from DB (UI table shape) and run engine for an order
+// Helper: load rules from DB (UI table shape) and run engine for an order
 export async function evaluateRulesForOrder(opts: {
   organizationId: string;
   orderId: string;
-  event: MagicEventType; // currently only "order_paid" is used
+  event: MagicEventType; // "order_paid" only for now
 }) {
   const { organizationId, orderId, event } = opts;
+  if (event !== "order_paid") return [];
 
-  if (event !== "order_paid") {
-    // Extend later for other events if/when you use them
-    return [];
-  }
-
-  // 1) Load the order + cart
+  // 1) Load minimal order info
   const { rows: [o] } = await pool.query(
     `SELECT id,"clientId",country,"datePaid","dateCreated","cartId"
        FROM orders
@@ -523,17 +520,14 @@ export async function evaluateRulesForOrder(opts: {
   );
   if (!o) return [];
 
-  // 2) Product ids from cart (products or affiliate products)
+  // 2) Product ids from cart
   const { rows: pRows } = await pool.query(
     `SELECT COALESCE("productId","affiliateProductId") AS pid
        FROM "cartProducts"
       WHERE "cartId" = $1`,
     [o.cartId],
   );
-  const purchasedProductIds = pRows
-    .map((r) => String(r.pid))
-    .filter(Boolean);
-
+  const purchasedProductIds = pRows.map(r => String(r.pid)).filter(Boolean);
   const purchasedAtISO = new Date(o.datePaid ?? o.dateCreated).toISOString();
 
   const eventPayload: EventPayload = {
@@ -544,33 +538,88 @@ export async function evaluateRulesForOrder(opts: {
     orderId,
     purchasedProductIds,
     purchasedAtISO,
-    // baseAffiliatePointsAwarded: optionally compute if you have it
   };
 
-  // 3) Load rules from the UI table (camelCase)
+  const now = new Date();
+
+  // 3) Load rules (scope/event are fixed to base/order_paid)
   const { rows: ruleRows } = await pool.query(
-    `SELECT id, name, "isEnabled" AS enabled, "stopOnMatch",
-            conditions, actions
+    `SELECT id, name, description, event, scope,
+            "isEnabled" AS enabled,
+            "stopOnMatch",
+            "runOncePerOrder",
+            "startDate","endDate",
+            conditions, actions, priority
        FROM "magicRules"
       WHERE "organizationId" = $1
-        AND "isEnabled" = TRUE
         AND event = 'order_paid'
+        AND scope = 'base'
       ORDER BY priority ASC, "updatedAt" DESC
       LIMIT 500`,
     [organizationId],
   );
 
-  const rules: MagicRule[] = ruleRows.map((r: any) => ({
-    id: r.id,
-    name: r.name || r.id,
-    enabled: r.enabled ?? true,
-    match: { anyOfEvents: ["order_paid"] },
-    conditions: Array.isArray(r.conditions) ? r.conditions : JSON.parse(r.conditions ?? "[]"),
-    actions: Array.isArray(r.actions) ? r.actions : JSON.parse(r.actions ?? "[]"),
-    stopAfterMatch: Boolean(r.stopOnMatch),
-  }));
+  // 3a) Filter by schedule window and once-per-order
+  const rulesToRun: { rule: MagicRule; meta: { id: string; runOnce: boolean } }[] = [];
+  for (const r of ruleRows) {
+    const startOk = !r.startDate || new Date(r.startDate) <= now;
+    const notExpired = !r.endDate || new Date(r.endDate) >= now;
 
-  if (!rules.length) return [];
+    // auto-disable if expired
+    if (r.endDate && new Date(r.endDate) < now && r.enabled) {
+      await pool.query(
+        `UPDATE "magicRules" SET "isEnabled" = FALSE, "updatedAt" = NOW()
+          WHERE id = $1`,
+        [r.id],
+      );
+    }
 
-  return runMagicRules(eventPayload, rules);
+    // Skip if disabled or outside window
+    if (!r.enabled || !startOk || !notExpired) continue;
+
+    // Skip if once-per-order already executed
+    if (r.runOncePerOrder) {
+      const { rowCount } = await pool.query(
+        `SELECT 1 FROM "magicRuleExecutions" WHERE "ruleId" = $1 AND "orderId" = $2 LIMIT 1`,
+        [r.id, orderId],
+      );
+      if (rowCount > 0) continue;
+    }
+
+    const rule: MagicRule = {
+      id: r.id,
+      name: r.name || r.id,
+      enabled: true,
+      match: { anyOfEvents: ["order_paid"] },
+      conditions: Array.isArray(r.conditions) ? r.conditions : JSON.parse(r.conditions ?? "[]"),
+      actions: Array.isArray(r.actions) ? r.actions : JSON.parse(r.actions ?? "[]"),
+      stopAfterMatch: Boolean(r.stopOnMatch),
+    };
+
+    rulesToRun.push({ rule, meta: { id: r.id, runOnce: !!r.runOncePerOrder } });
+  }
+
+  if (!rulesToRun.length) return [];
+
+  // 4) Run the engine
+  const results = await runMagicRules(eventPayload, rulesToRun.map(x => x.rule));
+
+  // 5) Persist execution for run-once rules that actually executed actions
+  for (let i = 0; i < results.length; i++) {
+    const res = results[i];
+    const meta = rulesToRun[i]?.meta;
+    if (!meta) continue;
+    const fired = res.matched && res.actionsExecuted.length > 0;
+    if (fired && meta.runOnce) {
+      await pool.query(
+        `INSERT INTO "magicRuleExecutions" ("ruleId","orderId","organizationId","createdAt")
+         VALUES ($1,$2,$3,NOW())
+         ON CONFLICT ("ruleId","orderId") DO NOTHING`,
+        [meta.id, orderId, organizationId],
+      );
+    }
+    // stopAfterMatch is honored inside runMagicRules; nothing extra here
+  }
+
+  return results;
 }

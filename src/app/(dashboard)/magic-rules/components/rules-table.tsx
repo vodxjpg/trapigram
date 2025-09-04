@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, startTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, MoreVertical, Search, ToggleLeft, ToggleRight, Trash2, Edit } from "lucide-react";
+import { Plus, MoreVertical, Search, ToggleLeft, ToggleRight, Trash2, Edit, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -12,14 +12,26 @@ import { toast } from "sonner";
 type Rule = {
   id: string;
   name: string;
-  event: string;
+  event: "order_paid";
+  scope: "base";
   priority: number;
-  scope: "base" | "supplier" | "both";
   isEnabled: boolean;
-  updatedAt: string;
   runOncePerOrder: boolean;
   stopOnMatch: boolean;
+  startDate: string | null;
+  endDate: string | null;
+  updatedAt: string;
 };
+
+function computeStatus(r: Rule) {
+  const now = Date.now();
+  const start = r.startDate ? new Date(r.startDate).getTime() : null;
+  const end   = r.endDate ? new Date(r.endDate).getTime() : null;
+  if (!r.isEnabled) return { label: "Disabled", variant: "outline" as const };
+  if (start && now < start) return { label: "Scheduled", variant: "secondary" as const };
+  if (end && now > end) return { label: "Expired", variant: "destructive" as const };
+  return { label: "Active", variant: "default" as const };
+}
 
 export function MagicRulesTable() {
   const router = useRouter();
@@ -97,9 +109,9 @@ export function MagicRulesTable() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Event</TableHead>
-              <TableHead>Scope</TableHead>
               <TableHead>Priority</TableHead>
+              <TableHead>Window</TableHead>
+              <TableHead>Status</TableHead>
               <TableHead>Once?</TableHead>
               <TableHead>Stop?</TableHead>
               <TableHead>Updated</TableHead>
@@ -111,55 +123,62 @@ export function MagicRulesTable() {
               <TableRow><TableCell colSpan={8} className="h-24 text-center">Loading…</TableCell></TableRow>
             ) : rules.length === 0 ? (
               <TableRow><TableCell colSpan={8} className="h-24 text-center">No rules found.</TableCell></TableRow>
-            ) : rules.map((r) => (
-              <TableRow key={r.id}>
-                <TableCell className="font-medium flex items-center gap-2">
-                  {r.name}
-                  {r.isEnabled ? (
-                    <Badge variant="secondary">Enabled</Badge>
-                  ) : (
-                    <Badge variant="outline">Disabled</Badge>
-                  )}
-                </TableCell>
-                <TableCell>{r.event}</TableCell>
-                <TableCell>{r.scope}</TableCell>
-                <TableCell>{r.priority}</TableCell>
-                <TableCell>{r.runOncePerOrder ? "Yes" : "No"}</TableCell>
-                <TableCell>{r.stopOnMatch ? "Yes" : "No"}</TableCell>
-                <TableCell>{new Date(r.updatedAt).toLocaleString()}</TableCell>
-                <TableCell className="text-right">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon">
-                        <MoreVertical className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => router.push(`/magic-rules/${r.id}`)}>
-                        <Edit className="mr-2 h-4 w-4" /> Edit
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => toggleEnabled(r)}>
-                        {r.isEnabled ? (
-                          <>
-                            <ToggleLeft className="mr-2 h-4 w-4" /> Disable
-                          </>
-                        ) : (
-                          <>
-                            <ToggleRight className="mr-2 h-4 w-4" /> Enable
-                          </>
-                        )}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => onDelete(r)}
-                        className="text-destructive focus:text-destructive"
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" /> Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
-            ))}
+            ) : rules.map((r) => {
+              const st = computeStatus(r);
+              return (
+                <TableRow key={r.id}>
+                  <TableCell className="font-medium">
+                    <div className="flex items-center gap-2">
+                      {r.name}
+                      <Badge variant="outline">order_paid</Badge>
+                      <Badge variant="outline">base</Badge>
+                    </div>
+                  </TableCell>
+                  <TableCell>{r.priority}</TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-muted-foreground" />
+                      <span>{r.startDate ? new Date(r.startDate).toLocaleString() : "—"} → {r.endDate ? new Date(r.endDate).toLocaleString() : "—"}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell><Badge variant={st.variant}>{st.label}</Badge></TableCell>
+                  <TableCell>{r.runOncePerOrder ? "Yes" : "No"}</TableCell>
+                  <TableCell>{r.stopOnMatch ? "Yes" : "No"}</TableCell>
+                  <TableCell>{new Date(r.updatedAt).toLocaleString()}</TableCell>
+                  <TableCell className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => router.push(`/magic-rules/${r.id}`)}>
+                          <Edit className="mr-2 h-4 w-4" /> Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => toggleEnabled(r)}>
+                          {r.isEnabled ? (
+                            <>
+                              <ToggleLeft className="mr-2 h-4 w-4" /> Disable
+                            </>
+                          ) : (
+                            <>
+                              <ToggleRight className="mr-2 h-4 w-4" /> Enable
+                            </>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => onDelete(r)}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
