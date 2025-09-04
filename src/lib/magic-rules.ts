@@ -1,6 +1,4 @@
 // src/lib/magic-rules.ts
-"use server";
-
 /**
  * Magic Rules – core engine
  * ---------------------------------------------------------------
@@ -19,12 +17,8 @@
 import { z } from "zod";
 import { randomBytes } from "crypto";
 import { pgPool as pool } from "@/lib/db";
-import {
-  enqueueNotificationFanout,
-  type NotificationChannel,
-  type NotificationType,
-} from "@/lib/notification-outbox";
-
+import { enqueueNotificationFanout } from "@/lib/notification-outbox";
+import type { NotificationChannel, NotificationType } from "@/lib/notifications";
 /* ─────────────────────────────── Types ─────────────────────────────── */
 
 export type MagicEventType = "order_paid" | "manual" | "sweep";
@@ -503,4 +497,80 @@ export async function runMagicRules(
   }
 
   return results;
+}
+
+
+// Helper: load rules from DB (UI table shape) and run engine for an order
+export async function evaluateRulesForOrder(opts: {
+  organizationId: string;
+  orderId: string;
+  event: MagicEventType; // currently only "order_paid" is used
+}) {
+  const { organizationId, orderId, event } = opts;
+
+  if (event !== "order_paid") {
+    // Extend later for other events if/when you use them
+    return [];
+  }
+
+  // 1) Load the order + cart
+  const { rows: [o] } = await pool.query(
+    `SELECT id,"clientId",country,"datePaid","dateCreated","cartId"
+       FROM orders
+      WHERE id = $1 AND "organizationId" = $2
+      LIMIT 1`,
+    [orderId, organizationId],
+  );
+  if (!o) return [];
+
+  // 2) Product ids from cart (products or affiliate products)
+  const { rows: pRows } = await pool.query(
+    `SELECT COALESCE("productId","affiliateProductId") AS pid
+       FROM "cartProducts"
+      WHERE "cartId" = $1`,
+    [o.cartId],
+  );
+  const purchasedProductIds = pRows
+    .map((r) => String(r.pid))
+    .filter(Boolean);
+
+  const purchasedAtISO = new Date(o.datePaid ?? o.dateCreated).toISOString();
+
+  const eventPayload: EventPayload = {
+    organizationId,
+    clientId: o.clientId,
+    country: o.country,
+    type: "order_paid",
+    orderId,
+    purchasedProductIds,
+    purchasedAtISO,
+    // baseAffiliatePointsAwarded: optionally compute if you have it
+  };
+
+  // 3) Load rules from the UI table (camelCase)
+  const { rows: ruleRows } = await pool.query(
+    `SELECT id, name, "isEnabled" AS enabled, "stopOnMatch",
+            conditions, actions
+       FROM "magicRules"
+      WHERE "organizationId" = $1
+        AND "isEnabled" = TRUE
+        AND event = 'order_paid'
+      ORDER BY priority ASC, "updatedAt" DESC
+      LIMIT 500`,
+    [organizationId],
+  );
+
+  const rules: MagicRule[] = ruleRows.map((r: any) => ({
+    id: r.id,
+    name: r.name || r.id,
+    enabled: r.enabled ?? true,
+    match: { anyOfEvents: ["order_paid"] },
+    conditions: Array.isArray(r.conditions) ? r.conditions : JSON.parse(r.conditions ?? "[]"),
+    actions: Array.isArray(r.actions) ? r.actions : JSON.parse(r.actions ?? "[]"),
+    stopAfterMatch: Boolean(r.stopOnMatch),
+  }));
+
+  if (!rules.length) return [];
+
+  return runMagicRules(eventPayload, rules);
 }
