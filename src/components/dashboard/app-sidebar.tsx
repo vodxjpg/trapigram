@@ -85,9 +85,10 @@ const data = {
       url: "#",
       icon: IconBolt,
       items: [
+        { title: "Announcements", url: "/announcements" },
         { title: "Affiliates", url: "/affiliates" },
         { title: "Coupons", url: "/coupons" },
-        { title: "Announcements", url: "/announcements" },
+        { title: "Magic Rules", url: "/magic-rules" },
       ],
     },
     {

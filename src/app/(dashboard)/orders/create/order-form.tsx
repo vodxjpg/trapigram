@@ -73,7 +73,7 @@ interface Product {
   image: string;
   stockData: Record<string, { [countryCode: string]: number }>;
   subtotal: number;
-   allowBackorders?: boolean;
+  allowBackorders?: boolean;
   isAffiliate?: boolean; // ← new
   categories?: string[]; // ← NEW
 }
@@ -296,7 +296,7 @@ export default function OrderForm() {
   // Category label cache: { [id]: name }
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
 
-    // Load ALL categories → build {id → name} map (no pagination gaps).
+  // Load ALL categories → build {id → name} map (no pagination gaps).
   useEffect(() => {
     (async () => {
       try {
@@ -606,7 +606,7 @@ export default function OrderForm() {
       (sum, e) => sum + (e[clientCountry] || 0),
       0
     );
-     if (totalStock > 0) return true;
+    if (totalStock > 0) return true;
 
     // …or allow it when backorders are enabled
     return p.allowBackorders === true;
@@ -663,7 +663,7 @@ export default function OrderForm() {
         /* map ➜ our <Product> shape, tagging affiliates */
         const mapShop = (p: any): Product => ({
           ...p,
-           allowBackorders: !!p.allowBackorders,   // ← ensure flag present
+          allowBackorders: !!p.allowBackorders,   // ← ensure flag present
           price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
           stockData: p.stockData,
           isAffiliate: false,
@@ -1504,13 +1504,13 @@ export default function OrderForm() {
                             <SelectGroup key={label}>
                               <SelectLabel>{label}</SelectLabel>
                               {items.map((p) => (
-                              <SelectItem key={p.id} value={p.id}>
-  {p.title}
-  {" — $"}
-  {p.regularPrice[clientCountry] ?? p.price}
-  {Object.values(p.stockData).reduce((s, e) => s + (e[clientCountry] || 0), 0) === 0 &&
-   p.allowBackorders ? " (backorder)" : ""}
-</SelectItem>
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.title}
+                                  {" — $"}
+                                  {p.regularPrice[clientCountry] ?? p.price}
+                                  {Object.values(p.stockData).reduce((s, e) => s + (e[clientCountry] || 0), 0) === 0 &&
+                                    p.allowBackorders ? " (backorder)" : ""}
+                                </SelectItem>
 
                               ))}
                               <SelectSeparator />

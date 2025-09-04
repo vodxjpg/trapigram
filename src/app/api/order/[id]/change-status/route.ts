@@ -10,6 +10,7 @@ import { sendNotification } from "@/lib/notifications";
 import { createHmac } from "crypto";
 import type { NotificationType } from "@/lib/notifications";
 import { enqueueNotificationFanout } from "@/lib/notification-outbox";
+import { evaluateRulesForOrder } from "@/lib/magic-rules";
 
 // Vercel runtime hints (keep these AFTER all imports)
 export const runtime = "nodejs";
@@ -1322,6 +1323,17 @@ export async function PATCH(
           sibs.map((s) => getRevenue(s.id, s.organizationId))
         );
 
+        // 🔮 Magic Rules: fire order_paid for paid siblings too
+        await Promise.allSettled(
+          sibs.map((s) =>
+            evaluateRulesForOrder({
+              organizationId: s.organizationId,
+              orderId: s.id,
+              event: "order_paid",
+            })
+          )
+        );
+
       }
 
       // 🔧 STOCK EFFECTS for supplier siblings on cascade
@@ -1569,6 +1581,12 @@ export async function PATCH(
           `Failed to update revenue or capture fee for order ${id}:`,
           err
         );
+      }
+      // Magic Rules: fire order_paid for this order
+      try {
+        await evaluateRulesForOrder({ organizationId, orderId: id, event: "order_paid" });
+      } catch (e) {
+        console.warn("[magicRules] base order eval failed", e);
       }
     }
     if (newStatus === "cancelled") {
