@@ -36,12 +36,18 @@ import {
 } from "@/components/ui/drawer";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Package, Plus, X, Trash2, Search, Edit } from "lucide-react";
+import {
+    Package,
+    Plus,
+    X,
+    Trash2,
+    Search,
+    Edit,
+    Calendar as CalendarIcon,
+} from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { Calendar as CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
-
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
@@ -76,13 +82,23 @@ type OrderItem = { product: Product; quantity: number };
 
 type Warehouse = { id: string; name: string; countries: string[] };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// helpers to safely read the allocations array from any common response shape
-// ─────────────────────────────────────────────────────────────────────────────
+/* ------------------------------------------------------------------ */
+/* Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+const DEBOUNCE_MS = 400;
+
+function firstPointPrice(pp: any): number {
+    if (!pp) return 0;
+    const firstLvl = (Object.values(pp)[0] as any) ?? {};
+    const firstCtMap = (Object.values(firstLvl)[0] as any) ?? {};
+    return firstCtMap.sale ?? firstCtMap.regular ?? 0;
+}
+
+// Normalize different API shapes → unified array of allocations
 function asArray<T = any>(v: any): T[] {
     return Array.isArray(v) ? v : [];
 }
-
 function normalizeAllocationsPayload(payload: any): Array<{
     warehouseId: string;
     country: string;
@@ -96,7 +112,6 @@ function normalizeAllocationsPayload(payload: any): Array<{
         asArray(payload?.data) ||
         asArray(payload?.allocations);
 
-    // Coerce shapes + numbers
     return arr.map((r: any) => ({
         warehouseId: r.warehouseId ?? r.warehouse?.id ?? r.wid ?? "",
         country: r.country ?? r.countryCode ?? r.ct ?? "",
@@ -105,26 +120,12 @@ function normalizeAllocationsPayload(payload: any): Array<{
     }));
 }
 
-
 /* ------------------------------------------------------------------ */
-/* Small helpers                                                       */
-/* ------------------------------------------------------------------ */
-
-const DEBOUNCE_MS = 400;
-
-function firstPointPrice(pp: any): number {
-    if (!pp) return 0;
-    const firstLvl = (Object.values(pp)[0] as any) ?? {};
-    const firstCtMap = (Object.values(firstLvl)[0] as any) ?? {};
-    return firstCtMap.sale ?? firstCtMap.regular ?? 0;
-}
-
-/* ------------------------------------------------------------------ */
-/* Main component                                                      */
+/* Component                                                          */
 /* ------------------------------------------------------------------ */
 
 export default function PurchaseOrderSupply() {
-    /* ───── suppliers + cart ───── */
+    /* Suppliers + cart */
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [selectedSupplierId, setSelectedSupplierId] = useState("");
     const [cartId, setCartId] = useState("");
@@ -132,7 +133,7 @@ export default function PurchaseOrderSupply() {
     const [notes, setNotes] = useState("");
     const [expectedAt, setExpectedAt] = useState<Date | undefined>(undefined);
 
-    /* ───── products + search (same behavior as your order view) ───── */
+    /* Products + search */
     const [products, setProducts] = useState<Product[]>([]);
     const [productsLoading, setProductsLoading] = useState(true);
     const [selectedProduct, setSelectedProduct] = useState("");
@@ -147,9 +148,7 @@ export default function PurchaseOrderSupply() {
         for (const p of arr) {
             if (p.isAffiliate) continue;
             const firstCat = p.categories?.[0];
-            const label = firstCat
-                ? categoryMap[firstCat] || firstCat
-                : "Uncategorized";
+            const label = firstCat ? categoryMap[firstCat] || firstCat : "Uncategorized";
             if (!buckets[label]) buckets[label] = [];
             buckets[label].push(p);
         }
@@ -161,10 +160,10 @@ export default function PurchaseOrderSupply() {
             );
     };
 
-    /* ───── displayed lines (no qty input; qty text at 0) ───── */
+    /* Displayed lines */
     const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
 
-    /* ───── drawer state (allocation UI) ───── */
+    /* Drawer state (allocation UI) */
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
     const [adding, setAdding] = useState(false);
@@ -174,9 +173,7 @@ export default function PurchaseOrderSupply() {
         Record<string, Record<string, { qty: number; cost: number }>>
     >({});
 
-    /* ------------------------------------------------------------------ */
-    /* Load suppliers                                                     */
-    /* ------------------------------------------------------------------ */
+    /* Load suppliers */
     useEffect(() => {
         (async () => {
             try {
@@ -191,9 +188,7 @@ export default function PurchaseOrderSupply() {
         })();
     }, []);
 
-    /* ------------------------------------------------------------------ */
-    /* Load categories (for grouping in the product select)                */
-    /* ------------------------------------------------------------------ */
+    /* Load categories (for grouping in the product select) */
     useEffect(() => {
         (async () => {
             try {
@@ -205,14 +200,12 @@ export default function PurchaseOrderSupply() {
                     setCategoryMap(Object.fromEntries(rows.map((c) => [c.id, c.name])));
                 }
             } catch {
-                // fall back to IDs as labels
+                // fallback to IDs as labels
             }
         })();
     }, []);
 
-    /* ------------------------------------------------------------------ */
-    /* Load products (shop + affiliate)                                    */
-    /* ------------------------------------------------------------------ */
+    /* Load products (shop + affiliate) */
     useEffect(() => {
         (async () => {
             setProductsLoading(true);
@@ -221,8 +214,7 @@ export default function PurchaseOrderSupply() {
                     fetch("/api/products?page=1&pageSize=1000"),
                     fetch("/api/affiliate/products?limit=1000"),
                 ]);
-                if (!normRes.ok || !affRes.ok)
-                    throw new Error("Failed to fetch products");
+                if (!normRes.ok || !affRes.ok) throw new Error("Failed to fetch products");
 
                 const { products: norm } = await normRes.json();
                 const { products: aff } = await affRes.json();
@@ -270,6 +262,163 @@ export default function PurchaseOrderSupply() {
         })();
     }, []);
 
+    /* Search (remote) */
+    useEffect(() => {
+        const q = prodTerm.trim();
+        if (q.length < 3) {
+            setProdResults([]);
+            setProdSearching(false);
+            return;
+        }
+        const t = setTimeout(async () => {
+            try {
+                setProdSearching(true);
+                const [shop, aff] = await Promise.all([
+                    fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`)
+                        .then((r) => r.json())
+                        .then((d) => d.products as any[]),
+                    fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`)
+                        .then((r) => r.json())
+                        .then((d) => d.products as any[]),
+                ]);
+
+                const mapShop = (p: any): Product => ({
+                    ...p,
+                    allowBackorders: !!p.allowBackorders,
+                    price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
+                    stockData: p.stockData,
+                    isAffiliate: false,
+                    categories: p.categories ?? [],
+                });
+                const mapAff = (a: any): Product => ({
+                    ...a,
+                    price: Object.values(a.pointsPrice)[0] ?? 0,
+                    stockData: a.stock,
+                    isAffiliate: true,
+                    categories: [],
+                });
+
+                setProdResults([...shop.map(mapShop), ...aff.map(mapAff)]);
+            } catch {
+                setProdResults([]);
+            } finally {
+                setProdSearching(false);
+            }
+        }, DEBOUNCE_MS);
+
+        return () => clearTimeout(t);
+    }, [prodTerm]);
+
+    const filteredProducts = useMemo(() => {
+        const q = prodTerm.trim();
+        if (q.length < 3) return products;
+        const qq = q.toLowerCase();
+        return products.filter(
+            (p) => p.title.toLowerCase().includes(qq) || p.sku.toLowerCase().includes(qq)
+        );
+    }, [products, prodTerm]);
+
+    const totalSelectedQty = useMemo(
+        () => orderItems.reduce((sum, it) => sum + Number(it.quantity ?? 0), 0),
+        [orderItems]
+    );
+
+    /* Cart create & reload */
+    const generateOrder = async () => {
+        if (!selectedSupplierId) {
+            toast.error("Select a supplier first");
+            return;
+        }
+        try {
+            const resC = await fetch("/api/suppliersCart", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ supplierId: selectedSupplierId }),
+            });
+            if (!resC.ok) {
+                const msg = await resC.text().catch(() => "Failed to create suppliers cart");
+                throw new Error(msg);
+            }
+            const dataC = await resC.json();
+            const { newCart } = dataC;
+            setCartId(newCart.id);
+
+            await reloadCartLines(newCart.id);
+            setOrderGenerated(true);
+            toast.success("Suppliers cart created");
+        } catch (err: any) {
+            toast.error(err?.message || "Could not create suppliers cart");
+        }
+    };
+
+    const reloadCartLines = async (id: string) => {
+        try {
+            const res = await fetch(`/api/suppliersCart/${id}`, {
+                headers: { "Content-Type": "application/json" },
+                cache: "no-store",
+            });
+            if (!res.ok) throw new Error(`Failed to reload cart (${res.status})`);
+            const data = await res.json().catch(() => ({}));
+            const rows = data?.resultCartProducts ?? [];
+
+            const mapped: OrderItem[] = rows.map((r: any) => ({
+                product: {
+                    id: r.productId ?? r.id,
+                    title: r.title,
+                    sku: r.sku,
+                    description: r.description,
+                    image: r.image,
+                    price: r.unitPrice ?? r.unitCost ?? 0,
+                    regularPrice: {},
+                    stockData: {},
+                    subtotal:
+                        r.subtotal ??
+                        Number(r.unitPrice ?? r.unitCost ?? 0) * Number(r.quantity ?? 0),
+                },
+                quantity: Number(r.quantity ?? 0),
+            }));
+
+            setOrderItems(mapped);
+        } catch (e: any) {
+            toast.error(e?.message || "Could not refresh cart items");
+        }
+    };
+
+    /* Add / Edit drawer openers */
+
+    // Ensure warehouses (used by Add flow)
+    const ensureWarehouses = async (): Promise<Warehouse[]> => {
+        if (warehouses.length) return warehouses;
+        const res = await fetch("/api/warehouses", {
+            headers: {
+                "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+            },
+        });
+        if (!res.ok) throw new Error("Failed to load warehouses");
+        const data = await res.json();
+        const whs: Warehouse[] = data?.warehouses ?? [];
+        setWarehouses(whs);
+        return whs;
+    };
+
+    const openAddDrawer = async () => {
+        if (!orderGenerated) return toast.error("Create the suppliers cart first");
+        if (!selectedProduct) return toast.error("Select a product first");
+        try {
+            const whs = await ensureWarehouses();
+            const zero: Record<string, Record<string, { qty: number; cost: number }>> =
+                {};
+            for (const w of whs) {
+                zero[w.id] = {};
+                for (const c of w.countries) zero[w.id][c] = { qty: 0, cost: 0 };
+            }
+            setEditable(zero);
+            setDrawerOpen(true);
+        } catch (err: any) {
+            toast.error(err?.message || "Could not load warehouses");
+        }
+    };
+
     const handleEditClick = async (productId: string) => {
         if (!orderGenerated || !cartId) {
             toast.error("Generate the suppliers cart first");
@@ -279,7 +428,7 @@ export default function PurchaseOrderSupply() {
             setSelectedProduct(productId);
             setEditingProductId(productId);
 
-            // 1) Warehouses (layout only)
+            // 1) Warehouses (layout)
             const wRes = await fetch("/api/warehouses", {
                 headers: {
                     "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
@@ -290,8 +439,9 @@ export default function PurchaseOrderSupply() {
             const whs: Warehouse[] = wData?.warehouses ?? [];
             setWarehouses(whs);
 
-            // 2) Build zeros for every cell so UI always shows all inputs
-            const zero: Record<string, Record<string, { qty: number; cost: number }>> = {};
+            // 2) Zero grid
+            const zero: Record<string, Record<string, { qty: number; cost: number }>> =
+                {};
             for (const w of whs) {
                 zero[w.id] = {};
                 for (const c of w.countries) zero[w.id][c] = { qty: 0, cost: 0 };
@@ -305,9 +455,9 @@ export default function PurchaseOrderSupply() {
             if (!aRes.ok) throw new Error("Failed to load product allocations");
 
             const { result } = await aRes.json().catch(() => ({}));
-            const rows = normalizeAllocationsPayload(result); // ← always an array
+            const rows = normalizeAllocationsPayload(result);
 
-            // 4) Prefill zeros with existing values
+            // 4) Prefill
             for (const r of rows) {
                 if (!r.warehouseId || !r.country) continue;
                 if (!zero[r.warehouseId]) zero[r.warehouseId] = {};
@@ -326,28 +476,115 @@ export default function PurchaseOrderSupply() {
         }
     };
 
+    /* Drawer handlers */
+    const handleQtyChange = (wid: string, country: string, qty: number) => {
+        const safeQty = Math.max(0, Number.isFinite(qty) ? qty : 0);
+        setEditable((prev) => {
+            const prevCell = prev[wid]?.[country] || { qty: 0, cost: 0 };
+            return {
+                ...prev,
+                [wid]: {
+                    ...(prev[wid] || {}),
+                    [country]: {
+                        qty: safeQty,
+                        cost: safeQty === 0 ? 0 : prevCell.cost,
+                    },
+                },
+            };
+        });
+    };
 
+    const handleCostChange = (wid: string, country: string, cost: number) => {
+        setEditable((prev) => ({
+            ...prev,
+            [wid]: {
+                ...(prev[wid] || {}),
+                [country]: {
+                    ...(prev[wid]?.[country] || { qty: 0, cost: 0 }),
+                    cost: Math.max(0, Number.isFinite(cost) ? cost : 0),
+                },
+            },
+        }));
+    };
 
-    /* ------------------------------------------------------------------ */
-    /* Product search (remote), like your order view                       */
-    /* ------------------------------------------------------------------ */
-    const filteredProducts = useMemo(() => {
-        const q = prodTerm.trim();
-        if (q.length < 3) return products;
-        const qq = q.toLowerCase();
-        return products.filter(
-            (p) =>
-                p.title.toLowerCase().includes(qq) || p.sku.toLowerCase().includes(qq)
-        );
-    }, [products, prodTerm]);
+    const clearWarehouse = (wid: string) => {
+        setEditable((prev) => {
+            const next = { ...prev };
+            const block = { ...(next[wid] || {}) };
+            warehouses
+                .find((w) => w.id === wid)
+                ?.countries.forEach((c) => (block[c] = { qty: 0, cost: 0 }));
+            next[wid] = block;
+            return next;
+        });
+    };
 
-    const totalSelectedQty = useMemo(
-        () => orderItems.reduce((sum, it) => sum + Number(it.quantity ?? 0), 0),
-        [orderItems]
+    const totalQty = useMemo(
+        () =>
+            Object.values(editable).reduce(
+                (sum, byCt) =>
+                    sum + Object.values(byCt).reduce((s, v) => s + (Number(v?.qty) || 0), 0),
+                0
+            ),
+        [editable]
     );
 
-    const completing = false; // optional: wire a state if you want a spinner
+    /* Save allocations (POST add / PATCH edit) */
+    const saveAllocations = async () => {
+        if (!cartId) {
+            toast.error("Create a suppliers cart first");
+            return;
+        }
+        const allocations = Object.entries(editable).flatMap(([warehouseId, byCt]) =>
+            Object.entries(byCt).map(([country, v]) => ({
+                warehouseId,
+                country,
+                quantity: Number(v?.qty || 0),
+                unitCost: Number(v?.cost || 0),
+            }))
+        );
 
+        setAdding(true);
+        try {
+            const isEditing = !!editingProductId;
+
+            const url = isEditing
+                ? `/api/suppliersCart/product/${editingProductId}`
+                : `/api/suppliersCart/${cartId}/add-product`;
+
+            const method = isEditing ? "PATCH" : "POST";
+
+            const body = isEditing
+                ? {
+                    supplierCartId: cartId, // include supplierCartId in PATCH
+                    productId: editingProductId,
+                    allocations,
+                }
+                : {
+                    productId: selectedProduct,
+                    allocations,
+                };
+
+            const res = await fetch(url, {
+                method,
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+
+            if (!res.ok) throw new Error(await res.text());
+
+            await reloadCartLines(cartId);
+            setDrawerOpen(false);
+            setEditingProductId(null);
+            toast.success(isEditing ? "Allocations updated" : "Product allocations saved");
+        } catch (e: any) {
+            toast.error(e?.message || "Could not save allocations");
+        } finally {
+            setAdding(false);
+        }
+    };
+
+    /* Complete order */
     const completeOrder = async () => {
         if (!orderGenerated || !cartId) {
             toast.error("Generate a cart first");
@@ -387,419 +624,7 @@ export default function PurchaseOrderSupply() {
         }
     };
 
-
-
-    useEffect(() => {
-        const q = prodTerm.trim();
-        if (q.length < 3) {
-            setProdResults([]);
-            setProdSearching(false);
-            return;
-        }
-        const t = setTimeout(async () => {
-            try {
-                setProdSearching(true);
-                const [shop, aff] = await Promise.all([
-                    fetch(
-                        `/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`
-                    )
-                        .then((r) => r.json())
-                        .then((d) => d.products as any[]),
-                    fetch(
-                        `/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`
-                    )
-                        .then((r) => r.json())
-                        .then((d) => d.products as any[]),
-                ]);
-
-                const mapShop = (p: any): Product => ({
-                    ...p,
-                    allowBackorders: !!p.allowBackorders,
-                    price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
-                    stockData: p.stockData,
-                    isAffiliate: false,
-                    categories: p.categories ?? [],
-                });
-                const mapAff = (a: any): Product => ({
-                    ...a,
-                    price: Object.values(a.pointsPrice)[0] ?? 0,
-                    stockData: a.stock,
-                    isAffiliate: true,
-                    categories: [],
-                });
-
-                setProdResults([...shop.map(mapShop), ...aff.map(mapAff)]);
-            } catch {
-                setProdResults([]);
-            } finally {
-                setProdSearching(false);
-            }
-        }, DEBOUNCE_MS);
-
-        return () => clearTimeout(t);
-    }, [prodTerm]);
-
-    /* ------------------------------------------------------------------ */
-    /* Generate suppliers cart                                             */
-    /* ------------------------------------------------------------------ */
-    const generateOrder = async () => {
-        if (!selectedSupplierId) {
-            toast.error("Select a supplier first");
-            return;
-        }
-        try {
-            const resC = await fetch("/api/suppliersCart", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ supplierId: selectedSupplierId }),
-            });
-            if (!resC.ok) {
-                const msg = await resC
-                    .text()
-                    .catch(() => "Failed to create suppliers cart");
-                throw new Error(msg);
-            }
-            const dataC = await resC.json();
-            const { newCart } = dataC;
-            setCartId(newCart.id);
-
-            // refresh lines from server
-            await reloadCartLines(newCart.id);
-
-            toast.success("Suppliers cart created");
-            setOrderGenerated(true);
-
-            // optional: load existing lines (if any)
-            const resP = await fetch(`/api/suppliersCart/${newCart.id}`, {
-                headers: { "Content-Type": "application/json" },
-            });
-            const dataP = await resP.json().catch(() => ({}));
-            const resultCartProducts = dataP?.resultCartProducts ?? [];
-
-            if (Array.isArray(resultCartProducts)) {
-                setOrderItems(
-                    resultCartProducts.map((r: any) => ({
-                        product: {
-                            id: r.id,
-                            title: r.title,
-                            sku: r.sku,
-                            description: r.description,
-                            image: r.image,
-                            price: r.unitPrice ?? 0,
-                            regularPrice: {},
-                            stockData: {},
-                            subtotal: r.subtotal ?? 0,
-                        },
-                        quantity: r.quantity ?? 0,
-                    }))
-                );
-            }
-
-            toast.success("Suppliers cart created");
-            setOrderGenerated(true);
-        } catch (err: any) {
-            toast.error(err?.message || "Could not create suppliers cart");
-        }
-    };
-
-    // Reload current cart lines from /api/suppliersCart/[id] and update UI
-    const reloadCartLines = async (id: string) => {
-        try {
-            const res = await fetch(`/api/suppliersCart/${id}`, {
-                headers: { "Content-Type": "application/json" },
-                cache: "no-store",
-            });
-            if (!res.ok) throw new Error(`Failed to reload cart (${res.status})`);
-            const data = await res.json().catch(() => ({}));
-            const rows = data?.resultCartProducts ?? [];
-
-            const mapped: OrderItem[] = rows.map((r: any) => ({
-                product: {
-                    id: r.productId ?? r.id,
-                    title: r.title,
-                    sku: r.sku,
-                    description: r.description,
-                    image: r.image,
-                    price: r.unitPrice ?? r.unitCost ?? 0,
-                    regularPrice: {},
-                    stockData: {},
-                    subtotal:
-                        r.subtotal ??
-                        Number(r.unitPrice ?? r.unitCost ?? 0) * Number(r.quantity ?? 0),
-                },
-                quantity: Number(r.quantity ?? 0),
-            }));
-
-            setOrderItems(mapped);
-        } catch (e: any) {
-            toast.error(e?.message || "Could not refresh cart items");
-        }
-    };
-
-    // Ensure warehouses are loaded (used by both Add + Edit flows)
-    const ensureWarehouses = async (): Promise<Warehouse[]> => {
-        if (warehouses.length) return warehouses;
-        const res = await fetch("/api/warehouses", {
-            headers: {
-                "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-            },
-        });
-        if (!res.ok) throw new Error("Failed to load warehouses");
-        const data = await res.json();
-        const whs: Warehouse[] = data?.warehouses ?? [];
-        setWarehouses(whs);
-        return whs;
-    };
-
-    // Build zeroed grid then overlay allocations from server
-    type AllocationRow = {
-        warehouseId: string;
-        country: string;
-        quantity: number;
-        cost: number;
-    };
-
-    const overlayAllocations = (
-        whs: Warehouse[],
-        allocs: AllocationRow[]
-    ) => {
-        const base: Record<string, Record<string, { qty: number; cost: number }>> = {};
-        for (const w of whs) {
-            base[w.id] = {};
-            for (const c of w.countries) base[w.id][c] = { qty: 0, cost: 0 };
-        }
-        for (const a of allocs) {
-            if (!base[a.warehouseId]) base[a.warehouseId] = {};
-            if (!base[a.warehouseId][a.country]) base[a.warehouseId][a.country] = { qty: 0, cost: 0 };
-            base[a.warehouseId][a.country] = {
-                qty: Number(a.quantity || 0),
-                cost: Number(a.cost || 0),
-            };
-        }
-        setEditable(base);
-    };
-
-    const openAddDrawer = async () => {
-        if (!orderGenerated) return toast.error("Create the suppliers cart first");
-        if (!selectedProduct) return toast.error("Select a product first");
-        try {
-            const whs = await ensureWarehouses();
-            // zeroed grid
-            const zero: Record<string, Record<string, { qty: number; cost: number }>> = {};
-            for (const w of whs) {
-                zero[w.id] = {};
-                for (const c of w.countries) zero[w.id][c] = { qty: 0, cost: 0 };
-            }
-            setEditable(zero);
-            setDrawerOpen(true);
-        } catch (err: any) {
-            toast.error(err?.message || "Could not load warehouses");
-        }
-    };
-
-    const openEditDrawer = async (productId: string) => {
-        if (!orderGenerated) return toast.error("Create the suppliers cart first");
-        try {
-            const whs = await ensureWarehouses();
-            setSelectedProduct(productId); // so Save uses this id
-
-            // GET allocations for this product
-            const res = await fetch(`/api/suppliersCart/product/${productId}`, {
-                headers: { "Content-Type": "application/json" },
-                cache: "no-store",
-            });
-            if (!res.ok) {
-                const msg = await res.text().catch(() => "Failed to load product allocations");
-                throw new Error(msg);
-            }
-
-            // Expect an array of { warehouseId, country, quantity, cost }
-            const raw = await res.json();
-            const arr: AllocationRow[] = Array.isArray(raw)
-                ? raw
-                : Array.isArray(raw?.result)
-                    ? raw.result
-                    : [];
-
-            overlayAllocations(
-                whs,
-                arr.map((r: any) => ({
-                    warehouseId: r.warehouseId,
-                    country: r.country,
-                    quantity: Number(r.quantity ?? 0),
-                    cost: Number(r.cost ?? r.unitCost ?? 0),
-                }))
-            );
-            setDrawerOpen(true);
-        } catch (err: any) {
-            toast.error(err?.message || "Could not load allocations");
-        }
-    };
-
-
-    /* ------------------------------------------------------------------ */
-    /* Drawer: fetch warehouses (for layout only) & init editable zeros    */
-    /* ------------------------------------------------------------------ */
-    const initEditableZeros = (whs: Warehouse[]) => {
-        const next: Record<
-            string,
-            Record<string, { qty: number; cost: number }>
-        > = {};
-        for (const w of whs) {
-            next[w.id] = {};
-            for (const c of w.countries) {
-                next[w.id][c] = { qty: 0, cost: 0 };
-            }
-        }
-        setEditable(next);
-    };
-
-    const openDrawer = async () => {
-        if (!orderGenerated) {
-            toast.error("Create the suppliers cart first");
-            return;
-        }
-        if (!selectedProduct) {
-            toast.error("Select a product first");
-            return;
-        }
-        try {
-            // fetch warehouses only for structure; do NOT pre-fill quantities
-            const res = await fetch("/api/warehouses", {
-                headers: {
-                    "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-                },
-            });
-            if (!res.ok) throw new Error("Failed to load warehouses");
-            const data = await res.json();
-            const whs: Warehouse[] = data?.warehouses ?? [];
-            setWarehouses(whs);
-            initEditableZeros(whs);
-            setDrawerOpen(true);
-        } catch (err: any) {
-            toast.error(err?.message || "Could not load warehouses");
-        }
-    };
-
-    /* ------------------------------------------------------------------ */
-    /* Drawer handlers: qty & cost changes                                 */
-    /* ------------------------------------------------------------------ */
-    const handleQtyChange = (wid: string, country: string, qty: number) => {
-        const safeQty = Math.max(0, Number.isFinite(qty) ? qty : 0);
-        setEditable((prev) => {
-            const prevCell = prev[wid]?.[country] || { qty: 0, cost: 0 };
-            return {
-                ...prev,
-                [wid]: {
-                    ...(prev[wid] || {}),
-                    [country]: {
-                        qty: safeQty,
-                        cost: safeQty === 0 ? 0 : prevCell.cost,
-                    },
-                },
-            };
-        });
-    };
-
-
-
-    const handleCostChange = (wid: string, country: string, cost: number) => {
-        setEditable((prev) => ({
-            ...prev,
-            [wid]: {
-                ...(prev[wid] || {}),
-                [country]: {
-                    ...(prev[wid]?.[country] || { qty: 0, cost: 0 }),
-                    cost: Math.max(0, Number.isFinite(cost) ? cost : 0),
-                },
-            },
-        }));
-    };
-
-    const clearWarehouse = (wid: string) => {
-        setEditable((prev) => {
-            const next = { ...prev };
-            const block = { ...(next[wid] || {}) };
-            warehouses
-                .find((w) => w.id === wid)
-                ?.countries.forEach((c) => (block[c] = { qty: 0, cost: 0 }));
-            next[wid] = block;
-            return next;
-        });
-    };
-
-    const totalQty = useMemo(
-        () =>
-            Object.values(editable).reduce(
-                (sum, byCt) =>
-                    sum +
-                    Object.values(byCt).reduce((s, v) => s + (Number(v?.qty) || 0), 0),
-                0
-            ),
-        [editable]
-    );
-
-    /* ------------------------------------------------------------------ */
-    /* Save allocations -> POST suppliersCart/:id/add-product              */
-    /* ------------------------------------------------------------------ */
-    const saveAllocations = async () => {
-        if (!cartId) {
-            toast.error("Create a suppliers cart first");
-            return;
-        }
-        const allocations = Object.entries(editable).flatMap(([warehouseId, byCt]) =>
-            Object.entries(byCt).map(([country, v]) => ({
-                warehouseId,
-                country,
-                quantity: Number(v?.qty || 0),
-                unitCost: Number(v?.cost || 0),
-            }))
-        );
-
-        setAdding(true);
-        try {
-            const isEditing = !!editingProductId;
-
-            const url = isEditing
-                ? `/api/suppliersCart/product/${editingProductId}`
-                : `/api/suppliersCart/${cartId}/add-product`;
-
-            const method = isEditing ? "PATCH" : "POST";
-
-            // ⬇️ Include supplierCartId when PATCHing (edit mode)
-            const body = isEditing
-                ? {
-                    supplierCartId: cartId,
-                    productId: editingProductId, // optional, but harmless if your API accepts it
-                    allocations,
-                }
-                : {
-                    productId: selectedProduct,
-                    allocations,
-                };
-
-            const res = await fetch(url, {
-                method,
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-            });
-
-            if (!res.ok) throw new Error(await res.text());
-
-            await reloadCartLines(cartId);
-            setDrawerOpen(false);
-            setEditingProductId(null);
-            toast.success(isEditing ? "Allocations updated" : "Product allocations saved");
-        } catch (e: any) {
-            toast.error(e?.message || "Could not save allocations");
-        } finally {
-            setAdding(false);
-        }
-    };
-
-    /* ------------------------------------------------------------------ */
-    /* Render                                                              */
-    /* ------------------------------------------------------------------ */
+    /* Render */
     return (
         <div className="container mx-auto py-6">
             <h1 className="text-3xl font-bold mb-6">Purchase Order (Supply)</h1>
@@ -844,9 +669,7 @@ export default function PurchaseOrderSupply() {
                     </Card>
 
                     {/* Product Selection */}
-                    <Card
-                        className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
-                    >
+                    <Card className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}>
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
                                 <Package className="h-5 w-5" /> Product Selection
@@ -884,6 +707,7 @@ export default function PurchaseOrderSupply() {
                                                             SKU: {product.sku}
                                                         </p>
                                                     </div>
+
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
@@ -898,13 +722,10 @@ export default function PurchaseOrderSupply() {
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
-                                                        title="Click to update stock"
+                                                        title="Remove (not implemented)"
                                                         className="flex items-center space-x-1"
                                                         onClick={() => {
-                                                            // TODO: Add remove functionality if needed
-                                                            toast.info(
-                                                                "Remove functionality not implemented yet"
-                                                            );
+                                                            toast.info("Remove functionality not implemented yet");
                                                         }}
                                                     >
                                                         <Trash2 className="h-4 w-4" />
@@ -924,16 +745,14 @@ export default function PurchaseOrderSupply() {
                                         value={selectedProduct}
                                         onValueChange={(val) => {
                                             setSelectedProduct(val);
-                                            setProdTerm(""); // reset inline search
+                                            setProdTerm("");
                                             setProdResults([]);
                                         }}
                                         disabled={productsLoading}
                                     >
                                         <SelectTrigger>
                                             <SelectValue
-                                                placeholder={
-                                                    productsLoading ? "Loading…" : "Select a product"
-                                                }
+                                                placeholder={productsLoading ? "Loading…" : "Select a product"}
                                             />
                                         </SelectTrigger>
 
@@ -985,9 +804,7 @@ export default function PurchaseOrderSupply() {
                                                     <>
                                                         {groupByCategory(
                                                             prodResults.filter(
-                                                                (p) =>
-                                                                    !p.isAffiliate &&
-                                                                    !products.some((lp) => lp.id === p.id)
+                                                                (p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id)
                                                             )
                                                         ).map(([label, items]) => (
                                                             <SelectGroup key={`remote-${label}`}>
@@ -1006,17 +823,14 @@ export default function PurchaseOrderSupply() {
 
                                                         {/* Remote affiliate results */}
                                                         {prodResults.some(
-                                                            (p) =>
-                                                                p.isAffiliate &&
-                                                                !products.some((lp) => lp.id === p.id)
+                                                            (p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)
                                                         ) && (
                                                                 <SelectGroup>
                                                                     <SelectLabel>Affiliate — search</SelectLabel>
                                                                     {prodResults
                                                                         .filter(
                                                                             (p) =>
-                                                                                p.isAffiliate &&
-                                                                                !products.some((lp) => lp.id === p.id)
+                                                                                p.isAffiliate && !products.some((lp) => lp.id === p.id)
                                                                         )
                                                                         .map((p) => (
                                                                             <SelectItem key={p.id} value={p.id}>
@@ -1036,13 +850,11 @@ export default function PurchaseOrderSupply() {
                                                         Searching…
                                                     </div>
                                                 )}
-                                                {!prodSearching &&
-                                                    prodTerm &&
-                                                    prodResults.length === 0 && (
-                                                        <div className="px-3 py-2 text-sm text-muted-foreground">
-                                                            No matches
-                                                        </div>
-                                                    )}
+                                                {!prodSearching && prodTerm && prodResults.length === 0 && (
+                                                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                                                        No matches
+                                                    </div>
+                                                )}
                                             </ScrollArea>
                                         </SelectContent>
                                     </Select>
@@ -1056,13 +868,12 @@ export default function PurchaseOrderSupply() {
                                     >
                                         <Plus className="h-4 w-4 mr-2" /> Add Product
                                     </Button>
-
                                 </div>
                             </div>
                         </CardContent>
                     </Card>
 
-                    {/* Notes card for optional order notes */}
+                    {/* Notes */}
                     <Card className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}>
                         <CardHeader>
                             <CardTitle>Notes (optional)</CardTitle>
@@ -1078,7 +889,7 @@ export default function PurchaseOrderSupply() {
                     </Card>
                 </div>
 
-                {/* RIGHT – simple summary */}
+                {/* RIGHT – summary */}
                 <div className="lg:col-span-1">
                     <Card className="sticky top-6">
                         <CardHeader>
@@ -1142,16 +953,15 @@ export default function PurchaseOrderSupply() {
                             </Button>
 
                             <p className="text-xs text-muted-foreground text-center">
-                                Generate a cart, add products in the drawer, pick an expected date, then complete the order.
+                                Generate a cart, add products in the drawer, pick an expected date, then
+                                complete the order.
                             </p>
                         </CardFooter>
                     </Card>
                 </div>
             </div>
 
-            {/* ──────────────────────────────────────────────────────────────── */}
-            {/* Drawer (clone of stock-management UI, with Qty + Unit Cost)     */}
-            {/* ──────────────────────────────────────────────────────────────── */}
+            {/* Drawer (Qty + Unit Cost) */}
             <Drawer
                 open={drawerOpen}
                 onOpenChange={(open) => {
@@ -1159,7 +969,6 @@ export default function PurchaseOrderSupply() {
                     if (!open) setEditingProductId(null);
                 }}
             >
-
                 <DrawerContent
                     className="
             fixed inset-x-0 bottom-0 top-auto w-full
@@ -1175,9 +984,8 @@ export default function PurchaseOrderSupply() {
                                 Allocate —{" "}
                                 <span className="font-normal">
                                     {selectedProduct
-                                        ? [...products, ...prodResults].find(
-                                            (p) => p.id === selectedProduct
-                                        )?.title
+                                        ? [...products, ...prodResults].find((p) => p.id === selectedProduct)
+                                            ?.title
                                         : ""}
                                 </span>
                             </DrawerTitle>
@@ -1195,12 +1003,9 @@ export default function PurchaseOrderSupply() {
 
                     <Separator />
 
-                    {/* Scrollable drawer body */}
                     <div className="overflow-y-auto px-6 py-4 h-[calc(85vh-9rem)] sm:h-[calc(85vh-9rem)]">
                         {warehouses.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">
-                                No warehouses found.
-                            </p>
+                            <p className="text-sm text-muted-foreground">No warehouses found.</p>
                         ) : (
                             <div className="space-y-6">
                                 {warehouses.map((w) => (
@@ -1208,11 +1013,7 @@ export default function PurchaseOrderSupply() {
                                         <div className="flex items-center justify-between">
                                             <h3 className="font-medium">{w.name}</h3>
                                             <div className="flex gap-2">
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    onClick={() => clearWarehouse(w.id)}
-                                                >
+                                                <Button variant="outline" size="sm" onClick={() => clearWarehouse(w.id)}>
                                                     Clear
                                                 </Button>
                                             </div>
@@ -1224,7 +1025,10 @@ export default function PurchaseOrderSupply() {
                                                 const qtyIsZero = (cell.qty ?? 0) === 0;
 
                                                 return (
-                                                    <div key={`${w.id}-${c}`} className="rounded-md border p-3 flex flex-col gap-2">
+                                                    <div
+                                                        key={`${w.id}-${c}`}
+                                                        className="rounded-md border p-3 flex flex-col gap-2"
+                                                    >
                                                         <span className="text-sm">{c}</span>
                                                         <div className="grid grid-cols-2 gap-3">
                                                             <div>
@@ -1254,7 +1058,11 @@ export default function PurchaseOrderSupply() {
                                                                     className="mt-1 w-full"
                                                                     value={cell.cost}
                                                                     onChange={(e) =>
-                                                                        handleCostChange(w.id, c, parseFloat(e.target.value) || 0)
+                                                                        handleCostChange(
+                                                                            w.id,
+                                                                            c,
+                                                                            parseFloat(e.target.value) || 0
+                                                                        )
                                                                     }
                                                                     disabled={qtyIsZero}
                                                                     placeholder={qtyIsZero ? "Set Qty first" : undefined}
@@ -1264,7 +1072,6 @@ export default function PurchaseOrderSupply() {
                                                     </div>
                                                 );
                                             })}
-
                                         </div>
                                     </div>
                                 ))}
