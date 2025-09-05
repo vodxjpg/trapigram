@@ -21,9 +21,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     // Ensure the row exists and belongs to this org
     const curQ = await pool.query(
         `SELECT id, code, name, email, phone
-       FROM suppliers
-      WHERE id = $1 AND "organizationId" = $2
-      LIMIT 1`,
+        FROM suppliers
+        WHERE id = $1 AND "organizationId" = $2
+        LIMIT 1`,
         [id, organizationId],
     );
     if (!curQ.rowCount) {
@@ -99,11 +99,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     // Always bump updatedAt
     const sql = `
-    UPDATE suppliers
-       SET ${sets.join(", ")}, "updatedAt" = NOW()
-     WHERE id = $${vals.length + 1} AND "organizationId" = $${vals.length + 2}
-     RETURNING id, code, name, email, phone
-  `;
+        UPDATE suppliers
+        SET ${sets.join(", ")}, "updatedAt" = NOW()
+        WHERE id = $${vals.length + 1} AND "organizationId" = $${vals.length + 2}
+        RETURNING id, code, name, email, phone
+    `;
     vals.push(id, organizationId);
 
     try {

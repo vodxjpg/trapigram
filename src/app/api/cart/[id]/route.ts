@@ -4,8 +4,6 @@ import { pgPool as pool } from "@/lib/db";;
 import { getContext } from "@/lib/context";
 import { resolveUnitPrice } from "@/lib/pricing";
 
-
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }

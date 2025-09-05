@@ -743,7 +743,7 @@ interface DB {
     discrepancyReason: string;
     isCounted: boolean;
     createdAt: Date;
-    updatedAt: Date
+    updatedAt: Date;
   }
 
   suppliers: {
@@ -753,6 +753,39 @@ interface DB {
     email: string;
     phone: string;
     organizationId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  supplierCart: {
+    id: string;
+    supplierId: string;
+    organizationId: string;
+    status: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  supplierCartProducts: {
+    id: string;
+    supplierCartId: string;
+    productId: string;
+    warehouseId: string;
+    quantity: number;
+    cost: number;
+    country: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  supplierOrders: {
+    id: string;
+    supplierId: string;
+    organizationId: string;
+    supplierCartId: string;
+    note: string;
+    status: string;
+    expectedAt: Date;
     createdAt: Date;
     updatedAt: Date;
   }
