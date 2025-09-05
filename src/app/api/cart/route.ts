@@ -1,11 +1,10 @@
 // src/app/api/cart/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
-
 
 
 const cartSchema = z.object({
@@ -50,9 +49,9 @@ export async function POST(req: NextRequest) {
     const shipRes = await pool.query(shipMethQ, [organizationId]);
     if (shipRes.rows.length === 0) {
       // This query checks the "shippingMethods" table (shipping companies),
-     // so return an explicit message to drive the correct front-end toast.
-     return NextResponse.json(
-       { error: "No shipping companies configured" }, { status: 400 });
+      // so return an explicit message to drive the correct front-end toast.
+      return NextResponse.json(
+        { error: "No shipping companies configured" }, { status: 400 });
     }
     const shippingMethod = shipRes.rows[0].id;
 

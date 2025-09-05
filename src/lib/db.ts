@@ -824,6 +824,39 @@ interface DB {
     updatedAt: Date;
   }
 
+  supplierCart: {
+    id: string;
+    supplierId: string;
+    organizationId: string;
+    status: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  supplierCartProducts: {
+    id: string;
+    supplierCartId: string;
+    productId: string;
+    warehouseId: string;
+    quantity: number;
+    cost: number;
+    country: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  supplierOrders: {
+    id: string;
+    supplierId: string;
+    organizationId: string;
+    supplierCartId: string;
+    note: string;
+    status: string;
+    expectedAt: Date;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
   /** Outbox for fan-out notifications (drained by cron) */
   notificationOutbox: {
     id: string;
