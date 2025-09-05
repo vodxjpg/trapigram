@@ -5,7 +5,7 @@ import { verify as jwtVerify, JwtPayload } from "jsonwebtoken";
 import net from "net";
 import fs from "fs";
 import path from "path";
-import CIDR from "ip-cidr";               // ← NEW
+import CIDR from "ip-cidr";
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -24,7 +24,6 @@ const SERVICE_ALLOWED_CIDRS = (process.env.SERVICE_ALLOWED_CIDRS ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-
 if (SERVICE_ALLOWED_CIDRS.length === 0) {
   throw new Error("SERVICE_ALLOWED_CIDRS env missing");
 }
@@ -46,7 +45,6 @@ function clientIp(req: NextRequest): string {
   return (req as any).ip ?? "";
 }
 
-
 function ipToInt(ip: string) {
   return ip.split(".").reduce((acc, oct) => (acc << 8) + Number(oct), 0) >>> 0;
 }
@@ -60,7 +58,7 @@ function ipAllowed(ipStr: string): boolean {
     try {
       return new CIDR(cidr).contains(ipStr);
     } catch {
-      return false;                           // ignore malformed CIDR
+      return false; // ignore malformed CIDR
     }
   });
 }
@@ -84,55 +82,57 @@ function validHmac(ts: string, sig: string) {
   return timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
 }
 
-/* ---------- resolveServiceAccount (unchanged) ---------- */
-async function resolveServiceAccount(
-  organizationId: string
-): Promise<RequestContext | NextResponse> {
-  console.log(`Resolving service account for organizationId: ${organizationId}`);
+/* ------------------------------------------------------------------ */
+/* Resolve the tenant that OWNS the given organization                */
+/* 1) Try organization.metadata.tenantId                               */
+/* 2) Fallback: org owner (member.role='owner') → tenant.ownerUserId   */
+/* ------------------------------------------------------------------ */
+async function resolveOrgTenantId(organizationId: string): Promise<string | null> {
   const orgRow = await db
     .selectFrom("organization")
-    .select("metadata")
+    .select(["id", "metadata"])
     .where("id", "=", organizationId)
     .executeTakeFirst();
 
-  if (!orgRow) {
-    console.log(`Organization not found: ${organizationId}`);
-    return NextResponse.json({ error: "Organization not found" }, { status: 404 });
-  }
+  if (!orgRow) return null;
 
-  let tenantId: string | undefined;
   if (orgRow.metadata) {
     try {
       const meta =
         typeof orgRow.metadata === "string"
-          ? JSON.parse(orgRow.metadata)
+          ? JSON.parse(orgRow.metadata || "{}")
           : orgRow.metadata;
-      tenantId = meta?.tenantId;
-      console.log(`Tenant ID from metadata: ${tenantId}`);
-    } catch (e) {
-      console.log(`Failed to parse organization metadata: ${e.message}`);
+      if (meta?.tenantId) return String(meta.tenantId);
+    } catch {
+      /* ignore parse error */
     }
   }
 
-  if (!tenantId) {
-    const owner = await db
-      .selectFrom("member")
-      .select("userId")
-      .where("organizationId", "=", organizationId)
-      .where("role", "=", "owner")
-      .executeTakeFirst();
+  const owner = await db
+    .selectFrom("member")
+    .select(["userId"])
+    .where("organizationId", "=", organizationId)
+    .where("role", "=", "owner")
+    .executeTakeFirst();
 
-    if (owner) {
-      const t = await db
-        .selectFrom("tenant")
-        .select("id")
-        .where("ownerUserId", "=", owner.userId)
-        .executeTakeFirst();
-      tenantId = t?.id;
-      console.log(`Tenant ID from owner: ${tenantId}`);
-    }
-  }
+  if (!owner?.userId) return null;
 
+  const t = await db
+    .selectFrom("tenant")
+    .select(["id"])
+    .where("ownerUserId", "=", owner.userId)
+    .executeTakeFirst();
+
+  return t?.id ?? null;
+}
+
+/* ---------- service-account using org tenant ---------- */
+async function resolveServiceAccount(
+  organizationId: string
+): Promise<RequestContext | NextResponse> {
+  console.log(`Resolving service account for organizationId: ${organizationId}`);
+
+  const tenantId = await resolveOrgTenantId(organizationId);
   if (!tenantId) {
     console.log(`Unable to determine tenantId for organization: ${organizationId}`);
     return NextResponse.json(
@@ -144,61 +144,25 @@ async function resolveServiceAccount(
   return { organizationId, userId: "service-account", tenantId };
 }
 
-/* ---------- resolveGuestTenant (unchanged) ------------- */
+/* ---------- guest utils kept for compatibility ---------- */
 async function resolveGuestTenant(
   organizationId: string
 ): Promise<string | NextResponse> {
-  const orgRow = await db
-    .selectFrom("organization")
-    .select("metadata")
-    .where("id", "=", organizationId)
-    .executeTakeFirst();
-
-  let tenantId: string | undefined;
-  if (orgRow?.metadata) {
-    try {
-      const meta =
-        typeof orgRow.metadata === "string"
-          ? JSON.parse(orgRow.metadata)
-          : orgRow.metadata;
-      tenantId = meta?.tenantId;
-    } catch {
-      /* ignore parse error */
-    }
-  }
-
-  if (!tenantId) {
-    const owner = await db
-      .selectFrom("member")
-      .select("userId")
-      .where("organizationId", "=", organizationId)
-      .where("role", "=", "owner")
-      .executeTakeFirst();
-
-    if (owner) {
-      const t = await db
-        .selectFrom("tenant")
-        .select("id")
-        .where("ownerUserId", "=", owner.userId)
-        .executeTakeFirst();
-      tenantId = t?.id;
-    }
-  }
-
+  const tenantId = await resolveOrgTenantId(organizationId);
   if (!tenantId) {
     return NextResponse.json({ error: "No tenant found for user" }, { status: 404 });
   }
   return tenantId;
 }
 
-/* ---------- getContext (unchanged except ipAllowed logic) ---------- */
+/* ---------- main context resolver ---------- */
 export async function getContext(
   req: NextRequest
 ): Promise<RequestContext | NextResponse> {
-
   const authz = req.headers.get("authorization") ?? "";
   const apiKey = req.headers.get("x-api-key") ?? "";
 
+  /* ----- Service JWT (RS256) ----- */
   if (authz.startsWith("Bearer ")) {
     try {
       const token = authz.slice(7);
@@ -230,6 +194,7 @@ export async function getContext(
     }
   }
 
+  /* ----- HMAC + IP allowlist (service key) ----- */
   if (apiKey && keysEqual(apiKey)) {
     const ip = clientIp(req);
     if (!ipAllowed(ip)) {
@@ -252,6 +217,7 @@ export async function getContext(
     return resolveServiceAccount(organizationId);
   }
 
+  /* ----- Personal/API keys via Auth provider ----- */
   if (apiKey) {
     const { valid, error, user, key } =
       await auth.api.verifyApiKey({ body: { key: apiKey } });
@@ -270,35 +236,31 @@ export async function getContext(
       );
     }
 
-    // ─── who is the owner of this key? ───────────────────────────────
+    // Keep userId for auditing; tenantId is always the organization's tenant.
     const ownerUserId =
-      user?.id                         // service key ⇒ we already have user
-      ?? key?.creatorUserId            // personal key ⇒ Clerk puts it here
-      ?? key?.userId                   // (older SDKs)
-      ?? undefined;
+      user?.id ??
+      key?.creatorUserId ??
+      key?.userId ??
+      undefined;
 
     if (!ownerUserId) {
       return NextResponse.json(
         { error: "Unable to resolve key owner" },
-        { status: 401 },
+        { status: 401 }
       );
     }
 
-    const tenantRow = await db
-      .selectFrom("tenant")
-      .select("id")
-      .where("ownerUserId", "=", ownerUserId)
-      .executeTakeFirst();
-
-    if (tenantRow) {
-      return { organizationId, userId: ownerUserId, tenantId: tenantRow.id };
+    const orgTenantId = await resolveOrgTenantId(organizationId);
+    if (!orgTenantId) {
+      return NextResponse.json(
+        { error: "Unable to determine tenant for organization" },
+        { status: 500 }
+      );
     }
-
-    const tenantResult = await resolveGuestTenant(organizationId);
-    if (tenantResult instanceof NextResponse) return tenantResult;
-    return { organizationId, userId: user.id, tenantId: tenantResult };
+    return { organizationId, userId: ownerUserId, tenantId: orgTenantId };
   }
 
+  /* ----- Session (browser) ----- */
   const session = await auth.api.getSession({ headers: req.headers });
   if (!session) {
     console.log("No session found");
@@ -316,17 +278,14 @@ export async function getContext(
 
   const userId = session.user.id;
 
-  const tenantRow = await db
-    .selectFrom("tenant")
-    .select("id")
-    .where("ownerUserId", "=", userId)
-    .executeTakeFirst();
-
-  if (tenantRow) {
-    return { organizationId, userId, tenantId: tenantRow.id };
+  // Always use org tenant (metadata → owner fallback)
+  const orgTenantId = await resolveOrgTenantId(organizationId);
+  if (!orgTenantId) {
+    return NextResponse.json(
+      { error: "Unable to determine tenant for organization" },
+      { status: 500 }
+    );
   }
 
-  const tenantResult = await resolveGuestTenant(organizationId);
-  if (tenantResult instanceof NextResponse) return tenantResult;
-  return { organizationId, userId, tenantId: tenantResult };
+  return { organizationId, userId, tenantId: orgTenantId };
 }
