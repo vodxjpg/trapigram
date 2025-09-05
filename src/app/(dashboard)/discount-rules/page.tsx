@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/discount-rules/page.tsx
 // src/app/(dashboard)/discount-rules/page.tsx
 "use client";
 
@@ -9,9 +10,9 @@ import { Suspense } from "react";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { Button } from "@/components/ui/button";
-import {
-  Plus,
-} from "lucide-react";
+import { Plus } from "lucide-react";
+
+const LOG = "[TierPricing/List]";
 
 export default function DiscountRulesPage() {
   const { setHeaderTitle } = useHeaderTitle();
@@ -35,6 +36,12 @@ export default function DiscountRulesPage() {
     setHeaderTitle("Tier pricing");
   }, [setHeaderTitle]);
 
+  useEffect(() => {
+    // lightweight visibility for diagnostics
+    // eslint-disable-next-line no-console
+    console.debug(`${LOG} mount`, { organizationId, permLoading, canView, canCreate });
+  }, [organizationId, permLoading, canView, canCreate]);
+
   if (permLoading) return null;
 
   if (!canView) {
@@ -53,10 +60,16 @@ export default function DiscountRulesPage() {
           <p className="text-muted-foreground">Manage your tier pricing rules.</p>
         </div>
         {canCreate && (
-          <Button onClick={() => router.push("/discount-rules/new")}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Rule
-        </Button>
+          <Button
+            onClick={() => {
+              // eslint-disable-next-line no-console
+              console.debug(`${LOG} click Add Rule`);
+              router.push("/discount-rules/new");
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Add Rule
+          </Button>
         )}
       </div>
       <Suspense fallback={<div>Loading tier pricing table…</div>}>

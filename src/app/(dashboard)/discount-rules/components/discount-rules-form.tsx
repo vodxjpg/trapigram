@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/discount-rules/components/discount-rules-form.tsx
 // src/app/(dashboard)/discount-rules/components/discount-rules-form.tsx
 "use client"
 
@@ -20,6 +21,8 @@ import ReactCountryFlag from "react-country-flag"
 countriesLib.registerLocale(enLocale)
 const allCountries = getCountries().map(c => ({ code: c, name: countriesLib.getName(c, "en") || c }))
 
+const LOG = "[TierPricing/Form]"
+
 /* ──────────────────────────────── */
 /*  Schemas                         */
 /* ──────────────────────────────── */
@@ -28,8 +31,15 @@ const stepSchema = z.object({
   toUnits: z.coerce.number().min(1),
   price: z.coerce.number().positive(), // must be > 0
 })
+/**
+ * IMPORTANT: shared copies use non-UUID IDs like "PROD-xxxx"/"VAR-xxxx".
+ * Accept any non-empty string or null. Do not require UUID.
+ */
 const productItemSchema = z
-  .object({ productId: z.string().uuid().nullable(), variationId: z.string().uuid().nullable() })
+  .object({
+    productId: z.string().min(1).nullable(),
+    variationId: z.string().min(1).nullable(),
+  })
   .refine(d => d.productId || d.variationId, { message: "Select either a product or a variation" })
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -64,6 +74,12 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
   })
   const { fields, append, remove } = useFieldArray({ control: form.control, name: "steps" })
 
+  // Initial debug of incoming props
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.debug(`${LOG} mount`, { isEditing, discountRuleData })
+  }, [isEditing, discountRuleData])
+
   // --- Countries ---
   const [countryOptions, setCountryOptions] = useState<
     { value: string; label: string }[]
@@ -75,24 +91,32 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
           process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
       },
     })
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch countries")
-        return res.json()
+      .then(async (res) => {
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(`Failed to fetch countries (${res.status}) ${text}`);
+        }
+        return res.json();
       })
       .then((data) => {
         const list: string[] = Array.isArray(data.countries)
           ? data.countries
           : JSON.parse(data.countries || "[]")
-        setCountryOptions(
-          list.map((c) => ({
-            value: c.toUpperCase(),
-            label:
-              allCountries.find((co) => co.code === c.toUpperCase())
-                ?.name || c,
-          }))
-        )
+        const opts = list.map((c) => ({
+          value: c.toUpperCase(),
+          label:
+            allCountries.find((co) => co.code === c.toUpperCase())
+              ?.name || c,
+        }))
+        setCountryOptions(opts)
+        // eslint-disable-next-line no-console
+        console.debug(`${LOG} countries loaded`, { count: opts.length })
       })
-      .catch((err) => toast.error(err.message))
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(`${LOG} countries error`, err)
+        toast.error(err.message)
+      })
   }, [])
 
   // Reset as soon as we have discountRuleData
@@ -108,6 +132,8 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
           price: s.price > 0 ? s.price : 0.01,
         })),
       })
+      // eslint-disable-next-line no-console
+      console.debug(`${LOG} form reset from loaded data`)
     }
   }, [isEditing, discountRuleData, form])
 
@@ -129,7 +155,7 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
   const [catQuery, setCatQuery] = useState("")
   const catQueryRef = useRef("")
 
-  const fetchCategoriesPage = async (page: number, query: string, append: boolean) => {
+  const fetchCategoriesPage = async (page: number, query: string, appendList: boolean) => {
     setCatLoading(true)
     try {
       const params = new URLSearchParams()
@@ -137,17 +163,21 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
       params.set("pageSize", "25")
       if (query.trim()) params.set("search", query.trim())
       const res = await fetch(`/api/product-categories?${params.toString()}`)
-      if (!res.ok) throw new Error("Failed to load categories")
+      if (!res.ok) throw new Error(`Failed to load categories (${res.status})`)
       const data = await res.json() as { categories: Array<{ id: string; name: string }>; totalPages: number; currentPage: number }
       const opts = data.categories.map(c => ({ value: c.id, label: c.name }))
       setCategoryOptions(prev => {
         const map = new Map<string, { value: string; label: string }>()
-        ;(append ? [...prev, ...opts] : opts).forEach(o => map.set(o.value, o))
+        ;(appendList ? [...prev, ...opts] : opts).forEach(o => map.set(o.value, o))
         return Array.from(map.values())
       })
       setCatTotalPages(data.totalPages || 1)
       setCatPage(data.currentPage || page)
+      // eslint-disable-next-line no-console
+      console.debug(`${LOG} categories page loaded`, { page: data.currentPage || page, totalPages: data.totalPages || 1, added: opts.length })
     } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error(`${LOG} categories error`, e)
       toast.error(e.message || "Failed to load categories")
     } finally {
       setCatLoading(false)
@@ -196,7 +226,7 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
       do {
         const url = `/api/products?categoryId=${catId}&pageSize=100&page=${page}`
         const res = await fetch(url)
-        if (!res.ok) throw new Error("Failed to fetch products")
+        if (!res.ok) throw new Error(`Failed to fetch products (${res.status})`)
         const json = await res.json()
         collected.push(...json.products)
         totalPages = json.pagination.totalPages
@@ -258,7 +288,11 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
 
         // 5) write back into the form
         form.setValue("products", Array.from(map.values()))
+        // eslint-disable-next-line no-console
+        console.debug(`${LOG} merged products from categories`, { categories: selectedCategories.length, added: items.length })
       } catch (err: any) {
+        // eslint-disable-next-line no-console
+        console.error(`${LOG} products-from-categories error`, err)
         toast.error(err.message)
       }
     })()
@@ -277,7 +311,7 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
         let page = 1, totalPages = 1
         do {
           const res = await fetch(`/api/products?page=${page}&pageSize=100`)
-          if (!res.ok) throw new Error("Failed to fetch products")
+          if (!res.ok) throw new Error(`Failed to fetch products (${res.status})`)
           const json = await res.json()
           collected.push(...json.products)
           totalPages = json.pagination?.totalPages ?? 1
@@ -299,7 +333,11 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
         })
 
         setProductOptions(opts)
+        // eslint-disable-next-line no-console
+        console.debug(`${LOG} products loaded`, { options: opts.length })
       } catch (err: any) {
+        // eslint-disable-next-line no-console
+        console.error(`${LOG} products load error`, err)
         toast.error(err.message)
       }
     })()
@@ -326,15 +364,41 @@ export function DiscountRuleForm({ discountRuleData, isEditing = false }: Props)
 
     if (missingOpts.length) {
       setProductOptions((prev) => [...prev, ...missingOpts])
+      // eslint-disable-next-line no-console
+      console.debug(`${LOG} added missing option stubs`, { count: missingOpts.length })
     }
   }, [isEditing, discountRuleData, productOptions])
+
+  const readErrorBody = async (res: Response) => {
+    try {
+      const json = await res.json()
+      return typeof json?.error === "string" ? json.error : JSON.stringify(json)
+    } catch {
+      try {
+        return await res.text()
+      } catch {
+        return ""
+      }
+    }
+  }
 
   const onSubmit = async (vals: FormValues) => {
     try {
       const url = isEditing ? `/api/tier-pricing/${(discountRuleData as any).id}` : "/api/tier-pricing"
       const method = isEditing ? "PATCH" : "POST"
+      // eslint-disable-next-line no-console
+      console.debug(`${LOG} submit ->`, { method, url, payload: vals })
+
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(vals) })
-      if (!res.ok) throw new Error("Save failed")
+      // eslint-disable-next-line no-console
+      console.debug(`${LOG} response`, { status: res.status })
+
+      if (!res.ok) {
+        const body = await readErrorBody(res)
+        // eslint-disable-next-line no-console
+        console.error(`${LOG} save failed`, { status: res.status, body })
+        throw new Error(body || "Save failed")
+      }
       toast.success(isEditing ? "Rule updated" : "Rule created")
       router.push("/discount-rules")
     } catch (err: any) {

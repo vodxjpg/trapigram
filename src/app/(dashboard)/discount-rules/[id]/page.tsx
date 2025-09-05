@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/(dashboard)/discount-rules/[id]/page.tsx
 // src/app/(dashboard)/discount-rules/[id]/page.tsx
 "use client";
 
@@ -11,6 +12,8 @@ import { toast } from "sonner";
 import { DiscountRuleForm } from "../components/discount-rules-form";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
+
+const LOG = "[TierPricing/Edit]";
 
 export default function EditDiscountRulePage() {
   const { id } = useParams<{ id: string }>();
@@ -32,6 +35,8 @@ export default function EditDiscountRulePage() {
   // redirect if no update permission
   useEffect(() => {
     if (!permLoading && !canUpdate) {
+      // eslint-disable-next-line no-console
+      console.debug(`${LOG} no permission; redirecting`, { canUpdate })
       router.replace("/discount-rules");
     }
   }, [permLoading, canUpdate, router]);
@@ -40,15 +45,24 @@ export default function EditDiscountRulePage() {
   useEffect(() => {
     if (permLoading || !canUpdate) return;
     setLoading(true);
+    // eslint-disable-next-line no-console
+    console.debug(`${LOG} fetching rule`, { id });
     fetch(`/api/tier-pricing/${id}`)
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch");
+      .then(async (res) => {
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(`Failed to fetch (${res.status}) ${text}`);
+        }
         return res.json();
       })
       .then((data) => {
         setRule(data);
+        // eslint-disable-next-line no-console
+        console.debug(`${LOG} rule loaded`, { steps: data?.steps?.length, products: data?.products?.length });
       })
       .catch((e) => {
+        // eslint-disable-next-line no-console
+        console.error(`${LOG} fetch error`, e);
         toast.error((e as Error).message);
         router.replace("/discount-rules");
       })
