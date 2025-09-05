@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/api/tier-pricing/[id]/route.ts
 // src/app/api/tier-pricing/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server"
 import { z } from "zod"
@@ -5,11 +6,24 @@ import { db } from "@/lib/db"
 import { getContext } from "@/lib/context"
 import { v4 as uuidv4 } from "uuid"
 
-const paramsSchema = z.object({ id: z.string().uuid() })
-const stepSchema = z.object({ fromUnits: z.number().min(1), toUnits: z.number().min(1), price: z.number().positive() })
+/**
+ * IMPORTANT: do not force UUID here — shared copies use non-UUID string IDs.
+ */
+const paramsSchema = z.object({ id: z.string().min(1) })
+
+const stepSchema = z.object({
+  fromUnits: z.number().min(1),
+  toUnits: z.number().min(1),
+  price: z.number().positive(),
+})
+
 const productItemSchema = z
-  .object({ productId: z.string().uuid().nullable(), variationId: z.string().uuid().nullable() })
+  .object({
+    productId: z.string().min(1).nullable(),
+    variationId: z.string().min(1).nullable(),
+  })
   .refine(d => d.productId || d.variationId, { message: "Must specify productId or variationId" })
+
 const patchSchema = z.object({
   name: z.string().min(1).optional(),
   countries: z.array(z.string().length(2)).min(1).optional(),
@@ -62,7 +76,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const updateCols: any = { updatedAt: now }
   if (body.name) updateCols.name = body.name
   if (body.countries) updateCols.countries = JSON.stringify(body.countries)
-  if (typeof body.active === "boolean") updateCols.active = body.active;
+  if (typeof body.active === "boolean") updateCols.active = body.active
 
   await db.updateTable("tierPricings").set(updateCols).where("id", "=", id).execute()
 
@@ -101,7 +115,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return NextResponse.json({ success: true })
 }
 
-/* ─── DELETE (unchanged logic, table names updated) ───────────── */
+/* ─── DELETE (unchanged logic) ────────── */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = paramsSchema.parse(await params)
 

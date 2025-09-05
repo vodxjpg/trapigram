@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/api/tier-pricing/route.ts
 // src/app/api/tier-pricing/route.ts
 import { NextRequest, NextResponse } from "next/server"
 import { z } from "zod"
@@ -11,9 +12,18 @@ const stepSchema = z.object({
   toUnits: z.number().min(1),
   price: z.number().positive(),
 })
+
+/**
+ * IMPORTANT: shared product copies use non-UUID string IDs like "PROD-xxxx" / "VAR-xxxx".
+ * We must NOT enforce UUID shape here, only non-empty strings (or null).
+ */
 const productItemSchema = z
-  .object({ productId: z.string().uuid().nullable(), variationId: z.string().uuid().nullable() })
+  .object({
+    productId: z.string().min(1).nullable(),
+    variationId: z.string().min(1).nullable(),
+  })
   .refine(d => d.productId || d.variationId, { message: "Must specify productId or variationId" })
+
 const bodySchema = z.object({
   name: z.string().min(1),
   countries: z.array(z.string().length(2)).min(1),
