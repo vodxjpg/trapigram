@@ -74,6 +74,7 @@ type Order = {
   orderNumber: string;
   cancelled: boolean;
   refunded: boolean;
+  status?: "paid" | "pending_payment" | "refunded" | "cancelled" | "open" | "partially_paid";
   userId: string;
   username: string;
   country: string;
@@ -200,7 +201,7 @@ export default function OrderReport() {
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [status, setStatus] = useState<
-    "all" | "paid" | "refunded" | "cancelled"
+    "all" | "paid" | "refunded" | "cancelled" | "pending_payment"
   >("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -288,7 +289,10 @@ export default function OrderReport() {
     const matchesStatus = (o: Order) => {
       switch (status) {
         case "paid":
-          return o.cancelled === false && o.refunded === false;
+          // Prefer explicit status if provided, else fallback to flags
+          return o.status ? o.status === "paid" : (!o.cancelled && !o.refunded);
+        case "pending_payment":
+          return o.status === "pending_payment";
         case "cancelled":
           return o.cancelled === true;
         case "refunded":
@@ -366,15 +370,18 @@ export default function OrderReport() {
       } else {
         netProfitDisplay = o.netProfit;
       }
-      return {
+       const rowStatus =
+     o.cancelled === true
+       ? "Cancelled"
+       : o.refunded === true
+       ? "Refunded"
+       : o.status === "pending_payment"
+       ? "Pending Payment"
+       : "Paid";
+   return {
         "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
         "Order Number": o.orderNumber,
-        Status:
-          o.cancelled === true
-            ? "Cancelled"
-            : o.refunded === true
-              ? "Refunded"
-              : "Paid",
+        Status: rowStatus,
         "User ID": o.userId,
         Country: o.country,
         Dropshipper: o.dropshipperLabel ?? "",
@@ -490,9 +497,9 @@ export default function OrderReport() {
                           <div className="text-sm text-muted-foreground">
                             {tempDateRange?.from && tempDateRange?.to
                               ? `${format(tempDateRange.from, "MMM dd, yyyy")} - ${format(
-                                  tempDateRange.to,
-                                  "MMM dd, yyyy"
-                                )}`
+                                tempDateRange.to,
+                                "MMM dd, yyyy"
+                              )}`
                               : "Select date range"}
                           </div>
                           <div className="flex gap-2">
@@ -542,9 +549,9 @@ export default function OrderReport() {
                   <span className="text-sm font-medium">Status</span>
                   <Select
                     value={status}
-                    onValueChange={(v) =>
-                      setStatus(v as "all" | "paid" | "cancelled" | "refunded")
-                    }
+                                onValueChange={(v) =>
+               setStatus(v as "all" | "paid" | "cancelled" | "refunded" | "pending_payment")
+             }
                     className="w-32"
                   >
                     <SelectTrigger size="sm">
@@ -553,6 +560,7 @@ export default function OrderReport() {
                     <SelectContent>
                       <SelectItem value="all">All</SelectItem>
                       <SelectItem value="paid">Paid</SelectItem>
+                      <SelectItem value="pending_payment">Pending Payment</SelectItem>
                       <SelectItem value="cancelled">Cancelled</SelectItem>
                       <SelectItem value="refunded">Refunded</SelectItem>
                     </SelectContent>
@@ -776,13 +784,15 @@ export default function OrderReport() {
                             <TableCell className="font-medium">
                               {o.orderNumber}
                             </TableCell>
-                            <TableCell>
-                              {o.cancelled === true
-                                ? "Cancelled"
-                                : o.refunded === true
-                                  ? "Refunded"
-                                  : "Paid"}
-                            </TableCell>
+                                                <TableCell>
+                      {o.cancelled
+                        ? "Cancelled"
+                        : o.refunded
+                        ? "Refunded"
+                        : o.status === "pending_payment"
+                        ? "Pending Payment"
+                        : "Paid"}
+                    </TableCell>
                             <TableCell>
                               <Link href={`/clients/${o.userId || o.id}/info`}>
                                 {o.username || o.userId}
@@ -795,58 +805,52 @@ export default function OrderReport() {
 
                             <TableCell>{o.country}</TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                              }`}
+                                }`}
                             >
                               {fmtMoney(o.totalPrice)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                              }`}
+                                }`}
                             >
                               {fmtMoney(o.shippingCost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                              }`}
+                                }`}
                             >
                               {fmtMoney(o.discount)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                              }`}
+                                }`}
                             >
                               {fmtMoney(o.cost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                              }`}
+                                }`}
                             >
                               {o.coin}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled || o.refunded
+                              className={`text-right font-medium ${o.cancelled || o.refunded
                                   ? "text-red-600"
                                   : o.netProfit >= 0
                                     ? "text-green-600"
                                     : "text-red-600"
-                              }`}
+                                }`}
                             >
                               {o.cancelled
                                 ? fmtMoney(0)
@@ -991,7 +995,7 @@ export default function OrderReport() {
                           day: "numeric",
                         });
                       }}
-                      valueFormatter={(v) => formatCurrency(Number(v))} // ← add this if supported
+                     valueFormatter={(v) => fmtMoney(Number(v))}// ← add this if supported
                       indicator="dot"
                     />
                   }

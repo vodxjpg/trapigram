@@ -625,7 +625,7 @@ export default function OrdersPage() {
                                 </Badge>
                               </SelectItem>
                               <SelectItem
-                                value="underpaid"
+                                value="pending_payment"
                                 className="w-auto flex justify-left"
                               >
                                 <Badge className={getStatusColor("pending_payment")}>

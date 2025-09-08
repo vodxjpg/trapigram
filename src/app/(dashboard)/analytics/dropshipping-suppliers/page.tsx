@@ -79,6 +79,7 @@ type OrderRow = {
   country: string;
   cancelled: boolean;
   refunded: boolean;
+   status?: "paid" | "pending_payment" | "refunded" | "cancelled";
   supplierOrgId: string | null;
   supplierLabel: string | null;
   items: Array<{
@@ -193,9 +194,7 @@ export default function SupplierPayables() {
   // table / filters
   const [currentPage, setCurrentPage] = useState(1);
   const [currency, setCurrency] = useState<"USD" | "GBP" | "EUR">("USD");
-  const [status, setStatus] = useState<
-    "all" | "paid" | "refunded" | "cancelled"
-  >("all");
+  const [status, setStatus] = useState<"all" | "paid" | "refunded" | "cancelled" | "pending_payment">("all");
 
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -338,7 +337,7 @@ export default function SupplierPayables() {
     const dataForSheet = filteredOrders.map((o) => ({
       "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
       Order: o.orderNumber,
-      Status: o.cancelled ? "Cancelled" : o.refunded ? "Refunded" : "Paid",
+      Status: o.cancelled ? "Cancelled" : o.refunded ? "Refunded" : (o.status === "pending_payment" ? "Pending Payment" : "Paid"),
       Username: o.username,
       Supplier: o.supplierLabel ?? "",
       "Total Qty": o.totalQty,
@@ -500,19 +499,18 @@ export default function SupplierPayables() {
 
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">Status</span>
-                  <Select
-                    value={status}
-                    onValueChange={(v) =>
-                      setStatus(v as "all" | "paid" | "cancelled" | "refunded")
-                    }
-                    className="w-32"
-                  >
+                    <Select
+                      value={status}
+                      onValueChange={(v) => setStatus(v as "all" | "paid" | "cancelled" | "refunded" | "pending_payment")}
+                      className="w-32"
+                    >
                     <SelectTrigger size="sm">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All</SelectItem>
                       <SelectItem value="paid">Paid</SelectItem>
+                      <SelectItem value="pending_payment">Pending Payment</SelectItem>
                       <SelectItem value="cancelled">Cancelled</SelectItem>
                       <SelectItem value="refunded">Refunded</SelectItem>
                     </SelectContent>
@@ -737,13 +735,15 @@ export default function SupplierPayables() {
                               <TableCell className="font-medium">
                                 {o.orderNumber}
                               </TableCell>
-                              <TableCell>
-                                {o.cancelled
-                                  ? "Cancelled"
-                                  : o.refunded
-                                    ? "Refunded"
-                                    : "Paid"}
-                              </TableCell>
+                                                       <TableCell>
+                         {o.cancelled
+                           ? "Cancelled"
+                           : o.refunded
+                           ? "Refunded"
+                           : o.status === "pending_payment"
+                           ? "Pending Payment"
+                           : "Paid"}
+                       </TableCell>
                               <TableCell>
                                 <Link href={`/clients/${o.orderId}/info`}>
                                   {o.username}
