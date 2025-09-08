@@ -60,6 +60,7 @@ import {
 type OrderStatus =
   | "open"
   | "underpaid"
+  | "pending_payment"       // ⬅️ NEW
   | "paid"
   | "cancelled"
   | "refunded"
@@ -289,6 +290,8 @@ export default function OrdersPage() {
     switch (s) {
       case "open":
         return "bg-blue-500";
+      case "pending_payment":         // ⬅️ NEW
+        return "bg-yellow-500";
       case "paid":
         return "bg-green-500";
       case "cancelled":
@@ -486,6 +489,7 @@ export default function OrdersPage() {
               <SelectContent>
                 <SelectItem value="all">All Statuses</SelectItem>
                 <SelectItem value="open">Open</SelectItem>
+                <SelectItem value="pending_payment">Pending payment</SelectItem>
                 <SelectItem value="paid">Paid</SelectItem>
                 <SelectItem value="underpaid">Underpaid</SelectItem>
                 <SelectItem value="completed">Completed</SelectItem>
@@ -618,6 +622,14 @@ export default function OrdersPage() {
                               >
                                 <Badge className={getStatusColor("underpaid")}>
                                   Partially paid
+                                </Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="underpaid"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("pending_payment")}>
+                                  Pending payment
                                 </Badge>
                               </SelectItem>
                               <SelectItem

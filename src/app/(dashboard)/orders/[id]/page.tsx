@@ -391,6 +391,7 @@ export default function OrderView() {
       {
         open: "bg-blue-500",
         paid: "bg-green-500",
+        pending_payment: "bg-yellow-500",
         cancelled: "bg-red-500",
         completed: "bg-purple-500",
       } as const

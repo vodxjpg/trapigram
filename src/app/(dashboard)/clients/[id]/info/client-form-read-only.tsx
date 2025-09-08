@@ -40,7 +40,7 @@ interface Props {
 type OrderRow = {
   id: string;
   orderKey: string;
-  status: "open" | "underpaid" | "paid" | "cancelled" | "refunded" | "completed";
+  status: "open" | "underpaid" | "pending_payment" | "paid" | "cancelled" | "refunded" | "completed";
   createdAt: string;
   total: number;
   trackingNumber?: string | null;
@@ -113,6 +113,7 @@ export default function ClientDetailView({ clientId }: Props) {
       open: "bg-blue-100 text-blue-800",
       paid: "bg-green-100 text-green-800",
       underpaid: "bg-orange-100 text-orange-800",
+      pending_payment: "bg-yellow-500",
       cancelled: "bg-red-100 text-red-800",
       refunded: "bg-red-100 text-red-800",
       completed: "bg-purple-100 text-purple-800",

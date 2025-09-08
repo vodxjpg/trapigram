@@ -330,7 +330,7 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
                   name="stackable"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Stackable</FormLabel>
+                      <FormLabel>Used with other coupons</FormLabel>
                       <FormControl>
                         <div className="flex items-center gap-3">
                           <span className={!field.value ? "font-semibold" : ""}>
@@ -418,8 +418,8 @@ export function CouponForm({ couponData, isEditing = false }: Props) {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {[
                 { name: "usageLimit", label: "Usage Limit" },
-                { name: "expendingMinimum", label: "Expending Minimum" },
-                { name: "expendingLimit", label: "Expending Limit" },
+                { name: "expendingMinimum", label: "Minimum spend" },
+                { name: "expendingLimit", label: "Max discount amount" },
                 { name: "limitPerUser", label: "Limit Per User" },
               ].map(({ name, label }) => (
                 <FormField

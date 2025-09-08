@@ -1,580 +1,529 @@
 import { pgPool, pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 
-// nothing
-
-const apiKey = process.env.CURRENCY_LAYER_API_KEY
+const apiKey = process.env.CURRENCY_LAYER_API_KEY;
 
 // ── diagnostics ──────────────────────────────────────────────
 const dbg = (...a: any[]) => console.log("[orderRevenue]", ...a);
 if (!process.env.CURRENCY_LAYER_API_KEY)
-    console.warn("[orderRevenue] ⚠️  CURRENCY_LAYER_API_KEY is not set");
+  console.warn("[orderRevenue] ⚠️  CURRENCY_LAYER_API_KEY is not set");
 
 const euroCountries = [
-    "AT", // Austria
-    "BE", // Belgium
-    "HR", // Croatia (used HRK, now uses EUR since Jan 2023, remove if current)
-    "CY", // Cyprus
-    "EE", // Estonia
-    "FI", // Finland
-    "FR", // France
-    "DE", // Germany
-    "GR", // Greece
-    "IE", // Ireland
-    "IT", // Italy
-    "LV", // Latvia
-    "LT", // Lithuania
-    "LU", // Luxembourg
-    "MT", // Malta
-    "NL", // Netherlands
-    "PT", // Portugal
-    "SK", // Slovakia
-    "SI", // Slovenia
-    "ES"  // Spain
+  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE",
+  "IT","LV","LT","LU","MT","NL","PT","SK","SI","ES"
 ];
 
 const coins: Record<string, string> = {
-    'BTC': 'bitcoin',
-    'ETH': 'ethereum',
-    'USDT': 'tether',
-    'USDT.ERC20': 'tether',
-    'USDT.TRC20': 'tether',
-    'USDC': 'usd-coin',
-    'USDC.ERC20': 'usd-coin',
-    'USDC.TRC20': 'usd-coin',
-    'USDC.SOL': 'usd-coin',
-    'USDC.SPL': 'usd-coin',
-    'USDC.POLYGON': 'usd-coin',
-    'USDC.BEP20': 'usd-coin',
-    'USDC.ARBITRUM': 'usd-coin',
-    'USDC.OPTIMISM': 'usd-coin',
-    'USDC.BASE': 'usd-coin',
-    'XRP': 'ripple',
-    'SOL': 'solana',
-    'ADA': 'cardano',
-    'LTC': 'litecoin',
-    'DOT': 'polkadot',
-    'BCH': 'bitcoin-cash',
-    'LINK': 'chainlink',
-    'BNB': 'binancecoin',
-    'DOGE': 'dogecoin',
-    'MATIC': 'matic-network',
-    'XMR': 'monero'
-}
-
-type CategoryRevenue = {
-    categoryId: string,
-    price: number,
-    cost: number,
-    quantity: number
-}
-
-type TransformedCategoryRevenue = {
-    categoryId: string;
-    total: number;
-    cost: number;
+  BTC: "bitcoin",
+  ETH: "ethereum",
+  USDT: "tether",
+  "USDT.ERC20": "tether",
+  "USDT.TRC20": "tether",
+  USDC: "usd-coin",
+  "USDC.ERC20": "usd-coin",
+  "USDC.TRC20": "usd-coin",
+  "USDC.SOL": "usd-coin",
+  "USDC.SPL": "usd-coin",
+  "USDC.POLYGON": "usd-coin",
+  "USDC.BEP20": "usd-coin",
+  "USDC.ARBITRUM": "usd-coin",
+  "USDC.OPTIMISM": "usd-coin",
+  "USDC.BASE": "usd-coin",
+  XRP: "ripple",
+  SOL: "solana",
+  ADA: "cardano",
+  LTC: "litecoin",
+  DOT: "polkadot",
+  BCH: "bitcoin-cash",
+  LINK: "chainlink",
+  BNB: "binancecoin",
+  DOGE: "dogecoin",
+  MATIC: "matic-network",
+  XMR: "monero",
 };
 
-export async function getRevenue(id: string, organizationId: string) {
-    try {
-        const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`
-        const resultCheck = await pool.query(checkQuery);
-        const check = resultCheck.rows
-
-        if (check.length > 0) {
-            console.log("[orderRevenue] revenue‑already‑exists", {
-                orderId: id,
-                rows: check.length,
-            });
-            return check[0]
-        }
-
-        if (check.length === 0) {
-            const orderQuery = `SELECT * FROM orders WHERE id = '${id}' AND "organizationId" = '${organizationId}'`
-            const resultOrders = await pool.query(orderQuery);
-            const order = resultOrders.rows[0]
-
-            const cartId = order.cartId
-            const paymentType = order.paymentMethod
-            const country = order.country
-
-            // --- after you've fetched `order` from the DB ---
-            const raw = order.datePaid;   // string or Date
-            const paidDate = raw instanceof Date
-                ? raw
-                : new Date(raw);                  // ensure it's a JS Date
-
-            // now get seconds since the Unix epoch **
-            const to = Math.floor(paidDate.getTime() / 1000);
-            const from = to - 3600;
-
-            const productQuery = `SELECT p.*, cp.quantity
-                    FROM "cartProducts" cp
-                    JOIN products p ON cp."productId" = p.id
-                    WHERE cp."cartId" = '${cartId}'`
-            const productResult = await pool.query(productQuery)
-            const products = productResult.rows
-
-            const affiliateQuery = `SELECT p.*, cp.quantity
-                    FROM "cartProducts" cp
-                    JOIN "affiliateProducts" p ON cp."affiliateProductId" = p.id
-                    WHERE cp."cartId" = '${cartId}'`
-            const affiliateResult = await pool.query(affiliateQuery)
-            const affiliate = affiliateResult.rows
-
-            const allProducts = products.concat(affiliate)
-
-            const categoryQuery = `SELECT cp.*, p.*, pc."categoryId" FROM "cartProducts" AS cp
-                JOIN "products" AS p ON cp."productId" = p."id"
-                LEFT JOIN "productCategory" AS pc ON pc."productId" = p."id"
-                WHERE cp."cartId" = '${cartId}'`
-            const categoryResult = await pool.query(categoryQuery)
-            const categoryData = categoryResult.rows
-
-            const categories: CategoryRevenue[] = [];
-
-            for (const ct of categoryData) {
-                categories.push({
-                    categoryId: ct.categoryId,
-                    price: ct.regularPrice[country],
-                    cost: ct.cost[country],
-                    quantity: ct.quantity
-                })
-            }
-
-            const newCategories: TransformedCategoryRevenue[] = categories.map(({ categoryId, price, cost, quantity }) => ({
-                categoryId,
-                total: price * quantity,
-                cost: cost * quantity,
-            }));
-
-            const totalCost = allProducts.reduce((sum, product) => {
-                return sum + ((product.cost[country] * product.quantity) || 0);
-            }, 0);
-
-            let total = 0
-            if (paymentType.toLowerCase() == 'niftipay') {
-                let coinRaw = ""
-                let amount = 0
-                const paidEntry = order.orderMeta.find(item => item.event === "paid");
-                if (paidEntry) {
-                    coinRaw = paidEntry.order.asset ?? ""
-                    amount = paidEntry.order.amount
-                }
-
-                const coinKey = coinRaw.toUpperCase();
-                const coinId = coins[coinKey];
-                if (!coinId) {
-                    console.warn("[orderRevenue] ⚠️ unsupported asset:", coinKey);
-                    throw new Error(`Unsupported crypto asset "${coinKey}"`);
-                }
-                const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
-                const options = { method: 'GET', headers: { accept: 'application/json' } };
-
-                const res = await fetch(url, options)
-                dbg("CoinGecko ←", res.status, res.statusText)
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status} – ${res.statusText}`);
-                }
-
-                const result = await res.json()
-                const price = result.prices[0][1]
-                total = amount * price
-
-                const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from}) AND to_timestamp(${to})`
-                const exchangeResult = await pgPool.query(exchangeQuery)
-
-                let USDEUR = 0
-                let USDGBP = 0
-                if (exchangeResult.rows.length === 0) {
-                    const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
-                    dbg("CurrencyLayer →", url)
-                    const res = await fetch(url);
-                    dbg("CurrencyLayer ←", res.status, res.statusText)
-                    const data = await res.json();
-
-                    const usdEur = data.quotes?.USDEUR;
-                    const usdGbp = data.quotes?.USDGBP;
-                    if (usdEur == null || usdGbp == null) {
-                        return { error: 'Invalid API response' }
-                    }
-                    const insertSql = `
-                        INSERT INTO "exchangeRate" ("EUR","GBP", date)
-                        VALUES ($1, $2, $3)
-                        RETURNING *`;
-                    const values = [usdEur, usdGbp, new Date(paidDate)]
-                    const response = await pgPool.query(insertSql, values);
-                    const result = response.rows[0]
-
-                    USDEUR = result.EUR
-                    USDGBP = result.GBP
-                } else {
-                    const result = exchangeResult.rows[0]
-                    USDEUR = result.EUR
-                    USDGBP = result.GBP
-                }
-
-                const revenueId = uuidv4();
-
-                if (country === 'GB') {
-                    const discountGBP = Number(order.discountTotal)
-                    const shippingGBP = Number(order.shippingTotal)
-                    const costGBP = totalCost
-                    let totalGBP = Number(order.totalAmount)
-
-                    const discountUSD = discountGBP / USDGBP
-                    const shippingUSD = shippingGBP / USDGBP
-                    const costUSD = costGBP / USDGBP
-                    let totalUSD = totalGBP / USDGBP
-
-                    const discountEUR = discountGBP * (USDEUR / USDGBP)
-                    const shippingEUR = shippingGBP * (USDEUR / USDGBP)
-                    const costEUR = costGBP * (USDEUR / USDGBP)
-                    let totalEUR = totalGBP * (USDEUR / USDGBP)
-
-                    if (paymentType.toLowerCase() == 'niftipay') {
-                        totalUSD = total
-                        totalEUR = total * USDEUR
-                        totalGBP = total * USDGBP
-                    }
-
-                    const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-                    const resultQuery = await pool.query(query)
-                    const revenue = resultQuery.rows[0]
-
-                    for (const ct of newCategories) {
-
-                        const catRevenueId = uuidv4();
-
-                        const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * (USDEUR / USDGBP)).toFixed(2)}, ${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-                        await pool.query(query)
-                    }
-                    return revenue;
-                } else if (euroCountries.includes(country)) {
-                    const discountEUR = Number(order.discountTotal)
-                    const shippingEUR = Number(order.shippingTotal)
-                    const costEUR = totalCost
-                    let totalEUR = Number(order.totalAmount)
-
-                    const discountUSD = discountEUR / USDEUR
-                    const shippingUSD = shippingEUR / USDEUR
-                    const costUSD = costEUR / USDEUR
-                    let totalUSD = totalEUR / USDEUR
-
-                    const discountGBP = discountEUR * (USDGBP / USDEUR)
-                    const shippingGBP = shippingEUR * (USDGBP / USDEUR)
-                    const costGBP = costEUR * (USDGBP / USDEUR)
-                    let totalGBP = totalEUR * (USDGBP / USDEUR)
-
-                    if (paymentType.toLowerCase() == 'niftipay') {
-                        totalUSD = total
-                        totalEUR = total * USDEUR
-                        totalGBP = total * USDGBP
-                    }
-
-                    const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-                    const resultQuery = await pool.query(query)
-                    const revenue = resultQuery.rows[0]
-
-                    for (const ct of newCategories) {
-
-                        const catRevenueId = uuidv4();
-
-                        const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDEUR).toFixed(2)}, ${(ct.cost / USDEUR).toFixed(2)},
-                            ${(ct.total * (USDGBP / USDEUR)).toFixed(2)}, ${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-                        await pool.query(query)
-                    }
-                    return revenue
-                } else {
-                    const discountUSD = Number(order.discountTotal)
-                    const shippingUSD = Number(order.shippingTotal)
-                    const costUSD = totalCost
-                    let totalUSD = Number(order.totalAmount)
-
-                    const discountEUR = discountUSD * USDEUR
-                    const shippingEUR = shippingUSD * USDEUR
-                    const costEUR = costUSD * USDEUR
-                    let totalEUR = totalUSD * USDEUR
-
-                    const discountGBP = discountUSD * USDGBP
-                    const shippingGBP = shippingUSD * USDGBP
-                    const costGBP = costUSD * USDGBP
-                    let totalGBP = totalUSD * USDGBP
-
-                    if (paymentType.toLowerCase() == 'niftipay') {
-                        totalUSD = total
-                        totalEUR = total * USDEUR
-                        totalGBP = total * USDGBP
-                    }
-
-                    const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-                    const resultQuery = await pool.query(query)
-                    const revenue = resultQuery.rows[0]
-
-                    for (const ct of newCategories) {
-
-                        const catRevenueId = uuidv4();
-
-                        const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * USDGBP).toFixed(2)}, ${(ct.cost * USDGBP).toFixed(2)},
-                            ${(ct.total * USDEUR).toFixed(2)}, ${(ct.cost * USDEUR).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-                        await pool.query(query)
-                    }
-                    return revenue
-                }
-            } else { //some changes
-                const exchangeQuery = `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${from}) AND to_timestamp(${to})`
-                const exchangeResult = await pgPool.query(exchangeQuery)
-
-                let USDEUR = 0
-                let USDGBP = 0
-                if (exchangeResult.rows.length === 0) {
-                    const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
-                    const res = await fetch(url);
-                    dbg("CurrencyLayer ←", res.status, res.statusText)
-                    const data = await res.json();
-
-                    const usdEur = data.quotes?.USDEUR;
-                    const usdGbp = data.quotes?.USDGBP;
-                    if (usdEur == null || usdGbp == null) {
-                        return { error: 'Invalid API response' }
-                    }
-
-                    const insertSql = `
-                        INSERT INTO "exchangeRate" ("EUR","GBP", date)
-                        VALUES ($1, $2, $3)
-                        RETURNING *`;
-                    const values = [usdEur, usdGbp, new Date(paidDate)]
-                    const response = await pgPool.query(insertSql, values);
-                    const result = response.rows[0]
-
-                    USDEUR = result.EUR
-                    USDGBP = result.GBP
-                } else {
-                    const result = exchangeResult.rows[0]
-                    USDEUR = result.EUR
-                    USDGBP = result.GBP
-                }
-
-                const revenueId = uuidv4();
-
-                if (country === 'GB') {
-                    const totalGBP = Number(order.totalAmount)
-                    const shippingGBP = Number(order.shippingTotal)
-                    const discountGBP = Number(order.discountTotal)
-                    const costGBP = totalCost
-
-                    const discountUSD = discountGBP / USDGBP
-                    const shippingUSD = shippingGBP / USDGBP
-                    const costUSD = costGBP / USDGBP
-                    const totalUSD = totalGBP / USDGBP
-
-                    const discountEUR = discountGBP * (USDEUR / USDGBP)
-                    const shippingEUR = shippingGBP * (USDEUR / USDGBP)
-                    const costEUR = costGBP * (USDEUR / USDGBP)
-                    const totalEUR = totalGBP * (USDEUR / USDGBP)
-
-                    const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-                    const resultQuery = await pool.query(query)
-                    const revenue = resultQuery.rows[0]
-
-                    for (const ct of newCategories) {
-
-                        const catRevenueId = uuidv4();
-
-                        const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDGBP).toFixed(2)}, ${(ct.cost / USDGBP).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * (USDEUR / USDGBP)).toFixed(2)}, ${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-                        await pool.query(query)
-                    }
-                    return revenue;
-                } else if (euroCountries.includes(country)) {
-                    const totalEUR = Number(order.totalAmount)
-                    const shippingEUR = Number(order.shippingTotal)
-                    const discountEUR = Number(order.discountTotal)
-                    const costEUR = totalCost
-
-                    const discountGBP = discountEUR * (USDGBP / USDEUR)
-                    const shippingGBP = shippingEUR * (USDGBP / USDEUR)
-                    const costGBP = costEUR * (USDGBP / USDEUR)
-                    const totalGBP = totalEUR * (USDGBP / USDEUR)
-
-                    const discountUSD = discountEUR / USDEUR
-                    const shippingUSD = shippingEUR / USDEUR
-                    const costUSD = costEUR / USDEUR
-                    const totalUSD = totalEUR / USDEUR
-
-                    const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-                    const resultQuery = await pool.query(query)
-                    const revenue = resultQuery.rows[0]
-
-                    for (const ct of newCategories) {
-
-                        const catRevenueId = uuidv4();
-
-                        const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${(ct.total / USDEUR).toFixed(2)}, ${(ct.cost / USDEUR).toFixed(2)},
-                            ${(ct.total * (USDGBP / USDEUR)).toFixed(2)}, ${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-                        await pool.query(query)
-                    }
-                    return revenue
-                } else {
-                    const discountUSD = Number(order.discountTotal)
-                    const shippingUSD = Number(order.shippingTotal)
-                    const totalUSD = Number(order.totalAmount)
-                    const costUSD = totalCost
-
-                    const discountEUR = discountUSD * USDEUR
-                    const shippingEUR = shippingUSD * USDEUR
-                    const costEUR = costUSD * USDEUR
-                    const totalEUR = totalUSD * USDEUR
-
-                    const discountGBP = discountUSD * USDGBP
-                    const shippingGBP = shippingUSD * USDGBP
-                    const costGBP = costUSD * USDGBP
-                    const totalGBP = totalUSD * USDGBP
-
-                    const query = `INSERT INTO "orderRevenue" (id, "orderId", 
-                        "USDtotal", "USDdiscount", "USDshipping", "USDcost", 
-                        "GBPtotal", "GBPdiscount", "GBPshipping", "GBPcost",
-                        "EURtotal", "EURdiscount", "EURshipping", "EURcost",
-                        "createdAt", "updatedAt", "organizationId")
-                        VALUES ('${revenueId}', '${id}', 
-                        ${totalUSD.toFixed(2)}, ${discountUSD.toFixed(2)}, ${shippingUSD.toFixed(2)}, ${costUSD.toFixed(2)},
-                        ${totalGBP.toFixed(2)}, ${discountGBP.toFixed(2)}, ${shippingGBP.toFixed(2)}, ${costGBP.toFixed(2)},
-                        ${totalEUR.toFixed(2)}, ${discountEUR.toFixed(2)}, ${shippingEUR.toFixed(2)}, ${costEUR.toFixed(2)},
-                        NOW(), NOW(), '${organizationId}')
-                        RETURNING *`
-
-                    const resultQuery = await pool.query(query)
-                    const revenue = resultQuery.rows[0]
-
-                    for (const ct of newCategories) {
-
-                        const catRevenueId = uuidv4();
-
-                        const query = `INSERT INTO "categoryRevenue" (id, "categoryId", 
-                            "USDtotal", "USDcost", 
-                            "GBPtotal", "GBPcost",
-                            "EURtotal", "EURcost",
-                            "createdAt", "updatedAt", "organizationId")
-                            VALUES ('${catRevenueId}', '${ct.categoryId}', 
-                            ${ct.total.toFixed(2)}, ${ct.cost.toFixed(2)},
-                            ${(ct.total * USDGBP).toFixed(2)}, ${(ct.cost * USDGBP).toFixed(2)},
-                            ${(ct.total * USDEUR).toFixed(2)}, ${(ct.cost * USDEUR).toFixed(2)},
-                            NOW(), NOW(), '${organizationId}')
-                            RETURNING *`
-
-                        await pool.query(query)
-                    }
-                    return revenue
-                }
-            }
-        }
-    } catch (error) {
-        return error
+type CategoryRevenue = {
+  categoryId: string;
+  price: number;
+  cost: number;
+  quantity: number;
+};
+
+type TransformedCategoryRevenue = {
+  categoryId: string;
+  total: number;
+  cost: number;
+};
+
+// ── helpers for paid-like behavior ───────────────────────────
+const isPaidLike = (status: unknown) =>
+  ["paid", "pending_payment", "completed"].includes(
+    String(status ?? "").toLowerCase(),
+  );
+
+function ensureDate(d: any): Date {
+  const dt = d instanceof Date ? d : new Date(d);
+  return isNaN(dt.getTime()) ? new Date() : dt;
+}
+
+function getPaidLikeDate(order: any): Date {
+  const raw =
+    order?.datePaid ??
+    (isPaidLike(order?.status) ? order?.dateCreated : undefined) ??
+    Date.now();
+  return ensureDate(raw);
+}
+
+async function getRatesForWindow(fromSec: number, toSec: number, paidAt: Date) {
+  // try exact window first
+  let ex = await pgPool.query(
+    `SELECT * FROM "exchangeRate" WHERE date BETWEEN to_timestamp(${fromSec}) AND to_timestamp(${toSec})`,
+  );
+
+  let USDEUR = 0;
+  let USDGBP = 0;
+
+  if (ex.rows.length === 0) {
+    // pull live + cache
+    const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
+    const res = await fetch(url);
+    dbg("CurrencyLayer ←", res.status, res.statusText);
+    const data = await res.json();
+    const usdEur = data?.quotes?.USDEUR;
+    const usdGbp = data?.quotes?.USDGBP;
+    if (usdEur == null || usdGbp == null) {
+      return { error: "Invalid API response" };
     }
+    const insertSql = `
+      INSERT INTO "exchangeRate" ("EUR","GBP", date)
+      VALUES ($1, $2, $3)
+      RETURNING *`;
+    const values = [usdEur, usdGbp, paidAt];
+    const inserted = await pgPool.query(insertSql, values);
+    USDEUR = Number(inserted.rows[0].EUR);
+    USDGBP = Number(inserted.rows[0].GBP);
+  } else {
+    USDEUR = Number(ex.rows[0].EUR);
+    USDGBP = Number(ex.rows[0].GBP);
+  }
+
+  return { USDEUR, USDGBP };
+}
+
+export async function getRevenue(id: string, organizationId: string) {
+  try {
+    // 0) idempotency: skip if exists
+    const checkQuery = `SELECT * FROM "orderRevenue" WHERE "orderId" = '${id}'`;
+    const resultCheck = await pool.query(checkQuery);
+    const existing = resultCheck.rows;
+    if (existing.length > 0) {
+      dbg("revenue-already-exists", { orderId: id, rows: existing.length });
+      return existing[0];
+    }
+
+    // 1) load order
+    const orderQuery = `SELECT * FROM orders WHERE id = '${id}' AND "organizationId" = '${organizationId}'`;
+    const resultOrders = await pool.query(orderQuery);
+    const order = resultOrders.rows[0];
+    if (!order) {
+      dbg("order-not-found", { id, organizationId });
+      throw new Error("Order not found");
+    }
+
+    const cartId = order.cartId;
+    const paymentType = String(order.paymentMethod || "").toLowerCase();
+    const country = order.country;
+
+    // paid-like moment (supports pending_payment)
+    const paidAt = getPaidLikeDate(order);
+    const to = Math.floor(paidAt.getTime() / 1000);
+    const from = to - 3600;
+
+    // products (first-party + affiliate)
+    const productQuery = `SELECT p.*, cp.quantity
+      FROM "cartProducts" cp
+      JOIN products p ON cp."productId" = p.id
+      WHERE cp."cartId" = '${cartId}'`;
+    const productResult = await pool.query(productQuery);
+    const products = productResult.rows;
+
+    const affiliateQuery = `SELECT p.*, cp.quantity
+      FROM "cartProducts" cp
+      JOIN "affiliateProducts" p ON cp."affiliateProductId" = p.id
+      WHERE cp."cartId" = '${cartId}'`;
+    const affiliateResult = await pool.query(affiliateQuery);
+    const affiliate = affiliateResult.rows;
+
+    const allProducts = products.concat(affiliate);
+
+    // categories
+    const categoryQuery = `SELECT cp.*, p.*, pc."categoryId"
+      FROM "cartProducts" AS cp
+      JOIN "products" AS p ON cp."productId" = p."id"
+      LEFT JOIN "productCategory" AS pc ON pc."productId" = p."id"
+      WHERE cp."cartId" = '${cartId}'`;
+    const categoryResult = await pool.query(categoryQuery);
+    const categoryData = categoryResult.rows;
+
+    const categories: CategoryRevenue[] = [];
+    for (const ct of categoryData) {
+      categories.push({
+        categoryId: ct.categoryId,
+        price: ct.regularPrice?.[country],
+        cost: ct.cost?.[country],
+        quantity: ct.quantity,
+      });
+    }
+    const newCategories: TransformedCategoryRevenue[] = categories.map(
+      ({ categoryId, price, cost, quantity }) => ({
+        categoryId,
+        total: Number(price || 0) * Number(quantity || 0),
+        cost: Number(cost || 0) * Number(quantity || 0),
+      }),
+    );
+
+    const totalCost = allProducts.reduce((sum, product) => {
+      const c = Number(product?.cost?.[country] || 0);
+      const q = Number(product?.quantity || 0);
+      return sum + c * q;
+    }, 0);
+
+    // 2) get exchange rates for that window (used in both branches)
+    const needRates = async () => {
+      const r = await getRatesForWindow(from, to, paidAt);
+      if ("error" in r) throw new Error(r.error as string);
+      return r as { USDEUR: number; USDGBP: number };
+    };
+
+    // 3) Payment paths
+    if (paymentType === "niftipay") {
+      // Try to read crypto asset from meta: prefer "paid" event, fallback to "pending_payment"
+      const meta = Array.isArray(order.orderMeta) ? order.orderMeta : [];
+      const paidEntry =
+        meta.find((it: any) => it?.event === "paid") ??
+        meta.find((it: any) => it?.event === "pending_payment");
+
+      let coinRaw = "";
+      let amount = 0;
+      if (paidEntry) {
+        coinRaw = paidEntry?.order?.asset ?? "";
+        amount = Number(paidEntry?.order?.amount ?? 0);
+      }
+
+      const coinKey = coinRaw.toUpperCase();
+      const coinId = coins[coinKey];
+      if (!coinId) {
+        console.warn("[orderRevenue] ⚠️ unsupported asset:", coinKey);
+        throw new Error(`Unsupported crypto asset "${coinKey}"`);
+      }
+
+      // price snapshot around paid-like time
+      const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
+      const res = await fetch(url, { method: "GET", headers: { accept: "application/json" } });
+      dbg("CoinGecko ←", res.status, res.statusText);
+      if (!res.ok) throw new Error(`HTTP ${res.status} – ${res.statusText}`);
+
+      const result = await res.json();
+      const price = Number(result?.prices?.[0]?.[1] ?? 0);
+      const totalCryptoUSD = amount * price;
+
+      const { USDEUR, USDGBP } = await needRates();
+      const revenueId = uuidv4();
+
+      if (country === "GB") {
+        const discountGBP = Number(order.discountTotal || 0);
+        const shippingGBP = Number(order.shippingTotal || 0);
+        const costGBP = Number(totalCost || 0);
+        // base conversions from GBP
+        let totalGBP = Number(order.totalAmount || 0);
+        let totalUSD = totalGBP / USDGBP;
+        let totalEUR = totalGBP * (USDEUR / USDGBP);
+
+        // override totals with crypto valuation
+        totalUSD = totalCryptoUSD;
+        totalGBP = totalCryptoUSD * USDGBP;
+        totalEUR = totalCryptoUSD * USDEUR;
+
+        const discountUSD = discountGBP / USDGBP;
+        const shippingUSD = shippingGBP / USDGBP;
+        const costUSD = costGBP / USDGBP;
+
+        const discountEUR = discountGBP * (USDEUR / USDGBP);
+        const shippingEUR = shippingGBP * (USDEUR / USDGBP);
+        const costEUR = costGBP * (USDEUR / USDGBP);
+
+        const q = `INSERT INTO "orderRevenue"(id,"orderId",
+          "USDtotal","USDdiscount","USDshipping","USDcost",
+          "GBPtotal","GBPdiscount","GBPshipping","GBPcost",
+          "EURtotal","EURdiscount","EURshipping","EURcost",
+          "createdAt","updatedAt","organizationId")
+        VALUES('${revenueId}','${id}',
+          ${totalUSD.toFixed(2)},${discountUSD.toFixed(2)},${shippingUSD.toFixed(2)},${costUSD.toFixed(2)},
+          ${totalGBP.toFixed(2)},${discountGBP.toFixed(2)},${shippingGBP.toFixed(2)},${costGBP.toFixed(2)},
+          ${totalEUR.toFixed(2)},${discountEUR.toFixed(2)},${shippingEUR.toFixed(2)},${costEUR.toFixed(2)},
+          NOW(),NOW(),'${organizationId}')
+        RETURNING *`;
+        const inserted = await pool.query(q);
+        const revenue = inserted.rows[0];
+
+        // category splits
+        for (const ct of newCategories) {
+          const catRevenueId = uuidv4();
+          const cq = `INSERT INTO "categoryRevenue"(id,"categoryId",
+            "USDtotal","USDcost",
+            "GBPtotal","GBPcost",
+            "EURtotal","EURcost",
+            "createdAt","updatedAt","organizationId")
+          VALUES('${catRevenueId}','${ct.categoryId}',
+            ${(ct.total / USDGBP).toFixed(2)},${(ct.cost / USDGBP).toFixed(2)},
+            ${ct.total.toFixed(2)},${ct.cost.toFixed(2)},
+            ${(ct.total * (USDEUR / USDGBP)).toFixed(2)},${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
+            NOW(),NOW(),'${organizationId}')`;
+          await pool.query(cq);
+        }
+        return revenue;
+      } else if (euroCountries.includes(country)) {
+        const discountEUR = Number(order.discountTotal || 0);
+        const shippingEUR = Number(order.shippingTotal || 0);
+        const costEUR = Number(totalCost || 0);
+        let totalEUR = Number(order.totalAmount || 0);
+
+        // override totals with crypto valuation
+        const totalUSD = totalCryptoUSD;
+        totalEUR = totalCryptoUSD * USDEUR;
+        const totalGBP = totalCryptoUSD * USDGBP;
+
+        const discountUSD = discountEUR / USDEUR;
+        const shippingUSD = shippingEUR / USDEUR;
+        const costUSD = costEUR / USDEUR;
+
+        const discountGBP = discountEUR * (USDGBP / USDEUR);
+        const shippingGBP = shippingEUR * (USDGBP / USDEUR);
+        const costGBP = costEUR * (USDGBP / USDEUR);
+
+        const q = `INSERT INTO "orderRevenue"(id,"orderId",
+          "USDtotal","USDdiscount","USDshipping","USDcost",
+          "GBPtotal","GBPdiscount","GBPshipping","GBPcost",
+          "EURtotal","EURdiscount","EURshipping","EURcost",
+          "createdAt","updatedAt","organizationId")
+        VALUES('${revenueId}','${id}',
+          ${totalUSD.toFixed(2)},${discountUSD.toFixed(2)},${shippingUSD.toFixed(2)},${costUSD.toFixed(2)},
+          ${totalGBP.toFixed(2)},${discountGBP.toFixed(2)},${shippingGBP.toFixed(2)},${costGBP.toFixed(2)},
+          ${totalEUR.toFixed(2)},${discountEUR.toFixed(2)},${shippingEUR.toFixed(2)},${costEUR.toFixed(2)},
+          NOW(),NOW(),'${organizationId}')
+        RETURNING *`;
+        const inserted = await pool.query(q);
+        const revenue = inserted.rows[0];
+
+        for (const ct of newCategories) {
+          const catRevenueId = uuidv4();
+          const cq = `INSERT INTO "categoryRevenue"(id,"categoryId",
+            "USDtotal","USDcost",
+            "GBPtotal","GBPcost",
+            "EURtotal","EURcost",
+            "createdAt","updatedAt","organizationId")
+          VALUES('${catRevenueId}','${ct.categoryId}',
+            ${(ct.total / USDEUR).toFixed(2)},${(ct.cost / USDEUR).toFixed(2)},
+            ${(ct.total * (USDGBP / USDEUR)).toFixed(2)},${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
+            ${ct.total.toFixed(2)},${ct.cost.toFixed(2)},
+            NOW(),NOW(),'${organizationId}')`;
+          await pool.query(cq);
+        }
+        return revenue;
+      } else {
+        const discountUSD = Number(order.discountTotal || 0);
+        const shippingUSD = Number(order.shippingTotal || 0);
+        const costUSD = Number(totalCost || 0);
+        let totalUSD = Number(order.totalAmount || 0);
+
+        // override with crypto USD
+        totalUSD = totalCryptoUSD;
+        const { USDEUR, USDGBP } = await needRates();
+        const totalEUR = totalUSD * USDEUR;
+        const totalGBP = totalUSD * USDGBP;
+
+        const discountEUR = discountUSD * USDEUR;
+        const shippingEUR = shippingUSD * USDEUR;
+        const costEUR = costUSD * USDEUR;
+
+        const discountGBP = discountUSD * USDGBP;
+        const shippingGBP = shippingUSD * USDGBP;
+        const costGBP = costUSD * USDGBP;
+
+        const revenueId = uuidv4();
+        const q = `INSERT INTO "orderRevenue"(id,"orderId",
+          "USDtotal","USDdiscount","USDshipping","USDcost",
+          "GBPtotal","GBPdiscount","GBPshipping","GBPcost",
+          "EURtotal","EURdiscount","EURshipping","EURcost",
+          "createdAt","updatedAt","organizationId")
+        VALUES('${revenueId}','${id}',
+          ${totalUSD.toFixed(2)},${discountUSD.toFixed(2)},${shippingUSD.toFixed(2)},${costUSD.toFixed(2)},
+          ${totalGBP.toFixed(2)},${discountGBP.toFixed(2)},${shippingGBP.toFixed(2)},${costGBP.toFixed(2)},
+          ${totalEUR.toFixed(2)},${discountEUR.toFixed(2)},${shippingEUR.toFixed(2)},${costEUR.toFixed(2)},
+          NOW(),NOW(),'${organizationId}')
+        RETURNING *`;
+        const inserted = await pool.query(q);
+        const revenue = inserted.rows[0];
+
+        for (const ct of newCategories) {
+          const catRevenueId = uuidv4();
+          const cq = `INSERT INTO "categoryRevenue"(id,"categoryId",
+            "USDtotal","USDcost",
+            "GBPtotal","GBPcost",
+            "EURtotal","EURcost",
+            "createdAt","updatedAt","organizationId")
+          VALUES('${catRevenueId}','${ct.categoryId}',
+            ${ct.total.toFixed(2)},${ct.cost.toFixed(2)},
+            ${(ct.total * USDGBP).toFixed(2)},${(ct.cost * USDGBP).toFixed(2)},
+            ${(ct.total * USDEUR).toFixed(2)},${(ct.cost * USDEUR).toFixed(2)},
+            NOW(),NOW(),'${organizationId}')`;
+          await pool.query(cq);
+        }
+        return revenue;
+      }
+    } else {
+      // Non-crypto payments
+      const { USDEUR, USDGBP } = await needRates();
+      const revenueId = uuidv4();
+
+      if (country === "GB") {
+        const totalGBP = Number(order.totalAmount || 0);
+        const shippingGBP = Number(order.shippingTotal || 0);
+        const discountGBP = Number(order.discountTotal || 0);
+        const costGBP = Number(totalCost || 0);
+
+        const discountUSD = discountGBP / USDGBP;
+        const shippingUSD = shippingGBP / USDGBP;
+        const costUSD = costGBP / USDGBP;
+        const totalUSD = totalGBP / USDGBP;
+
+        const discountEUR = discountGBP * (USDEUR / USDGBP);
+        const shippingEUR = shippingGBP * (USDEUR / USDGBP);
+        const costEUR = costGBP * (USDEUR / USDGBP);
+        const totalEUR = totalGBP * (USDEUR / USDGBP);
+
+        const q = `INSERT INTO "orderRevenue"(id,"orderId",
+          "USDtotal","USDdiscount","USDshipping","USDcost",
+          "GBPtotal","GBPdiscount","GBPshipping","GBPcost",
+          "EURtotal","EURdiscount","EURshipping","EURcost",
+          "createdAt","updatedAt","organizationId")
+        VALUES('${revenueId}','${id}',
+          ${totalUSD.toFixed(2)},${discountUSD.toFixed(2)},${shippingUSD.toFixed(2)},${costUSD.toFixed(2)},
+          ${totalGBP.toFixed(2)},${discountGBP.toFixed(2)},${shippingGBP.toFixed(2)},${costGBP.toFixed(2)},
+          ${totalEUR.toFixed(2)},${discountEUR.toFixed(2)},${shippingEUR.toFixed(2)},${costEUR.toFixed(2)},
+          NOW(),NOW(),'${organizationId}')
+        RETURNING *`;
+        const inserted = await pool.query(q);
+        const revenue = inserted.rows[0];
+
+        for (const ct of newCategories) {
+          const catRevenueId = uuidv4();
+          const cq = `INSERT INTO "categoryRevenue"(id,"categoryId",
+            "USDtotal","USDcost",
+            "GBPtotal","GBPcost",
+            "EURtotal","EURcost",
+            "createdAt","updatedAt","organizationId")
+          VALUES('${catRevenueId}','${ct.categoryId}',
+            ${(ct.total / USDGBP).toFixed(2)},${(ct.cost / USDGBP).toFixed(2)},
+            ${ct.total.toFixed(2)},${ct.cost.toFixed(2)},
+            ${(ct.total * (USDEUR / USDGBP)).toFixed(2)},${(ct.cost * (USDEUR / USDGBP)).toFixed(2)},
+            NOW(),NOW(),'${organizationId}')`;
+          await pool.query(cq);
+        }
+        return revenue;
+      } else if (euroCountries.includes(country)) {
+        const totalEUR = Number(order.totalAmount || 0);
+        const shippingEUR = Number(order.shippingTotal || 0);
+        const discountEUR = Number(order.discountTotal || 0);
+        const costEUR = Number(totalCost || 0);
+
+        const discountGBP = discountEUR * (USDGBP / USDEUR);
+        const shippingGBP = shippingEUR * (USDGBP / USDEUR);
+        const costGBP = costEUR * (USDGBP / USDEUR);
+        const totalGBP = totalEUR * (USDGBP / USDEUR);
+
+        const discountUSD = discountEUR / USDEUR;
+        const shippingUSD = shippingEUR / USDEUR;
+        const costUSD = costEUR / USDEUR;
+        const totalUSD = totalEUR / USDEUR;
+
+        const q = `INSERT INTO "orderRevenue"(id,"orderId",
+          "USDtotal","USDdiscount","USDshipping","USDcost",
+          "GBPtotal","GBPdiscount","GBPshipping","GBPcost",
+          "EURtotal","EURdiscount","EURshipping","EURcost",
+          "createdAt","updatedAt","organizationId")
+        VALUES('${revenueId}','${id}',
+          ${totalUSD.toFixed(2)},${discountUSD.toFixed(2)},${shippingUSD.toFixed(2)},${costUSD.toFixed(2)},
+          ${totalGBP.toFixed(2)},${discountGBP.toFixed(2)},${shippingGBP.toFixed(2)},${costGBP.toFixed(2)},
+          ${totalEUR.toFixed(2)},${discountEUR.toFixed(2)},${shippingEUR.toFixed(2)},${costEUR.toFixed(2)},
+          NOW(),NOW(),'${organizationId}')
+        RETURNING *`;
+        const inserted = await pool.query(q);
+        const revenue = inserted.rows[0];
+
+        for (const ct of newCategories) {
+          const catRevenueId = uuidv4();
+          const cq = `INSERT INTO "categoryRevenue"(id,"categoryId",
+            "USDtotal","USDcost",
+            "GBPtotal","GBPcost",
+            "EURtotal","EURcost",
+            "createdAt","updatedAt","organizationId")
+          VALUES('${catRevenueId}','${ct.categoryId}',
+            ${(ct.total / USDEUR).toFixed(2)},${(ct.cost / USDEUR).toFixed(2)},
+            ${(ct.total * (USDGBP / USDEUR)).toFixed(2)},${(ct.cost * (USDGBP / USDEUR)).toFixed(2)},
+            ${ct.total.toFixed(2)},${ct.cost.toFixed(2)},
+            NOW(),NOW(),'${organizationId}')`;
+          await pool.query(cq);
+        }
+        return revenue;
+      } else {
+        const discountUSD = Number(order.discountTotal || 0);
+        const shippingUSD = Number(order.shippingTotal || 0);
+        const totalUSD = Number(order.totalAmount || 0);
+        const costUSD = Number(totalCost || 0);
+
+        const discountEUR = discountUSD * USDEUR;
+        const shippingEUR = shippingUSD * USDEUR;
+        const costEUR = costUSD * USDEUR;
+        const totalEUR = totalUSD * USDEUR;
+
+        const discountGBP = discountUSD * USDGBP;
+        const shippingGBP = shippingUSD * USDGBP;
+        const costGBP = costUSD * USDGBP;
+        const totalGBP = totalUSD * USDGBP;
+
+        const q = `INSERT INTO "orderRevenue"(id,"orderId",
+          "USDtotal","USDdiscount","USDshipping","USDcost",
+          "GBPtotal","GBPdiscount","GBPshipping","GBPcost",
+          "EURtotal","EURdiscount","EURshipping","EURcost",
+          "createdAt","updatedAt","organizationId")
+        VALUES('${revenueId}','${id}',
+          ${totalUSD.toFixed(2)},${discountUSD.toFixed(2)},${shippingUSD.toFixed(2)},${costUSD.toFixed(2)},
+          ${totalGBP.toFixed(2)},${discountGBP.toFixed(2)},${shippingGBP.toFixed(2)},${costGBP.toFixed(2)},
+          ${totalEUR.toFixed(2)},${discountEUR.toFixed(2)},${shippingEUR.toFixed(2)},${costEUR.toFixed(2)},
+          NOW(),NOW(),'${organizationId}')
+        RETURNING *`;
+        const inserted = await pool.query(q);
+        const revenue = inserted.rows[0];
+
+        for (const ct of newCategories) {
+          const catRevenueId = uuidv4();
+          const cq = `INSERT INTO "categoryRevenue"(id,"categoryId",
+            "USDtotal","USDcost",
+            "GBPtotal","GBPcost",
+            "EURtotal","EURcost",
+            "createdAt","updatedAt","organizationId")
+          VALUES('${catRevenueId}','${ct.categoryId}',
+            ${ct.total.toFixed(2)},${ct.cost.toFixed(2)},
+            ${(ct.total * USDGBP).toFixed(2)},${(ct.cost * USDGBP).toFixed(2)},
+            ${(ct.total * USDEUR).toFixed(2)},${(ct.cost * USDEUR).toFixed(2)},
+            NOW(),NOW(),'${organizationId}')`;
+          await pool.query(cq);
+        }
+        return revenue;
+      }
+    }
+  } catch (error) {
+    return error;
+  }
 }

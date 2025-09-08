@@ -57,12 +57,15 @@ type OrderStatus =
   | "cancelled"
   | "refunded"
   | "underpaid"
+  | "pending_payment"       // ⬅️ NEW
   | "completed";
 
 const getStatusColor = (s: OrderStatus) => {
   switch (s) {
     case "open":
       return "bg-blue-500";
+    case "pending_payment":         // ⬅️ NEW
+      return "bg-yellow-500";
     case "paid":
       return "bg-green-500";
     case "cancelled":

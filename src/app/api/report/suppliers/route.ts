@@ -20,7 +20,8 @@ function eachDay(from: Date, to: Date) {
 }
 
 const EURO_COUNTRIES = new Set([
-  "AT", "BE", "HR", "CY", "EE", "FI", "FR", "DE", "GR", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PT", "SK", "SI", "ES"
+  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE",
+  "IT","LV","LT","LU","MT","NL","PT","SK","SI","ES",
 ]);
 
 async function resolveOrgLabel(orgId: string | null): Promise<string | null> {
@@ -30,6 +31,7 @@ async function resolveOrgLabel(orgId: string | null): Promise<string | null> {
     [orgId],
   );
   if (!orgQ.rowCount) return null;
+
   const orgName: string = orgQ.rows[0].name ?? "";
   let email: string | null = null;
   const rawMeta: string | null = orgQ.rows[0].metadata ?? null;
@@ -63,26 +65,27 @@ async function getLatestRates(): Promise<Rates> {
   return { USDEUR, USDGBP };
 }
 
-function convertByCountry(amountLocal: number, country: string, to: "USD" | "GBP" | "EUR", rates: Rates) {
+function convertByCountry(
+  amountLocal: number,
+  country: string,
+  to: "USD" | "GBP" | "EUR",
+  rates: Rates,
+) {
   const { USDEUR, USDGBP } = rates;
   if (country === "GB") {
-    // base = GBP
-    if (to === "GBP") return amountLocal;
+    if (to === "GBP") return amountLocal;                 // base GBP
     if (to === "USD") return amountLocal / USDGBP;
-    // to EUR
-    return amountLocal * (USDEUR / USDGBP);
+    return amountLocal * (USDEUR / USDGBP);               // → EUR
   }
   if (EURO_COUNTRIES.has(country)) {
-    // base = EUR
-    if (to === "EUR") return amountLocal;
+    if (to === "EUR") return amountLocal;                 // base EUR
     if (to === "USD") return amountLocal / USDEUR;
-    // to GBP
-    return amountLocal * (USDGBP / USDEUR);
+    return amountLocal * (USDGBP / USDEUR);               // → GBP
   }
-  // assume base = USD
+  // base USD
   if (to === "USD") return amountLocal;
   if (to === "GBP") return amountLocal * USDGBP;
-  return amountLocal * USDEUR; // EUR
+  return amountLocal * USDEUR;                            // → EUR
 }
 
 /* --------------------------------------------------------------- */
@@ -91,11 +94,12 @@ function convertByCountry(amountLocal: number, country: string, to: "USD" | "GBP
 type Line = {
   orderId: string;
   orderNumber: string;
-  datePaid: string;
+  datePaid: string;              // ← will hold COALESCE(datePaid, dateCreated)
   username: string;
   country: string;
   cancelled: boolean;
   refunded: boolean;
+  status: string;                // ← include order status so we can treat pending_payment as paid-like
   supplierOrgId: string | null;
   supplierLabel: string | null;
   productTitle: string;
@@ -156,16 +160,14 @@ function groupByOrderAndSupplier(lines: Line[]): GroupedOrder[] {
   const grouped = Array.from(map.values());
   for (const g of grouped) {
     if (g.cancelled) {
-      // not shipping => owe nothing
-      g.totalOwed = 0;
+      g.totalOwed = 0;                 // cancelled => owe nothing
     } else if (g.refunded) {
-      // refunded => negative owed
-      g.totalOwed = -Math.abs(g.totalOwed);
+      g.totalOwed = -Math.abs(g.totalOwed); // refunded => negative owed
     }
   }
 
   return grouped.sort(
-    (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
+    (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime(),
   );
 }
 
@@ -176,9 +178,16 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
-  const currencyRaw = (url.searchParams.get("currency") || "USD").toUpperCase() as "USD" | "GBP" | "EUR";
+  const currencyRaw = (url.searchParams.get("currency") || "USD").toUpperCase() as
+    | "USD"
+    | "GBP"
+    | "EUR";
   const supplierOrgIdFilter = url.searchParams.get("supplierOrgId") || ""; // optional
-  const statusFilter = (url.searchParams.get("status") || "all") as "all" | "paid" | "cancelled" | "refunded";
+  const statusFilter = (url.searchParams.get("status") || "all") as
+    | "all"
+    | "paid"
+    | "cancelled"
+    | "refunded";
 
   if (!from || !to) {
     return NextResponse.json(
@@ -186,7 +195,11 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   }
-  const currency: "USD" | "GBP" | "EUR" = (["USD", "GBP", "EUR"] as const).includes(currencyRaw) ? currencyRaw : "USD";
+  const currency: "USD" | "GBP" | "EUR" = (["USD", "GBP", "EUR"] as const).includes(
+    currencyRaw,
+  )
+    ? currencyRaw
+    : "USD";
 
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -200,23 +213,25 @@ export async function GET(req: NextRequest) {
       vals.push(supplierOrgIdFilter);
     }
 
-    // Only include cart lines created from a shared product mapping (i.e., you owe a supplier).
-    // Join orderRevenue for refund/cancel flags (status filter).
-    // NOTE: include cp.id so we can de-duplicate rows at the application layer if joins fan out.
+    // NOTE:
+    // - Use COALESCE(datePaid, dateCreated) as paidAt to include pending_payment
+    //   orders that don't have datePaid yet, but should act like paid.
+    // - Select o.status so we can treat pending_payment as paid-like.
     const sql = `
       SELECT
-        cp.id                       AS "cartProductId",
-        o.id                        AS "orderId",
-        o."orderKey"                AS "orderNumber",
-        o."datePaid"                AS "datePaid",
-        o.country                   AS country,
-        c.username                  AS username,
-        r.cancelled                 AS cancelled,
-        r.refunded                  AS refunded,
-        cp.quantity                 AS quantity,
-        pt.title                    AS "productTitle",
-        sp.cost                     AS "transferCostJson",
-        psrc."organizationId"       AS "supplierOrgId"
+        cp.id                               AS "cartProductId",
+        o.id                                AS "orderId",
+        o."orderKey"                        AS "orderNumber",
+        COALESCE(o."datePaid", o."dateCreated") AS "paidAt",
+        o.status                            AS "status",
+        o.country                           AS country,
+        c.username                          AS username,
+        r.cancelled                         AS cancelled,
+        r.refunded                          AS refunded,
+        cp.quantity                         AS quantity,
+        pt.title                            AS "productTitle",
+        sp.cost                             AS "transferCostJson",
+        psrc."organizationId"               AS "supplierOrgId"
       FROM orders o
       JOIN "orderRevenue" r
         ON r."orderId" = o.id
@@ -235,18 +250,23 @@ export async function GET(req: NextRequest) {
         ON sp."shareLinkId" = m."shareLinkId"
        AND sp."productId"   = m."sourceProductId"
       WHERE o."organizationId" = $1
-        AND o."datePaid" BETWEEN $2::timestamptz AND $3::timestamptz
+        AND COALESCE(o."datePaid", o."dateCreated") BETWEEN $2::timestamptz AND $3::timestamptz
         AND m."sourceProductId" IS NOT NULL
         ${supplierSql}
-      ORDER BY o."datePaid" DESC, o."orderKey" DESC, cp.id DESC
+      ORDER BY COALESCE(o."datePaid", o."dateCreated") DESC, o."orderKey" DESC, cp.id DESC
     `;
-    const res = await pool.query(sql, vals);
 
+    const res = await pool.query(sql, vals);
     const { USDEUR, USDGBP } = await getLatestRates();
+
+    // Paid-like statuses (treated as "paid" in filters, counts, charts)
+    const isPaidLike = (status: string | null | undefined) =>
+      ["paid", "pending_payment", "completed"].includes(String(status ?? "").toLowerCase());
 
     // in-memory status filter
     const statusPass = (row: any) => {
-      if (statusFilter === "paid") return row.cancelled === false && row.refunded === false;
+      const paidLike = isPaidLike(row.status);
+      if (statusFilter === "paid") return paidLike && row.cancelled === false && row.refunded === false;
       if (statusFilter === "cancelled") return row.cancelled === true;
       if (statusFilter === "refunded") return row.refunded === true;
       return true; // all
@@ -262,6 +282,9 @@ export async function GET(req: NextRequest) {
     // De-duplicate by cartProductId to avoid counting the same cart line twice
     const seenCartProduct = new Set<string>();
 
+    // Track per-order "paid-like" for later grouped calculations
+    const orderPaidLike = new Map<string, boolean>();
+
     const lines: Line[] = [];
     for (const row of res.rows) {
       if (!statusPass(row)) continue;
@@ -270,6 +293,7 @@ export async function GET(req: NextRequest) {
       if (seenCartProduct.has(cpId)) continue;
       seenCartProduct.add(cpId);
 
+      const orderId = String(row.orderId);
       const country = row.country as string;
       countrySet.add(country);
 
@@ -288,9 +312,16 @@ export async function GET(req: NextRequest) {
       // unit transfer in local currency
       let unitLocal = 0;
       if (row.transferCostJson) {
-        const j = typeof row.transferCostJson === "string"
-          ? (() => { try { return JSON.parse(row.transferCostJson); } catch { return {}; } })()
-          : row.transferCostJson;
+        const j =
+          typeof row.transferCostJson === "string"
+            ? (() => {
+                try {
+                  return JSON.parse(row.transferCostJson);
+                } catch {
+                  return {};
+                }
+              })()
+            : row.transferCostJson;
         const v = j?.[country];
         unitLocal = Number(v || 0) || 0;
       }
@@ -298,14 +329,18 @@ export async function GET(req: NextRequest) {
       const qty = Number(row.quantity || 0);
       const lineTotal = unit * qty;
 
+      const status: string = String(row.status ?? "");
+      orderPaidLike.set(orderId, isPaidLike(status));
+
       lines.push({
-        orderId: row.orderId as string,
+        orderId,
         orderNumber: row.orderNumber as string,
-        datePaid: row.datePaid as string,
+        datePaid: row.paidAt as string, // coalesced date
         username: row.username as string,
         country,
         cancelled: !!row.cancelled,
         refunded: !!row.refunded,
+        status,
         supplierOrgId,
         supplierLabel,
         productTitle: row.productTitle as string,
@@ -326,11 +361,13 @@ export async function GET(req: NextRequest) {
       Array.from(supplierSet).map(async (orgId) => ({
         orgId,
         label: labelCache.get(orgId) ?? (await resolveOrgLabel(orgId)) ?? orgId,
-      }))
+      })),
     );
 
-    // Chart: daily sum of totalOwed for non-cancelled & non-refunded (paid only)
-    const paidOrders = orders.filter(o => !o.cancelled && !o.refunded);
+    // Chart: daily sum of totalOwed for paid-like & not cancelled/refunded
+    const paidOrders = orders.filter(
+      (o) => orderPaidLike.get(o.orderId) === true && !o.cancelled && !o.refunded,
+    );
     const byDay = paidOrders.reduce<Record<string, number>>((acc, o) => {
       const key = new Date(o.datePaid).toISOString().split("T")[0];
       acc[key] = (acc[key] ?? 0) + o.totalOwed;
@@ -346,9 +383,9 @@ export async function GET(req: NextRequest) {
 
     const counts = {
       total: orders.length,
-      paid: orders.filter(o => !o.cancelled && !o.refunded).length,
-      refunded: orders.filter(o => o.refunded).length,
-      cancelled: orders.filter(o => o.cancelled).length,
+      paid: orders.filter((o) => orderPaidLike.get(o.orderId) === true && !o.cancelled && !o.refunded).length,
+      refunded: orders.filter((o) => o.refunded).length,
+      cancelled: orders.filter((o) => o.cancelled).length,
     };
 
     const sums = orders.reduce(
@@ -356,10 +393,12 @@ export async function GET(req: NextRequest) {
         const owed = Number(o.totalOwed) || 0;
         acc.allOrdersNet += owed; // includes negatives for refunded, zero for cancelled
         acc.totalQty += Number(o.totalQty) || 0;
-        if (!o.cancelled && !o.refunded) acc.paidOrdersNet += owed;
+        if (orderPaidLike.get(o.orderId) === true && !o.cancelled && !o.refunded) {
+          acc.paidOrdersNet += owed;
+        }
         return acc;
       },
-      { allOrdersNet: 0, paidOrdersNet: 0, totalQty: 0 }
+      { allOrdersNet: 0, paidOrdersNet: 0, totalQty: 0 },
     );
 
     const currencySymbol = currency === "USD" ? "$" : currency === "GBP" ? "£" : "€";
@@ -375,9 +414,11 @@ export async function GET(req: NextRequest) {
       { orders, countries, suppliers, chartData, totals },
       { status: 200 },
     );
-
   } catch (err) {
     console.error("Error fetching supplier payables:", err);
-    return NextResponse.json({ error: "Internal server error." }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error." },
+      { status: 500 },
+    );
   }
 }

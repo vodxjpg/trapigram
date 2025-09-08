@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
         const resultProducts = await pool.query(queryProducts);
         const products = resultProducts.rows
 
-        const queryCarts = `SELECT "cartId" FROM orders WHERE "organizationId" = '${organizationId}' AND (status = 'completed' OR status = 'paid')`
+        const queryCarts = `SELECT "cartId" FROM orders WHERE "organizationId" = '${organizationId}' AND (status = 'completed' OR status = 'paid' OR status = 'pending_payment')`
         const resultCarts = await pool.query(queryCarts);
         const carts = resultCarts.rows
 
