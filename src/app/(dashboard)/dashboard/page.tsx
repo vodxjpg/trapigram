@@ -31,13 +31,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
 import {
   Table,
   TableBody,
@@ -48,6 +41,15 @@ import {
 } from "@/components/ui/table";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
+import {
+  endOfMonth,
+  endOfYear,
+  startOfMonth,
+  startOfYear,
+  subDays,
+  subMonths,
+  subYears,
+} from "date-fns";
 
 export const description = "An interactive area chart";
 
@@ -57,14 +59,14 @@ type OrderStatus =
   | "cancelled"
   | "refunded"
   | "underpaid"
-  | "pending_payment"       // ⬅️ NEW
+  | "pending_payment"
   | "completed";
 
 const getStatusColor = (s: OrderStatus) => {
   switch (s) {
     case "open":
       return "bg-blue-500";
-    case "pending_payment":         // ⬅️ NEW
+    case "pending_payment":
       return "bg-yellow-500";
     case "paid":
       return "bg-green-500";
@@ -81,11 +83,38 @@ const getStatusColor = (s: OrderStatus) => {
   }
 };
 
-// Updated chartConfig to use Total and Revenue
+// Chart: Total and Revenue
 const chartConfig = {
   total: { label: "Total", color: "var(--color-desktop)" },
   revenue: { label: "Revenue", color: "var(--color-mobile)" },
 } satisfies ChartConfig;
+
+// Table row type for recent orders
+type DashboardOrder = {
+  id: string;
+  orderNumber: string;
+  user: string;
+  status: OrderStatus;
+  total: number;
+  date: string; // ISO date
+};
+
+type TimePreset =
+  | "current-month"
+  | "last-7-days"
+  | "last-month"
+  | "last-3-months"
+  | "this-year"
+  | "last-year";
+
+const RANGE_LABELS: Record<TimePreset, string> = {
+  "current-month": "Current month",
+  "last-7-days": "Last 7 days",
+  "last-month": "Last month",
+  "last-3-months": "Last 3 months",
+  "this-year": "This year",
+  "last-year": "Last year",
+};
 
 export default function DashboardPage() {
   const { setHeaderTitle } = useHeaderTitle();
@@ -96,9 +125,8 @@ export default function DashboardPage() {
   const orgId = activeOrg?.id ?? null;
   const { hasPermission: canViewRevenue, isLoading: revLoading } =
     useHasPermission(orgId, { revenue: ["view"] });
-   
+
   // Owners should always be able to view revenue
-  // (normalize possible shapes returned by your auth client)
   const role =
     (activeOrg as any)?.userRole ??
     (activeOrg as any)?.role ??
@@ -109,71 +137,94 @@ export default function DashboardPage() {
 
   // Final gate used by UI
   const canShowRevenue = !revLoading && (!!canViewRevenue || isOwner);
+
   /**
-   * Format helper ― always respect the currency selected
+   * Currency formatter — always respect the currency selected
    */
   const formatCurrency = React.useCallback(
     (amount: number) =>
-      new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency, // <─ ties the symbol to the <Select />
-      }).format(amount),
+      new Intl.NumberFormat("en-US", { style: "currency", currency }).format(
+        amount
+      ),
     [currency]
   );
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
+  const formatDate = (dateString: string) =>
+    new Date(dateString).toLocaleDateString("en-US", {
       year: "numeric",
       month: "short",
       day: "numeric",
     });
-  };
 
   useEffect(() => {
     setHeaderTitle("Dashboard");
   }, [setHeaderTitle]);
 
   const isMobile = useIsMobile();
-  const [timeRange, setTimeRange] = React.useState<string>("90d");
-  const [customRange, setCustomRange] = React.useState<{
-    from?: Date;
-    to?: Date;
-  }>({});
+
+  // New single dropdown for date presets
+  const [timeRange, setTimeRange] =
+    React.useState<TimePreset>("current-month");
+
   const [totalOrders, setTotalOrders] = React.useState<number | null>(null);
   const [totalRevenue, setTotalRevenue] = React.useState<number | null>(null);
   const [totalClient, setTotalClient] = React.useState<number | null>(null);
   const [totalActive, setTotalActive] = React.useState<number | null>(null);
-  const [orderList, setOrderList] = React.useState<number | null>(null);
+  const [orderList, setOrderList] = React.useState<DashboardOrder[] | null>(
+    null
+  );
   const [growthRate, setGrowthRate] = React.useState<number | null>(null);
   const [clientGrowth, setClientGrowth] = React.useState<number | null>(null);
   const [activeGrowth, setActiveGrowth] = React.useState<number | null>(null);
   const [chartData, setChartData] = React.useState<
-    {
-      date: string;
-      total: number;
-      revenue: number;
-    }[]
+    { date: string; total: number; revenue: number }[]
   >([]);
 
-  // Compute from/to params for API based on selection
+  // Convert preset to from/to params for API
   const getFromToParams = (): { from: string; to: string } => {
-    const toDate = new Date();
-    let fromDate = new Date();
+    const now = new Date();
+    let fromDate = now;
+    let toDate = now;
 
-    if (timeRange === "custom" && customRange.from && customRange.to) {
-      fromDate = customRange.from;
-      toDate.setTime(customRange.to.getTime());
-    } else {
-      const days = timeRange === "30d" ? 30 : timeRange === "7d" ? 7 : 90;
-      fromDate.setDate(toDate.getDate() - days);
+    switch (timeRange) {
+      case "current-month":
+        fromDate = startOfMonth(now);
+        toDate = endOfMonth(now);
+        break;
+      case "last-7-days":
+        fromDate = subDays(now, 6); // include today
+        toDate = now;
+        break;
+      case "last-month": {
+        const lastM = subMonths(now, 1);
+        fromDate = startOfMonth(lastM);
+        toDate = endOfMonth(lastM);
+        break;
+      }
+      case "last-3-months":
+        // Three calendar months including the current month
+        fromDate = startOfMonth(subMonths(now, 2));
+        toDate = endOfMonth(now);
+        break;
+      case "this-year":
+        fromDate = startOfYear(now);
+        toDate = endOfYear(now);
+        break;
+      case "last-year": {
+        const lastY = subYears(now, 1);
+        fromDate = startOfYear(lastY);
+        toDate = endOfYear(lastY);
+        break;
+      }
     }
+
     return {
       from: fromDate.toISOString().split("T")[0],
       to: toDate.toISOString().split("T")[0],
     };
   };
 
-  // Fetch total orders whenever range or custom dates change
+  // Fetch dashboard aggregates
   React.useEffect(() => {
     const fetchTotal = async () => {
       const { from, to } = getFromToParams();
@@ -193,7 +244,7 @@ export default function DashboardPage() {
           clientGrowth,
           activeGrowth,
         } = await resp.json();
-        console.log(chartData);
+
         setTotalOrders(orderAmount);
         setTotalRevenue(Number(revenue));
         setTotalClient(clientAmount);
@@ -209,18 +260,17 @@ export default function DashboardPage() {
     };
 
     fetchTotal();
-  }, [timeRange, customRange, currency]);
+  }, [timeRange, currency]);
 
+  // Default range on mobile
   React.useEffect(() => {
-    if (isMobile) {
-      setTimeRange("7d");
-    }
+    if (isMobile) setTimeRange("last-7-days");
   }, [isMobile]);
 
   const filteredData = chartData;
 
+  // One-time product tour
   React.useEffect(() => {
-    // Only show the tour once per user
     const hasSeen = localStorage.getItem("hasSeenDriverTour");
     if (!hasSeen) {
       const tour = driver({
@@ -338,19 +388,16 @@ export default function DashboardPage() {
         ],
       });
 
-      // start the tour
       tour.drive();
-
-      // mark as shown
       localStorage.setItem("hasSeenDriverTour", "true");
     }
   }, []);
 
-  // dashboard components
   return (
     <div className="flex flex-1 flex-col">
       <div className="@container/main flex flex-1 flex-col gap-2">
         <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+          {/* Header card with range selector */}
           <div className="px-4 lg:px-6">
             <Card className="@container/card">
               <CardHeader>
@@ -359,39 +406,40 @@ export default function DashboardPage() {
                   <CardDescription>
                     {totalOrders !== null ? `${totalOrders}` : "Loading..."}
                   </CardDescription>
-                  <span className="@[540px]/card:hidden">Last 3 months</span>
+                  <span className="@[540px]/card:hidden">
+                    {RANGE_LABELS[timeRange]}
+                  </span>
                 </CardDescription>
                 <CardAction>
-                  <ToggleGroup
-                    type="single"
+                  <Select
                     value={timeRange}
-                    onValueChange={setTimeRange}
-                    variant="outline"
-                    className="hidden *:data-[slot=toggle-group-item]:!px-4 @[767px]/card:flex"
+                    onValueChange={(v) => setTimeRange(v as TimePreset)}
                   >
-                    <ToggleGroupItem value="90d">Last 3 months</ToggleGroupItem>
-                    <ToggleGroupItem value="30d">Last 30 days</ToggleGroupItem>
-                    <ToggleGroupItem value="7d">
-                      Last 7 days
-                    </ToggleGroupItem>{" "}
-                  </ToggleGroup>
-                  <Select value={timeRange} onValueChange={setTimeRange}>
                     <SelectTrigger
-                      className="flex w-40 **:data-[slot=select-value]:block **:data-[slot=select-value]:truncate @[767px]/card:hidden"
+                      className="flex w-52 **:data-[slot=select-value]:block **:data-[slot=select-value]:truncate"
                       size="sm"
                       aria-label="Select a value"
                     >
-                      <SelectValue placeholder="Last 3 months" />
+                      <SelectValue placeholder="Select range" />
                     </SelectTrigger>
                     <SelectContent className="rounded-xl">
-                      <SelectItem value="90d" className="rounded-lg">
+                      <SelectItem value="current-month" className="rounded-lg">
+                        Current month
+                      </SelectItem>
+                      <SelectItem value="last-7-days" className="rounded-lg">
+                        Last 7 days
+                      </SelectItem>
+                      <SelectItem value="last-month" className="rounded-lg">
+                        Last month
+                      </SelectItem>
+                      <SelectItem value="last-3-months" className="rounded-lg">
                         Last 3 months
                       </SelectItem>
-                      <SelectItem value="30d" className="rounded-lg">
-                        Last 30 days
+                      <SelectItem value="this-year" className="rounded-lg">
+                        This year
                       </SelectItem>
-                      <SelectItem value="7d" className="rounded-lg">
-                        Last 7 days
+                      <SelectItem value="last-year" className="rounded-lg">
+                        Last year
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -399,25 +447,21 @@ export default function DashboardPage() {
               </CardHeader>
             </Card>
           </div>
+
+          {/* KPIs */}
           <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
             <Card className="@container/card">
               <CardHeader>
                 <CardDescription>Total Revenue</CardDescription>
                 <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                                  {
-                   totalRevenue === null
-                     ? "Loading..."
-                     : canShowRevenue
-                       ? formatCurrency(totalRevenue)
-                       : "****"
-                 }
+                  {totalRevenue === null
+                    ? "Loading..."
+                    : canShowRevenue
+                    ? formatCurrency(totalRevenue)
+                    : "****"}
                 </CardTitle>
                 <CardAction className="flex items-center space-x-2">
-                  <Select
-                    value={currency}
-                    onValueChange={setCurrency}
-                    size="sm"
-                  >
+                  <Select value={currency} onValueChange={setCurrency} size="sm">
                     <SelectTrigger>
                       <SelectValue placeholder="USD" />
                     </SelectTrigger>
@@ -430,24 +474,22 @@ export default function DashboardPage() {
                 </CardAction>
               </CardHeader>
             </Card>
+
             <Card className="@container/card">
               <CardHeader>
                 <CardDescription>Revenue Growth Rate</CardDescription>
                 <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                  {growthRate !== null
-                    ? `${growthRate.toFixed(2)}%`
-                    : "Loading..."}
+                  {growthRate !== null ? `${growthRate.toFixed(2)}%` : "Loading..."}
                 </CardTitle>
                 <CardAction>
                   <Badge variant="outline">
                     <IconTrendingUp />
-                    {growthRate !== null
-                      ? `${growthRate.toFixed(2)}%`
-                      : "Loading..."}
+                    {growthRate !== null ? `${growthRate.toFixed(2)}%` : "Loading..."}
                   </Badge>
                 </CardAction>
               </CardHeader>
             </Card>
+
             <Card className="@container/card">
               <CardHeader>
                 <CardDescription>New Customers</CardDescription>
@@ -457,13 +499,12 @@ export default function DashboardPage() {
                 <CardAction>
                   <Badge variant="outline">
                     <IconTrendingUp />
-                    {clientGrowth !== null
-                      ? `${clientGrowth.toFixed(2)}%`
-                      : "Loading..."}
+                    {clientGrowth !== null ? `${clientGrowth.toFixed(2)}%` : "Loading..."}
                   </Badge>
                 </CardAction>
               </CardHeader>
             </Card>
+
             <Card className="@container/card">
               <CardHeader>
                 <CardDescription>Active Accounts</CardDescription>
@@ -473,14 +514,14 @@ export default function DashboardPage() {
                 <CardAction>
                   <Badge variant="outline">
                     <IconTrendingUp />
-                    {activeGrowth !== null
-                      ? `${activeGrowth.toFixed(2)}%`
-                      : "Loading..."}
+                    {activeGrowth !== null ? `${activeGrowth.toFixed(2)}%` : "Loading..."}
                   </Badge>
                 </CardAction>
               </CardHeader>
             </Card>
           </div>
+
+          {/* Chart */}
           <div className="px-4 lg:px-6">
             <Card className="@container/card">
               <CardHeader>
@@ -496,13 +537,7 @@ export default function DashboardPage() {
                     margin={{ top: 20, right: 0, left: 0, bottom: 0 }}
                   >
                     <defs>
-                      <linearGradient
-                        id="fillTotal"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
+                      <linearGradient id="fillTotal" x1="0" y1="0" x2="0" y2="1">
                         <stop
                           offset="5%"
                           stopColor="var(--color-desktop)"
@@ -514,13 +549,7 @@ export default function DashboardPage() {
                           stopOpacity={0.1}
                         />
                       </linearGradient>
-                      <linearGradient
-                        id="fillRevenue"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
+                      <linearGradient id="fillRevenue" x1="0" y1="0" x2="0" y2="1">
                         <stop
                           offset="5%"
                           stopColor="var(--color-mobile)"
@@ -585,6 +614,8 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Orders table */}
           <div className="px-4 lg:px-6">
             <Card>
               <CardHeader>
@@ -595,9 +626,7 @@ export default function DashboardPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="font-semibold">
-                          Order Nro
-                        </TableHead>
+                        <TableHead className="font-semibold">Order Nro</TableHead>
                         <TableHead className="font-semibold">User</TableHead>
                         <TableHead className="font-semibold">Status</TableHead>
                         <TableHead className="font-semibold text-right">
@@ -609,10 +638,7 @@ export default function DashboardPage() {
                     <TableBody>
                       {orderList !== null ? (
                         orderList.map((order) => (
-                          <TableRow
-                            key={order.id}
-                            className="hover:bg-muted/50"
-                          >
+                          <TableRow key={order.id} className="hover:bg-muted/50">
                             <TableCell className="font-medium">
                               {order.orderNumber}
                             </TableCell>
