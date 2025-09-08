@@ -27,7 +27,7 @@ function eachDay(from: Date, to: Date) {
   return days;
 }
 
-// ── dropshipper helpers (same logic used elsewhere) ───────────────
+// ── dropshipper helpers ──────────────────────────────────────────
 function asArray(meta: unknown): any[] {
   if (!meta) return [];
   if (Array.isArray(meta)) return meta;
@@ -56,6 +56,16 @@ function extractDropshipper(
     }
   }
   return { orgId: null, name: null };
+}
+
+/** Only treat an order as “dropship” if we have an explicit signal. */
+function hasDropshipSignal(asset: unknown, orderKey: string | null): boolean {
+  const arr = asArray(asset);
+  const metaSignal = arr.some(
+    (m) => m && m.type === "dropshipper" && typeof m.organizationId === "string"
+  );
+  const keySignal = typeof orderKey === "string" && orderKey.startsWith("S-");
+  return metaSignal || keySignal;
 }
 
 async function resolveDropshipperLabel(
@@ -89,11 +99,8 @@ async function resolveDropshipperLabel(
 }
 
 /**
- * Fallback: infer immediate downstream org for legacy orders with empty orderMeta.
- * Strategy:
- *  1) Preferred: via sharedProductMapping using this supplier order's productIds:
- *     cp.productId -> sharedProductMapping.targetProductId -> products.organizationId (downstream)
- *  2) Last resort: if orderKey starts with "S-", strip prefix and take the base order's organizationId.
+ * Fallback: infer immediate downstream org for legacy supplier orders.
+ *  - Now only used when we ALREADY have a dropship signal (e.g., S- key).
  */
 async function inferDownstreamOrgId(
   orderId: string,
@@ -154,8 +161,6 @@ function normalizeStatus(row: any): NormStatus {
   if (raw.includes("complete")) return "paid";
   if (raw.includes("paid")) return "paid";
   if (raw.includes("open") || raw.includes("new")) return "open";
-
-  // Fallback: if there are no cancel/refund flags, don't assume paid — mark open.
   return "open";
 }
 
@@ -193,9 +198,6 @@ export async function GET(req: NextRequest) {
   const { organizationId } = ctx;
 
   try {
-    /* ------------------------------------------------------------- */
-    /* Fetch orders in range (no dropshipper filter in SQL)          */
-    /* ------------------------------------------------------------- */
     const baseValsOrders: any[] = [organizationId, from, to];
     const revenueQuery = `
       SELECT
@@ -225,7 +227,6 @@ export async function GET(req: NextRequest) {
     `;
     const revenueRes = await pool.query(revenueQuery, baseValsOrders);
 
-    // Enrich rows: coin, netProfit, dropshipper (with inference) + normalized status
     const dropshipperMap = new Map<string, string>(); // orgId -> label
     const enriched = await Promise.all(
       revenueRes.rows.map(async (m: any) => {
@@ -255,18 +256,27 @@ export async function GET(req: NextRequest) {
         // normalized status
         m.status = normalizeStatus(m);
 
-        // dropshipper fields (fallback inference like order detail page)
-        const drop = extractDropshipper(m.asset);
-        let dsOrgId: string | null = drop.orgId ?? null;
-        if (!dsOrgId) {
-          dsOrgId = await inferDownstreamOrgId(m.id, m.cartId, m.orderNumber);
+        // ── DROPSHIPPER (guarded) ────────────────────────────────
+        const hasDS = hasDropshipSignal(m.asset, m.orderNumber);
+        let dsOrgId: string | null = null;
+        let dsLabel: string | null = null;
+
+        if (hasDS) {
+          const drop = extractDropshipper(m.asset);
+          dsOrgId = drop.orgId ?? null;
+          dsLabel = drop.name ?? null;
+
+          // Only run heavy fallback if we still don't have orgId AND we had a signal
+          if (!dsOrgId && typeof m.orderNumber === "string" && m.orderNumber.startsWith("S-")) {
+            dsOrgId = await inferDownstreamOrgId(m.id, m.cartId, m.orderNumber);
+          }
+          if (!dsLabel && dsOrgId) {
+            dsLabel = await resolveDropshipperLabel(dsOrgId);
+          }
         }
-        let dsLabel: string | null = drop.name ?? null;
-        if (!dsLabel && dsOrgId) {
-          dsLabel = await resolveDropshipperLabel(dsOrgId);
-        }
-        m.dropshipperOrgId = dsOrgId;
-        m.dropshipperLabel = dsLabel;
+
+        m.dropshipperOrgId = dsOrgId ?? null;
+        m.dropshipperLabel = dsLabel ?? null;
 
         if (m.dropshipperOrgId && m.dropshipperLabel) {
           dropshipperMap.set(m.dropshipperOrgId, m.dropshipperLabel);
@@ -285,7 +295,7 @@ export async function GET(req: NextRequest) {
       return true;
     };
 
-    // Apply dropshipper & status filter in-memory (works for legacy orders too)
+    // Apply dropshipper & status filter in-memory
     const orders = enriched.filter(
       (m: any) =>
         (!dropshipperOrgIdFilter || m.dropshipperOrgId === dropshipperOrgIdFilter) &&
@@ -297,9 +307,9 @@ export async function GET(req: NextRequest) {
       new Set(orders.map((o: any) => o.country).filter(Boolean))
     ).sort();
 
-    // Build chart data from filtered orders (PAID ONLY)
+    // Build chart data from PAID ONLY
     const byDay = orders.reduce((acc: any, o: any) => {
-      if (o.status !== "paid") return acc; // only fully paid
+      if (o.status !== "paid") return acc;
       const key = new Date(o.datePaid).toISOString().split("T")[0];
       const total = Number(o.totalPrice) || 0;
       const discount = Number(o.discount) || 0;
@@ -324,12 +334,9 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // options for the UI dropdown (from all enriched orders within the range)
+    // Dropdown options
     const dropshippers = Array.from(dropshipperMap.entries()).map(
-      ([orgId, label]) => ({
-        orgId,
-        label,
-      })
+      ([orgId, label]) => ({ orgId, label })
     );
 
     const toNum = (x: unknown) => {
@@ -337,7 +344,7 @@ export async function GET(req: NextRequest) {
       return Number.isFinite(n) ? n : 0;
     };
 
-    // Gross totals over ALL returned orders (includes cancelled/refunded)
+    // Totals over ALL returned orders
     const totalsAll = orders.reduce(
       (
         acc: {
@@ -357,14 +364,13 @@ export async function GET(req: NextRequest) {
         acc.shippingCost += ship;
         acc.discount += disc;
         acc.cost += cost;
-        // Same formula elsewhere (not excluding canc/ref here)
         acc.netProfit += total - disc - ship - cost;
         return acc;
       },
       { totalPrice: 0, shippingCost: 0, discount: 0, cost: 0, netProfit: 0 }
     );
 
-    // Totals over PAID orders only
+    // Totals over PAID only
     const totalsPaid = orders.reduce(
       (
         acc: {
@@ -398,9 +404,9 @@ export async function GET(req: NextRequest) {
         chartData,
         dropshippers,
         totals: {
-          currency, // "USD" | "GBP" | "EUR"
-          all: totalsAll, // { totalPrice, shippingCost, discount, cost, netProfit }
-          paid: totalsPaid, // { totalPrice, shippingCost, discount, cost, revenue }
+          currency,
+          all: totalsAll,
+          paid: totalsPaid,
         },
       },
       { status: 200 }
