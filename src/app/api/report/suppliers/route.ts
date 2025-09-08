@@ -351,7 +351,9 @@ export async function GET(req: NextRequest) {
       const country = row.country as string;
       countrySet.add(country);
 
-      const supplierOrgId: string | null = row.supplierOrgId ?? null;
+            // Treat mappings that point back to our own org as "in-house" (no supplier)
+      let supplierOrgId: string | null = row.supplierOrgId ?? null;
+      if (supplierOrgId === organizationId) supplierOrgId = null;
       let supplierLabel: string | null = null;
       if (supplierOrgId) {
         supplierSet.add(supplierOrgId);

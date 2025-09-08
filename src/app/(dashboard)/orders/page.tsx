@@ -66,6 +66,19 @@ type OrderStatus =
   | "refunded"
   | "completed";
 
+
+// Pretty labels for statuses (single source of truth)
+const STATUS_LABELS: Record<OrderStatus, string> = {
+  open: "Open",
+  underpaid: "Partially paid",
+  pending_payment: "Pending payment",
+  paid: "Paid",
+  cancelled: "Cancelled",
+  refunded: "Refunded",
+  completed: "Completed",
+};
+const statusLabel = (s: OrderStatus) => STATUS_LABELS[s] ?? s.replace(/_/g, " ");
+
 interface Order {
   id: string;
   orderKey: string;
@@ -437,11 +450,11 @@ export default function OrdersPage() {
         prev.map((o) =>
           o.id === selectedOrderId
             ? {
-                ...o,
-                trackingNumber: draftTracking,
-                shippingCompany: company.name,
-                status: "completed",
-              }
+              ...o,
+              trackingNumber: draftTracking,
+              shippingCompany: company.name,
+              status: "completed",
+            }
             : o
         )
       );
@@ -603,8 +616,7 @@ export default function OrdersPage() {
                           >
                             <SelectTrigger className="w-auto flex justify-center">
                               <Badge className={getStatusColor(order.status)}>
-                                {order.status.charAt(0).toUpperCase() +
-                                  order.status.slice(1)}
+                                {statusLabel(order.status)}
                               </Badge>
                             </SelectTrigger>
                             <SelectContent>
@@ -613,7 +625,7 @@ export default function OrdersPage() {
                                 className="w-auto flex justify-left"
                               >
                                 <Badge className={getStatusColor("open")}>
-                                  Open
+                                  {statusLabel("open")}
                                 </Badge>
                               </SelectItem>
                               <SelectItem
@@ -621,7 +633,7 @@ export default function OrdersPage() {
                                 className="w-auto flex justify-left"
                               >
                                 <Badge className={getStatusColor("underpaid")}>
-                                  Partially paid
+                                  {statusLabel("underpaid")}
                                 </Badge>
                               </SelectItem>
                               <SelectItem
@@ -629,7 +641,7 @@ export default function OrdersPage() {
                                 className="w-auto flex justify-left"
                               >
                                 <Badge className={getStatusColor("pending_payment")}>
-                                  Pending payment
+                                  {statusLabel("pending_payment")}
                                 </Badge>
                               </SelectItem>
                               <SelectItem
@@ -637,7 +649,7 @@ export default function OrdersPage() {
                                 className="w-auto flex justify-left"
                               >
                                 <Badge className={getStatusColor("paid")}>
-                                  Paid
+                                  {statusLabel("paid")}
                                 </Badge>
                               </SelectItem>
                               <SelectItem
@@ -645,7 +657,7 @@ export default function OrdersPage() {
                                 className="w-auto flex justify-left"
                               >
                                 <Badge className={getStatusColor("completed")}>
-                                  Completed
+                                  {statusLabel("completed")}
                                 </Badge>
                               </SelectItem>
                               <SelectItem
@@ -653,7 +665,7 @@ export default function OrdersPage() {
                                 className="w-auto flex justify-left"
                               >
                                 <Badge className={getStatusColor("cancelled")}>
-                                  Cancelled
+                                  {statusLabel("cancelled")}
                                 </Badge>
                               </SelectItem>
                               <SelectItem
@@ -661,15 +673,14 @@ export default function OrdersPage() {
                                 className="w-auto flex justify-left"
                               >
                                 <Badge className={getStatusColor("refunded")}>
-                                  Refunded
+                                  {statusLabel("refunded")}
                                 </Badge>
                               </SelectItem>
                             </SelectContent>
                           </Select>
                         ) : (
                           <Badge className={getStatusColor(order.status)}>
-                            {order.status.charAt(0).toUpperCase() +
-                              order.status.slice(1)}
+                            {statusLabel(order.status)}
                           </Badge>
                         )}
                       </TableCell>
