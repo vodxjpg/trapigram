@@ -227,6 +227,7 @@ export async function GET(req: NextRequest) {
     `;
     const revenueRes = await pool.query(revenueQuery, baseValsOrders);
 
+    // Enrich rows: coin, netProfit, normalized status, and (guarded) dropshipper
     const dropshipperMap = new Map<string, string>(); // orgId -> label
     const enriched = await Promise.all(
       revenueRes.rows.map(async (m: any) => {
@@ -267,12 +268,20 @@ export async function GET(req: NextRequest) {
           dsLabel = drop.name ?? null;
 
           // Only run heavy fallback if we still don't have orgId AND we had a signal
-          if (!dsOrgId && typeof m.orderNumber === "string" && m.orderNumber.startsWith("S-")) {
+          const isSupplierHop =
+            typeof m.orderNumber === "string" && m.orderNumber.startsWith("S-");
+          if (!dsOrgId && isSupplierHop) {
             dsOrgId = await inferDownstreamOrgId(m.id, m.cartId, m.orderNumber);
           }
           if (!dsLabel && dsOrgId) {
             dsLabel = await resolveDropshipperLabel(dsOrgId);
           }
+        }
+
+        // Never set dropshipper to our own org
+        if (dsOrgId === organizationId) {
+          dsOrgId = null;
+          dsLabel = null;
         }
 
         m.dropshipperOrgId = dsOrgId ?? null;
