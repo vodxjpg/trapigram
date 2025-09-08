@@ -6,6 +6,14 @@ import { getContext } from "@/lib/context";
 /* --------------------------------------------------------------- */
 /* helpers                                                         */
 /* --------------------------------------------------------------- */
+type NormStatus =
+  | "paid"
+  | "pending_payment"
+  | "refunded"
+  | "cancelled"
+  | "open"
+  | "partially_paid";
+
 function eachDay(from: Date, to: Date) {
   const days: Date[] = [];
   const cur = new Date(from);
@@ -20,15 +28,33 @@ function eachDay(from: Date, to: Date) {
 }
 
 const EURO_COUNTRIES = new Set([
-  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE",
-  "IT","LV","LT","LU","MT","NL","PT","SK","SI","ES",
+  "AT",
+  "BE",
+  "HR",
+  "CY",
+  "EE",
+  "FI",
+  "FR",
+  "DE",
+  "GR",
+  "IE",
+  "IT",
+  "LV",
+  "LT",
+  "LU",
+  "MT",
+  "NL",
+  "PT",
+  "SK",
+  "SI",
+  "ES",
 ]);
 
 async function resolveOrgLabel(orgId: string | null): Promise<string | null> {
   if (!orgId) return null;
   const orgQ = await pool.query(
     `SELECT name, metadata FROM "organization" WHERE id = $1 LIMIT 1`,
-    [orgId],
+    [orgId]
   );
   if (!orgQ.rowCount) return null;
 
@@ -42,11 +68,13 @@ async function resolveOrgLabel(orgId: string | null): Promise<string | null> {
       if (tenantId) {
         const tQ = await pool.query(
           `SELECT "ownerEmail" FROM "tenant" WHERE id = $1 LIMIT 1`,
-          [tenantId],
+          [tenantId]
         );
         email = (tQ.rows[0]?.ownerEmail as string) ?? null;
       }
-    } catch { /* ignore malformed */ }
+    } catch {
+      /* ignore malformed */
+    }
   }
   return email ? `${orgName} (${email})` : orgName;
 }
@@ -54,7 +82,7 @@ async function resolveOrgLabel(orgId: string | null): Promise<string | null> {
 type Rates = { USDEUR: number; USDGBP: number };
 async function getLatestRates(): Promise<Rates> {
   const { rows } = await pool.query(
-    `SELECT "EUR","GBP" FROM "exchangeRate" ORDER BY date DESC LIMIT 1`,
+    `SELECT "EUR","GBP" FROM "exchangeRate" ORDER BY date DESC LIMIT 1`
   );
   const USDEUR = Number(rows[0]?.EUR ?? 0) || 0;
   const USDGBP = Number(rows[0]?.GBP ?? 0) || 0;
@@ -69,23 +97,37 @@ function convertByCountry(
   amountLocal: number,
   country: string,
   to: "USD" | "GBP" | "EUR",
-  rates: Rates,
+  rates: Rates
 ) {
   const { USDEUR, USDGBP } = rates;
   if (country === "GB") {
-    if (to === "GBP") return amountLocal;                 // base GBP
+    if (to === "GBP") return amountLocal; // base GBP
     if (to === "USD") return amountLocal / USDGBP;
-    return amountLocal * (USDEUR / USDGBP);               // → EUR
+    return amountLocal * (USDEUR / USDGBP); // → EUR
   }
   if (EURO_COUNTRIES.has(country)) {
-    if (to === "EUR") return amountLocal;                 // base EUR
+    if (to === "EUR") return amountLocal; // base EUR
     if (to === "USD") return amountLocal / USDEUR;
-    return amountLocal * (USDGBP / USDEUR);               // → GBP
+    return amountLocal * (USDGBP / USDEUR); // → GBP
   }
   // base USD
   if (to === "USD") return amountLocal;
   if (to === "GBP") return amountLocal * USDGBP;
-  return amountLocal * USDEUR;                            // → EUR
+  return amountLocal * USDEUR; // → EUR
+}
+
+function normalizeStatus(row: any): NormStatus {
+  if (row?.cancelled) return "cancelled";
+  if (row?.refunded) return "refunded";
+  const raw = String(row?.status ?? "").toLowerCase().trim();
+  if (raw.includes("pending")) return "pending_payment";
+  if (raw.includes("partial")) return "partially_paid";
+  if (raw.includes("cancel")) return "cancelled";
+  if (raw.includes("refund")) return "refunded";
+  if (raw.includes("complete")) return "paid";
+  if (raw.includes("paid")) return "paid";
+  if (raw.includes("open") || raw.includes("new")) return "open";
+  return "open";
 }
 
 /* --------------------------------------------------------------- */
@@ -94,12 +136,12 @@ function convertByCountry(
 type Line = {
   orderId: string;
   orderNumber: string;
-  datePaid: string;              // ← will hold COALESCE(datePaid, dateCreated)
+  datePaid: string; // COALESCE(datePaid, dateCreated)
   username: string;
   country: string;
   cancelled: boolean;
   refunded: boolean;
-  status: string;                // ← include order status so we can treat pending_payment as paid-like
+  status: NormStatus; // normalized
   supplierOrgId: string | null;
   supplierLabel: string | null;
   productTitle: string;
@@ -116,9 +158,15 @@ type GroupedOrder = {
   country: string;
   cancelled: boolean;
   refunded: boolean;
+  status: NormStatus; // <- include status on the grouped row so UI can show it
   supplierOrgId: string | null;
   supplierLabel: string | null;
-  items: Array<{ productTitle: string; quantity: number; unitCost: number; lineTotal: number }>;
+  items: Array<{
+    productTitle: string;
+    quantity: number;
+    unitCost: number;
+    lineTotal: number;
+  }>;
   totalQty: number;
   totalOwed: number;
 };
@@ -138,6 +186,7 @@ function groupByOrderAndSupplier(lines: Line[]): GroupedOrder[] {
         country: l.country,
         cancelled: l.cancelled,
         refunded: l.refunded,
+        status: l.status, // propagate status
         supplierOrgId: l.supplierOrgId,
         supplierLabel: l.supplierLabel,
         items: [],
@@ -160,14 +209,14 @@ function groupByOrderAndSupplier(lines: Line[]): GroupedOrder[] {
   const grouped = Array.from(map.values());
   for (const g of grouped) {
     if (g.cancelled) {
-      g.totalOwed = 0;                 // cancelled => owe nothing
+      g.totalOwed = 0; // cancelled => owe nothing
     } else if (g.refunded) {
       g.totalOwed = -Math.abs(g.totalOwed); // refunded => negative owed
     }
   }
 
   return grouped.sort(
-    (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime(),
+    (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
   );
 }
 
@@ -186,17 +235,18 @@ export async function GET(req: NextRequest) {
   const statusFilter = (url.searchParams.get("status") || "all") as
     | "all"
     | "paid"
+    | "pending_payment"
     | "cancelled"
     | "refunded";
 
   if (!from || !to) {
     return NextResponse.json(
       { error: "Missing required query parameters `from` and `to`." },
-      { status: 400 },
+      { status: 400 }
     );
   }
   const currency: "USD" | "GBP" | "EUR" = (["USD", "GBP", "EUR"] as const).includes(
-    currencyRaw,
+    currencyRaw
   )
     ? currencyRaw
     : "USD";
@@ -215,8 +265,8 @@ export async function GET(req: NextRequest) {
 
     // NOTE:
     // - Use COALESCE(datePaid, dateCreated) as paidAt to include pending_payment
-    //   orders that don't have datePaid yet, but should act like paid.
-    // - Select o.status so we can treat pending_payment as paid-like.
+    //   orders that might not have datePaid yet.
+    // - Select o.status so we can normalize and expose it.
     const sql = `
       SELECT
         cp.id                               AS "cartProductId",
@@ -259,31 +309,35 @@ export async function GET(req: NextRequest) {
     const res = await pool.query(sql, vals);
     const { USDEUR, USDGBP } = await getLatestRates();
 
-    // Paid-like statuses (treated as "paid" in filters, counts, charts)
-    const isPaidLike = (status: string | null | undefined) =>
-      ["paid", "pending_payment", "completed"].includes(String(status ?? "").toLowerCase());
-
-    // in-memory status filter
+    // Server-side status filter
     const statusPass = (row: any) => {
-      const paidLike = isPaidLike(row.status);
-      if (statusFilter === "paid") return paidLike && row.cancelled === false && row.refunded === false;
+      const s = normalizeStatus(row);
+      if (statusFilter === "all") return true;
+      if (statusFilter === "paid")
+        return s === "paid" && row.cancelled === false && row.refunded === false;
+      if (statusFilter === "pending_payment")
+        return (
+          s === "pending_payment" &&
+          row.cancelled === false &&
+          row.refunded === false
+        );
       if (statusFilter === "cancelled") return row.cancelled === true;
       if (statusFilter === "refunded") return row.refunded === true;
-      return true; // all
+      return true;
     };
 
     // Prepare sets for dropdowns
     const supplierSet = new Set<string>();
     const countrySet = new Set<string>();
 
-    // Preload labels cache
+    // Label cache
     const labelCache = new Map<string, string>();
 
-    // De-duplicate by cartProductId to avoid counting the same cart line twice
+    // De-duplicate by cartProductId
     const seenCartProduct = new Set<string>();
 
-    // Track per-order "paid-like" for later grouped calculations
-    const orderPaidLike = new Map<string, boolean>();
+    // Track per-order normalized status
+    const orderStatus = new Map<string, NormStatus>();
 
     const lines: Line[] = [];
     for (const row of res.rows) {
@@ -309,7 +363,7 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // unit transfer in local currency
+      // transfer unit in local currency
       let unitLocal = 0;
       if (row.transferCostJson) {
         const j =
@@ -325,12 +379,15 @@ export async function GET(req: NextRequest) {
         const v = j?.[country];
         unitLocal = Number(v || 0) || 0;
       }
-      const unit = convertByCountry(unitLocal, country, currency, { USDEUR, USDGBP });
+      const unit = convertByCountry(unitLocal, country, currency, {
+        USDEUR,
+        USDGBP,
+      });
       const qty = Number(row.quantity || 0);
       const lineTotal = unit * qty;
 
-      const status: string = String(row.status ?? "");
-      orderPaidLike.set(orderId, isPaidLike(status));
+      const s = normalizeStatus(row);
+      orderStatus.set(orderId, s);
 
       lines.push({
         orderId,
@@ -340,7 +397,7 @@ export async function GET(req: NextRequest) {
         country,
         cancelled: !!row.cancelled,
         refunded: !!row.refunded,
-        status,
+        status: s,
         supplierOrgId,
         supplierLabel,
         productTitle: row.productTitle as string,
@@ -350,7 +407,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Group by Order × Supplier and apply cancelled/refunded rules to orders
+    // Group by Order × Supplier and apply cancelled/refunded rules
     const orders = groupByOrderAndSupplier(lines);
 
     // Countries (sorted)
@@ -360,13 +417,14 @@ export async function GET(req: NextRequest) {
     const suppliers = await Promise.all(
       Array.from(supplierSet).map(async (orgId) => ({
         orgId,
-        label: labelCache.get(orgId) ?? (await resolveOrgLabel(orgId)) ?? orgId,
-      })),
+        label:
+          labelCache.get(orgId) ?? (await resolveOrgLabel(orgId)) ?? orgId,
+      }))
     );
 
-    // Chart: daily sum of totalOwed for paid-like & not cancelled/refunded
+    // Chart: daily sum of totalOwed for fully PAID & not cancelled/refunded
     const paidOrders = orders.filter(
-      (o) => orderPaidLike.get(o.orderId) === true && !o.cancelled && !o.refunded,
+      (o) => orderStatus.get(o.orderId) === "paid" && !o.cancelled && !o.refunded
     );
     const byDay = paidOrders.reduce<Record<string, number>>((acc, o) => {
       const key = new Date(o.datePaid).toISOString().split("T")[0];
@@ -383,7 +441,9 @@ export async function GET(req: NextRequest) {
 
     const counts = {
       total: orders.length,
-      paid: orders.filter((o) => orderPaidLike.get(o.orderId) === true && !o.cancelled && !o.refunded).length,
+      paid: orders.filter(
+        (o) => orderStatus.get(o.orderId) === "paid" && !o.cancelled && !o.refunded
+      ).length,
       refunded: orders.filter((o) => o.refunded).length,
       cancelled: orders.filter((o) => o.cancelled).length,
     };
@@ -393,32 +453,33 @@ export async function GET(req: NextRequest) {
         const owed = Number(o.totalOwed) || 0;
         acc.allOrdersNet += owed; // includes negatives for refunded, zero for cancelled
         acc.totalQty += Number(o.totalQty) || 0;
-        if (orderPaidLike.get(o.orderId) === true && !o.cancelled && !o.refunded) {
+        if (orderStatus.get(o.orderId) === "paid" && !o.cancelled && !o.refunded) {
           acc.paidOrdersNet += owed;
         }
         return acc;
       },
-      { allOrdersNet: 0, paidOrdersNet: 0, totalQty: 0 },
+      { allOrdersNet: 0, paidOrdersNet: 0, totalQty: 0 }
     );
 
-    const currencySymbol = currency === "USD" ? "$" : currency === "GBP" ? "£" : "€";
+    const currencySymbol =
+      currency === "USD" ? "$" : currency === "GBP" ? "£" : "€";
 
     const totals = {
-      ...sums,           // { allOrdersNet, paidOrdersNet, totalQty }
-      counts,            // { total, paid, refunded, cancelled }
-      currency,          // "USD" | "GBP" | "EUR"
-      currencySymbol,    // "$" | "£" | "€"
+      ...sums, // { allOrdersNet, paidOrdersNet, totalQty }
+      counts, // { total, paid, refunded, cancelled }
+      currency, // "USD" | "GBP" | "EUR"
+      currencySymbol, // "$" | "£" | "€"
     };
 
     return NextResponse.json(
       { orders, countries, suppliers, chartData, totals },
-      { status: 200 },
+      { status: 200 }
     );
   } catch (err) {
     console.error("Error fetching supplier payables:", err);
     return NextResponse.json(
       { error: "Internal server error." },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

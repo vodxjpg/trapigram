@@ -6,6 +6,14 @@ import { getContext } from "@/lib/context";
 /* --------------------------------------------------------------- */
 /* helpers                                                         */
 /* --------------------------------------------------------------- */
+type NormStatus =
+  | "paid"
+  | "pending_payment"
+  | "refunded"
+  | "cancelled"
+  | "open"
+  | "partially_paid";
+
 function eachDay(from: Date, to: Date) {
   const days: Date[] = [];
   const cur = new Date(from);
@@ -35,7 +43,7 @@ function asArray(meta: unknown): any[] {
 }
 
 function extractDropshipper(
-  meta: unknown,
+  meta: unknown
 ): { orgId: string | null; name: string | null } {
   const arr = asArray(meta);
   for (let i = arr.length - 1; i >= 0; i--) {
@@ -50,11 +58,13 @@ function extractDropshipper(
   return { orgId: null, name: null };
 }
 
-async function resolveDropshipperLabel(orgId: string | null): Promise<string | null> {
+async function resolveDropshipperLabel(
+  orgId: string | null
+): Promise<string | null> {
   if (!orgId) return null;
   const orgQ = await pool.query(
     `SELECT name, metadata FROM "organization" WHERE id = $1 LIMIT 1`,
-    [orgId],
+    [orgId]
   );
   if (!orgQ.rowCount) return null;
   const orgName: string = orgQ.rows[0].name ?? "";
@@ -67,7 +77,7 @@ async function resolveDropshipperLabel(orgId: string | null): Promise<string | n
       if (tenantId) {
         const tQ = await pool.query(
           `SELECT "ownerEmail" FROM "tenant" WHERE id = $1 LIMIT 1`,
-          [tenantId],
+          [tenantId]
         );
         email = (tQ.rows[0]?.ownerEmail as string) ?? null;
       }
@@ -88,7 +98,7 @@ async function resolveDropshipperLabel(orgId: string | null): Promise<string | n
 async function inferDownstreamOrgId(
   orderId: string,
   cartId: string,
-  orderKey: string | null,
+  orderKey: string | null
 ): Promise<string | null> {
   try {
     // 1) Via product mapping (strongest)
@@ -97,19 +107,19 @@ async function inferDownstreamOrgId(
          FROM "cartProducts" cp
         WHERE cp."cartId" = $1
           AND cp."productId" IS NOT NULL`,
-      [cartId],
+      [cartId]
     );
     for (const row of prodQ.rows as Array<{ pid: string }>) {
       const mapQ = await pool.query(
         `SELECT "targetProductId" FROM "sharedProductMapping"
           WHERE "sourceProductId" = $1 LIMIT 1`,
-        [row.pid],
+        [row.pid]
       );
       const targetId = mapQ.rows[0]?.targetProductId as string | undefined;
       if (targetId) {
         const orgQ = await pool.query(
           `SELECT "organizationId" FROM "products" WHERE id = $1 LIMIT 1`,
-          [targetId],
+          [targetId]
         );
         const orgId = orgQ.rows[0]?.organizationId as string | undefined;
         if (orgId) return orgId;
@@ -120,7 +130,7 @@ async function inferDownstreamOrgId(
       const base = orderKey.slice(2);
       const baseQ = await pool.query(
         `SELECT "organizationId" FROM "orders" WHERE "orderKey" = $1 LIMIT 1`,
-        [base],
+        [base]
       );
       return (baseQ.rows[0]?.organizationId as string) ?? null;
     }
@@ -128,6 +138,25 @@ async function inferDownstreamOrgId(
     /* ignore and fall through */
   }
   return null;
+}
+
+/** Normalize status coming from DB / metadata into a consistent set. */
+function normalizeStatus(row: any): NormStatus {
+  if (row?.cancelled) return "cancelled";
+  if (row?.refunded) return "refunded";
+  const raw = String(row?.status ?? row?.statusRaw ?? "")
+    .toLowerCase()
+    .trim();
+  if (raw.includes("pending")) return "pending_payment";
+  if (raw.includes("partial")) return "partially_paid";
+  if (raw.includes("cancel")) return "cancelled";
+  if (raw.includes("refund")) return "refunded";
+  if (raw.includes("complete")) return "paid";
+  if (raw.includes("paid")) return "paid";
+  if (raw.includes("open") || raw.includes("new")) return "open";
+
+  // Fallback: if there are no cancel/refund flags, don't assume paid — mark open.
+  return "open";
 }
 
 /* --------------------------------------------------------------- */
@@ -139,16 +168,22 @@ export async function GET(req: NextRequest) {
   const to = url.searchParams.get("to");
   const currencyRaw = (url.searchParams.get("currency") || "USD").toUpperCase();
   const dropshipperOrgIdFilter = url.searchParams.get("dropshipperOrgId") || "";
+  const statusFilter = (url.searchParams.get("status") || "all") as
+    | "all"
+    | "paid"
+    | "pending_payment"
+    | "cancelled"
+    | "refunded";
 
   if (!from || !to) {
     return NextResponse.json(
       { error: "Missing required query parameters `from` and `to`." },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
   const currency = (["USD", "GBP", "EUR"] as const).includes(
-    currencyRaw as any,
+    currencyRaw as any
   )
     ? (currencyRaw as "USD" | "GBP" | "EUR")
     : "USD";
@@ -176,7 +211,8 @@ export async function GET(req: NextRequest) {
           r."${currency}discount" AS "discount",
           r."${currency}cost"     AS "cost",
           r.cancelled, r.refunded,
-          o."orderMeta"   AS asset
+          o."orderMeta"   AS asset,
+          o.status        AS status
       FROM "orderRevenue" r
       JOIN orders o
         ON r."orderId" = o.id
@@ -189,7 +225,7 @@ export async function GET(req: NextRequest) {
     `;
     const revenueRes = await pool.query(revenueQuery, baseValsOrders);
 
-    // Enrich rows: coin, netProfit, dropshipper (with inference)
+    // Enrich rows: coin, netProfit, dropshipper (with inference) + normalized status
     const dropshipperMap = new Map<string, string>(); // orgId -> label
     const enriched = await Promise.all(
       revenueRes.rows.map(async (m: any) => {
@@ -216,6 +252,9 @@ export async function GET(req: NextRequest) {
           Number(m.discount) -
           Number(m.cost);
 
+        // normalized status
+        m.status = normalizeStatus(m);
+
         // dropshipper fields (fallback inference like order detail page)
         const drop = extractDropshipper(m.asset);
         let dsOrgId: string | null = drop.orgId ?? null;
@@ -233,22 +272,34 @@ export async function GET(req: NextRequest) {
           dropshipperMap.set(m.dropshipperOrgId, m.dropshipperLabel);
         }
         return m;
-      }),
+      })
     );
 
-    // Apply dropshipper filter in-memory (works for legacy orders too)
-    const orders = dropshipperOrgIdFilter
-      ? enriched.filter((m: any) => m.dropshipperOrgId === dropshipperOrgIdFilter)
-      : enriched;
+    // Server-side status filter (optional; UI also filters client-side)
+    const statusPass = (s: NormStatus, row: any) => {
+      if (statusFilter === "all") return true;
+      if (statusFilter === "paid") return s === "paid" && !row.cancelled && !row.refunded;
+      if (statusFilter === "pending_payment") return s === "pending_payment" && !row.cancelled && !row.refunded;
+      if (statusFilter === "cancelled") return !!row.cancelled;
+      if (statusFilter === "refunded") return !!row.refunded;
+      return true;
+    };
+
+    // Apply dropshipper & status filter in-memory (works for legacy orders too)
+    const orders = enriched.filter(
+      (m: any) =>
+        (!dropshipperOrgIdFilter || m.dropshipperOrgId === dropshipperOrgIdFilter) &&
+        statusPass(m.status as NormStatus, m)
+    );
 
     // Countries based on filtered orders
     const countries = Array.from(
-      new Set(orders.map((o: any) => o.country).filter(Boolean)),
+      new Set(orders.map((o: any) => o.country).filter(Boolean))
     ).sort();
 
-    // Build chart data from filtered orders (paid only)
+    // Build chart data from filtered orders (PAID ONLY)
     const byDay = orders.reduce((acc: any, o: any) => {
-      if (o.cancelled || o.refunded) return acc;
+      if (o.status !== "paid") return acc; // only fully paid
       const key = new Date(o.datePaid).toISOString().split("T")[0];
       const total = Number(o.totalPrice) || 0;
       const discount = Number(o.discount) || 0;
@@ -278,7 +329,7 @@ export async function GET(req: NextRequest) {
       ([orgId, label]) => ({
         orgId,
         label,
-      }),
+      })
     );
 
     const toNum = (x: unknown) => {
@@ -288,7 +339,16 @@ export async function GET(req: NextRequest) {
 
     // Gross totals over ALL returned orders (includes cancelled/refunded)
     const totalsAll = orders.reduce(
-      (acc: { totalPrice: number; shippingCost: number; discount: number; cost: number; netProfit: number }, o: any) => {
+      (
+        acc: {
+          totalPrice: number;
+          shippingCost: number;
+          discount: number;
+          cost: number;
+          netProfit: number;
+        },
+        o: any
+      ) => {
         const total = toNum(o.totalPrice);
         const ship = toNum(o.shippingCost);
         const disc = toNum(o.discount);
@@ -297,17 +357,26 @@ export async function GET(req: NextRequest) {
         acc.shippingCost += ship;
         acc.discount += disc;
         acc.cost += cost;
-        // Same formula you use elsewhere (not excluding canc/ref here)
+        // Same formula elsewhere (not excluding canc/ref here)
         acc.netProfit += total - disc - ship - cost;
         return acc;
       },
       { totalPrice: 0, shippingCost: 0, discount: 0, cost: 0, netProfit: 0 }
     );
 
-    // Totals over PAID orders only (exclude cancelled/refunded)
+    // Totals over PAID orders only
     const totalsPaid = orders.reduce(
-      (acc: { totalPrice: number; shippingCost: number; discount: number; cost: number; revenue: number }, o: any) => {
-        if (o.cancelled || o.refunded) return acc;
+      (
+        acc: {
+          totalPrice: number;
+          shippingCost: number;
+          discount: number;
+          cost: number;
+          revenue: number;
+        },
+        o: any
+      ) => {
+        if (o.status !== "paid") return acc;
         const total = toNum(o.totalPrice);
         const ship = toNum(o.shippingCost);
         const disc = toNum(o.discount);
@@ -316,7 +385,6 @@ export async function GET(req: NextRequest) {
         acc.shippingCost += ship;
         acc.discount += disc;
         acc.cost += cost;
-        // This “revenue” mirrors your chart calculation exactly
         acc.revenue += total - disc - ship - cost;
         return acc;
       },
@@ -329,16 +397,19 @@ export async function GET(req: NextRequest) {
         countries,
         chartData,
         dropshippers,
-        totals: {                 // ★ NEW
-          currency,               // "USD" | "GBP" | "EUR"
-          all: totalsAll,         // { totalPrice, shippingCost, discount, cost, netProfit }
-          paid: totalsPaid,       // { totalPrice, shippingCost, discount, cost, revenue }
+        totals: {
+          currency, // "USD" | "GBP" | "EUR"
+          all: totalsAll, // { totalPrice, shippingCost, discount, cost, netProfit }
+          paid: totalsPaid, // { totalPrice, shippingCost, discount, cost, revenue }
         },
       },
-      { status: 200 },
+      { status: 200 }
     );
   } catch (err) {
     console.error("Error fetching revenue:", err);
-    return NextResponse.json({ error: "Internal server error." }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error." },
+      { status: 500 }
+    );
   }
 }
