@@ -1313,6 +1313,7 @@ export async function PATCH(
         );
       }
     }
+  }
 
     /* ──────────────────────────────────────────────────────────────
    *  Niftipay (Coinx) sync via merchant API key
