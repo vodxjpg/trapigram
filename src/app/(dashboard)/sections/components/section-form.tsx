@@ -1,7 +1,7 @@
 // src/app/(dashboard)/sections/components/section-form.tsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -24,6 +24,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { placeholderDefs } from "@/lib/placeholder-meta";
 import { toast } from "sonner";
 import { Upload, X } from "lucide-react";
@@ -45,7 +46,7 @@ const quillFormats = ["header", "bold", "italic", "underline", "list", "link"];
 
 /* ───────── schema ───────── */
 const schema = z.object({
-  name: z.string().min(1),         // hidden but still required
+  name: z.string().min(1), // hidden but still required
   title: z.string().min(1),
   content: z.string().min(1),
   videoUrl: z
@@ -73,26 +74,70 @@ const slugify = (s: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-type Opt  = { id: string; title: string; parentSectionId: string | null };
+type Opt = { id: string; title: string; parentSectionId: string | null };
 type Props = { initial?: Partial<Values> & { id?: string }; sections?: Opt[] };
 
 export function SectionForm({ initial, sections = [] }: Props) {
   const router = useRouter();
   const [isSubmitting, setSubmitting] = useState(false);
 
-  /* ─── intro detector (slug === "intro") ─── */
+  /* ─── section type detectors ─── */
   const introSlug = initial?.name === "intro";
+  const isSettings = initial?.name === "settings";
 
   /* ─── initial file name for intro’s video ─── */
   const initialFileName =
     introSlug && initial?.videoUrl ? initial.videoUrl.split("/").pop() ?? null : null;
   const [fileName, setFileName] = useState<string | null>(initialFileName);
 
+  /* ─── org-wide Secret Phrase toggle state (visible only on settings section) ─── */
+  const [secretEnabled, setSecretEnabled] = useState<boolean>(false);
+  const [loadingSecret, setLoadingSecret] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!isSettings) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/clients/secret-phrase/settings");
+        if (!res.ok) throw new Error("Failed to load secret-phrase settings");
+        const data = await res.json();
+        const enabledCount = Number(data?.enabled_count ?? 0);
+        const disabledCount = Number(data?.disabled_count ?? 0);
+        setSecretEnabled(enabledCount >= disabledCount && enabledCount > 0);
+      } catch (e: any) {
+        console.warn("[section-form] secret-phrase GET failed:", e?.message || e);
+      }
+    })();
+  }, [isSettings]);
+
+  const handleToggleSecret = async (next: boolean) => {
+    if (!isSettings) return;
+    setLoadingSecret(true);
+    try {
+      const res = await fetch("/api/clients/secret-phrase/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true, enabled: next }),
+      });
+      if (!res.ok) throw new Error("Failed to update secret-phrase setting");
+      setSecretEnabled(next);
+      toast.success(
+        next
+          ? "Secret phrase enabled for all clients"
+          : "Secret phrase disabled for all clients",
+      );
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to update setting");
+    } finally {
+      setLoadingSecret(false);
+    }
+  };
+
   /* ─── RHF setup ─── */
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
-      name:  initial?.name  ?? "",
+      name: initial?.name ?? "",
       title: initial?.title ?? "",
       content: initial?.content ?? "",
       videoUrl: introSlug ? initial?.videoUrl ?? null : null,
@@ -128,7 +173,7 @@ export function SectionForm({ initial, sections = [] }: Props) {
       /* non-intro sections must NOT carry videoUrl */
       if (raw.name !== "intro") raw.videoUrl = null;
 
-      const url    = selfId ? `/api/sections/${selfId}` : "/api/sections";
+      const url = selfId ? `/api/sections/${selfId}` : "/api/sections";
       const method = selfId ? "PUT" : "POST";
       const res = await fetch(url, {
         method,
@@ -222,7 +267,7 @@ export function SectionForm({ initial, sections = [] }: Props) {
                 <FormMessage />
               </FormItem>
 
-              {/* Video upload — only for intro  */}
+              {/* Video upload — only for intro */}
               {introSlug && (
                 <FormItem className="md:col-span-2">
                   <FormLabel>Intro Video</FormLabel>
@@ -289,6 +334,34 @@ export function SectionForm({ initial, sections = [] }: Props) {
             </FormItem>
           </CardContent>
         </Card>
+
+        {/* Secret Phrase toggle – visible only on the "settings" section */}
+        {isSettings && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Security</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-start justify-between gap-6">
+                <div className="space-y-1">
+                  <div className="font-medium">Secret phrase challenge</div>
+                  <p className="text-sm text-muted-foreground">
+                    Require customers to set/confirm a secret phrase before checkout.
+                    This toggle applies to <b>all clients</b> in your store. You can
+                    still override settings per client in the Clients page.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={secretEnabled}
+                    disabled={loadingSecret || isSubmitting}
+                    onCheckedChange={handleToggleSecret}
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Actions */}
         <div className="flex justify-end gap-4">
