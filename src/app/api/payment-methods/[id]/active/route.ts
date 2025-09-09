@@ -1,12 +1,10 @@
-// src/app/api/payment-methods/[id]/route.ts
-
+// src/app/api/payment-methods/[id]/active/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
-// ---------------------- Zod schemas ----------------------
-const paymentUpdateSchema = z.object({
+const bodySchema = z.object({
   active: z.boolean(),
 });
 
@@ -16,7 +14,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  const { tenantId } = ctx;
+  const { tenantId } = ctx as { tenantId: string | null };
   if (!tenantId) {
     return NextResponse.json(
       { error: "No tenant found for the current credentials" },
@@ -25,52 +23,40 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   try {
-    // keep parity with existing style across the codebase
-    const { id } = await params as any;
+    const { id } = params;
 
-    // validate body
     const body = await req.json();
-    const { active } = paymentUpdateSchema.parse(body);
+    const { active } = bodySchema.parse(body);
 
-    // ownership guard
+    // Ownership guard
     const owns = await pool.query(
       `SELECT id FROM "paymentMethods" WHERE id = $1 AND "tenantId" = $2`,
       [id, tenantId]
     );
     if (!owns.rowCount) {
-      return NextResponse.json(
-        { error: "Payment method not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
     }
 
-    // update (tenant-scoped)
     const sql = `
       UPDATE "paymentMethods"
          SET active = $1,
              "updatedAt" = NOW()
-       WHERE id = $2
-         AND "tenantId" = $3
-       RETURNING id, name, active, "apiKey", "secretKey", "tenantId", "createdAt", "updatedAt"
+       WHERE id = $2 AND "tenantId" = $3
+       RETURNING id, name, active, "apiKey", "secretKey",
+                 description, instructions, "default",
+                 "tenantId", "createdAt", "updatedAt"
     `;
-    const res = await pool.query(sql, [active, id, tenantId]);
-
-    if (!res.rows.length) {
-      return NextResponse.json(
-        { error: "Payment method not found" },
-        { status: 404 }
-      );
+    const { rows } = await pool.query(sql, [active, id, tenantId]);
+    if (!rows.length) {
+      return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
     }
 
-    return NextResponse.json(res.rows[0], { status: 200 });
-  } catch (err: any) {
-    console.error("[PATCH /api/payment-methods/[id]]", err);
+    return NextResponse.json(rows[0], { status: 200 });
+  } catch (err) {
+    console.error("[PATCH /api/payment-methods/[id]/active]", err);
     if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });
     }
-    return NextResponse.json(
-      { error: err?.message || "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

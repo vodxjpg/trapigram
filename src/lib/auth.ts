@@ -402,6 +402,70 @@ The Trapyfy Team
             console.log(
               `[afterCreate] seeded sections for org ${organization.id}`,
             );
+
+            /* ─────────────────────────────────────────────────────────────
+             * NEW: Seed default payment methods (tenant-scoped, idempotent)
+             *   - Niftipay (inactive, default=true)
+             *   - Cash on delivery (inactive, default=true)
+             *   - Bank transfer (inactive, default=true)
+             * Notes:
+             *   • Uses tenantId attached in organizationCreation.beforeCreate
+             *   • Inserts only if a method with same name doesn't already exist
+             *   • "default"=TRUE ensures API won’t allow deletion (only edit/activate)
+             * ──────────────────────────────────────────────────────────── */
+            const tenantId: string | undefined =
+              (organization as any)?.metadata?.tenantId;
+            if (!tenantId) {
+              console.warn(
+                "[afterCreate] Skipping default payment-method seeding: tenantId missing on organization.metadata",
+              );
+            } else {
+              // Read existing names (case-insensitive) → keep idempotent
+              const { rows: existing } = await pgPool.query<{ name: string }>(
+                `SELECT lower(name) AS name
+                   FROM "paymentMethods"
+                  WHERE "tenantId" = $1`,
+                [tenantId],
+              );
+              const have = new Set(existing.map((r) => String(r.name)));
+
+              type Def = {
+                name: string;
+                description: string;
+                instructions: string | null;
+              };
+              const defaults: Def[] = [
+                {
+                  name: "Niftipay",
+                  description: "Let your customers pay with crypto assets.",
+                  instructions: null, // "none"
+                },
+                {
+                  name: "Cash on delivery",
+                  description: "Let your customers pay by cash on delivery",
+                  instructions: null, // "none"
+                },
+                {
+                  name: "Bank transfer",
+                  description: "Let your customers by bank transfer",
+                  instructions: null, // "none"
+                },
+              ];
+
+              for (const def of defaults) {
+                if (have.has(def.name.toLowerCase())) continue;
+                await pgPool.query(
+                  `INSERT INTO "paymentMethods"
+                     (id, name, "tenantId", active, "apiKey", "secretKey",
+                      description, instructions, "default", "createdAt", "updatedAt")
+                   VALUES ($1, $2, $3, FALSE, NULL, NULL, $4, $5, TRUE, NOW(), NOW())`,
+                  [uuidv4(), def.name, tenantId, def.description, def.instructions],
+                );
+              }
+              console.log(
+                `[afterCreate] seeded default payment methods for tenant ${tenantId}`,
+              );
+            }
           } catch (err) {
             console.error("[afterCreate] seeding error:", err);
           }

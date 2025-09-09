@@ -48,17 +48,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 
 import { PaymentMethodDrawer } from "./payment-drawer";
 import { authClient } from "@/lib/auth-client";
@@ -70,6 +61,9 @@ export interface PaymentMethod {
   active: boolean;
   apiKey?: string | null;
   secretKey?: string | null;
+  description?: string | null;
+  instructions?: string | null;
+  default?: boolean; // internal; used to disable deletion + show badge
 }
 
 const TRUSTED = [
@@ -83,38 +77,39 @@ const TRUSTED = [
 export function PaymentMethodsTable() {
   const router = useRouter();
 
-  /* active organization for permission scope */
+  // active organization for permission scope
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
-  /* permissions */
+  // permissions
   const {
     hasPermission: canView,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { payment: ["view"] });
 
   const { hasPermission: canCreate } = useHasPermission(organizationId, { payment: ["create"] });
   const { hasPermission: canUpdate } = useHasPermission(organizationId, { payment: ["update"] });
   const { hasPermission: canDelete } = useHasPermission(organizationId, { payment: ["delete"] });
 
-  /* state */
-  const [methods, setMethods]       = useState<PaymentMethod[]>([]);
-  const [loading, setLoading]       = useState(true);
+  // state
+  const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages]   = useState(1);
-  const [pageSize, setPageSize]     = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const [drawerOpen, setDrawerOpen]   = useState(false);
-  const [drawerMode, setDrawerMode]   = useState<"niftipay" | "custom">("custom");
-  const [editing, setEditing]         = useState<PaymentMethod | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerMode, setDrawerMode] = useState<"niftipay" | "custom">("custom");
+  const [editing, setEditing] = useState<PaymentMethod | null>(null);
   const [providerDialog, setProviderDialog] = useState(false);
+
   // Success dialog after Easy Connect: locked for 5 seconds
   const [niftipayAlertOpen, setNiftipayAlertOpen] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(5);
   const canDismiss = secondsLeft <= 0;
 
-  /* fetch */
+  // fetch
   const fetchMethods = async () => {
     setLoading(true);
     try {
@@ -136,7 +131,7 @@ export function PaymentMethodsTable() {
     }
   };
 
-  /* effects */
+  // effects
   useEffect(() => {
     if (canView) fetchMethods();
   }, [currentPage, pageSize, searchQuery, canView]);
@@ -166,16 +161,14 @@ export function PaymentMethodsTable() {
   }, [niftipayAlertOpen, secondsLeft]);
 
   const handleAlertOpenChange = (open: boolean) => {
-    // Prevent closing until countdown finished
     if (!open && canDismiss) setNiftipayAlertOpen(false);
   };
 
-  /* guard */
   if (permLoading || !canView) return null;
 
   const niftipayRow = methods.find((m) => m.name.toLowerCase() === "niftipay") || null;
 
-  /* actions */
+  // actions
   const toggleActive = async (pm: PaymentMethod) => {
     if (!canUpdate) return;
     try {
@@ -194,13 +187,21 @@ export function PaymentMethodsTable() {
 
   const deleteRow = async (pm: PaymentMethod) => {
     if (!canDelete) return;
+    if (pm.default) {
+      toast.error("Default payment methods cannot be deleted. You can edit or deactivate them.");
+      return;
+    }
     if (!confirm("Delete this payment method?")) return;
     try {
-      await fetch(`/api/payment-methods/${pm.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/payment-methods/${pm.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || "Failed to delete");
+      }
       toast.success("Deleted");
       fetchMethods();
-    } catch {
-      toast.error("Failed to delete");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete");
     }
   };
 
@@ -219,6 +220,11 @@ export function PaymentMethodsTable() {
     setEditing(null);
     if (refresh) fetchMethods();
   };
+
+  const truncate = (s?: string | null, n = 80) => {
+    if (!s) return "";
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+    };
 
   return (
     <>
@@ -244,7 +250,9 @@ export function PaymentMethodsTable() {
                     width={48}
                     height={48}
                   />
-                  <span className="font-medium">Niftipay - Accept crypto payments</span>
+                  <span className="font-medium">
+                    Niftipay - Accept crypto payments
+                  </span>
                   <span className="text-xs text-green-600">Trusted provider</span>
                 </button>
                 <button
@@ -297,6 +305,7 @@ export function PaymentMethodsTable() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>Description</TableHead>
                 <TableHead>Active</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -304,13 +313,13 @@ export function PaymentMethodsTable() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={3} className="text-center py-6">
+                  <TableCell colSpan={4} className="text-center py-6">
                     Loading…
                   </TableCell>
                 </TableRow>
               ) : methods.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3} className="text-center py-6">
+                  <TableCell colSpan={4} className="text-center py-6">
                     No payment methods.
                   </TableCell>
                 </TableRow>
@@ -324,6 +333,16 @@ export function PaymentMethodsTable() {
                           trusted
                         </span>
                       )}
+                      {pm.default && (
+                        <Badge variant="secondary" className="ml-2">
+                          Default
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="max-w-[420px]">
+                      <span className="text-muted-foreground">
+                        {truncate(pm.description)}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <Switch
@@ -360,7 +379,8 @@ export function PaymentMethodsTable() {
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 onClick={() => deleteRow(pm)}
-                                className="text-destructive focus:text-destructive"
+                                className={pm.default ? "opacity-50" : "text-destructive focus:text-destructive"}
+                                disabled={pm.default}
                               >
                                 <Trash2 className="mr-2 h-4 w-4" />
                                 Delete
@@ -447,7 +467,7 @@ export function PaymentMethodsTable() {
         />
       </div>
 
-      {/* ---------- success verification dialog ---------- */}
+      {/* success verification dialog */}
       <AlertDialog open={niftipayAlertOpen} onOpenChange={handleAlertOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
