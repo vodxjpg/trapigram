@@ -10,6 +10,7 @@ import { sendEmail } from "@/lib/email";
  * ──────────────────────────────────────────────────────────── */
 export type NotificationType =
   | "order_placed"
+  | "order_pending_payment"
   | "order_paid"
   | "order_completed"
   | "order_cancelled"

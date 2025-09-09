@@ -880,6 +880,10 @@ export async function PATCH(
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
+    // Identify supplier (shared) orders once and reuse everywhere.
+    // Sibling cascade and early admin notifications rely on this.
+    const isSupplierOrder = String(ord.orderKey ?? "").startsWith("S-");
+
     /* 2️⃣ determine transition */
     const statusChanged = newStatus !== ord.status;
     const becameActive = isActive(newStatus) && !isActive(ord.status);
@@ -1013,61 +1017,40 @@ export async function PATCH(
     // release the transactional connection ASAP; do side-effects with pool
     client.release(); released = true;
 
-    // 🔔 Notify the BASE order (merchant) too
-    try {
-      const notifTypeMap: Record<string, NotificationType> = {
-        open: "order_placed",
-        underpaid: "order_partially_paid",
-        pending_payment: "order_paid",
-        paid: "order_paid",
-        completed: "order_completed",
-        cancelled: "order_cancelled",
-        refunded: "order_refunded",
-      };
-      const shouldNotify =
-        newStatus === "paid" ||
-          newStatus === "pending_payment" ||
-          newStatus === "completed"
-          ? !ord.notifiedPaidOrCompleted
-          : newStatus === "cancelled" || newStatus === "refunded";
-      if (shouldNotify) {
-        const productList = await buildProductListForCart(ord.cartId);
-        const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
-        await enqueueNotificationFanout({
-          organizationId,
-          orderId: id,
-          type: notifTypeMap[newStatus],
-          trigger: "admin_only",
-          channels: ["in_app", "telegram"],
-          dedupeSalt: `merchant_admin:${newStatus}`,
-          payload: {
-            message: `Order #${ord.orderKey} is now <b>${newStatus}</b><br>{product_list}`,
-            subject: `Order #${ord.orderKey} ${newStatus}`,
-            variables: {
-              product_list: productList,
-              order_number: ord.orderKey,
-              order_date: orderDate,
-              order_shipping_method: ord.shippingMethod ?? "-",
-              tracking_number: ord.trackingNumber ?? "",
-              shipping_company: ord.shippingService ?? "",
-            },
-            country: ord.country,
-            clientId: null,
-            userId: null,
-            url: `/orders/${id}`,
-          },
-        });
-        // Optional: email the buyer when completed (matches your sibling logic)
-        if (newStatus === "completed") {
+    // 🔔 Notify the BASE order (merchant) too (only for base orders)
+    if (!isSupplierOrder) {
+      try {
+        const notifTypeMap: Record<string, NotificationType> = {
+          open: "order_placed",
+          underpaid: "order_partially_paid",
+          pending_payment: "order_pending_payment",
+          paid: "order_paid",
+          completed: "order_completed",
+          cancelled: "order_cancelled",
+          refunded: "order_refunded",
+        };
+
+        // keep once-only semantics for PAID/COMPLETED via notifiedPaidOrCompleted;
+        // allow PENDING_PAYMENT separately (we'll not set the flag for pending).
+        const shouldNotify =
+          newStatus === "paid" || newStatus === "completed"
+            ? !ord.notifiedPaidOrCompleted
+            : newStatus === "pending_payment" ||
+              newStatus === "cancelled" ||
+              newStatus === "refunded";
+
+        if (shouldNotify) {
+          const productList = await buildProductListForCart(ord.cartId);
+          const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
           await enqueueNotificationFanout({
             organizationId,
             orderId: id,
-            type: "order_completed",
-            trigger: "user_only_email",
-            channels: ["email"],
-            dedupeSalt: `buyer_email:${newStatus}`,
+            type: notifTypeMap[newStatus],
+            trigger: "admin_only",
+            channels: ["in_app", "telegram"],
+            dedupeSalt: `merchant_admin:${newStatus}`,
             payload: {
-              message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+              message: `Order #${ord.orderKey} is now <b>${newStatus}</b><br>{product_list}`,
               subject: `Order #${ord.orderKey} ${newStatus}`,
               variables: {
                 product_list: productList,
@@ -1078,39 +1061,66 @@ export async function PATCH(
                 shipping_company: ord.shippingService ?? "",
               },
               country: ord.country,
-              clientId: ord.clientId,
+              clientId: null,
               userId: null,
               url: `/orders/${id}`,
             },
           });
+          // Optional: email the buyer when completed (matches your sibling logic)
+          if (newStatus === "completed") {
+            await enqueueNotificationFanout({
+              organizationId,
+              orderId: id,
+              type: "order_completed",
+              trigger: "user_only_email",
+              channels: ["email"],
+              dedupeSalt: `buyer_email:${newStatus}`,
+              payload: {
+                message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+                subject: `Order #${ord.orderKey} ${newStatus}`,
+                variables: {
+                  product_list: productList,
+                  order_number: ord.orderKey,
+                  order_date: orderDate,
+                  order_shipping_method: ord.shippingMethod ?? "-",
+                  tracking_number: ord.trackingNumber ?? "",
+                  shipping_company: ord.shippingService ?? "",
+                },
+                country: ord.country,
+                clientId: ord.clientId,
+                userId: null,
+                url: `/orders/${id}`,
+              },
+            });
+          }
+          if (newStatus === "paid" || newStatus === "completed") {
+            await pool.query(
+              `UPDATE orders SET "notifiedPaidOrCompleted" = TRUE WHERE id = $1 AND "notifiedPaidOrCompleted" = FALSE`,
+              [id],
+            );
+          }
         }
-        if (
-          newStatus === "paid" || newStatus === "pending_payment" || newStatus === "completed"
-        ) {
-          await pool.query(
-            `UPDATE orders SET "notifiedPaidOrCompleted" = TRUE WHERE id = $1 AND "notifiedPaidOrCompleted" = FALSE`,
-            [id],
-          );
-        }
+      } catch (e) {
+        console.warn("[change-status] enqueue (base order) failed", e);
       }
-    } catch (e) {
-      console.warn("[change-status] enqueue (base order) failed", e);
     }
 
-    // 🔒 Ensure supplier orders exist before we cascade the status
-    try { await ensureSupplierOrdersExist(id); } catch (e) { console.warn("[ensureSupplierOrders] failed:", e); }
-    /* ──────────────────────────────────────────────────────────────
-     * Cascade status to supplier “split” orders (baseKey and S-baseKey)
-     * – normalize orderKey so 123 and S-123 are siblings
-     * – update status + date cols on siblings
-     * – after cascade to PAID or PENDING_PAYMENT, also generate revenue for siblings
-     * ───────────────────────────────────────────────────────────── */
-    const CASCADE_STATUSES = new Set(["pending_payment", "paid", "cancelled", "refunded", "completed"]);
-    if (CASCADE_STATUSES.has(newStatus)) {
-      const dateCol = DATE_COL_FOR_STATUS[newStatus];
-      const setBits = [`status = $1`, `"updatedAt" = NOW()`];
-      if (dateCol) setBits.splice(1, 0, `"${dateCol}" = COALESCE("${dateCol}", NOW())`);
-      const baseKey = String(ord.orderKey || "").replace(/^S-/, "");
+    // 🔒 One-way cascade: only from base (dropshipper) → supplier(s)
+    if (!isSupplierOrder) {
+      // Ensure supplier orders exist before we cascade the status
+      try { await ensureSupplierOrdersExist(id); } catch (e) { console.warn("[ensureSupplierOrders] failed:", e); }
+      /* ────────────────────────────────────────────────────────────
+       * Cascade status to supplier “split” orders (baseKey and S-baseKey)
+       * – normalize orderKey so 123 and S-123 are siblings
+       * – update status + date cols on siblings
+       * – after cascade to PAID or PENDING_PAYMENT, also generate revenue for siblings
+       * ─────────────────────────────────────────────────────────── */
+      const CASCADE_STATUSES = new Set(["pending_payment", "paid", "cancelled", "refunded", "completed"]);
+      if (CASCADE_STATUSES.has(newStatus)) {
+        const dateCol = DATE_COL_FOR_STATUS[newStatus];
+        const setBits = [`status = $1`, `"updatedAt" = NOW()`];
+        if (dateCol) setBits.splice(1, 0, `"${dateCol}" = COALESCE("${dateCol}", NOW())`);
+        const baseKey = String(ord.orderKey || "").replace(/^S-/, "");
 
       // capture sibling states BEFORE update (to decide stock effects)
       const { rows: beforeSibs } = await pool.query(
@@ -1136,7 +1146,7 @@ export async function PATCH(
         const notifTypeMap: Record<string, NotificationType> = {
           open: "order_placed",
           underpaid: "order_partially_paid",
-          pending_payment: "order_paid",
+          pending_payment: "order_pending_payment",
           paid: "order_paid",
           completed: "order_completed",
           cancelled: "order_cancelled",
@@ -1515,8 +1525,7 @@ export async function PATCH(
     if (newStatus === "cancelled") {
       try {
         const statusQuery = `UPDATE "orderRevenue" SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = $1 RETURNING *`
-        const statusResult = await pool.query(statusQuery, [id])
-        const result = statusResult.rows
+        await pool.query(statusQuery, [id])
       } catch (err) {
         console.error(
           `Failed to update revenue for order ${id}:`,
@@ -1528,8 +1537,7 @@ export async function PATCH(
     if (newStatus === "refunded") {
       try {
         const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW() WHERE "orderId" = $1 RETURNING *`
-        const statusResult = await pool.query(statusQuery, [id])
-        const result = statusResult.rows
+        await pool.query(statusQuery, [id])
       } catch (err) {
         console.error(
           `Failed to update revenue for order ${id}:`,
@@ -1541,8 +1549,7 @@ export async function PATCH(
     if (newStatus !== "refunded" && newStatus !== "cancelled") {
       try {
         const statusQuery = `UPDATE "orderRevenue" SET cancelled = FALSE, refunded = FALSE, "updatedAt" = NOW() WHERE "orderId" = $1 RETURNING *`
-        const statusResult = await pool.query(statusQuery, [id])
-        const result = statusResult.rows[0]
+        await pool.query(statusQuery, [id])
       } catch (err) {
         console.error(
           `Failed to update revenue for order ${id}:`,
@@ -1562,6 +1569,9 @@ export async function PATCH(
     if (newStatus === "open" && ord.status !== "open") {
       shouldNotify = true;
     } else if (newStatus === "underpaid") {
+      shouldNotify = true;
+    } else if (newStatus === "pending_payment") {
+      // notify on status change (separate template)
       shouldNotify = true;
     } else if (newStatus === "paid") {
       // de-dupe paid once
@@ -1610,6 +1620,7 @@ export async function PATCH(
       const notifTypeMap: Record<string, NotificationType> = {
         open: "order_placed",
         underpaid: "order_partially_paid",   // NEW ⬅︎
+        pending_payment: "order_pending_payment",
         paid: "order_paid",
         completed: "order_completed",
         cancelled: "order_cancelled",
@@ -1620,10 +1631,8 @@ export async function PATCH(
         "order_message";
 
       const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
-
-      const isSupplierOrder = String(ord.orderKey || "").startsWith("S-");
       // statuses that should alert store admins for buyer orders
-      const ADMIN_ALERT_STATUSES = new Set(["underpaid", "paid", "completed", "cancelled", "refunded"]);
+      const ADMIN_ALERT_STATUSES = new Set(["underpaid", "pending_payment", "paid", "completed", "cancelled", "refunded"]);
       // keep “only-once” semantics for paid/completed
       const adminEligibleOnce =
         (newStatus === "paid" || newStatus === "completed") ? !ord.notifiedPaidOrCompleted : true;
@@ -1851,9 +1860,9 @@ export async function PATCH(
         }
       }
 
-      /* mark as notified on first PAID **or** COMPLETED to prevent repeats */
+      /* mark as notified only on first PAID or COMPLETED to prevent repeats */
       if (
-        (newStatus === "paid" || newStatus === "pending_payment" || newStatus === "completed") && !ord.notifiedPaidOrCompleted
+        (newStatus === "paid" || newStatus === "completed") && !ord.notifiedPaidOrCompleted
       ) {
 
         await pool.query(

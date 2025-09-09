@@ -8,6 +8,7 @@ import type { NotificationType } from "@/lib/notifications";
 
 const NOTIF_TYPES: Readonly<NotificationType[]> = [
   "order_placed",
+  "order_pending_payment",
   "order_paid",
   "order_completed",
   "order_cancelled",
