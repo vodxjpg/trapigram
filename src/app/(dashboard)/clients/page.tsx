@@ -57,17 +57,9 @@ export default function ClientsPage() {
 
   /* ── mirror legacy local state for minimal churn ─────────────────────── */
   const [mayView, setMayView] = useState<boolean | null>(null);
-
   useEffect(() => {
     if (!viewLoading) setMayView(viewPerm);
   }, [viewLoading, viewPerm]);
-
-  /* ── guards ───────────────────────────────────────────────────────────── */
-  if (mayView === null) return null; // still resolving
-  if (!mayView) {
-    router.replace("/dashboard");
-    return null; // redirect
-  }
 
   const canCreate = createPerm && !createLoading;
   const canForceAll = updatePerm && !updateLoading;
@@ -93,6 +85,13 @@ export default function ClientsPage() {
     setForceAt("");
   };
 
+  /* ── perform redirect in an effect (don’t do it during render) ───────── */
+  useEffect(() => {
+    if (mayView === false) {
+      router.replace("/dashboard");
+    }
+  }, [mayView, router]);
+
   // Load current org-wide distribution to set initial toggle
   useEffect(() => {
     if (!drawerOpen || !canForceAll) return;
@@ -103,9 +102,8 @@ export default function ClientsPage() {
         const data = await res.json();
         const enabledCount = Number(data?.enabled_count ?? 0);
         const disabledCount = Number(data?.disabled_count ?? 0);
-        // If none disabled → treat as globally enabled; else if none enabled → disabled; else mixed → default to enabled=false
-        const initialEnabled =
-          disabledCount === 0 ? true : enabledCount === 0 ? false : false;
+        // If none disabled → globally enabled; if none enabled → disabled; else mixed → default disabled
+        const initialEnabled = disabledCount === 0 ? true : enabledCount === 0 ? false : false;
         setGlobalEnabled(initialEnabled);
         setEnableAll(initialEnabled); // keep drawer form in sync
       } catch {
@@ -144,8 +142,7 @@ export default function ClientsPage() {
   };
 
   const onApplyClicked = () => {
-    // open confirmation dialog first
-    setConfirmOpen(true);
+    setConfirmOpen(true); // open confirmation dialog first
   };
 
   const doSubmit = async () => {
@@ -191,6 +188,10 @@ export default function ClientsPage() {
     }
   };
 
+  /* ── guards (AFTER all hooks have run) ───────────────────────────────── */
+  if (mayView === null) return null; // still resolving
+  if (mayView === false) return null; // redirect handled in effect
+
   /* ── page ─────────────────────────────────────────────────────────────── */
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
@@ -221,12 +222,16 @@ export default function ClientsPage() {
       <ClientsTable />
 
       {/* Drawer: Force Secret Phrase for ALL clients */}
-      <Drawer open={drawerOpen} onOpenChange={(o) => (o ? setDrawerOpen(true) : setDrawerOpen(false))}>
+      <Drawer
+        open={drawerOpen}
+        onOpenChange={(o) => (o ? setDrawerOpen(true) : setDrawerOpen(false))}
+      >
         <DrawerContent side="right">
           <DrawerHeader>
             <DrawerTitle>Force secret phrase for all clients</DrawerTitle>
             <DrawerDescription>
-              Trigger a re-verification prompt for every client. You can also enable/disable this requirement for everyone.
+              Trigger a re-verification prompt for every client. You can also
+              enable/disable this requirement for everyone.
             </DrawerDescription>
           </DrawerHeader>
 
@@ -236,7 +241,8 @@ export default function ClientsPage() {
               <div>
                 <div className="font-medium">Secret phrase (All clients)</div>
                 <p className="text-sm text-muted-foreground">
-                  Toggle to enable or disable the secret-phrase requirement for everyone immediately.
+                  Toggle to enable or disable the secret-phrase requirement for
+                  everyone immediately.
                 </p>
               </div>
               <Switch
@@ -250,7 +256,9 @@ export default function ClientsPage() {
 
             {/* Re-verify after X days */}
             <div className="space-y-2">
-              <label className="text-sm font-medium">Re-verify after (days, optional)</label>
+              <label className="text-sm font-medium">
+                Re-verify after (days, optional)
+              </label>
               <Input
                 type="number"
                 min={1}
@@ -260,7 +268,8 @@ export default function ClientsPage() {
                 onChange={(e) => setReverifyDays(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                If provided, clients will be asked again after this many days from their last setup.
+                If provided, clients will be asked again after this many days
+                from their last setup.
               </p>
             </div>
 
@@ -272,14 +281,17 @@ export default function ClientsPage() {
               </div>
               {!forceNow && (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Schedule (local time)</label>
+                  <label className="text-sm font-medium">
+                    Schedule (local time)
+                  </label>
                   <Input
                     type="datetime-local"
                     value={forceAt}
                     onChange={(e) => setForceAt(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Pick a date/time to enforce the challenge later. Leave empty to only change settings above.
+                    Pick a date/time to enforce the challenge later. Leave empty
+                    to only change settings above.
                   </p>
                 </div>
               )}
@@ -287,7 +299,11 @@ export default function ClientsPage() {
           </div>
 
           <DrawerFooter className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => setDrawerOpen(false)} disabled={submitting}>
+            <Button
+              variant="outline"
+              onClick={() => setDrawerOpen(false)}
+              disabled={submitting}
+            >
               Close
             </Button>
             <Button onClick={onApplyClicked} disabled={submitting}>
@@ -301,16 +317,25 @@ export default function ClientsPage() {
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Force secret phrase for all clients?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Force secret phrase for all clients?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This action will prompt <b>all</b> clients to enter their secret phrase
-              {forceNow ? " immediately." : forceAt ? ` at ${new Date(forceAt).toLocaleString()}.` : "."}
+              This action will prompt <b>all</b> clients to enter their secret
+              phrase
+              {forceNow
+                ? " immediately."
+                : forceAt
+                ? ` at ${new Date(forceAt).toLocaleString()}.`
+                : "."}
               <br />
-              It will also keep the current global toggle {enableAll ? <b>enabled</b> : <b>disabled</b>}.
+              It will also keep the current global toggle{" "}
+              {enableAll ? <b>enabled</b> : <b>disabled</b>}.
               {reverifyDays && (
                 <>
                   <br />
-                  Re-verify interval will be set to <b>{reverifyDays} days</b>.
+                  Re-verify interval will be set to{" "}
+                  <b>{reverifyDays} days</b>.
                 </>
               )}
             </AlertDialogDescription>
