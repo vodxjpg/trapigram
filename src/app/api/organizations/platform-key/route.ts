@@ -49,10 +49,10 @@ export async function GET(req: NextRequest) {
     const lastUpdated =
       platformKeys.length > 0
         ? new Date(
-            Math.max(
-              ...platformKeys.map((k) => new Date(k.updatedAt as any).getTime()),
-            ),
-          ).toISOString()
+          Math.max(
+            ...platformKeys.map((k) => new Date(k.updatedAt as any).getTime()),
+          ),
+        ).toISOString()
         : null;
 
     const signature = computeSignature(

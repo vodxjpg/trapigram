@@ -7,8 +7,8 @@ import { getContext } from "@/lib/context";
 
 const patchSchema = z.object({
   groupName: z.string().min(1).optional(),
-  points:    z.coerce.number().int().optional()
-                  .transform(p => (p === undefined ? p : Math.max(p, 1))),
+  points: z.coerce.number().int().optional()
+    .transform(p => (p === undefined ? p : Math.max(p, 1))),
 });
 
 export async function PATCH(

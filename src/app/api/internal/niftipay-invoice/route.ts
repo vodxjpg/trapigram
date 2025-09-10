@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
   }
 
-    // Do not mint zero-amount invoices (should already be skipped upstream, this is a hard guard)
+  // Do not mint zero-amount invoices (should already be skipped upstream, this is a hard guard)
   const amt = Number(inv.totalAmount);
   if (!isFinite(amt) || amt <= 0) {
     return NextResponse.json(

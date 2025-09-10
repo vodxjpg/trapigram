@@ -520,10 +520,10 @@ export async function PATCH(
         message = ` Note: the following field${skipped.length > 1 ? "s were" : " was"} skipped because shared products cannot be edited: ${skipped.join(", ")}.`;
       }
 
-       return NextResponse.json({
-           product: { id, ...parsedUpdate, updatedAt: new Date().toISOString() },
-           message
-         }, { status: 200 });
+      return NextResponse.json({
+        product: { id, ...parsedUpdate, updatedAt: new Date().toISOString() },
+        message
+      }, { status: 200 });
     }
 
 
@@ -556,16 +556,16 @@ export async function PATCH(
       const bad = parsedUpdate.categories.filter((cid) => !validIds.includes(cid));
       if (bad.length)
         return NextResponse.json({ error: `Invalid category IDs: ${bad.join(", ")}` }, { status: 400 });
-      }
+    }
 
-      // Fetch current productType so we can decide variation logic even if client omits it
-const current = await db
-  .selectFrom("products")
-  .select(["productType"])
-  .where("id", "=", id)
-  .executeTakeFirst();
-const isVariableAfter =
-  (parsedUpdate.productType ?? current?.productType) === "variable";
+    // Fetch current productType so we can decide variation logic even if client omits it
+    const current = await db
+      .selectFrom("products")
+      .select(["productType"])
+      .where("id", "=", id)
+      .executeTakeFirst();
+    const isVariableAfter =
+      (parsedUpdate.productType ?? current?.productType) === "variable";
 
 
 
@@ -592,7 +592,7 @@ const isVariableAfter =
 
     await db.updateTable("products").set(updateCols).where("id", "=", id).execute();
 
-        /* If switching to simple, drop variations (block if any are shared) */
+    /* If switching to simple, drop variations (block if any are shared) */
     if (parsedUpdate.productType === "simple") {
       const existingVarRows = await db
         .selectFrom("productVariations")
@@ -633,7 +633,7 @@ const isVariableAfter =
     /*  **NEW** safe upsert for variations (variable products)        */
     /* ============================================================== */
     if (parsedUpdate.variations && isVariableAfter) {
-        /* current variations in DB (after-change view) */
+      /* current variations in DB (after-change view) */
       const existingVarRows = await db
         .selectFrom("productVariations")
         .select("id")

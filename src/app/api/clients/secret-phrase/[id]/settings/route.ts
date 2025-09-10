@@ -38,9 +38,9 @@ export async function GET(req: NextRequest, { params }: Params) {
     if (!c) return NextResponse.json({ error: "Client not found" }, { status: 404 });
 
     return NextResponse.json({
-      enabled:            c.secretPhraseEnabled,
-      reverifyAfterDays:  c.secretPhraseReverifyDays,
-      forceAt:            c.secretPhraseForceAt,
+      enabled: c.secretPhraseEnabled,
+      reverifyAfterDays: c.secretPhraseReverifyDays,
+      forceAt: c.secretPhraseForceAt,
     });
   } catch (err) {
     console.error("[GET /api/clients/secret-phrase/[id]/settings] error:", err);
@@ -60,9 +60,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const current = await findClientRow(userId, organizationId);
     if (!current) return NextResponse.json({ error: "Client not found" }, { status: 404 });
 
-    const nextEnabled  = body.enabled ?? current.secretPhraseEnabled;
-    const nextDays     = body.reverifyAfterDays ?? current.secretPhraseReverifyDays;
-    const nextForceAt  = body.forceNow
+    const nextEnabled = body.enabled ?? current.secretPhraseEnabled;
+    const nextDays = body.reverifyAfterDays ?? current.secretPhraseReverifyDays;
+    const nextForceAt = body.forceNow
       ? new Date()
       : (body.forceAt ? new Date(body.forceAt) : current.secretPhraseForceAt);
 

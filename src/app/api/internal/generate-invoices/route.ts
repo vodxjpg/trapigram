@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   });
   console.log(
     `[generate-invoices] eligible owners (signup DOM === ${genDay}): ` +
-      eligible.map((o) => o.userId).join(", ")
+    eligible.map((o) => o.userId).join(", ")
   );
 
   const created: Array<{
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
     const total = Number(sumRow?.total ?? 0);
     console.log(`  → total fees for period: ${total}`);
 
-      // For zero-fee users, still create a $0 invoice if there was activity (fee rows) in the window.
+    // For zero-fee users, still create a $0 invoice if there was activity (fee rows) in the window.
     let hasActivity = false;
     if (total <= 0) {
       const cntRow = await db
@@ -121,22 +121,22 @@ export async function POST(req: NextRequest) {
     const inv = await db
       .insertInto("userInvoices")
       .values({
-        id:                crypto.randomUUID(),
+        id: crypto.randomUUID(),
         userId,
-        periodStart:       ps,
-        periodEnd:         pe,
-        totalAmount:       total,
-        paidAmount:        0,
+        periodStart: ps,
+        periodEnd: pe,
+        totalAmount: total,
+        paidAmount: 0,
         // Auto-settle zero invoices; keep normal ones pending.
-        status:            total > 0 ? "pending" : "paid",
-        dueDate:           due,
-        niftipayNetwork:   "ETH",
-        niftipayAsset:     "USDT",
-        niftipayOrderId:   null,
+        status: total > 0 ? "pending" : "paid",
+        dueDate: due,
+        niftipayNetwork: "ETH",
+        niftipayAsset: "USDT",
+        niftipayOrderId: null,
         niftipayReference: null,
-        niftipayAddress:   null,
-        niftipayQrUrl:     null,
-        createdAt:         new Date(),
+        niftipayAddress: null,
+        niftipayQrUrl: null,
+        createdAt: new Date(),
       })
       .returning([
         "id",
@@ -152,24 +152,24 @@ export async function POST(req: NextRequest) {
 
     console.log(`  → created invoice ${inv.id}`);
 
-           // ── 6) Mint on-chain immediately (skip mint for zero-amount invoices)
-     if (Number(inv.totalAmount) > 0) {
-       try {
-         await fetch(MINT_ENDPOINT, {
-           method: "POST",
-           headers: {
-             "Content-Type":       "application/json",
-             "x-internal-secret":  INTERNAL_SECRET,
-           },
-           body: JSON.stringify({ invoiceId: inv.id }),
-         });
-         console.log(`  → minted invoice ${inv.id} on Niftipay`);
-       } catch (err) {
-         console.error(`  → failed to mint invoice ${inv.id}:`, err);
-       }
-     } else {
-       console.log(`  → skip mint (zero-amount invoice ${inv.id})`);
-     }
+    // ── 6) Mint on-chain immediately (skip mint for zero-amount invoices)
+    if (Number(inv.totalAmount) > 0) {
+      try {
+        await fetch(MINT_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-secret": INTERNAL_SECRET,
+          },
+          body: JSON.stringify({ invoiceId: inv.id }),
+        });
+        console.log(`  → minted invoice ${inv.id} on Niftipay`);
+      } catch (err) {
+        console.error(`  → failed to mint invoice ${inv.id}:`, err);
+      }
+    } else {
+      console.log(`  → skip mint (zero-amount invoice ${inv.id})`);
+    }
 
     // attach each fee line-item
     const fees = await db
@@ -185,8 +185,8 @@ export async function POST(req: NextRequest) {
       await db
         .insertInto("invoiceItems")
         .values({
-          id:          crypto.randomUUID(),
-          invoiceId:   inv.id,
+          id: crypto.randomUUID(),
+          invoiceId: inv.id,
           orderFeeId,
           amount,
         })
@@ -194,13 +194,13 @@ export async function POST(req: NextRequest) {
     }
 
     created.push({
-      id:           inv.id,
-      userId:       inv.userId,
-      periodStart:  inv.periodStart,
-      periodEnd:    inv.periodEnd,
-      totalAmount:  inv.totalAmount.toString(),
-      dueDate:      inv.dueDate,
-      createdAt:    (inv.createdAt as Date).toISOString(),
+      id: inv.id,
+      userId: inv.userId,
+      periodStart: inv.periodStart,
+      periodEnd: inv.periodEnd,
+      totalAmount: inv.totalAmount.toString(),
+      dueDate: inv.dueDate,
+      createdAt: (inv.createdAt as Date).toISOString(),
     });
   }
 

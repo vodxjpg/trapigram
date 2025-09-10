@@ -23,9 +23,9 @@ import { pusher } from "@/lib/pusher-server";
 
 /* ──────────────── validation schema ──────────────────────────────── */
 const messagesSchema = z.object({
-  message:     z.string().min(1, "Message is required."),
+  message: z.string().min(1, "Message is required."),
   attachments: z.string(),     // JSON-stringified array
-  isInternal:  z.boolean(),
+  isInternal: z.boolean(),
 });
 
 /* ───────────────────────── POST /messages ────────────────────────── */
@@ -47,10 +47,10 @@ export async function POST(
       typeof raw.message === "string"
         ? raw.message.trim()
         : typeof raw.text === "string"
-        ? raw.text.trim()
-        : typeof raw.content === "string"
-        ? raw.content.trim()
-        : "";
+          ? raw.text.trim()
+          : typeof raw.content === "string"
+            ? raw.content.trim()
+            : "";
 
     if (!messageText) {
       return NextResponse.json({ error: "Message is required." }, { status: 400 });
@@ -68,7 +68,7 @@ export async function POST(
         : req.headers.get("x-is-internal") === "true";
 
     const parsed = messagesSchema.parse({
-      message:     messageText,
+      message: messageText,
       attachments: attachmentsStr,
       isInternal,
     });
@@ -110,12 +110,12 @@ export async function POST(
         `org-${organizationId}-client-${clientId}`,
         "admin-message",
         {
-          id:          saved.id,
-          text:        saved.message,
+          id: saved.id,
+          text: saved.message,
           ticketId,
           ticketTitle,
           attachments: saved.attachments,
-          createdAt:   saved.createdAt,
+          createdAt: saved.createdAt,
         },
       );
     }
@@ -134,7 +134,7 @@ export async function POST(
         rows: [
           {
             clientId: ticketClientId,
-            country:  clientCountry,
+            country: clientCountry,
           },
         ],
       } = await pool.query(
@@ -149,14 +149,14 @@ export async function POST(
       const channels: NotificationChannel[] = ["email", "in_app"];
       await sendNotification({
         organizationId,
-        type:    "ticket_replied",
+        type: "ticket_replied",
         message: `Update on your ticket: <strong>${messageText}</strong>`,
         subject: `Reply on ticket #${ticketId}`,
         variables: { ticket_number: ticketId },
         channels,
         clientId: ticketClientId,
         ticketId,
-        country:  clientCountry,
+        country: clientCountry,
         url: `/tickets/${ticketId}`,
       });
     }

@@ -27,24 +27,24 @@ export async function GET(req: NextRequest) {
   const qp = qpSchema.parse(raw);
 
   // Normalize empties and whitespace
-  const userId   = norm(qp.userId);
+  const userId = norm(qp.userId);
   const username = norm(qp.username);
-  const email    = norm(qp.email);
-  const first    = norm(qp.firstName);
-  const last     = norm(qp.lastName);
+  const email = norm(qp.email);
+  const first = norm(qp.firstName);
+  const last = norm(qp.lastName);
 
   const parts: string[] = [`"organizationId" = $1`];
   const vals: any[] = [organizationId];
   let i = 2;
 
   // Strong keys: exact (username/email case-insensitive)
-  if (userId)   { parts.push(`"userId" = $${i++}`); vals.push(userId); }
+  if (userId) { parts.push(`"userId" = $${i++}`); vals.push(userId); }
   if (username) { parts.push(`LOWER(BTRIM(username)) = LOWER(BTRIM($${i++}))`); vals.push(username); }
-  if (email)    { parts.push(`LOWER(BTRIM(email)) = LOWER(BTRIM($${i++}))`);    vals.push(email); }
+  if (email) { parts.push(`LOWER(BTRIM(email)) = LOWER(BTRIM($${i++}))`); vals.push(email); }
 
   // Names: exact, but case-insensitive + trimmed to avoid false negatives
-  if (first)    { parts.push(`LOWER(BTRIM("firstName")) = LOWER(BTRIM($${i++}))`); vals.push(first); }
-  if (last)     { parts.push(`LOWER(BTRIM("lastName"))  = LOWER(BTRIM($${i++}))`); vals.push(last); }
+  if (first) { parts.push(`LOWER(BTRIM("firstName")) = LOWER(BTRIM($${i++}))`); vals.push(first); }
+  if (last) { parts.push(`LOWER(BTRIM("lastName"))  = LOWER(BTRIM($${i++}))`); vals.push(last); }
 
   if (parts.length === 1) {
     return NextResponse.json({ error: "Provide at least one query param to resolve." }, { status: 400 });
@@ -62,6 +62,6 @@ export async function GET(req: NextRequest) {
   );
 
   if (rows.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (rows.length > 1)  return NextResponse.json({ error: "Ambiguous", matches: rows.slice(0, 10) }, { status: 409 });
+  if (rows.length > 1) return NextResponse.json({ error: "Ambiguous", matches: rows.slice(0, 10) }, { status: 409 });
   return NextResponse.json({ client: rows[0] }, { status: 200 });
 }

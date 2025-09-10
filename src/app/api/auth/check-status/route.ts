@@ -45,8 +45,8 @@ export async function GET(req: NextRequest) {
     const hasPassword = credRows.length > 0;
 
     if (isGuest &&
-        !hasPassword &&
-        !originalPath.startsWith("/accept-invitation/")) {
+      !hasPassword &&
+      !originalPath.startsWith("/accept-invitation/")) {
       return NextResponse.json({ redirect: "/set-password" });
     }
 

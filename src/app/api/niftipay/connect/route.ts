@@ -140,22 +140,22 @@ export async function POST(req: NextRequest) {
   });
 
   if (!upstream.ok) {
-         // Prefer upstream JSON { error } if available for a clean message
-     let message = "Failed to provision on Niftipay";
-     try {
-       const text = await upstream.text();
-       try {
-         const j = JSON.parse(text);
-         if (j && typeof j.error === "string") {
-           message = j.error;
-         } else {
-           message = `${message}: ${text.slice(0, 300)}`;
-         }
-       } catch {
-         message = `${message}: ${text.slice(0, 300)}`;
-       }
-     } catch {}
-     return problem(message, upstream.status);
+    // Prefer upstream JSON { error } if available for a clean message
+    let message = "Failed to provision on Niftipay";
+    try {
+      const text = await upstream.text();
+      try {
+        const j = JSON.parse(text);
+        if (j && typeof j.error === "string") {
+          message = j.error;
+        } else {
+          message = `${message}: ${text.slice(0, 300)}`;
+        }
+      } catch {
+        message = `${message}: ${text.slice(0, 300)}`;
+      }
+    } catch { }
+    return problem(message, upstream.status);
   }
 
   const { apiKey } = (await upstream.json()) as { apiKey: string };

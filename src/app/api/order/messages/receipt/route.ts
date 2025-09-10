@@ -5,7 +5,7 @@ import { getContext } from "@/lib/context";
 
 const schema = z.object({
   messageIds: z.array(z.string().min(1)).nonempty(),
-  clientId:   z.string().min(1),
+  clientId: z.string().min(1),
 });
 
 export async function POST(req: NextRequest) {

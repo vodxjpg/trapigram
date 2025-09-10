@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
-const BASE = (process.env.NIFTIPAY_API_URL || "https://www.niftipay.com").replace(/\/+$/,"");
+const BASE = (process.env.NIFTIPAY_API_URL || "https://www.niftipay.com").replace(/\/+$/, "");
 
 type OrgMeta = { tenantId?: string } & Record<string, unknown>;
 
@@ -39,17 +39,17 @@ export async function GET(req: NextRequest) {
 
   const pm = pmId
     ? await db
-        .selectFrom("paymentMethods")
-        .select(["apiKey", "name"])
-        .where("id", "=", pmId)
-        .where("tenantId", "=", tenantId)
-        .executeTakeFirst()
+      .selectFrom("paymentMethods")
+      .select(["apiKey", "name"])
+      .where("id", "=", pmId)
+      .where("tenantId", "=", tenantId)
+      .executeTakeFirst()
     : await db
-        .selectFrom("paymentMethods")
-        .select(["apiKey", "name"])
-        .where("tenantId", "=", tenantId)
-        .where("name", "=", "Niftipay")
-        .executeTakeFirst();
+      .selectFrom("paymentMethods")
+      .select(["apiKey", "name"])
+      .where("tenantId", "=", tenantId)
+      .where("name", "=", "Niftipay")
+      .executeTakeFirst();
 
   if (!pm?.apiKey) {
     return NextResponse.json(

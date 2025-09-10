@@ -38,7 +38,7 @@ export async function PATCH(
     if (!rows.length) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
-    
+
     // 2) Delegate the status transition to the central pipeline so it enqueues notifications.
     //    Forward the caller's cookies to preserve auth/session in getContext.
     try {

@@ -67,7 +67,7 @@ if (!process.env.CURRENCY_LAYER_API_KEY)
   console.warn("[orderRevenue] ⚠️  CURRENCY_LAYER_API_KEY is not set");
 
 const euroCountries = [
-  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE","IT","LV","LT","LU","MT","NL","PT","SK","SI","ES"
+  "AT", "BE", "HR", "CY", "EE", "FI", "FR", "DE", "GR", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PT", "SK", "SI", "ES"
 ];
 
 const coins: Record<string, string> = {

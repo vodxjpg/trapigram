@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 export type Tier = {
   id?: string;
   name?: string;
-  active?: boolean;  
+  active?: boolean;
   countries: string[];
   products: { productId: string; variationId: string | null }[];
   steps: { fromUnits: number; toUnits: number; price: number }[];

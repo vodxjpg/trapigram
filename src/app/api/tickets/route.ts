@@ -151,15 +151,15 @@ export async function POST(req: NextRequest) {
     const channels: NotificationChannel[] = ["email", "in_app"];
     await sendNotification({
       organizationId,
-      type:    "ticket_created",
+      type: "ticket_created",
       subject: `Ticket #${ticketId} created`,
       message: `New ticket created: <strong>${inserted.title}</strong>`,
       variables: { ticket_number: ticketId, ticket_id: ticketId, ticket_title: inserted.title },
       channels,
-      clientId:  inserted.clientId,
-      ticketId:  ticketId,
-      country:   clientCountry,
-      url:       `/tickets/${ticketId}`,
+      clientId: inserted.clientId,
+      ticketId: ticketId,
+      country: clientCountry,
+      url: `/tickets/${ticketId}`,
     });
 
     return NextResponse.json(inserted, { status: 201 });

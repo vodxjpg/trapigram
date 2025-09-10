@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
   let where = `"organizationId" = $1 AND "userId" = $2`;
   let selector: "userId" | "username" | "email" = "userId";
   let values: any[] = [organizationId, userId];
-  
+
   if (!userId || userId === "") {
     if (username && username !== "") {
       where = `"organizationId" = $1 AND LOWER(username) = LOWER($2)`;
@@ -123,12 +123,12 @@ export async function POST(req: NextRequest) {
       );
     }
   }
-  
+
   const existingRes = await pool.query(
     `SELECT id FROM clients WHERE ${where}`,
     values,
   );
-  
+
   if (existingRes.rowCount > 1) {
     return NextResponse.json(
       {

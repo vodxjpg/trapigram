@@ -33,7 +33,7 @@ export async function DELETE(
         await client.query("ROLLBACK");
         return NextResponse.json({ error: "Cart not found" }, { status: 404 });
       }
-      const country  = metaRows[0].country as string;
+      const country = metaRows[0].country as string;
       const clientId = metaRows[0].clientId as string;
 
       // delete all lines but keep them for refunds/stock

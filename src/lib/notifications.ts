@@ -100,19 +100,19 @@ export async function sendNotification(params: SendNotificationParams) {
   } = params;
 
   // ───────────────── DEBUG overview (no secrets) ─────────────────
-console.log("[notify] dispatch start", {
-  organizationId,
-  type,
-  trigger,
-  channels,
-  country,
-  hasSubject: Boolean(subject),
-  hasMessageHtml: Boolean(message && message.length),
-  userId,
-  clientId,
-  urlPresent: Boolean(url),
-  ticketId,
-});
+  console.log("[notify] dispatch start", {
+    organizationId,
+    type,
+    trigger,
+    channels,
+    country,
+    hasSubject: Boolean(subject),
+    hasMessageHtml: Boolean(message && message.length),
+    userId,
+    clientId,
+    urlPresent: Boolean(url),
+    ticketId,
+  });
 
 
   /* enrich variables (tracking link) */
@@ -134,19 +134,19 @@ console.log("[notify] dispatch start", {
   const hasUserTpl = !!tplUser;
   const hasAdminTpl = !!tplAdmin;
 
-    // Decide fan-out based on trigger  template presence
+  // Decide fan-out based on trigger  template presence
   const suppressAdminFanout = trigger === "user_only_email";
-  const suppressUserFanout  = trigger === "admin_only";
-  const shouldAdminFanout   = !suppressAdminFanout && hasAdminTpl;
-  const shouldUserFanout    = !suppressUserFanout; // user can still receive fallback content
+  const suppressUserFanout = trigger === "admin_only";
+  const shouldAdminFanout = !suppressAdminFanout && hasAdminTpl;
+  const shouldUserFanout = !suppressUserFanout; // user can still receive fallback content
   console.log("[notify] templates & fanout", {
-  hasUserTpl,
-  hasAdminTpl,
-  suppressAdminFanout,
-  suppressUserFanout,
-  shouldAdminFanout,
-  shouldUserFanout,
-});
+    hasUserTpl,
+    hasAdminTpl,
+    suppressAdminFanout,
+    suppressUserFanout,
+    shouldAdminFanout,
+    shouldUserFanout,
+  });
 
 
   /* 2️⃣ subjects & bodies – generic (all channels) */
@@ -188,7 +188,7 @@ console.log("[notify] dispatch start", {
     .limit(1)
     .executeTakeFirst();
   const supportEmail = supportRow?.email || null;
-   console.log("[notify] support email", { present: Boolean(supportEmail) });
+  console.log("[notify] support email", { present: Boolean(supportEmail) });
 
   /* 4️⃣ e-mail targets */
   const adminEmails: string[] = [];
@@ -232,13 +232,13 @@ console.log("[notify] dispatch start", {
 
   if (!adminEmails.length && supportEmail) adminEmails.push(supportEmail);
 
-   
-console.log("[notify] resolved email targets", {
-  adminCount: adminEmails.length,
-  userCount: userEmails.length,
-  adminPreview: adminEmails.slice(0, 3),
-  userPreview: userEmails.slice(0, 3),
-});
+
+  console.log("[notify] resolved email targets", {
+    adminCount: adminEmails.length,
+    userCount: userEmails.length,
+    adminPreview: adminEmails.slice(0, 3),
+    userPreview: userEmails.slice(0, 3),
+  });
 
   /* 5️⃣ master log */
   await db
@@ -258,17 +258,17 @@ console.log("[notify] resolved email targets", {
     })
     .execute();
 
-console.log("[notify] master log inserted");
+  console.log("[notify] master log inserted");
 
   /* 6️⃣ channel fan-out */
   /* — EMAIL — */
   if (channels.includes("email")) {
-      console.log("[notify] EMAIL fanout", {
-    shouldAdminFanout,
-    shouldUserFanout,
-    adminCount: adminEmails.length,
-    userCount: userEmails.length,
-  });
+    console.log("[notify] EMAIL fanout", {
+      shouldAdminFanout,
+      shouldUserFanout,
+      adminCount: adminEmails.length,
+      userCount: userEmails.length,
+    });
     const send = ({
       to,
       subject,
@@ -313,12 +313,12 @@ console.log("[notify] master log inserted");
     }
 
     await Promise.all(promises);
-     console.log("[notify] EMAIL done");
+    console.log("[notify] EMAIL done");
   }
 
   /* — IN-APP — */
   if (channels.includes("in_app")) {
-     console.log("[notify] IN_APP fanout begin");
+    console.log("[notify] IN_APP fanout begin");
     const targets = new Set<string | null>();
     // user-facing
     if (shouldUserFanout) {
@@ -340,9 +340,9 @@ console.log("[notify] master log inserted");
   /* — WEBHOOK — */
   if (channels.includes("webhook")) {
     if (shouldAdminFanout) {
-       console.log("[notify] WEBHOOK dispatch");
+      console.log("[notify] WEBHOOK dispatch");
       await dispatchWebhook({ organizationId, type, message: bodyUserGeneric });
-       console.log("[notify] WEBHOOK done");
+      console.log("[notify] WEBHOOK done");
     }
   }
 
@@ -355,14 +355,14 @@ console.log("[notify] master log inserted");
     const wantClientDM = !suppressUserFanout; // i.e., not admin_only
 
     const bodyAdminOut = wantAdminGroups && hasAdminTpl ? bodyAdminGeneric : "";
-  const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
-  console.log("[notify] TELEGRAM fanout", {
-    wantAdminGroups,
-    wantClientDM,
-    hasAdminTpl,
-    bodyAdminLen: bodyAdminOut.length,
-    bodyUserLen: bodyUserOut.length,
-  });
+    const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
+    console.log("[notify] TELEGRAM fanout", {
+      wantAdminGroups,
+      wantClientDM,
+      hasAdminTpl,
+      bodyAdminLen: bodyAdminOut.length,
+      bodyUserLen: bodyUserOut.length,
+    });
 
     await dispatchTelegram({
       organizationId,
@@ -374,7 +374,7 @@ console.log("[notify] master log inserted");
       clientUserId: wantClientDM ? clientRow?.userId || null : null,
       ticketId,
     });
-     console.log("[notify] TELEGRAM done");
+    console.log("[notify] TELEGRAM done");
   }
 }
 
@@ -500,13 +500,13 @@ async function dispatchTelegram(opts: {
   const ticketSet = new Set(ticketGroupIds); // for selective Reply button
   const uniqueGroupIds = Array.from(new Set([...orderGroupIds, ...ticketGroupIds]));
   console.log("[telegram] targets discovery", {
-  hasBodyAdmin: Boolean(bodyAdmin && bodyAdmin.trim().length),
-  hasBodyUser: Boolean(bodyUser && bodyUser.trim().length),
-  orderGroupCount: orderGroupIds.length,
-  ticketGroupCount: ticketGroupIds.length,
-  uniqueGroupCount: uniqueGroupIds.length,
-  hasClientDM: Boolean(clientUserId),
-});
+    hasBodyAdmin: Boolean(bodyAdmin && bodyAdmin.trim().length),
+    hasBodyUser: Boolean(bodyUser && bodyUser.trim().length),
+    orderGroupCount: orderGroupIds.length,
+    ticketGroupCount: ticketGroupIds.length,
+    uniqueGroupCount: uniqueGroupIds.length,
+    hasClientDM: Boolean(clientUserId),
+  });
 
   if (bodyAdmin.trim()) {
     const safeAdmin = toTelegramHtml(bodyAdmin);
@@ -524,10 +524,10 @@ async function dispatchTelegram(opts: {
       const markup =
         ticketId && ticketSet.has(id)
           ? JSON.stringify({
-              inline_keyboard: [
-                [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
-              ],
-            })
+            inline_keyboard: [
+              [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
+            ],
+          })
           : undefined;
       targets.push({ chatId: id, text: safeAdmin, ...(markup ? { markup } : {}) });
     }
@@ -541,15 +541,15 @@ async function dispatchTelegram(opts: {
     }
   }
 
-   // Summarize where this will go (mask chat ids)
- const mask = (s: string) => (s.length > 6 ? `${s.slice(0, 2)}…${s.slice(-4)}` : s);
- console.log("[telegram] final targets", {
-   count: targets.length,
-   chatIds: targets.map((t) => mask(t.chatId)),
-   kinds: targets.map((t) =>
-     ticketId && t.markup ? "group+ticket" : orderGroupIds.includes(t.chatId) ? "group" : "dm"
-   ),
- });
+  // Summarize where this will go (mask chat ids)
+  const mask = (s: string) => (s.length > 6 ? `${s.slice(0, 2)}…${s.slice(-4)}` : s);
+  console.log("[telegram] final targets", {
+    count: targets.length,
+    chatIds: targets.map((t) => mask(t.chatId)),
+    kinds: targets.map((t) =>
+      ticketId && t.markup ? "group+ticket" : orderGroupIds.includes(t.chatId) ? "group" : "dm"
+    ),
+  });
 
   await Promise.all(
     targets.map((t) =>

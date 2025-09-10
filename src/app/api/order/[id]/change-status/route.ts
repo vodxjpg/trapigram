@@ -1027,14 +1027,17 @@ export async function PATCH(
     try {
       const eventMap: Record<string,
         | "order_placed" | "order_partially_paid" | "order_pending_payment"
-        | "order_paid"   | "order_completed"      | "order_cancelled" | "order_refunded"
-      > = { open: "order_placed", underpaid: "order_partially_paid", pending_payment: "order_pending_payment",
-            paid: "order_paid", completed: "order_completed", cancelled: "order_cancelled", refunded: "order_refunded" };
+        | "order_paid" | "order_completed" | "order_cancelled" | "order_refunded"
+      > = {
+        open: "order_placed", underpaid: "order_partially_paid", pending_payment: "order_pending_payment",
+        paid: "order_paid", completed: "order_completed", cancelled: "order_cancelled", refunded: "order_refunded"
+      };
       const orderCurrency = currencyFromCountry(ord.country);
       await processAutomationRules({
         organizationId, event: eventMap[newStatus], country: ord.country ?? null, orderCurrency,
         variables: { order_id: id, order_number: ord.orderKey, order_status: newStatus, order_currency: orderCurrency },
-        clientId: ord.clientId ?? null, userId: null, url: `/orders/${id}` });
+        clientId: ord.clientId ?? null, userId: null, url: `/orders/${id}`
+      });
     } catch (e) { console.warn("[rules] base order hook failed", e); }
 
     // 🔔 Notify the BASE order (merchant) too (only for base orders)
@@ -1056,8 +1059,8 @@ export async function PATCH(
           newStatus === "paid" || newStatus === "completed"
             ? !ord.notifiedPaidOrCompleted
             : newStatus === "pending_payment" ||
-              newStatus === "cancelled" ||
-              newStatus === "refunded";
+            newStatus === "cancelled" ||
+            newStatus === "refunded";
 
         if (shouldNotify) {
           const productList = await buildProductListForCart(ord.cartId);
@@ -1142,40 +1145,40 @@ export async function PATCH(
         if (dateCol) setBits.splice(1, 0, `"${dateCol}" = COALESCE("${dateCol}", NOW())`);
         const baseKey = String(ord.orderKey || "").replace(/^S-/, "");
 
-      // capture sibling states BEFORE update (to decide stock effects)
-      const { rows: beforeSibs } = await pool.query(
-        `SELECT id, status, "cartId", country, "organizationId"
+        // capture sibling states BEFORE update (to decide stock effects)
+        const { rows: beforeSibs } = await pool.query(
+          `SELECT id, status, "cartId", country, "organizationId"
       FROM orders
      WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
        AND id <> $2`,
-        [baseKey, id],
-      );
-      const sql = `
+          [baseKey, id],
+        );
+        const sql = `
     UPDATE orders o
        SET ${setBits.join(", ")}
      WHERE (o."orderKey" = $2 OR o."orderKey" = ('S-' || $2))
        AND o.id <> $3
        AND o.status <> $1
   `;
-      const { rowCount } = await pool.query(sql, [newStatus, baseKey, id]);
-      console.log(`[cascade] ${newStatus} → ${rowCount} sibling orders for baseKey=${baseKey}`);
+        const { rowCount } = await pool.query(sql, [newStatus, baseKey, id]);
+        console.log(`[cascade] ${newStatus} → ${rowCount} sibling orders for baseKey=${baseKey}`);
 
-      // --- Notify supplier siblings that changed due to the cascade ---
-      (async () => {
-        // map status→notification type (repeat here or hoist globally)
-        const notifTypeMap: Record<string, NotificationType> = {
-          open: "order_placed",
-          underpaid: "order_partially_paid",
-          pending_payment: "order_pending_payment",
-          paid: "order_paid",
-          completed: "order_completed",
-          cancelled: "order_cancelled",
-          refunded: "order_refunded",
-        };
+        // --- Notify supplier siblings that changed due to the cascade ---
+        (async () => {
+          // map status→notification type (repeat here or hoist globally)
+          const notifTypeMap: Record<string, NotificationType> = {
+            open: "order_placed",
+            underpaid: "order_partially_paid",
+            pending_payment: "order_pending_payment",
+            paid: "order_paid",
+            completed: "order_completed",
+            cancelled: "order_cancelled",
+            refunded: "order_refunded",
+          };
 
-        // Only supplier siblings (S-xxxx) that now sit at the cascaded status
-        const { rows: sibsForNotif } = await pool.query(
-          `SELECT id, "organizationId", "clientId", "cartId", country, "orderKey",
+          // Only supplier siblings (S-xxxx) that now sit at the cascaded status
+          const { rows: sibsForNotif } = await pool.query(
+            `SELECT id, "organizationId", "clientId", "cartId", country, "orderKey",
             "shippingMethod","shippingService","trackingNumber","dateCreated",
             COALESCE("notifiedPaidOrCompleted", FALSE) AS "notified"
        FROM orders
@@ -1183,72 +1186,50 @@ export async function PATCH(
         AND id <> $2
         AND status = $3
         AND "orderKey" LIKE 'S-%'`,
-          [baseKey, id, newStatus],
-        );
+            [baseKey, id, newStatus],
+          );
 
-        for (const sb of sibsForNotif) {
-          // Respect "only once" for paid/completed
-          const should =
-            newStatus === "paid" ||
-              newStatus === "pending_payment" ||
-              newStatus === "completed"
-              ? !sb.notified
-              : newStatus === "cancelled" || newStatus === "refunded";
+          for (const sb of sibsForNotif) {
+            // Respect "only once" for paid/completed
+            const should =
+              newStatus === "paid" ||
+                newStatus === "pending_payment" ||
+                newStatus === "completed"
+                ? !sb.notified
+                : newStatus === "cancelled" || newStatus === "refunded";
 
-          if (!should) continue;
+            if (!should) continue;
 
-          // ─────────────────────────────────────────────────────
-          // Rules engine hook (SUPPLIER sibling): after cascade
-          // ─────────────────────────────────────────────────────
-          try {
-            const eventMap: Record<string,
-              | "order_placed" | "order_partially_paid" | "order_pending_payment"
-              | "order_paid"   | "order_completed"      | "order_cancelled" | "order_refunded"
-            > = { open: "order_placed", underpaid: "order_partially_paid", pending_payment: "order_pending_payment",
-                  paid: "order_paid", completed: "order_completed", cancelled: "order_cancelled", refunded: "order_refunded" };
-            const sbCurrency = currencyFromCountry(sb.country);
-            await processAutomationRules({
-              organizationId: sb.organizationId, event: eventMap[newStatus], country: sb.country, orderCurrency: sbCurrency,
-              variables: { order_id: sb.id, order_number: sb.orderKey, order_status: newStatus, order_currency: sbCurrency },
-              clientId: sb.clientId ?? null, userId: null, url: `/orders/${sb.id}` });
-          } catch (e) { console.warn("[rules] supplier sibling hook failed", sb.id, e); }
+            // ─────────────────────────────────────────────────────
+            // Rules engine hook (SUPPLIER sibling): after cascade
+            // ─────────────────────────────────────────────────────
+            try {
+              const eventMap: Record<string,
+                | "order_placed" | "order_partially_paid" | "order_pending_payment"
+                | "order_paid" | "order_completed" | "order_cancelled" | "order_refunded"
+              > = {
+                open: "order_placed", underpaid: "order_partially_paid", pending_payment: "order_pending_payment",
+                paid: "order_paid", completed: "order_completed", cancelled: "order_cancelled", refunded: "order_refunded"
+              };
+              const sbCurrency = currencyFromCountry(sb.country);
+              await processAutomationRules({
+                organizationId: sb.organizationId, event: eventMap[newStatus], country: sb.country, orderCurrency: sbCurrency,
+                variables: { order_id: sb.id, order_number: sb.orderKey, order_status: newStatus, order_currency: sbCurrency },
+                clientId: sb.clientId ?? null, userId: null, url: `/orders/${sb.id}`
+              });
+            } catch (e) { console.warn("[rules] supplier sibling hook failed", sb.id, e); }
 
-          const productList = await buildProductListForCart(sb.cartId);
-          const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
+            const productList = await buildProductListForCart(sb.cartId);
+            const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
 
-          try {
-            await enqueueNotificationFanout({
-              organizationId: sb.organizationId,
-              orderId: sb.id,
-              type: notifTypeMap[newStatus],
-              trigger: "admin_only",
-              channels: ["in_app", "telegram"],
-              dedupeSalt: `supplier_admin:${newStatus}`,
-              payload: {
-                message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
-                subject: `Order #${sb.orderKey} ${newStatus}`,
-                variables: {
-                  product_list: productList,
-                  order_number: sb.orderKey,
-                  order_date: orderDate,
-                  order_shipping_method: sb.shippingMethod ?? "-",
-                  tracking_number: sb.trackingNumber ?? "",
-                  shipping_company: sb.shippingService ?? "",
-                },
-                country: sb.country,
-                clientId: null,
-                userId: null,
-                url: `/orders/${sb.id}`,
-              },
-            });
-            if (newStatus === "completed") {
+            try {
               await enqueueNotificationFanout({
                 organizationId: sb.organizationId,
                 orderId: sb.id,
                 type: notifTypeMap[newStatus],
-                trigger: "user_only_email",
-                channels: ["email"],
-                dedupeSalt: `supplier_buyer:${newStatus}`,
+                trigger: "admin_only",
+                channels: ["in_app", "telegram"],
+                dedupeSalt: `supplier_admin:${newStatus}`,
                 payload: {
                   message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
                   subject: `Order #${sb.orderKey} ${newStatus}`,
@@ -1261,84 +1242,109 @@ export async function PATCH(
                     shipping_company: sb.shippingService ?? "",
                   },
                   country: sb.country,
-                  clientId: sb.clientId,
+                  clientId: null,
                   userId: null,
                   url: `/orders/${sb.id}`,
                 },
               });
+              if (newStatus === "completed") {
+                await enqueueNotificationFanout({
+                  organizationId: sb.organizationId,
+                  orderId: sb.id,
+                  type: notifTypeMap[newStatus],
+                  trigger: "user_only_email",
+                  channels: ["email"],
+                  dedupeSalt: `supplier_buyer:${newStatus}`,
+                  payload: {
+                    message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
+                    subject: `Order #${sb.orderKey} ${newStatus}`,
+                    variables: {
+                      product_list: productList,
+                      order_number: sb.orderKey,
+                      order_date: orderDate,
+                      order_shipping_method: sb.shippingMethod ?? "-",
+                      tracking_number: sb.trackingNumber ?? "",
+                      shipping_company: sb.shippingService ?? "",
+                    },
+                    country: sb.country,
+                    clientId: sb.clientId,
+                    userId: null,
+                    url: `/orders/${sb.id}`,
+                  },
+                });
+              }
+            } catch (e) {
+              console.warn("[cascade][enqueue] failed for supplier sibling", sb.id, e);
+              continue;
             }
-          } catch (e) {
-            console.warn("[cascade][enqueue] failed for supplier sibling", sb.id, e);
-            continue;
           }
-        }
-      })();
+        })();
 
 
-      // Generate revenue for siblings when they become PAID or PENDING_PAYMENT as part of the cascade
-      if (newStatus === "paid" || newStatus === "pending_payment") {
-        const { rows: sibs } = await pool.query(
-          `SELECT id, "organizationId"
+        // Generate revenue for siblings when they become PAID or PENDING_PAYMENT as part of the cascade
+        if (newStatus === "paid" || newStatus === "pending_payment") {
+          const { rows: sibs } = await pool.query(
+            `SELECT id, "organizationId"
          FROM orders
         WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
           AND id <> $2
           AND status IN ('paid','pending_payment')`,
-          [baseKey, id],
-        );
-        await Promise.allSettled(
-          sibs.map((s) => getRevenue(s.id, s.organizationId))
-        );
+            [baseKey, id],
+          );
+          await Promise.allSettled(
+            sibs.map((s) => getRevenue(s.id, s.organizationId))
+          );
 
-      }
+        }
 
-      // 🔧 STOCK EFFECTS for supplier siblings on cascade
-      // apply when a sibling transitions across ACTIVE/INACTIVE boundary due to cascade
-      for (const sb of beforeSibs) {
-        const wasActive = isActive(sb.status);
-        const willBeActive = isActive(newStatus);
-        if (wasActive === willBeActive) continue; // no boundary change → skip
-        const effectSign: 1 | -1 = willBeActive ? -1 : +1; // -1 reserve, +1 release
-        const { rows: lines } = await pool.query(
-          `SELECT "productId","affiliateProductId",quantity
+        // 🔧 STOCK EFFECTS for supplier siblings on cascade
+        // apply when a sibling transitions across ACTIVE/INACTIVE boundary due to cascade
+        for (const sb of beforeSibs) {
+          const wasActive = isActive(sb.status);
+          const willBeActive = isActive(newStatus);
+          if (wasActive === willBeActive) continue; // no boundary change → skip
+          const effectSign: 1 | -1 = willBeActive ? -1 : +1; // -1 reserve, +1 release
+          const { rows: lines } = await pool.query(
+            `SELECT "productId","affiliateProductId",quantity
         FROM "cartProducts" WHERE "cartId" = $1`,
-          [sb.cartId],
-        );
-        for (const ln of lines) {
-          if (ln.productId) {
-            try { await adjustStock(pool as unknown as Pool, ln.productId, sb.country, effectSign * ln.quantity); }
-            catch (e) { console.warn("[cascade][stock] product adjust failed", { orderId: sb.id, productId: ln.productId }, e); }
-          }
-          if (ln.affiliateProductId) {
-            try { await adjustStock(pool as unknown as Pool, ln.affiliateProductId, sb.country, effectSign * ln.quantity); }
-            catch (e) { console.warn("[cascade][stock] affiliate adjust failed", { orderId: sb.id, productId: ln.affiliateProductId }, e); }
+            [sb.cartId],
+          );
+          for (const ln of lines) {
+            if (ln.productId) {
+              try { await adjustStock(pool as unknown as Pool, ln.productId, sb.country, effectSign * ln.quantity); }
+              catch (e) { console.warn("[cascade][stock] product adjust failed", { orderId: sb.id, productId: ln.productId }, e); }
+            }
+            if (ln.affiliateProductId) {
+              try { await adjustStock(pool as unknown as Pool, ln.affiliateProductId, sb.country, effectSign * ln.quantity); }
+              catch (e) { console.warn("[cascade][stock] affiliate adjust failed", { orderId: sb.id, productId: ln.affiliateProductId }, e); }
+            }
           }
         }
-      }
 
-      // On cancel/refund, flag sibling revenues appropriately
-      if (newStatus === "cancelled") {
-        await pool.query(
-          `UPDATE "orderRevenue"
+        // On cancel/refund, flag sibling revenues appropriately
+        if (newStatus === "cancelled") {
+          await pool.query(
+            `UPDATE "orderRevenue"
            SET cancelled = TRUE, refunded = FALSE, "updatedAt" = NOW()
          WHERE "orderId" IN (
            SELECT id FROM orders
             WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
          )`,
-          [baseKey]
-        );
-      } else if (newStatus === "refunded") {
-        await pool.query(
-          `UPDATE "orderRevenue"
+            [baseKey]
+          );
+        } else if (newStatus === "refunded") {
+          await pool.query(
+            `UPDATE "orderRevenue"
            SET cancelled = FALSE, refunded = TRUE, "updatedAt" = NOW()
          WHERE "orderId" IN (
            SELECT id FROM orders
             WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
          )`,
-          [baseKey]
-        );
+            [baseKey]
+          );
+        }
       }
     }
-  }
 
     /* ──────────────────────────────────────────────────────────────
    *  Niftipay (Coinx) sync via merchant API key
@@ -1541,7 +1547,7 @@ export async function PATCH(
           err
         );
       }
-     
+
     }
     if (newStatus === "cancelled") {
       try {

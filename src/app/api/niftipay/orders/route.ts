@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
-const BASE = (process.env.NIFTIPAY_API_URL || "https://www.niftipay.com").replace(/\/+$/,"");
+const BASE = (process.env.NIFTIPAY_API_URL || "https://www.niftipay.com").replace(/\/+$/, "");
 type OrgMeta = { tenantId?: string };
 
 export async function POST(req: NextRequest) {
@@ -13,12 +13,12 @@ export async function POST(req: NextRequest) {
   // 1) resolve tenantId from organization.metadata
   const org = await db.selectFrom("organization")
     .select("metadata")
-    .where("id","=", ctx.organizationId)
+    .where("id", "=", ctx.organizationId)
     .executeTakeFirst();
 
   let tenantId: string | null = null;
   if (org?.metadata) {
-    try { tenantId = (JSON.parse(org.metadata) as OrgMeta).tenantId ?? null; } catch {}
+    try { tenantId = (JSON.parse(org.metadata) as OrgMeta).tenantId ?? null; } catch { }
   }
   if (!tenantId) {
     return NextResponse.json({ error: "Organization tenantId not configured" }, { status: 404 });
@@ -26,9 +26,9 @@ export async function POST(req: NextRequest) {
 
   // 2) get Niftipay apiKey for that tenant
   const pm = await db.selectFrom("paymentMethods")
-    .select(["apiKey","name"])
-    .where("tenantId","=", tenantId)
-    .where("name","=", "Niftipay")
+    .select(["apiKey", "name"])
+    .where("tenantId", "=", tenantId)
+    .where("name", "=", "Niftipay")
     .executeTakeFirst();
 
   if (!pm?.apiKey) {

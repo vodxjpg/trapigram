@@ -3,6 +3,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
+import type { PoolClient } from "pg";
+
+/** Get next per-org orderKey safely within a transaction */
+async function getNextOrderKeyTx(client: PoolClient, organizationId: string): Promise<number> {
+    // Lock scoped to this org to avoid races from concurrent requests
+    await client.query(
+        `SELECT pg_advisory_xact_lock(hashtext($1))`,
+        [`supplierOrders:${organizationId}`]
+    );
+
+    const { rows } = await client.query<{ next: number }>(
+        `SELECT COALESCE(MAX("orderKey"), 0) + 1 AS next
+     FROM "supplierOrders"
+     WHERE "organizationId" = $1`,
+        [organizationId]
+    );
+    return Number(rows[0]?.next ?? 1);
+}
 
 export async function GET(req: NextRequest) {
     const ctx = await getContext(req);
@@ -55,9 +73,9 @@ export async function GET(req: NextRequest) {
             so."supplierId",
             s.name AS "supplierName",
             so.note,
+            so."orderKey",
             so."expectedAt" AS "expectedAt",
             so.status,
-            so.draft,
             so."createdAt" AS "createdAt"
         FROM "supplierOrders" so
         LEFT JOIN "suppliers" s ON s.id = so."supplierId"
@@ -70,10 +88,11 @@ export async function GET(req: NextRequest) {
 
         const items = rows.map((r: any) => ({
             id: r.id,
+            orderKey: r.orderKey,
             supplier: r.supplierId ? { id: r.supplierId, name: r.supplierName ?? null } : null,
             note: r.note ?? null,
             expectedAt: r.expectedAt ?? null,
-            status: r.draft ? "draft" : r.status, // normalize for UI
+            status: r.status, // normalize for UI
             createdAt: r.createdAt,
         }));
 
@@ -95,19 +114,23 @@ export async function POST(req: NextRequest) {
     const ctx = await getContext(req);
     if (ctx instanceof NextResponse) return ctx;
     const { organizationId } = ctx;
+    const client = await pool.connect();
     try {
         const body = await req.json()
-        const { supplierId, supplierCartId, note, expectedAt, draft, submitAction } = body
+        const { supplierId, supplierCartId, note, expectedAt, submitAction } = body
 
         await pool.query(`UPDATE "supplierCart" SET status = FALSE WHERE id='${supplierCartId}'`)
+
+        // Generate next orderKey (per organization) safely
+        const orderKey = await getNextOrderKeyTx(client, organizationId);
 
         const id = uuidv4()
         const status = submitAction === "place_order" ? "pending" : "draft"
         const insert = await pool.query(
-            `INSERT INTO "supplierOrders" (id, "supplierId", "organizationId", "supplierCartId", note, status, draft, "expectedAt", "createdAt", "updatedAt")
+            `INSERT INTO "supplierOrders" (id, "supplierId", "organizationId", "supplierCartId", note, status, "orderKey", "expectedAt", "createdAt", "updatedAt")
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
             RETURNING *`,
-            [id, supplierId, organizationId, supplierCartId, note, status, draft, expectedAt]
+            [id, supplierId, organizationId, supplierCartId, note, status, orderKey, expectedAt]
         );
         return NextResponse.json({ supplier: insert.rows[0] }, { status: 201 });
     } catch (error) {

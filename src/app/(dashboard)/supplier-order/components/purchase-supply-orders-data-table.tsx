@@ -28,8 +28,9 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MoreHorizontal, CheckCircle2, Plus, Eye, FileSpreadsheet, FileText } from "lucide-react";
+import { MoreHorizontal, CheckCircle2, Plus, FileSpreadsheet, FileText } from "lucide-react";
 import { toast } from "sonner";
+import Link from "next/link";
 
 type OrderStatus = "draft" | "pending" | "completed";
 
@@ -38,6 +39,7 @@ export type PurchaseSupplyOrder = {
     supplier: { id: string; name: string } | null;
     note: string | null;
     expectedAt: string | null; // ISO
+    orderKey: number | null;
     status: OrderStatus;
     createdAt: string; // ISO
 };
@@ -105,13 +107,14 @@ export default function PurchaseSupplyOrdersDataTable() {
         const items: any[] = data?.resultCartProducts ?? [];
 
         // 3) aggregate by productId (global quantities)
-        const map = new Map<string, { name: string; sku: string; quantity: number; received: number }>();
+        const map = new Map<string, { orderKey: number; name: string; sku: string; quantity: number; received: number }>();
         for (const it of items) {
             const pid = it.productId ?? it.id;
             const prev = map.get(pid);
             const nextQty = Number(it.quantity ?? 0) + (prev?.quantity ?? 0);
             const nextRed = Number(it.received ?? 0) + (prev?.received ?? 0);
             map.set(pid, {
+                orderKey: it.orderKey,
                 name: it.title,
                 sku: it.sku,
                 quantity: nextQty,
@@ -126,6 +129,7 @@ export default function PurchaseSupplyOrdersDataTable() {
             const rows = await fetchAggregatedItems(id);
             const XLSX = await import("xlsx");
             const sheetRows = rows.map(r => ({
+                OrderKey: r.orderKey,
                 Name: r.name,
                 SKU: r.sku,
                 Quantity: r.quantity,
@@ -150,9 +154,10 @@ export default function PurchaseSupplyOrdersDataTable() {
                 header: { fontSize: 16, marginBottom: 12 },
                 row: { flexDirection: "row", borderBottomWidth: 1, borderColor: "#eee", paddingVertical: 6 },
                 th: { fontWeight: 700 },
+                cellOrderKey: { width: "10%" },
                 cellName: { width: "50%" },
                 cellSku: { width: "30%" },
-                cellQty: { width: "20%", textAlign: "right" },
+                cellQty: { width: "10%", textAlign: "right" },
             });
 
             const Doc = (
@@ -160,6 +165,7 @@ export default function PurchaseSupplyOrdersDataTable() {
                     <Page size="A4" style={styles.page}>
                         <Text style={styles.header}>Order {id} — Items</Text>
                         <View style={[styles.row, styles.th]}>
+                            <Text style={styles.cellOrderKey}>Name</Text>
                             <Text style={styles.cellName}>Name</Text>
                             <Text style={styles.cellSku}>SKU</Text>
                             <Text style={styles.cellQty}>Quantity</Text>
@@ -167,6 +173,7 @@ export default function PurchaseSupplyOrdersDataTable() {
                         </View>
                         {rows.map((r, i) => (
                             <View key={i} style={styles.row}>
+                                <Text style={styles.cellOrderKey}>{r.orderKey}</Text>
                                 <Text style={styles.cellName}>{r.name}</Text>
                                 <Text style={styles.cellSku}>{r.sku}</Text>
                                 <Text style={styles.cellQty}>{r.quantity}</Text>
@@ -203,6 +210,19 @@ export default function PurchaseSupplyOrdersDataTable() {
 
     const columns = useMemo<ColumnDef<PurchaseSupplyOrder>[]>(
         () => [
+            {
+                accessorKey: "orderKey",
+                header: "Order Key",
+                cell: ({ row }) => (
+                    <Link
+                        href={`/supplier-order/${row.original.id}`}
+                        className="font-medium text-primary hover:underline"
+                        prefetch={false}
+                    >
+                        {row.original.orderKey ?? "—"}
+                    </Link>
+                ),
+            },
             {
                 accessorKey: "supplier",
                 header: "Supplier",
@@ -258,7 +278,6 @@ export default function PurchaseSupplyOrdersDataTable() {
                 cell: ({ row }) => {
                     const { id, status } = row.original;
                     const canComplete = status === "draft";
-                    const canEdit = status !== "completed"; // ← disable when completed
                     return (
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -271,14 +290,6 @@ export default function PurchaseSupplyOrdersDataTable() {
                                 <DropdownMenuLabel>Actions</DropdownMenuLabel>
 
                                 {/* NEW: Edit */}
-                                <DropdownMenuItem
-                                    disabled={!canEdit}
-                                    onClick={() => canEdit && router.push(`/supplier-order/${id}`)}
-                                >
-                                    <Eye className="mr-2 h-4 w-4" />
-                                    Open
-                                </DropdownMenuItem>
-
                                 <DropdownMenuItem
                                     disabled={canComplete}
                                     onClick={() => !canComplete && handleCompleteOrder(id)}

@@ -1,8 +1,8 @@
 /* eslint-disable no-console */
-export const runtime    = "nodejs";
+export const runtime = "nodejs";
 export const revalidate = 0;
 
-import { NextRequest }    from "next/server";
+import { NextRequest } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import type { ClientBase } from "pg";
 
@@ -13,16 +13,16 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const { id }  = params;
-  const chan    = `ticket_${id.replace(/-/g, "")}`;      // ticket_abcd…
+  const { id } = params;
+  const chan = `ticket_${id.replace(/-/g, "")}`;      // ticket_abcd…
 
   /* 1️⃣  open dedicated connection & attach listener *before* LISTEN ------ */
   const client: ClientBase = await pool.connect();
 
   const encoder = new TextEncoder();
   let heartbeat: NodeJS.Timeout;
-  let ttl:       NodeJS.Timeout;
-  let send:      (obj: unknown) => void;                 // defined in start()
+  let ttl: NodeJS.Timeout;
+  let send: (obj: unknown) => void;                 // defined in start()
 
   const onNotify = (msg: any) => {
     if (msg.channel !== chan) return;
@@ -69,9 +69,9 @@ export async function GET(
   /* 3️⃣  Return the SSE response ----------------------------------------- */
   return new Response(stream, {
     headers: {
-      "Content-Type":  "text/event-stream; charset=utf-8",
+      "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache",
-      Connection:      "keep-alive",
+      Connection: "keep-alive",
     },
   });
 }

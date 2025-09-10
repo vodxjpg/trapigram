@@ -10,8 +10,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({}, { status: 200 });
   }
 
-  const evt       = (payload.event || "").toLowerCase();
-  const ref       = payload.order?.reference;
+  const evt = (payload.event || "").toLowerCase();
+  const ref = payload.order?.reference;
   if (!ref) return NextResponse.json({}, { status: 200 });
 
   // lookup our invoice by its ID
@@ -24,9 +24,9 @@ export async function POST(req: NextRequest) {
   if (!inv) return NextResponse.json({}, { status: 200 });
 
   let newStatus = inv.status;
-  if (evt === "paid")       newStatus = "paid";
+  if (evt === "paid") newStatus = "paid";
   else if (evt === "underpaid") newStatus = "underpaid";
-  else if (evt === "expired")   newStatus = "cancelled";
+  else if (evt === "expired") newStatus = "cancelled";
 
   if (newStatus !== inv.status) {
     await db

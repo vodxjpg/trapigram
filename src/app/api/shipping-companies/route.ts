@@ -58,13 +58,13 @@ export async function GET(req: NextRequest) {
     }));
 
     return NextResponse.json({
-   // keep legacy key
-   shippingMethods,
-   // add normalized alias
-   companies: shippingMethods,
-   totalPages,
-   currentPage: page,
- });
+      // keep legacy key
+      shippingMethods,
+      // add normalized alias
+      companies: shippingMethods,
+      totalPages,
+      currentPage: page,
+    });
   } catch (err: any) {
     console.error("[GET /api/shippingMethods] error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

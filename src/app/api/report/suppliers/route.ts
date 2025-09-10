@@ -351,7 +351,7 @@ export async function GET(req: NextRequest) {
       const country = row.country as string;
       countrySet.add(country);
 
-            // Treat mappings that point back to our own org as "in-house" (no supplier)
+      // Treat mappings that point back to our own org as "in-house" (no supplier)
       let supplierOrgId: string | null = row.supplierOrgId ?? null;
       if (supplierOrgId === organizationId) supplierOrgId = null;
       let supplierLabel: string | null = null;
@@ -371,12 +371,12 @@ export async function GET(req: NextRequest) {
         const j =
           typeof row.transferCostJson === "string"
             ? (() => {
-                try {
-                  return JSON.parse(row.transferCostJson);
-                } catch {
-                  return {};
-                }
-              })()
+              try {
+                return JSON.parse(row.transferCostJson);
+              } catch {
+                return {};
+              }
+            })()
             : row.transferCostJson;
         const v = j?.[country];
         unitLocal = Number(v || 0) || 0;

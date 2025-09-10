@@ -852,6 +852,8 @@ interface DB {
     supplierCartId: string;
     note: string;
     status: string;
+    draft: boolean;
+    orderKey: number;
     expectedAt: Date;
     createdAt: Date;
     updatedAt: Date;

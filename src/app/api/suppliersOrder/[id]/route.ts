@@ -25,7 +25,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         so."supplierCartId",
         so.note,
         so.status,
-        so.draft,
         so."expectedAt",
         so."createdAt",
         so."updatedAt",
@@ -44,7 +43,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             [id, organizationId]
         );
 
-        console.log(q.rows)
         if (q.rowCount === 0) {
             return NextResponse.json({ error: "Order not found" }, { status: 404 });
         }
@@ -73,38 +71,23 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
         // Acceptable fields
         let nextStatus: "draft" | "pending" | "completed" | undefined;
-        let nextDraft: boolean | undefined;
         const updates: string[] = [];
         const values: any[] = [];
         let i = 1;
+        const status = body.submitAction === "place_order" ? "pending" : "draft"
 
         // Status & draft reconciliation
-        if (typeof body.status === "string") {
-            const s = String(body.status).toLowerCase();
+        if (typeof status === "string") {
+            const s = String(status).toLowerCase();
             if (!["draft", "pending", "completed"].includes(s)) {
                 return NextResponse.json({ error: "Invalid status" }, { status: 400 });
             }
             nextStatus = s as typeof nextStatus;
-            nextDraft = s === "draft";
-        }
-
-        if (typeof body.draft === "boolean" && nextStatus === undefined) {
-            nextDraft = body.draft;
-            // If explicitly toggling draft without status, normalize status when needed
-            if (nextDraft === true) nextStatus = "draft";
-            if (nextDraft === false && body.status === undefined) {
-                // If leaving draft and no explicit status provided, default to pending
-                nextStatus = "pending";
-            }
         }
 
         if (nextStatus !== undefined) {
             updates.push(`status = $${i++}`);
             values.push(nextStatus);
-        }
-        if (nextDraft !== undefined) {
-            updates.push(`draft = $${i++}`);
-            values.push(nextDraft);
         }
 
         if (typeof body.note === "string") {

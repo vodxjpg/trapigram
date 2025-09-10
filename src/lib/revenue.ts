@@ -9,8 +9,8 @@ if (!process.env.CURRENCY_LAYER_API_KEY)
   console.warn("[orderRevenue] ⚠️  CURRENCY_LAYER_API_KEY is not set");
 
 const euroCountries = [
-  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE",
-  "IT","LV","LT","LU","MT","NL","PT","SK","SI","ES"
+  "AT", "BE", "HR", "CY", "EE", "FI", "FR", "DE", "GR", "IE",
+  "IT", "LV", "LT", "LU", "MT", "NL", "PT", "SK", "SI", "ES"
 ];
 
 const coins: Record<string, string> = {
@@ -201,8 +201,8 @@ export async function getRevenue(id: string, organizationId: string) {
       const meta = Array.isArray(order.orderMeta)
         ? order.orderMeta
         : (() => {
-            try { return JSON.parse(order.orderMeta ?? "[]"); } catch { return []; }
-          })();
+          try { return JSON.parse(order.orderMeta ?? "[]"); } catch { return []; }
+        })();
       const paidEntry =
         meta.find((it: any) => it?.event === "paid") ??
         meta.find((it: any) => it?.event === "pending_payment");

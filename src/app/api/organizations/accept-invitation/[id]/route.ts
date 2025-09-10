@@ -1,11 +1,11 @@
 // src/app/api/organizations/accept-invitation/[id]/route.ts
-export const runtime  = "nodejs";        // If Node is available, use it
-export const dynamic  = "force-dynamic"; // Disable edge-cache for safety
+export const runtime = "nodejs";        // If Node is available, use it
+export const dynamic = "force-dynamic"; // Disable edge-cache for safety
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth }   from "@/lib/auth";
-import { db }     from "@/lib/db";
-import crypto     from "crypto";
+import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
+import crypto from "crypto";
 
 /* helper – works with Edge (Promise params) or Node (plain object) */
 async function extractId(
@@ -134,15 +134,15 @@ export async function GET(
   const userId = existingUser
     ? existingUser.id
     : (
-        await (await auth.$context).internalAdapter.createUser({
-          name: invite.email.split("@")[0] ?? "User",
-          email: invite.email,
-          emailVerified: false,
-          phone: null,
-          country: null,
-          is_guest: true,
-        })
-      ).id;
+      await (await auth.$context).internalAdapter.createUser({
+        name: invite.email.split("@")[0] ?? "User",
+        email: invite.email,
+        emailVerified: false,
+        phone: null,
+        country: null,
+        is_guest: true,
+      })
+    ).id;
 
   /* membership – ignore duplicate-key errors gracefully */
   try {

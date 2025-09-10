@@ -22,8 +22,8 @@ export async function POST(req: NextRequest) {
     /* 📋 body */
     const { organizationIds, warehouseName, countries } = (await req.json()) as {
       organizationIds: string[];
-      warehouseName:   string;
-      countries:       string[];
+      warehouseName: string;
+      countries: string[];
     };
 
     if (!organizationIds?.length)

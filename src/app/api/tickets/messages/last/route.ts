@@ -52,10 +52,10 @@ export async function POST(req: NextRequest) {
   const last: Record<string, LastMsg> = {};
   for (const r of rows) {
     last[r.ticketId] = {
-      id:         r.id,
-      message:    r.message,
+      id: r.id,
+      message: r.message,
       isInternal: r.isInternal,
-      createdAt:  r.createdAt,
+      createdAt: r.createdAt,
     };
   }
   return NextResponse.json({ last });

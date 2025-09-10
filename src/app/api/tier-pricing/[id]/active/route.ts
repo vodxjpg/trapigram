@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
 const paramsSchema = z.object({ id: z.string().uuid() });
-const bodySchema   = z.object({ active: z.boolean() });
+const bodySchema = z.object({ active: z.boolean() });
 
 export async function PATCH(
   req: NextRequest,
@@ -15,7 +15,7 @@ export async function PATCH(
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  const { id }     = paramsSchema.parse(await params);
+  const { id } = paramsSchema.parse(await params);
   const { active } = bodySchema.parse(await req.json());
 
   await db

@@ -104,14 +104,14 @@ export async function GET(
     const termMap =
       vAttrIds.size > 0
         ? new Map(
-            (
-              await db
-                .selectFrom("productAttributeTerms")
-                .select(["id", "name"])
-                .where("id", "in", [...vAttrIds])
-                .execute()
-            ).map((t) => [t.id, t.name]),
-          )
+          (
+            await db
+              .selectFrom("productAttributeTerms")
+              .select(["id", "name"])
+              .where("id", "in", [...vAttrIds])
+              .execute()
+          ).map((t) => [t.id, t.name]),
+        )
         : new Map();
 
     const formattedProducts = products.map((p) => {
@@ -229,23 +229,23 @@ export async function PUT(
         baseCost = typeof variation.cost === "string" ? JSON.parse(variation.cost) : variation.cost;
       }
 
-     /* const stockQuery = db
-        .selectFrom("warehouseStock")
-        .select(["country", "quantity"])
-        .where("warehouseId", "=", warehouseId)
-        .where("productId", "=", productId);
-      variationId
-        ? stockQuery.where("variationId", "=", variationId)
-        : stockQuery.where("variationId", "is", null);
-      const stock = await stockQuery.execute();
-      if (!stock.some((s) => s.quantity > 0)) {
-        return NextResponse.json(
-          {
-            error: `No stock available for product ${productId}${variationId ? ` variation ${variationId}` : ""}`,
-          },
-          { status: 400 },
-        );
-      } */
+      /* const stockQuery = db
+         .selectFrom("warehouseStock")
+         .select(["country", "quantity"])
+         .where("warehouseId", "=", warehouseId)
+         .where("productId", "=", productId);
+       variationId
+         ? stockQuery.where("variationId", "=", variationId)
+         : stockQuery.where("variationId", "is", null);
+       const stock = await stockQuery.execute();
+       if (!stock.some((s) => s.quantity > 0)) {
+         return NextResponse.json(
+           {
+             error: `No stock available for product ${productId}${variationId ? ` variation ${variationId}` : ""}`,
+           },
+           { status: 400 },
+         );
+       } */
 
       if (cost) {
         for (const [country, sharedCost] of Object.entries(cost)) {
@@ -261,7 +261,7 @@ export async function PUT(
               { status: 400 },
             );
           }
-          
+
           /*if (!stock.some((s) => s.country === country && s.quantity > 0)) {
             return NextResponse.json(
               {

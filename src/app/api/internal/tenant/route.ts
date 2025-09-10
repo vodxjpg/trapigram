@@ -47,8 +47,8 @@ export async function POST(req: NextRequest) {
   }
 
   const tenantId = crypto.randomUUID();
-  const rateId   = crypto.randomUUID();
-  const now      = new Date();
+  const rateId = crypto.randomUUID();
+  const now = new Date();
 
   // 4) Create tenant + initial fee rate in one transaction
   try {
@@ -57,14 +57,14 @@ export async function POST(req: NextRequest) {
       await trx
         .insertInto("tenant")
         .values({
-          id:                   tenantId,
-          ownerUserId:          userId,
-          ownerName:            session.user.name ?? null,
-          ownerEmail:           session.user.email ?? null,
+          id: tenantId,
+          ownerUserId: userId,
+          ownerName: session.user.name ?? null,
+          ownerEmail: session.user.email ?? null,
           plan,
-          createdAt:            now,
-          updatedAt:            now,
-          onboardingCompleted:  0,
+          createdAt: now,
+          updatedAt: now,
+          onboardingCompleted: 0,
         })
         .execute();
 
@@ -72,11 +72,11 @@ export async function POST(req: NextRequest) {
       await trx
         .insertInto("userFeeRates")
         .values({
-          id:        rateId,
+          id: rateId,
           userId,
           percent,
-          startsAt:  now,
-          endsAt:    null,
+          startsAt: now,
+          endsAt: null,
           createdAt: now,
         })
         .execute();

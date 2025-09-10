@@ -37,8 +37,8 @@ export async function GET(
 
     const { rows } = await pool.query(
       baseSQL +
-        (since ? ` AND om."createdAt" > $2` : "") +
-        ` ORDER BY om."createdAt" ASC`,
+      (since ? ` AND om."createdAt" > $2` : "") +
+      ` ORDER BY om."createdAt" ASC`,
       args,
     );
 
@@ -109,7 +109,7 @@ export async function POST(
         text: message,
         orderId: id,
         orderKey: ordInfo?.orderKey,
-        createdAt:   saved.createdAt,
+        createdAt: saved.createdAt,
       };
 
       // Realtime ping to the bot’s Pusher channel

@@ -7,14 +7,14 @@ import crypto from "crypto";
 
 /* ---------- shared helpers (copy from sibling route) ---------- */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
-const ENC_IV_B64  = process.env.ENCRYPTION_IV   || "";
+const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
 
 function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
   const key = Buffer.from(ENC_KEY_B64, "base64");
-  const iv  = Buffer.from(ENC_IV_B64,  "base64");
+  const iv = Buffer.from(ENC_IV_B64, "base64");
   if (!ENC_KEY_B64 || !ENC_IV_B64) throw new Error("ENCRYPTION_KEY or ENCRYPTION_IV not set");
   if (key.length !== 32) throw new Error(`Invalid ENCRYPTION_KEY length: ${key.length}`);
-  if (iv.length  !== 16) throw new Error(`Invalid ENCRYPTION_IV length: ${iv.length}`);
+  if (iv.length !== 16) throw new Error(`Invalid ENCRYPTION_IV length: ${iv.length}`);
   return { key, iv };
 }
 

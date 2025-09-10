@@ -148,14 +148,14 @@ export async function GET(
 
     const termMap = termIds.size
       ? new Map(
-          (
-            await db
-              .selectFrom("productAttributeTerms")
-              .select(["id", "name"])
-              .where("id", "in", [...termIds])
-              .execute()
-          ).map((t) => [t.id, t.name]),
-        )
+        (
+          await db
+            .selectFrom("productAttributeTerms")
+            .select(["id", "name"])
+            .where("id", "in", [...termIds])
+            .execute()
+        ).map((t) => [t.id, t.name]),
+      )
       : new Map<string, string>();
 
     /* ── 4. transform rows into final payload ─────────────────── */
@@ -258,10 +258,10 @@ export async function PATCH(
 
       const affiliateProduct = isAffiliate
         ? await db
-            .selectFrom("affiliateProducts")
-            .select(["id", "productType", "tenantId"])
-            .where("id", "=", productId)
-            .executeTakeFirst()
+          .selectFrom("affiliateProducts")
+          .select(["id", "productType", "tenantId"])
+          .where("id", "=", productId)
+          .executeTakeFirst()
         : null;
 
       if (!moneyProduct && !affiliateProduct) {
@@ -294,17 +294,17 @@ export async function PATCH(
 
         const variationExists = isAffiliate
           ? await db
-              .selectFrom("affiliateProductVariations")
-              .select("id")
-              .where("id", "=", variationId)
-              .where("productId", "=", productId)
-              .executeTakeFirst()
+            .selectFrom("affiliateProductVariations")
+            .select("id")
+            .where("id", "=", variationId)
+            .where("productId", "=", productId)
+            .executeTakeFirst()
           : await db
-              .selectFrom("productVariations")
-              .select("id")
-              .where("id", "=", variationId)
-              .where("productId", "=", productId)
-              .executeTakeFirst();
+            .selectFrom("productVariations")
+            .select("id")
+            .where("id", "=", variationId)
+            .where("productId", "=", productId)
+            .executeTakeFirst();
 
         if (!variationExists) {
           return NextResponse.json(

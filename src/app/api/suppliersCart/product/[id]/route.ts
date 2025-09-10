@@ -18,7 +18,11 @@ export async function GET(
         const cartRes = await pool.query(`SELECT * FROM "supplierCartProducts" WHERE "productId"=$1`, [id]);
         const result = cartRes.rows
 
-        return NextResponse.json({ result }, { status: 200 });
+        const stockQuery = `SELECT cost FROM products WHERE id = $1`
+        const stockResult = await pool.query(stockQuery, [id])
+        const stock = stockResult.rows[0]
+
+        return NextResponse.json({ result, stock }, { status: 200 });
     } catch (error: any) {
         console.error("[GET /api/suppliersCart/product/:id]", error);
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });

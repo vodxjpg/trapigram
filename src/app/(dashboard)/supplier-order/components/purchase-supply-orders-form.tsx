@@ -169,7 +169,6 @@ export default function PurchaseOrderSupply({
                 const res = await fetch(`/api/suppliersOrder/${currentOrderId}`, { signal: ctrl.signal });
                 if (!res.ok) throw new Error("Failed to load order");
                 const { order } = await res.json();
-                console.log(order)
 
                 setSelectedSupplierId(order.supplierId);
                 setCartId(order.supplierCartId);
@@ -259,7 +258,6 @@ export default function PurchaseOrderSupply({
                 if (!normRes.ok || !affRes.ok) throw new Error("Failed to fetch products");
 
                 const { products: norm } = await normRes.json();
-                console.log(norm)
 
                 const all: Product[] = [
                     ...norm.map((p: any) => ({
@@ -277,7 +275,6 @@ export default function PurchaseOrderSupply({
                         categories: p.categories ?? [],
                     }))
                 ];
-                console.log(all)
                 setProducts(all);
             } catch (e: any) {
                 toast.error(e?.message || "Failed loading products");
@@ -496,28 +493,38 @@ export default function PurchaseOrderSupply({
             const whs: Warehouse[] = wData?.warehouses ?? [];
             setWarehouses(whs);
 
-            const zero: Record<string, Record<string, { qty: number; cost: number }>> = {};
-            for (const w of whs) {
-                zero[w.id] = {};
-                for (const c of w.countries) zero[w.id][c] = { qty: 0, cost: 0 };
-            }
-
             const aRes = await fetch(`/api/suppliersCart/product/${productId}`, {
                 headers: { "Content-Type": "application/json" },
                 cache: "no-store",
             });
             if (!aRes.ok) throw new Error("Failed to load product allocations");
 
-            const { result } = await aRes.json().catch(() => ({}));
-            const rows = normalizeAllocationsPayload(result);
+            // Response has two objects: `result` (allocations) and `cost` (per-country costs).
+            const json = await aRes.json().catch(() => ({} as any));
+            const rows = normalizeAllocationsPayload(json?.result);
+            // Extract country → cost map robustly (accept {cost:{CL:..}} or {CL:..})
+            const rawCost = json?.stock.cost ?? {};
+            const countryCostMap: Record<string, number> =
+                (rawCost?.cost ?? rawCost) || {};
 
+            // Seed the editable grid with default costs for every warehouse/country
+            const zero: Record<string, Record<string, { qty: number; cost: number }>> = {};
+            for (const w of whs) {
+                zero[w.id] = {};
+                for (const c of w.countries) {
+                    const suggested = Number(countryCostMap?.[c] ?? 0) || 0;
+                    zero[w.id][c] = { qty: 0, cost: suggested };
+                }
+            }
+
+            // Apply existing allocations (keep qty; cost falls back to suggested cost for that country)
             for (const r of rows) {
                 if (!r.warehouseId || !r.country) continue;
                 if (!zero[r.warehouseId]) zero[r.warehouseId] = {};
-                zero[r.warehouseId][r.country] = {
-                    qty: r.quantity,
-                    cost: r.quantity === 0 ? 0 : r.unitCost,
-                };
+                const suggested = Number(countryCostMap?.[r.country] ?? 0) || 0;
+                const qty = Number(r.quantity || 0);
+                const cost = qty > 0 ? (Number(r.unitCost) || suggested) : suggested;
+                zero[r.warehouseId][r.country] = { qty, cost };
             }
 
             setEditable(zero);
@@ -681,13 +688,11 @@ export default function PurchaseOrderSupply({
     return (
         <div className="container mx-auto py-6">
             <h1 className="text-3xl font-bold mb-6">Purchase Order (Supply)</h1>
-            {isPending && (
-                <div className="mb-4">
-                    <Button variant="outline" onClick={() => router.push("/supplier-order")}>
-                        <ArrowLeft className="mr-2 h-4 w-4" /> Go back
-                    </Button>
-                </div>
-            )}
+            <div className="mb-4">
+                <Button variant="outline" onClick={() => router.push("/supplier-order")}>
+                    <ArrowLeft className="mr-2 h-4 w-4" /> Go back
+                </Button>
+            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* LEFT – main flow */}
@@ -981,15 +986,6 @@ export default function PurchaseOrderSupply({
                                 disabled={!orderGenerated || orderItems.length === 0 || isLocked || isPending}
                             />
                         </CardContent>
-                        <CardFooter className="justify-end">
-                            <Button
-                                variant="outline"
-                                onClick={() => completeOrder(true, "save_draft")}
-                                disabled={!orderGenerated || orderItems.length === 0 || isLocked || isPending}
-                            >
-                                Save as draft
-                            </Button>
-                        </CardFooter>
                     </Card>
                 </div>
 
@@ -1053,14 +1049,22 @@ export default function PurchaseOrderSupply({
                                         Select a supplier to choose a date.
                                     </p>
                                 )}
+                            </div>                                                        {/* Buttons on one line */}
+                            <div className="flex w-full items-center justify-center gap-2">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => completeOrder(true, "save_draft")}
+                                    disabled={!orderGenerated || orderItems.length === 0 || isLocked}
+                                >
+                                    Save as draft
+                                </Button>
+                                <Button
+                                    onClick={() => completeOrder(false, "place_order")}
+                                    disabled={!orderGenerated || orderItems.length === 0 || !expectedAt || isLocked}
+                                >
+                                    Place Order
+                                </Button>
                             </div>
-                            <Button
-                                onClick={() => completeOrder(false, "place_order")}
-                                disabled={!orderGenerated || orderItems.length === 0 || isLocked || isPending}
-                                className="w-full"
-                            >
-                                Place Order
-                            </Button>
                             <p className="text-xs text-muted-foreground text-center">
                                 Generate a cart, add products, pick an expected date, then place the
                                 order.

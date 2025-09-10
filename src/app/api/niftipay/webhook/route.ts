@@ -70,10 +70,9 @@ export async function POST(req: NextRequest) {
       .execute();
 
     console.log(
-      `[niftipay] invoice ${ref} updated → status='${newStatus}'${
-        newPaidAmount !== undefined
-          ? `, paidAmount=${newPaidAmount}`
-          : ""
+      `[niftipay] invoice ${ref} updated → status='${newStatus}'${newPaidAmount !== undefined
+        ? `, paidAmount=${newPaidAmount}`
+        : ""
       }`
     );
   } else {
