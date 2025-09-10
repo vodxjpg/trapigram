@@ -261,12 +261,7 @@ export async function PUT(
               { status: 400 },
             );
           }
-          if (sharedCost <= baseCost[country]) {
-            return NextResponse.json(
-              { error: `Shared cost for ${country} must be higher than base cost (${baseCost[country]})` },
-              { status: 400 },
-            );
-          }
+          
           /*if (!stock.some((s) => s.country === country && s.quantity > 0)) {
             return NextResponse.json(
               {
