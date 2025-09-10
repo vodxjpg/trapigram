@@ -1,21 +1,20 @@
+//src/app/api/clients/secret-phrase/[id]/verify/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-import crypto from "crypto";
 import { z } from "zod";
+import crypto from "crypto";
 
-/* ---------- encryption helpers (same as in [id]/route.ts) ---------- */
+/* ---------- shared helpers (copy from sibling route) ---------- */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
 const ENC_IV_B64  = process.env.ENCRYPTION_IV   || "";
 
 function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
   const key = Buffer.from(ENC_KEY_B64, "base64");
   const iv  = Buffer.from(ENC_IV_B64,  "base64");
-  if (!ENC_KEY_B64 || !ENC_IV_B64) {
-    throw new Error("ENCRYPTION_KEY or ENCRYPTION_IV not set in environment");
-  }
-  if (key.length !== 32) throw new Error(`Invalid ENCRYPTION_KEY: expected 32 bytes, got ${key.length}`);
-  if (iv.length  !== 16) throw new Error(`Invalid ENCRYPTION_IV: expected 16 bytes, got ${iv.length}`);
+  if (!ENC_KEY_B64 || !ENC_IV_B64) throw new Error("ENCRYPTION_KEY or ENCRYPTION_IV not set");
+  if (key.length !== 32) throw new Error(`Invalid ENCRYPTION_KEY length: ${key.length}`);
+  if (iv.length  !== 16) throw new Error(`Invalid ENCRYPTION_IV length: ${iv.length}`);
   return { key, iv };
 }
 
@@ -27,14 +26,6 @@ function encryptSecretNode(plain: string): string {
   return encrypted;
 }
 
-/* ---------- validation ---------- */
-const bodySchema = z.object({
-  phrase: z.string().min(1, "Phrase is required"),
-});
-
-type Params = { params: Promise<{ id: string }> }; // id = Telegram userId
-
-/* ---------- helpers ---------- */
 async function getClientByTelegramId(userId: string, organizationId: string) {
   const sql = `
     SELECT id, "secretPhraseEnabled"
@@ -46,9 +37,11 @@ async function getClientByTelegramId(userId: string, organizationId: string) {
   return rows[0] || null;
 }
 
-/* ───────── POST: verify client secret phrase (no overwrite) ─────────
-   Returns 200 always with { ok: true|false } when client & feature exist.
-   On success: bumps updatedAt to “now” so reverify timers reset.          */
+const bodySchema = z.object({ phrase: z.string().min(1) });
+
+type Params = { params: Promise<{ id: string }> };
+
+/* ───────── POST: verify (do NOT overwrite), bump updatedAt on success ───────── */
 export async function POST(req: NextRequest, { params }: Params) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -57,41 +50,29 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   try {
     const { phrase } = bodySchema.parse(await req.json());
-
-    // 1) resolve client
     const client = await getClientByTelegramId(userId, organizationId);
-    if (!client) {
-      return NextResponse.json({ error: "Client not found" }, { status: 404 });
-    }
+    if (!client) return NextResponse.json({ ok: false }, { status: 401 });
     if (client.secretPhraseEnabled === false) {
-      return NextResponse.json({ error: "Secret phrase disabled" }, { status: 403 });
+      return NextResponse.json({ ok: false, error: "disabled" }, { status: 403 });
     }
 
-    // 2) fetch stored encrypted phrase
-    const rowSql = `SELECT id, phrase FROM "clientSecretPhrase" WHERE "clientId" = $1 LIMIT 1`;
-    const rowRes = await pool.query(rowSql, [client.id]);
-    if (!rowRes.rowCount) {
-      // no phrase saved yet
-      return NextResponse.json({ ok: false, errorCode: "NO_PHRASE" }, { status: 200 });
-    }
+    const enc = encryptSecretNode(phrase);
+    const row = await pool.query(
+      `SELECT id FROM "clientSecretPhrase" WHERE "clientId" = $1 AND phrase = $2 LIMIT 1`,
+      [client.id, enc],
+    );
+    if (!row.rowCount) return NextResponse.json({ ok: false }, { status: 401 });
 
-    // 3) compare deterministically-encrypted values (same key+IV)
-    const candidate = encryptSecretNode(phrase);
-    const { id: cspId, phrase: stored } = rowRes.rows[0] as { id: string; phrase: string };
-    const ok = candidate === stored;
-
-    // 4) if match, bump updatedAt so reverifyAfterDays countdown resets
-    if (ok) {
-      const upd = `UPDATE "clientSecretPhrase" SET "updatedAt" = NOW() WHERE id = $1`;
-      await pool.query(upd, [cspId]);
-    }
-
-    return NextResponse.json({ ok }, { status: 200 });
-  } catch (err: any) {
+    await pool.query(
+      `UPDATE "clientSecretPhrase" SET "updatedAt" = NOW() WHERE id = $1`,
+      [row.rows[0].id],
+    );
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (err) {
     if (err instanceof z.ZodError) {
-      return NextResponse.json({ error: err.errors }, { status: 400 });
+      return NextResponse.json({ ok: false, error: err.errors }, { status: 400 });
     }
     console.error("[POST /api/clients/secret-phrase/[id]/verify] error:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
   }
 }

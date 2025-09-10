@@ -47,6 +47,33 @@ async function getClientByTelegramId(userId: string, organizationId: string) {
   return rows[0] || null;
 }
 
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+  const { id: userId } = await params;
+
+  try {
+    const client = await getClientByTelegramId(userId, organizationId);
+    if (!client) {
+      return NextResponse.json({ hasPhrase: false, updatedAt: null }, { status: 200 });
+    }
+
+    const row = await pool.query(
+      `SELECT "updatedAt" FROM "clientSecretPhrase" WHERE "clientId" = $1 LIMIT 1`,
+      [client.id],
+    );
+
+    if (!row.rowCount) {
+      return NextResponse.json({ hasPhrase: false, updatedAt: null }, { status: 200 });
+    }
+    return NextResponse.json({ hasPhrase: true, updatedAt: row.rows[0].updatedAt }, { status: 200 });
+  } catch (err) {
+    console.error("[GET /api/clients/secret-phrase/[id]] error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
 /* ───────── POST: create (or replace) client secret phrase ───────── */
 export async function POST(req: NextRequest, { params }: Params) {
   const ctx = await getContext(req);

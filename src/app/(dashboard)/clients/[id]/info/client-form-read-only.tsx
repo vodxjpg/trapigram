@@ -163,21 +163,27 @@ export default function ClientDetailView({ clientId }: Props) {
       }
 
       // 2) meta (has phrase? last updatedAt?) – try dedicated meta endpoint first
-      let meta: SecretMeta | null = null;
-      try {
-        const mRes = await fetch(
-          `/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/meta`,
-        );
-        if (mRes.ok) {
-          const m = await mRes.json();
-          meta = {
-            hasPhrase: !!m.hasPhrase,
-            updatedAt: m.updatedAt ?? null,
-          };
-        }
-      } catch {
-        /* ignore */
+       // 2) meta (has phrase? last updatedAt?) – try dedicated meta endpoint first
+  let meta: SecretMeta | null = null;
+  try {
+    const mRes = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/meta`);
+    if (mRes.ok) {
+      const m = await mRes.json();
+      meta = { hasPhrase: !!m.hasPhrase, updatedAt: m.updatedAt ?? null };
+    }
+  } catch {/* ignore */}
+
+  // ⬇️ NEW: fallback to GET /api/clients/secret-phrase/[userId]
+  if (!meta) {
+    try {
+      const gRes = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}`);
+      if (gRes.ok) {
+        const g = await gRes.json();
+        meta = { hasPhrase: !!g.hasPhrase, updatedAt: g.updatedAt ?? null };
       }
+    } catch {/* ignore */}
+  }
+
 
       // Fallback: some installs may expose these fields in /api/clients/:id
       if (!meta) {
