@@ -5,7 +5,7 @@ import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import purify from "@/lib/dompurify";
 import { getContext } from "@/lib/context";
-import { publish } from "@/lib/pubsub";            // ✅ add this
+import { publish } from "@/lib/pubsub";
 
 const announcementSchema = z.object({
   title: z.string().min(1, { message: "Title is required." }),

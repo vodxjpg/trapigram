@@ -1,6 +1,6 @@
 // src/app/api/suppliersCart/product/[id]/route.ts   ← full file, only response shape changed
 import { NextRequest, NextResponse } from "next/server";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 
