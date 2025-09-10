@@ -29,15 +29,15 @@ export async function POST(
             return NextResponse.json({ error: "Cart or client not found" }, { status: 404 });
 
         const allProducts: [] = []
-        console.log(products)
 
         for (const prod of products) {
             const supplierProductId = uuidv4()
+            const received = 0
             const productQuery = `INSERT INTO "supplierCartProducts"
-                    (id, "supplierCartId", "productId", "warehouseId", quantity, cost, country, "createdAt", "updatedAt")
-                    VALUES($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+                    (id, "supplierCartId", "productId", "warehouseId", quantity, received, cost, country, "createdAt", "updatedAt")
+                    VALUES($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
                     RETURNING *`
-            const productResult = await pool.query(productQuery, [supplierProductId, supplierCartId, productId, prod.warehouseId, prod.quantity, prod.unitCost, prod.country])
+            const productResult = await pool.query(productQuery, [supplierProductId, supplierCartId, productId, prod.warehouseId, prod.quantity, received, prod.unitCost, prod.country])
             const result = productResult.rows[0]
             allProducts.push(result)
         }

@@ -28,7 +28,7 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MoreHorizontal, FileDown, CheckCircle2, Plus, Edit } from "lucide-react";
+import { MoreHorizontal, CheckCircle2, Plus, Eye, FileSpreadsheet, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 type OrderStatus = "draft" | "pending" | "completed";
@@ -90,20 +90,110 @@ export default function PurchaseSupplyOrdersDataTable() {
     }, [page, pageSize, query, statusFilter]);
 
     // actions
-    const handleCompleteOrder = async (id: string) => {
-        try {
-            const res = await fetch(`/api/suppliersOrder/${id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "pending" as OrderStatus }),
+    const fetchAggregatedItems = async (orderId: string) => {
+        // 1) get order → supplierCartId
+        const orderRes = await fetch(`/api/suppliersOrder/${orderId}`, { cache: "no-store" });
+        if (!orderRes.ok) throw new Error("Failed to load order");
+        const { order } = await orderRes.json();
+        const cartId: string = order?.supplierCartId;
+        if (!cartId) throw new Error("Order has no cart");
+
+        // 2) get cart lines
+        const linesRes = await fetch(`/api/suppliersCart/${cartId}`, { cache: "no-store" });
+        if (!linesRes.ok) throw new Error("Failed to load order items");
+        const data = await linesRes.json();
+        const items: any[] = data?.resultCartProducts ?? [];
+
+        // 3) aggregate by productId (global quantities)
+        const map = new Map<string, { name: string; sku: string; quantity: number; received: number }>();
+        for (const it of items) {
+            const pid = it.productId ?? it.id;
+            const prev = map.get(pid);
+            const nextQty = Number(it.quantity ?? 0) + (prev?.quantity ?? 0);
+            const nextRed = Number(it.received ?? 0) + (prev?.received ?? 0);
+            map.set(pid, {
+                name: it.title,
+                sku: it.sku,
+                quantity: nextQty,
+                received: nextRed
             });
-            if (!res.ok) throw new Error(await res.text().catch(() => "Failed to complete order"));
-            toast.success("Order moved to Pending");
-            // refresh current page
-            setPage((p) => p); // triggers refetch due to effect deps
-        } catch (e: any) {
-            toast.error(e?.message || "Could not complete order");
         }
+        return Array.from(map.values());
+    };
+
+    const exportOrderXLSX = async (id: string) => {
+        try {
+            const rows = await fetchAggregatedItems(id);
+            const XLSX = await import("xlsx");
+            const sheetRows = rows.map(r => ({
+                Name: r.name,
+                SKU: r.sku,
+                Quantity: r.quantity,
+                Received: r.received
+            }));
+            const ws = XLSX.utils.json_to_sheet(sheetRows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Items");
+            XLSX.writeFile(wb, `order-${id}.xlsx`);
+        } catch (e: any) {
+            toast.error(e?.message || "Failed to export XLSX");
+        }
+    };
+
+    const exportOrderPDF = async (id: string) => {
+        try {
+            const rows = await fetchAggregatedItems(id);
+            const { pdf, Document, Page, Text, View, StyleSheet } = await import("@react-pdf/renderer");
+
+            const styles = StyleSheet.create({
+                page: { padding: 24, fontSize: 12 },
+                header: { fontSize: 16, marginBottom: 12 },
+                row: { flexDirection: "row", borderBottomWidth: 1, borderColor: "#eee", paddingVertical: 6 },
+                th: { fontWeight: 700 },
+                cellName: { width: "50%" },
+                cellSku: { width: "30%" },
+                cellQty: { width: "20%", textAlign: "right" },
+            });
+
+            const Doc = (
+                <Document>
+                    <Page size="A4" style={styles.page}>
+                        <Text style={styles.header}>Order {id} — Items</Text>
+                        <View style={[styles.row, styles.th]}>
+                            <Text style={styles.cellName}>Name</Text>
+                            <Text style={styles.cellSku}>SKU</Text>
+                            <Text style={styles.cellQty}>Quantity</Text>
+                            <Text style={styles.cellQty}>Received</Text>
+                        </View>
+                        {rows.map((r, i) => (
+                            <View key={i} style={styles.row}>
+                                <Text style={styles.cellName}>{r.name}</Text>
+                                <Text style={styles.cellSku}>{r.sku}</Text>
+                                <Text style={styles.cellQty}>{r.quantity}</Text>
+                                <Text style={styles.cellQty}>{r.received}</Text>
+                            </View>
+                        ))}
+                    </Page>
+                </Document>
+            );
+
+            const blob = await pdf(Doc).toBlob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `order-${id}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e: any) {
+            toast.error(e?.message || "Failed to export PDF");
+        }
+    };
+
+    const handleCompleteOrder = (id: string) => {
+        // Navigate to the receive/complete page for this order
+        router.push(`/supplier-order/${id}/complete`);
     };
 
     const handleExportPDF = (id: string) => {
@@ -185,19 +275,24 @@ export default function PurchaseSupplyOrdersDataTable() {
                                     disabled={!canEdit}
                                     onClick={() => canEdit && router.push(`/supplier-order/${id}`)}
                                 >
-                                    <Edit className="mr-2 h-4 w-4" />
-                                    Edit
+                                    <Eye className="mr-2 h-4 w-4" />
+                                    Open
                                 </DropdownMenuItem>
 
                                 <DropdownMenuItem
-                                    disabled={!canComplete}
-                                    onClick={() => canComplete && handleCompleteOrder(id)}
+                                    disabled={canComplete}
+                                    onClick={() => !canComplete && handleCompleteOrder(id)}
                                 >
                                     <CheckCircle2 className="mr-2 h-4 w-4" />
                                     Complete order
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleExportPDF(id)}>
-                                    <FileDown className="mr-2 h-4 w-4" />
+                                {/* NEW: Exporters */}
+                                <DropdownMenuItem onClick={() => exportOrderXLSX(id)}>
+                                    <FileSpreadsheet className="mr-2 h-4 w-4" />
+                                    Export to XLSX
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => exportOrderPDF(id)}>
+                                    <FileText className="mr-2 h-4 w-4" />
                                     Export to PDF
                                 </DropdownMenuItem>
                             </DropdownMenuContent>

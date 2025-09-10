@@ -45,6 +45,7 @@ import {
     Search,
     Edit,
     Calendar as CalendarIcon,
+    ArrowLeft
 } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -157,6 +158,7 @@ export default function PurchaseOrderSupply({
     const [currentOrderId, setCurrentOrderId] = useState<string | null>(initialOrderId ?? null);
     const [orderStatus, setOrderStatus] = useState<OrderStatus | null>(null);
     const isLocked = orderStatus === "completed";
+    const isPending = orderStatus === "pending"
 
     /* When editing, hydrate from API */
     useEffect(() => {
@@ -167,6 +169,7 @@ export default function PurchaseOrderSupply({
                 const res = await fetch(`/api/suppliersOrder/${currentOrderId}`, { signal: ctrl.signal });
                 if (!res.ok) throw new Error("Failed to load order");
                 const { order } = await res.json();
+                console.log(order)
 
                 setSelectedSupplierId(order.supplierId);
                 setCartId(order.supplierCartId);
@@ -636,7 +639,7 @@ export default function PurchaseOrderSupply({
     };
 
     // Create / update order (expectedAt required ONLY when not a draft)
-    const completeOrder = async (isDraft: boolean) => {
+    const completeOrder = async (isDraft: boolean, submitAction: "save_draft" | "place_order") => {
         if (!orderGenerated || !cartId) return toast.error("Generate a cart first");
         if (!selectedSupplierId) return toast.error("Select a supplier");
         if (!isDraft && !expectedAt) return toast.error("Choose an expected date");
@@ -648,6 +651,7 @@ export default function PurchaseOrderSupply({
                 supplierCartId: cartId,
                 note: notes || "",
                 draft: isDraft,
+                submitAction
             };
             if (expectedAt) payload.expectedAt = expectedAt.toISOString();
 
@@ -683,6 +687,13 @@ export default function PurchaseOrderSupply({
     return (
         <div className="container mx-auto py-6">
             <h1 className="text-3xl font-bold mb-6">Purchase Order (Supply)</h1>
+            {isPending && (
+                <div className="mb-4">
+                    <Button variant="outline" onClick={() => router.push("/supplier-order")}>
+                        <ArrowLeft className="mr-2 h-4 w-4" /> Go back
+                    </Button>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* LEFT – main flow */}
@@ -769,7 +780,7 @@ export default function PurchaseOrderSupply({
                                                         title="Edit allocations"
                                                         className="flex items-center space-x-1"
                                                         onClick={() => handleEditClick(product.id)}
-                                                        disabled={isLocked}
+                                                        disabled={isPending}
                                                     >
                                                         <span>{quantity ?? 0}</span>
                                                         <Edit className="h-4 w-4 text-gray-500" />
@@ -782,6 +793,7 @@ export default function PurchaseOrderSupply({
                                                         onClick={() => {
                                                             toast.info("Remove functionality not implemented yet");
                                                         }}
+                                                        disabled={isPending}
                                                     >
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
@@ -834,7 +846,7 @@ export default function PurchaseOrderSupply({
                                                             const disabled = addedProductIds.has(p.id);
                                                             return (
                                                                 <SelectItem key={p.id} value={p.id} disabled={disabled}>
-                                                                    {p.title} — ${p.price}
+                                                                    {p.title} — ${p.cost}
                                                                     {disabled ? " (added)" : ""}
                                                                 </SelectItem>
                                                             );
@@ -947,7 +959,7 @@ export default function PurchaseOrderSupply({
                                             !selectedProduct ||
                                             !orderGenerated ||
                                             addedProductIds.has(selectedProduct) ||
-                                            isLocked
+                                            isLocked || isPending
                                         }
                                     >
                                         <Plus className="h-4 w-4 mr-2" /> Add Product
@@ -968,13 +980,14 @@ export default function PurchaseOrderSupply({
                                 value={notes}
                                 onChange={(e) => setNotes(e.target.value)}
                                 className="min-h-[100px] resize-none"
+                                disabled={!orderGenerated || orderItems.length === 0 || isLocked || isPending}
                             />
                         </CardContent>
                         <CardFooter className="justify-end">
                             <Button
                                 variant="outline"
-                                onClick={() => completeOrder(true)}
-                                disabled={!orderGenerated || orderItems.length === 0 || isLocked}
+                                onClick={() => completeOrder(true, "save_draft")}
+                                disabled={!orderGenerated || orderItems.length === 0 || isLocked || isPending}
                             >
                                 Save as draft
                             </Button>
@@ -1015,7 +1028,7 @@ export default function PurchaseOrderSupply({
                                             type="button"
                                             variant="outline"
                                             className="w-full justify-start text-left font-normal"
-                                            disabled={!selectedSupplierId || isLocked}
+                                            disabled={!selectedSupplierId || isPending}
                                         >
                                             <CalendarIcon className="mr-2 h-4 w-4" />
                                             {expectedAt ? format(expectedAt, "PPP") : "Pick a date"}
@@ -1026,6 +1039,13 @@ export default function PurchaseOrderSupply({
                                             mode="single"
                                             selected={expectedAt}
                                             onSelect={setExpectedAt}
+                                            disabled={(date) => {
+                                                const today = new Date()
+                                                today.setHours(0, 0, 0, 0)      // start of today
+                                                const d = new Date(date)
+                                                d.setHours(0, 0, 0, 0)
+                                                return d <= today               // disable today and any past date
+                                            }}
                                             initialFocus
                                         />
                                     </PopoverContent>
@@ -1037,14 +1057,14 @@ export default function PurchaseOrderSupply({
                                 )}
                             </div>
                             <Button
-                                onClick={() => completeOrder(false)}
-                                disabled={!orderGenerated || orderItems.length === 0 || !expectedAt || isLocked}
+                                onClick={() => completeOrder(false, "place_order")}
+                                disabled={!orderGenerated || orderItems.length === 0 || isLocked || isPending}
                                 className="w-full"
                             >
-                                Complete Order
+                                Place Order
                             </Button>
                             <p className="text-xs text-muted-foreground text-center">
-                                Generate a cart, add products, pick an expected date, then complete the
+                                Generate a cart, add products, pick an expected date, then place the
                                 order.
                             </p>
                         </CardFooter>

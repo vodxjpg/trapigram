@@ -50,7 +50,7 @@ export async function GET(
         const prodQ = `
             SELECT
             p.id, p.title, p.description, p.image, p.sku,
-            cp.quantity, cp."warehouseId", cp.cost, cp.country,
+            cp.quantity, cp.received, cp."warehouseId", cp.cost, cp.country,
             cp."createdAt"                     /* NEW */
             FROM products p
             JOIN "supplierCartProducts" cp ON p.id = cp."productId"

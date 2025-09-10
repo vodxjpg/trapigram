@@ -97,12 +97,12 @@ export async function POST(req: NextRequest) {
     const { organizationId } = ctx;
     try {
         const body = await req.json()
-        const { supplierId, supplierCartId, note, expectedAt, draft } = body
+        const { supplierId, supplierCartId, note, expectedAt, draft, submitAction } = body
 
         await pool.query(`UPDATE "supplierCart" SET status = FALSE WHERE id='${supplierCartId}'`)
 
         const id = uuidv4()
-        const status = "pending"
+        const status = submitAction === "place_order" ? "pending" : "draft"
         const insert = await pool.query(
             `INSERT INTO "supplierOrders" (id, "supplierId", "organizationId", "supplierCartId", note, status, draft, "expectedAt", "createdAt", "updatedAt")
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
