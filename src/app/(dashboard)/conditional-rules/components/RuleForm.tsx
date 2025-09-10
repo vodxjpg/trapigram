@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import ChannelsPicker, { Channel } from "./ChannelsPicker";
+import ChannelsPicker, { Channel } from "./ChannelPicker";
 import { CountriesMulti, CurrencyMulti } from "./ConditionFields";
 
 const channelsEnum = z.enum(["email", "telegram", "in_app", "webhook"]);
