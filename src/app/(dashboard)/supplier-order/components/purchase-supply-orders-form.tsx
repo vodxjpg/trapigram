@@ -3,7 +3,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import Image from "next/image";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
     Card,
@@ -259,7 +259,7 @@ export default function PurchaseOrderSupply({
                 if (!normRes.ok || !affRes.ok) throw new Error("Failed to fetch products");
 
                 const { products: norm } = await normRes.json();
-                const { products: aff } = await affRes.json();
+                console.log(norm)
 
                 const all: Product[] = [
                     ...norm.map((p: any) => ({
@@ -270,31 +270,14 @@ export default function PurchaseOrderSupply({
                         description: p.description,
                         image: p.image,
                         regularPrice: p.regularPrice,
-                        price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
+                        cost: Math.max(...Object.values(p.cost)),
                         stockData: p.stockData,
                         isAffiliate: false,
                         subtotal: 0,
                         categories: p.categories ?? [],
-                    })),
-                    ...aff.map((a: any) => {
-                        const firstPts = firstPointPrice(a.pointsPrice);
-                        const regularPrice: Record<string, number> = { pts: firstPts };
-                        return {
-                            id: a.id,
-                            title: a.title,
-                            sku: a.sku,
-                            description: a.description,
-                            image: a.image,
-                            regularPrice,
-                            price: firstPts,
-                            stockData: a.stock ?? {},
-                            isAffiliate: true,
-                            subtotal: 0,
-                            categories: [],
-                        };
-                    }),
+                    }))
                 ];
-
+                console.log(all)
                 setProducts(all);
             } catch (e: any) {
                 toast.error(e?.message || "Failed loading products");
@@ -683,6 +666,17 @@ export default function PurchaseOrderSupply({
         }
     };
 
+
+    // Build 2-letter initials from a product title
+    function getInitials(name: string): string {
+        return name
+            .split(" ")
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((w) => w[0]?.toUpperCase() ?? "")
+            .join("");
+    }
+
     /* Render */
     return (
         <div className="container mx-auto py-6">
@@ -758,13 +752,17 @@ export default function PurchaseOrderSupply({
                                                     key={`${product.id}-${idx}`}
                                                     className="flex items-center gap-3 p-3 hover:bg-muted/30"
                                                 >
-                                                    <Image
-                                                        src={product.image || "/placeholder.svg"}
-                                                        alt={product.title}
-                                                        width={40}
-                                                        height={40}
-                                                        className="rounded object-cover flex-shrink-0"
-                                                    />
+                                                    <div className="relative h-10 w-10 flex-shrink-0">
+                                                        <Skeleton className="h-10 w-10 rounded-full" />
+                                                        <span
+                                                            className="
+                                                          absolute inset-0 grid place-items-center
+                                                          text-xs font-medium text-muted-foreground
+                                                        "
+                                                        >
+                                                            {getInitials(product.title)}
+                                                        </span>
+                                                    </div>
                                                     <div className="flex-1 min-w-0">
                                                         <h5 className="font-medium text-sm truncate">
                                                             {product.title}
