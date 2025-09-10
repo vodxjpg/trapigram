@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { RefreshCcw, Zap } from "lucide-react";
+import { RefreshCcw, Zap, ShieldAlert, ShieldOff } from "lucide-react";
 
 countriesLib.registerLocale(enLocale);
 
@@ -42,7 +42,14 @@ interface Props {
 type OrderRow = {
   id: string;
   orderKey: string;
-  status: "open" | "underpaid" | "pending_payment" | "paid" | "cancelled" | "refunded" | "completed";
+  status:
+    | "open"
+    | "underpaid"
+    | "pending_payment"
+    | "paid"
+    | "cancelled"
+    | "refunded"
+    | "completed";
   createdAt: string;
   total: number;
   trackingNumber?: string | null;
@@ -81,6 +88,8 @@ export default function ClientDetailView({ clientId }: Props) {
   const [secretMeta, setSecretMeta] = useState<SecretMeta | null>(null);
   const [loadingSecret, setLoadingSecret] = useState(false);
   const [forcing, setForcing] = useState(false);
+  const [togglingEnabled, setTogglingEnabled] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const fmtDate = (iso?: string | null) =>
     iso
@@ -109,11 +118,14 @@ export default function ClientDetailView({ clientId }: Props) {
         const [clientRes, ordersRes] = await Promise.all([
           fetch(`/api/clients/${clientId}`, {
             headers: {
+              // note: if you truly need this header client-side, ensure it's public-safe
               "x-internal-secret": process.env.INTERNAL_API_SECRET || "",
             },
           }),
           fetch(
-            `/api/order?clientId=${encodeURIComponent(clientId)}&limit=10&fields=id,orderKey,status,createdAt,total,trackingNumber,shippingCompany`,
+            `/api/order?clientId=${encodeURIComponent(
+              clientId,
+            )}&limit=10&fields=id,orderKey,status,createdAt,total,trackingNumber,shippingCompany`,
           ),
         ]);
         if (!clientRes.ok) throw new Error("Failed to fetch client");
@@ -140,7 +152,9 @@ export default function ClientDetailView({ clientId }: Props) {
     setLoadingSecret(true);
     try {
       // 1) settings (enabled, reverify, forceAt)
-      const sRes = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/settings`);
+      const sRes = await fetch(
+        `/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/settings`,
+      );
       if (sRes.ok) {
         const sJson = await sRes.json();
         setSecretEnabled(!!sJson.enabled);
@@ -151,7 +165,9 @@ export default function ClientDetailView({ clientId }: Props) {
       // 2) meta (has phrase? last updatedAt?) – try dedicated meta endpoint first
       let meta: SecretMeta | null = null;
       try {
-        const mRes = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/meta`);
+        const mRes = await fetch(
+          `/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/meta`,
+        );
         if (mRes.ok) {
           const m = await mRes.json();
           meta = {
@@ -166,7 +182,8 @@ export default function ClientDetailView({ clientId }: Props) {
       // Fallback: some installs may expose these fields in /api/clients/:id
       if (!meta) {
         const hasViaClient =
-          typeof client.hasSecretPhrase === "boolean" || typeof client.secretPhraseUpdatedAt === "string";
+          typeof client.hasSecretPhrase === "boolean" ||
+          typeof client.secretPhraseUpdatedAt === "string";
         meta = hasViaClient
           ? {
               hasPhrase: !!client.hasSecretPhrase || !!client.secretPhraseUpdatedAt,
@@ -191,11 +208,14 @@ export default function ClientDetailView({ clientId }: Props) {
     if (!client?.userId) return;
     setForcing(true);
     try {
-      const res = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/settings`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ forceNow: true }),
-      });
+      const res = await fetch(
+        `/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/settings`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ forceNow: true }),
+        },
+      );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error || "Failed to force secret phrase");
@@ -206,6 +226,65 @@ export default function ClientDetailView({ clientId }: Props) {
       toast.error(e?.message || "Failed to force secret phrase");
     } finally {
       setForcing(false);
+    }
+  };
+
+  const handleToggleEnabled = async () => {
+    if (!client?.userId || secretEnabled === null) return;
+    setTogglingEnabled(true);
+    try {
+      const res = await fetch(
+        `/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/settings`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: !secretEnabled }),
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "Failed to update setting");
+      }
+      toast.success(
+        !secretEnabled
+          ? "Secret phrase enabled for this client."
+          : "Secret phrase disabled for this client.",
+      );
+      await refreshSecretInfo();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to update setting");
+    } finally {
+      setTogglingEnabled(false);
+    }
+  };
+
+  // Clear the stored phrase (customer forgot). After this, the bot will ask them to set a new one.
+  // This calls DELETE /api/clients/secret-phrase/[userId] (same route file as POST/PATCH).
+  const handleResetPhrase = async () => {
+    if (!client?.userId) return;
+    if (
+      !window.confirm(
+        "Reset secret phrase for this customer?\n\nThis clears the current phrase. Next time they use the bot, they’ll be asked to set a new one.",
+      )
+    ) {
+      return;
+    }
+    setResetting(true);
+    try {
+      const res = await fetch(
+        `/api/clients/secret-phrase/${encodeURIComponent(client.userId)}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "Failed to reset secret phrase");
+      }
+      toast.success("Secret phrase cleared for this customer.");
+      await refreshSecretInfo();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to reset secret phrase");
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -282,12 +361,8 @@ export default function ClientDetailView({ clientId }: Props) {
             <KV label="Last set on">{fmtDate(secretMeta?.updatedAt)}</KV>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={refreshSecretInfo}
-              variant="outline"
-              disabled={loadingSecret}
-            >
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={refreshSecretInfo} variant="outline" disabled={loadingSecret}>
               <RefreshCcw className="h-4 w-4 mr-2" />
               Refresh
             </Button>
@@ -299,11 +374,35 @@ export default function ClientDetailView({ clientId }: Props) {
               <Zap className="h-4 w-4 mr-2" />
               {forcing ? "Forcing…" : "Force secret phrase now"}
             </Button>
+            <Button
+              onClick={handleToggleEnabled}
+              variant="outline"
+              disabled={togglingEnabled || !canUpdate || secretEnabled === null}
+              title={!canUpdate ? "You don't have permission to update customers" : ""}
+            >
+              <ShieldOff className="h-4 w-4 mr-2" />
+              {secretEnabled
+                ? togglingEnabled
+                  ? "Disabling…"
+                  : "Disable for this client"
+                : togglingEnabled
+                ? "Enabling…"
+                : "Enable for this client"}
+            </Button>
+            <Button
+              onClick={handleResetPhrase}
+              variant="destructive"
+              disabled={resetting || !canUpdate}
+              title={!canUpdate ? "You don't have permission to update customers" : ""}
+            >
+              <ShieldAlert className="h-4 w-4 mr-2" />
+              {resetting ? "Resetting…" : "Reset (clear) secret phrase"}
+            </Button>
           </div>
 
           {!canUpdate && (
             <p className="text-xs text-muted-foreground">
-              You don't have permission to force a secret phrase for this client.
+              You don't have permission to update this client.
             </p>
           )}
         </CardContent>

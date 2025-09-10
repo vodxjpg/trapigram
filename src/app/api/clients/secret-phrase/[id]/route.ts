@@ -153,3 +153,33 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
+
+/* ───────── DELETE: clear phrase for client (reset) ───────── */
+export async function DELETE(req: NextRequest, { params }: Params) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+  const { id: userId } = await params;
+
+  try {
+    // Find client by Telegram userId
+    const client = await getClientByTelegramId(userId, organizationId);
+    if (!client) {
+      return NextResponse.json({ error: "Client not found" }, { status: 404 });
+    }
+
+    // Remove any existing phrase row
+    const delSql = `DELETE FROM "clientSecretPhrase" WHERE "clientId" = $1`;
+    const result = await pool.query(delSql, [client.id]);
+
+    // 200 with a simple payload; you could also return 204 with empty body
+    return NextResponse.json(
+      { ok: true, deleted: (result.rowCount ?? 0) > 0 },
+      { status: 200 },
+    );
+  } catch (err: any) {
+    console.error("[DELETE /api/clients/secret-phrase/[id]] error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
