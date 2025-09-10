@@ -198,7 +198,11 @@ export async function getRevenue(id: string, organizationId: string) {
     // 3) Payment paths
     if (paymentType === "niftipay") {
       // Try to read crypto asset from meta: prefer "paid" event, fallback to "pending_payment"
-      const meta = Array.isArray(order.orderMeta) ? order.orderMeta : [];
+      const meta = Array.isArray(order.orderMeta)
+        ? order.orderMeta
+        : (() => {
+            try { return JSON.parse(order.orderMeta ?? "[]"); } catch { return []; }
+          })();
       const paidEntry =
         meta.find((it: any) => it?.event === "paid") ??
         meta.find((it: any) => it?.event === "pending_payment");

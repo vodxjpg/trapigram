@@ -30,6 +30,7 @@ import ReactCountryFlag from "react-country-flag";
  * ────────────────────────────────────────────────────────────── */
 const NOTIF_TYPES = [
   "order_placed",
+  "order_pending_payment",
   "order_paid",
   "order_completed",
   "order_cancelled",

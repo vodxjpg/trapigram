@@ -1,4 +1,4 @@
-// /home/zodx/Desktop/trapigram/src/app/(dashboard)/payment-methods/payment-drawer.tsx
+// src/app/(dashboard)/payment-methods/payment-drawer.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Drawer,
   DrawerContent,
@@ -24,6 +25,9 @@ export interface PaymentMethod {
   active: boolean;
   apiKey?: string | null;
   secretKey?: string | null;
+  description?: string | null;
+  instructions?: string | null;
+  default?: boolean;
 }
 
 interface Props {
@@ -47,6 +51,8 @@ export function PaymentMethodDrawer({
   const [active, setActive] = useState(true);
   const [apiKey, setApiKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
+  const [description, setDescription] = useState("");
+  const [instructions, setInstructions] = useState("");
   const [saving, setSaving] = useState(false);
   const isMobile = useIsMobile();
 
@@ -57,11 +63,15 @@ export function PaymentMethodDrawer({
       setActive(method.active);
       setApiKey(method.apiKey ?? "");
       setSecretKey(method.secretKey ?? "");
+      setDescription(method.description ?? "");
+      setInstructions(method.instructions ?? "");
     } else {
       setName(isNiftipay ? "Niftipay" : "");
       setActive(true);
       setApiKey("");
       setSecretKey("");
+      setDescription("");
+      setInstructions("");
     }
   }, [method, mode, isNiftipay]);
 
@@ -69,29 +79,23 @@ export function PaymentMethodDrawer({
   const handleConnectNiftipay = async () => {
     setSaving(true);
     try {
-      // Body is optional; server resolves email from session if not provided.
       const res = await fetch("/api/niftipay/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
 
-      // Try to surface upstream error details
       if (!res.ok) {
         let message = "Failed to connect Niftipay";
         try {
           const data = await res.json();
           if (typeof data?.error === "string") message = data.error;
-        } catch {
-          /* ignore parse error */
-        }
+        } catch {}
         throw new Error(message);
       }
 
-      // On success, the API already upserts/activates the Niftipay method.
       toast.success("Niftipay connected successfully");
 
-      // Notify the page to show a verification dialog (5s lockout).
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("niftipay-connected"));
       }
@@ -105,17 +109,20 @@ export function PaymentMethodDrawer({
 
   /* ---------- manual save (custom / advanced) ---------- */
   const handleSave = async () => {
-    if (!name.trim()) {
+    if (!name.trim() && !isNiftipay) {
       toast.error("Name is required");
       return;
     }
     setSaving(true);
     try {
-      const payload = {
+      const payload: Record<string, any> = {
         name: isNiftipay ? "Niftipay" : name.trim(),
         active,
         apiKey: apiKey.trim() || null,
-        secretKey: secretKey.trim() || null,
+        // Secret key stays editable only for custom methods
+        ...(isNiftipay ? {} : { secretKey: secretKey.trim() || null }),
+        description: description.trim() || null,
+        instructions: instructions.trim() || null,
       };
 
       const res = await fetch(
@@ -126,11 +133,15 @@ export function PaymentMethodDrawer({
           body: JSON.stringify(payload),
         },
       );
-      if (!res.ok) throw new Error();
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || "Failed to save");
+      }
       toast.success(method ? "Updated" : "Created");
       onClose(true);
-    } catch {
-      toast.error("Failed to save");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to save");
     } finally {
       setSaving(false);
     }
@@ -162,7 +173,7 @@ export function PaymentMethodDrawer({
         </DrawerHeader>
 
         <div className="px-4 space-y-4">
-          {/* ───────── Easy Connect CTA (Niftipay only) ───────── */}
+          {/* Easy Connect CTA (Niftipay only) */}
           {isNiftipay && (
             <div className="rounded-lg border p-4">
               <div className="mb-2 font-medium">Niftipay Easy Connect</div>
@@ -213,7 +224,7 @@ export function PaymentMethodDrawer({
             />
           </div>
 
-          {/* secret key (only for custom methods) */}
+          {/* secret key (custom methods only) */}
           {!isNiftipay && (
             <div>
               <label className="block text-sm font-medium mb-1">
@@ -227,6 +238,34 @@ export function PaymentMethodDrawer({
               />
             </div>
           )}
+
+          {/* description */}
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Description
+            </label>
+            <Textarea
+              placeholder="Short text shown to admins to explain this method (optional)"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="min-h-[80px]"
+              disabled={saving}
+            />
+          </div>
+
+          {/* instructions */}
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Instructions for customers
+            </label>
+            <Textarea
+              placeholder="What customers should do after choosing this method (e.g., bank transfer reference, etc.)"
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              className="min-h-[120px]"
+              disabled={saving}
+            />
+          </div>
         </div>
 
         <DrawerFooter className="space-x-2">

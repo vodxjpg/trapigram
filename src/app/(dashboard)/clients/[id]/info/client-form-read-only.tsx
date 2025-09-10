@@ -1,7 +1,7 @@
 // src/app/(dashboard)/clients/[id]/info/client-form-read-only.tsx
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -15,9 +15,11 @@ import { useHasPermission } from "@/hooks/use-has-permission";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { RefreshCcw, Zap } from "lucide-react";
 
 countriesLib.registerLocale(enLocale);
 
@@ -47,6 +49,11 @@ type OrderRow = {
   shippingCompany?: string | null;
 };
 
+type SecretMeta = {
+  hasPhrase: boolean;
+  updatedAt: string | null; // ISO string or null
+};
+
 export default function ClientDetailView({ clientId }: Props) {
   const router = useRouter();
 
@@ -55,8 +62,11 @@ export default function ClientDetailView({ clientId }: Props) {
 
   const { hasPermission: viewPerm, isLoading: viewLoading } =
     useHasPermission(organizationId, { customer: ["view"] });
+  const { hasPermission: updatePerm } =
+    useHasPermission(organizationId, { customer: ["update"] });
 
   const canView = useMemo(() => !viewLoading && viewPerm, [viewLoading, viewPerm]);
+  const canUpdate = !!updatePerm;
 
   useEffect(() => {
     if (!viewLoading && !viewPerm) router.replace("/clients");
@@ -66,9 +76,34 @@ export default function ClientDetailView({ clientId }: Props) {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Secret-phrase UI bits
+  const [secretEnabled, setSecretEnabled] = useState<boolean | null>(null);
+  const [secretMeta, setSecretMeta] = useState<SecretMeta | null>(null);
+  const [loadingSecret, setLoadingSecret] = useState(false);
+  const [forcing, setForcing] = useState(false);
+
+  const fmtDate = (iso?: string | null) =>
+    iso
+      ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+      : "—";
+
+  const fmtMoney = (n: number) => `$${(n ?? 0).toFixed(2)}`;
+
+  const statusCls = (s: OrderRow["status"]) =>
+    ({
+      open: "bg-blue-100 text-blue-800",
+      paid: "bg-green-100 text-green-800",
+      underpaid: "bg-orange-100 text-orange-800",
+      pending_payment: "bg-yellow-500",
+      cancelled: "bg-red-100 text-red-800",
+      refunded: "bg-red-100 text-red-800",
+      completed: "bg-purple-100 text-purple-800",
+    }[s] ?? "bg-gray-100 text-gray-800");
+
+  // Load client & recent orders
   useEffect(() => {
     if (!canView) return;
-  
+
     (async () => {
       try {
         const [clientRes, ordersRes] = await Promise.all([
@@ -83,10 +118,11 @@ export default function ClientDetailView({ clientId }: Props) {
         ]);
         if (!clientRes.ok) throw new Error("Failed to fetch client");
         if (!ordersRes.ok) throw new Error("Failed to fetch recent orders");
-  
+
         const clientJson = await clientRes.json();
-        setClient(clientJson.client ?? clientJson);   // ← THE FIX
-  
+        const c = clientJson.client ?? clientJson; // API may wrap
+        setClient(c);
+
         const ordersJson = await ordersRes.json();
         setOrders(ordersJson);
       } catch (err: any) {
@@ -97,27 +133,85 @@ export default function ClientDetailView({ clientId }: Props) {
       }
     })();
   }, [canView, clientId, router]);
-  
+
+  // Fetch per-client secret settings + meta once we have client.userId
+  const refreshSecretInfo = useCallback(async () => {
+    if (!client?.userId) return;
+    setLoadingSecret(true);
+    try {
+      // 1) settings (enabled, reverify, forceAt)
+      const sRes = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/settings`);
+      if (sRes.ok) {
+        const sJson = await sRes.json();
+        setSecretEnabled(!!sJson.enabled);
+      } else {
+        setSecretEnabled(null);
+      }
+
+      // 2) meta (has phrase? last updatedAt?) – try dedicated meta endpoint first
+      let meta: SecretMeta | null = null;
+      try {
+        const mRes = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/meta`);
+        if (mRes.ok) {
+          const m = await mRes.json();
+          meta = {
+            hasPhrase: !!m.hasPhrase,
+            updatedAt: m.updatedAt ?? null,
+          };
+        }
+      } catch {
+        /* ignore */
+      }
+
+      // Fallback: some installs may expose these fields in /api/clients/:id
+      if (!meta) {
+        const hasViaClient =
+          typeof client.hasSecretPhrase === "boolean" || typeof client.secretPhraseUpdatedAt === "string";
+        meta = hasViaClient
+          ? {
+              hasPhrase: !!client.hasSecretPhrase || !!client.secretPhraseUpdatedAt,
+              updatedAt: client.secretPhraseUpdatedAt ?? null,
+            }
+          : { hasPhrase: false, updatedAt: null };
+      }
+
+      setSecretMeta(meta);
+    } catch (e: any) {
+      console.warn("Failed to load secret-phrase info:", e?.message || e);
+    } finally {
+      setLoadingSecret(false);
+    }
+  }, [client?.userId, client?.hasSecretPhrase, client?.secretPhraseUpdatedAt]);
+
+  useEffect(() => {
+    refreshSecretInfo();
+  }, [refreshSecretInfo]);
+
+  const handleForceNow = async () => {
+    if (!client?.userId) return;
+    setForcing(true);
+    try {
+      const res = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ forceNow: true }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "Failed to force secret phrase");
+      }
+      toast.success("Secret phrase challenge forced for this client.");
+      await refreshSecretInfo();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to force secret phrase");
+    } finally {
+      setForcing(false);
+    }
+  };
 
   if (viewLoading || !canView) return null;
   if (loading) return <p className="p-6">Loading…</p>;
   if (!client) return <p className="p-6">Client not found.</p>;
-
-  const fmtDate = (iso: string) =>
-    new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-
-  const fmtMoney = (n: number) => `$${(n ?? 0).toFixed(2)}`;
-
-  const statusCls = (s: OrderRow["status"]) =>
-    ({
-      open: "bg-blue-100 text-blue-800",
-      paid: "bg-green-100 text-green-800",
-      underpaid: "bg-orange-100 text-orange-800",
-      pending_payment: "bg-yellow-500",
-      cancelled: "bg-red-100 text-red-800",
-      refunded: "bg-red-100 text-red-800",
-      completed: "bg-purple-100 text-purple-800",
-    }[s] ?? "bg-gray-100 text-gray-800");
 
   /* ---------------------------------------------------------------------- */
   return (
@@ -149,6 +243,69 @@ export default function ClientDetailView({ clientId }: Props) {
             </div>
             <Field label="Referred By" value={client.referredBy || ""} />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Secret phrase block (per-client) */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Security — Secret Phrase</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid sm:grid-cols-3 gap-4">
+            <KV label="Enabled for this client">
+              {loadingSecret ? (
+                <span className="text-muted-foreground">Loading…</span>
+              ) : secretEnabled === null ? (
+                <span className="text-muted-foreground">Unknown</span>
+              ) : secretEnabled ? (
+                <Badge className="bg-green-600 text-white">Enabled</Badge>
+              ) : (
+                <Badge variant="outline" className="border-gray-300 text-gray-700">
+                  Disabled
+                </Badge>
+              )}
+            </KV>
+
+            <KV label="Has secret phrase">
+              {loadingSecret ? (
+                <span className="text-muted-foreground">Loading…</span>
+              ) : secretMeta?.hasPhrase ? (
+                <Badge className="bg-blue-600 text-white">Yes</Badge>
+              ) : (
+                <Badge variant="outline" className="border-gray-300 text-gray-700">
+                  No
+                </Badge>
+              )}
+            </KV>
+
+            <KV label="Last set on">{fmtDate(secretMeta?.updatedAt)}</KV>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={refreshSecretInfo}
+              variant="outline"
+              disabled={loadingSecret}
+            >
+              <RefreshCcw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+            <Button
+              onClick={handleForceNow}
+              disabled={forcing || !canUpdate}
+              title={!canUpdate ? "You don't have permission to update customers" : ""}
+            >
+              <Zap className="h-4 w-4 mr-2" />
+              {forcing ? "Forcing…" : "Force secret phrase now"}
+            </Button>
+          </div>
+
+          {!canUpdate && (
+            <p className="text-xs text-muted-foreground">
+              You don't have permission to force a secret phrase for this client.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -250,6 +407,15 @@ function Field({ label, value }: { label: string; value: string }) {
     <div className="flex flex-col">
       <label className="mb-1 text-sm font-medium">{label}</label>
       <Input value={value ?? ""} disabled />
+    </div>
+  );
+}
+
+function KV({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col">
+      <div className="mb-1 text-sm font-medium">{label}</div>
+      <div>{children}</div>
     </div>
   );
 }

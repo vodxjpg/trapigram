@@ -71,7 +71,9 @@ export async function enqueueNotificationFanout(opts: {
     // so different code paths with slightly different messages/vars still dedupe correctly.
     const isAdminOnlyOrder =
       (opts.trigger ?? "") === "admin_only" &&
-      (opts.type === "order_paid" || opts.type === "order_completed") &&
+      (opts.type === "order_paid" ||
+      opts.type === "order_completed" ||
+      opts.type === "order_pending_payment") &&
       Boolean(opts.orderId);
     const dedupeKey = isAdminOnlyOrder
       ? // payload-agnostic stable key (works across processes/instances)
