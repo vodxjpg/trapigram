@@ -18,7 +18,7 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-
+import Link from "next/link";
 import { useDebounce } from "@/hooks/use-debounce"; // ← NEW
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
@@ -365,7 +365,14 @@ export function ClientsTable() {
               ) : (
                 clients.map((c) => (
                   <TableRow key={c.id}>
-                    <TableCell>{c.username}</TableCell>
+                    <TableCell>
+                      <Link
+                        href={`/clients/${c.id}/info`}
+                        className="font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-ring rounded-sm"
+                      >
+                        {c.username}
+                      </Link>
+                    </TableCell>
                     <TableCell>{`${c.firstName} ${c.lastName}`}</TableCell>
                     <TableCell>{c.email}</TableCell>
                     <TableCell>{c.phoneNumber}</TableCell>
