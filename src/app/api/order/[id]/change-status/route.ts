@@ -10,6 +10,7 @@ import { sendNotification } from "@/lib/notifications";
 import { createHmac } from "crypto";
 import type { NotificationType } from "@/lib/notifications";
 import { enqueueNotificationFanout } from "@/lib/notification-outbox";
+import { processAutomationRules } from "@/lib/rules";
 
 // Vercel runtime hints (keep these AFTER all imports)
 export const runtime = "nodejs";
@@ -65,6 +66,10 @@ const euroCountries = [
   "SI", // Slovenia
   "ES"  // Spain
 ];
+
+// Map country → 3-letter currency (fallback USD)
+const currencyFromCountry = (c: string) =>
+  c === "GB" ? "GBP" : euroCountries.includes(c) ? "EUR" : "USD";
 
 const coins: Record<string, string> = {
   'BTC': 'bitcoin',
@@ -1016,6 +1021,22 @@ export async function PATCH(
     // release the transactional connection ASAP; do side-effects with pool
     client.release(); released = true;
 
+    // ─────────────────────────────────────────────────────────────
+    // Rules engine hook (BASE order only): run after commit
+    // ─────────────────────────────────────────────────────────────
+    try {
+      const eventMap: Record<string,
+        | "order_placed" | "order_partially_paid" | "order_pending_payment"
+        | "order_paid"   | "order_completed"      | "order_cancelled" | "order_refunded"
+      > = { open: "order_placed", underpaid: "order_partially_paid", pending_payment: "order_pending_payment",
+            paid: "order_paid", completed: "order_completed", cancelled: "order_cancelled", refunded: "order_refunded" };
+      const orderCurrency = currencyFromCountry(ord.country);
+      await processAutomationRules({
+        organizationId, event: eventMap[newStatus], country: ord.country ?? null, orderCurrency,
+        variables: { order_id: id, order_number: ord.orderKey, order_status: newStatus, order_currency: orderCurrency },
+        clientId: ord.clientId ?? null, userId: null, url: `/orders/${id}` });
+    } catch (e) { console.warn("[rules] base order hook failed", e); }
+
     // 🔔 Notify the BASE order (merchant) too (only for base orders)
     if (!isSupplierOrder) {
       try {
@@ -1175,6 +1196,22 @@ export async function PATCH(
               : newStatus === "cancelled" || newStatus === "refunded";
 
           if (!should) continue;
+
+          // ─────────────────────────────────────────────────────
+          // Rules engine hook (SUPPLIER sibling): after cascade
+          // ─────────────────────────────────────────────────────
+          try {
+            const eventMap: Record<string,
+              | "order_placed" | "order_partially_paid" | "order_pending_payment"
+              | "order_paid"   | "order_completed"      | "order_cancelled" | "order_refunded"
+            > = { open: "order_placed", underpaid: "order_partially_paid", pending_payment: "order_pending_payment",
+                  paid: "order_paid", completed: "order_completed", cancelled: "order_cancelled", refunded: "order_refunded" };
+            const sbCurrency = currencyFromCountry(sb.country);
+            await processAutomationRules({
+              organizationId: sb.organizationId, event: eventMap[newStatus], country: sb.country, orderCurrency: sbCurrency,
+              variables: { order_id: sb.id, order_number: sb.orderKey, order_status: newStatus, order_currency: sbCurrency },
+              clientId: sb.clientId ?? null, userId: null, url: `/orders/${sb.id}` });
+          } catch (e) { console.warn("[rules] supplier sibling hook failed", sb.id, e); }
 
           const productList = await buildProductListForCart(sb.cartId);
           const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
