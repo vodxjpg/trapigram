@@ -6,19 +6,20 @@ import { getContext } from "@/lib/context";
 const channelsEnum = z.enum(["email", "telegram", "in_app", "webhook"]);
 const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
 const eventEnum = z.enum([
-  "order_placed",
-  "order_pending_payment",
-  "order_paid",
-  "order_completed",
-  "order_cancelled",
-  "order_refunded",
-  "order_partially_paid",
-  "order_shipped",
-  "order_message",
-  "ticket_created",
-  "ticket_replied",
-  "manual",
+  "order_placed","order_pending_payment","order_paid","order_completed",
+  "order_cancelled","order_refunded","order_partially_paid","order_shipped",
+  "order_message","ticket_created","ticket_replied","manual",
 ]);
+
+const conditionsSchema = z.object({
+  op: z.enum(["AND","OR"]),
+  items: z.array(
+    z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
+      z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
+    ])
+  ).min(1),
+}).partial().refine(v => !v.items || !!v.op, { message: "Provide op when items exist", path: ["op"] });
 
 const baseRule = z.object({
   name: z.string().min(1),
@@ -27,8 +28,7 @@ const baseRule = z.object({
   priority: z.coerce.number().int().min(0).default(100),
   event: eventEnum,
   countries: z.array(z.string()).optional().default([]),
-  orderCurrencyIn: z.array(z.string()).optional().default([]),
-  channels: z.array(channelsEnum).min(1),
+  channels: z.array(channelsEnum).min(1), // per-action channels (we still fan-out)
 });
 
 const sendCouponPayload = z.object({
@@ -37,9 +37,7 @@ const sendCouponPayload = z.object({
   templateSubject: z.string().optional(),
   templateMessage: z.string().optional(),
   url: z.string().url().optional().nullable(),
-
-  // NEW: product condition for this rule
-  onlyIfProductIdsAny: z.array(z.string()).optional(),
+  conditions: conditionsSchema.optional(),
 });
 
 const productRecoPayload = z.object({
@@ -48,9 +46,7 @@ const productRecoPayload = z.object({
   templateSubject: z.string().optional(),
   templateMessage: z.string().optional(),
   url: z.string().url().optional().nullable(),
-
-  // NEW: product condition for this rule
-  onlyIfProductIdsAny: z.array(z.string()).optional(),
+  conditions: conditionsSchema.optional(),
 });
 
 const createSchema = z.discriminatedUnion("action", [
@@ -70,38 +66,32 @@ export async function GET(req: NextRequest) {
 
   try {
     const countRes = await pool.query(
-      `
-      SELECT COUNT(*) FROM "automationRules"
-      WHERE "organizationId" = $1
-        AND ($2 = '' OR name ILIKE $3 OR event ILIKE $3 OR action ILIKE $3)
-      `,
+      `SELECT COUNT(*) FROM "automationRules"
+        WHERE "organizationId" = $1
+          AND ($2 = '' OR name ILIKE $3 OR event ILIKE $3 OR action ILIKE $3)`,
       [organizationId, search, `%${search}%`],
     );
+
     const totalRows = Number(countRes.rows[0].count);
     const totalPages = Math.ceil(totalRows / pageSize);
 
     const dataRes = await pool.query(
-      `
-      SELECT id, "organizationId", name, description, enabled, priority,
-             event, countries, "orderCurrencyIn",
-             action, channels, payload, "createdAt", "updatedAt"
-      FROM "automationRules"
-      WHERE "organizationId" = $1
-        AND ($2 = '' OR name ILIKE $3 OR event ILIKE $3 OR action ILIKE $3)
-      ORDER BY priority ASC, "createdAt" DESC
-      LIMIT $4 OFFSET $5
-      `,
+      `SELECT id,"organizationId",name,description,enabled,priority,event,
+              countries,action,channels,payload,"createdAt","updatedAt"
+         FROM "automationRules"
+        WHERE "organizationId" = $1
+          AND ($2 = '' OR name ILIKE $3 OR event ILIKE $3 OR action ILIKE $3)
+        ORDER BY priority ASC, "createdAt" DESC
+        LIMIT $4 OFFSET $5`,
       [organizationId, search, `%${search}%`, pageSize, (page - 1) * pageSize],
     );
 
     const rules = dataRes.rows.map((r) => ({
       ...r,
       countries: JSON.parse(r.countries || "[]"),
-      orderCurrencyIn: JSON.parse(r.orderCurrencyIn || "[]"),
       channels: JSON.parse(r.channels || "[]"),
       payload: typeof r.payload === "string" ? JSON.parse(r.payload || "{}") : (r.payload ?? {}),
     }));
-
     return NextResponse.json({ rules, totalPages, currentPage: page });
   } catch (e) {
     console.error("[GET /api/rules] error", e);
@@ -118,18 +108,14 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = createSchema.parse(body);
 
-    const id = crypto.randomUUID(); // TEXT id is fine
-
+    const id = crypto.randomUUID();
     const res = await pool.query(
-      `
-      INSERT INTO "automationRules"
-      (id, "organizationId", name, description, enabled, priority, event,
-       countries, "orderCurrencyIn", action, channels, payload, "createdAt", "updatedAt")
-      VALUES
-      ($1, $2, $3, $4, $5, $6, $7,
-       $8, $9, $10, $11, $12, NOW(), NOW())
-      RETURNING *
-      `,
+      `INSERT INTO "automationRules"
+         (id,"organizationId",name,description,enabled,priority,event,
+          countries,action,channels,payload,"createdAt","updatedAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,
+               $8,$9,$10,$11,NOW(),NOW())
+       RETURNING *`,
       [
         id,
         organizationId,
@@ -139,7 +125,6 @@ export async function POST(req: NextRequest) {
         parsed.priority ?? 100,
         parsed.event,
         JSON.stringify(parsed.countries ?? []),
-        JSON.stringify(parsed.orderCurrencyIn ?? []),
         parsed.action,
         JSON.stringify(parsed.channels ?? []),
         JSON.stringify(parsed.payload ?? {}),
@@ -148,7 +133,6 @@ export async function POST(req: NextRequest) {
 
     const row = res.rows[0];
     row.countries = JSON.parse(row.countries || "[]");
-    row.orderCurrencyIn = JSON.parse(row.orderCurrencyIn || "[]");
     row.channels = JSON.parse(row.channels || "[]");
     row.payload = typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : (row.payload ?? {});
     return NextResponse.json(row, { status: 201 });

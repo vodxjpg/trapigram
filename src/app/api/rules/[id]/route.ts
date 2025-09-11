@@ -6,44 +6,36 @@ import { getContext } from "@/lib/context";
 const channelsEnum = z.enum(["email", "telegram", "in_app", "webhook"]);
 const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
 const eventEnum = z.enum([
-  "order_placed",
-  "order_pending_payment",
-  "order_paid",
-  "order_completed",
-  "order_cancelled",
-  "order_refunded",
-  "order_partially_paid",
-  "order_shipped",
-  "order_message",
-  "ticket_created",
-  "ticket_replied",
-  "manual",
+  "order_placed","order_pending_payment","order_paid","order_completed",
+  "order_cancelled","order_refunded","order_partially_paid","order_shipped",
+  "order_message","ticket_created","ticket_replied","manual",
 ]);
+
+const conditionsSchema = z.object({
+  op: z.enum(["AND","OR"]),
+  items: z.array(
+    z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
+      z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
+    ])
+  ).min(1),
+}).partial();
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
   enabled: z.boolean().optional(),
   priority: z.coerce.number().int().min(0).optional(),
-  event: eventEnum.optional(),
+  event: eventEnum.optional(),          // still a single trigger
   countries: z.array(z.string()).optional(),
-  orderCurrencyIn: z.array(z.string()).optional(),
   action: actionEnum.optional(),
   channels: z.array(channelsEnum).optional(),
-  payload: z
-    .object({
-      couponId: z.string().optional().nullable(),
-      code: z.string().optional(),
-      templateSubject: z.string().optional(),
-      templateMessage: z.string().optional(),
-      url: z.string().url().optional().nullable(),
-      productIds: z.array(z.string()).optional(),
-      collectionId: z.string().optional(),
-      // NEW: product condition
-      onlyIfProductIdsAny: z.array(z.string()).optional(),
-    })
-    .partial()
-    .optional(),
+  payload: z.record(z.any()).optional().refine((p) => {
+    if (!p) return true;
+    if (!("conditions" in p)) return true;
+    const r = conditionsSchema.safeParse(p.conditions);
+    return r.success;
+  }, { message: "Invalid payload.conditions" }),
 });
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
@@ -54,20 +46,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   try {
     const res = await pool.query(
-      `
-      SELECT id, "organizationId", name, description, enabled, priority,
-             event, countries, "orderCurrencyIn",
-             action, channels, payload, "createdAt", "updatedAt"
-      FROM "automationRules"
-      WHERE id = $1 AND "organizationId" = $2
-      `,
+      `SELECT id,"organizationId",name,description,enabled,priority,
+              event,countries,action,channels,payload,"createdAt","updatedAt"
+         FROM "automationRules"
+        WHERE id = $1 AND "organizationId" = $2`,
       [id, organizationId],
     );
     if (!res.rowCount) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
 
     const row = res.rows[0];
     row.countries = JSON.parse(row.countries || "[]");
-    row.orderCurrencyIn = JSON.parse(row.orderCurrencyIn || "[]");
     row.channels = JSON.parse(row.channels || "[]");
     row.payload = typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : (row.payload ?? {});
     return NextResponse.json(row);
@@ -93,39 +81,30 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     for (const [key, value] of Object.entries(parsed)) {
       if (value === undefined) continue;
-      if (key === "countries" || key === "orderCurrencyIn" || key === "channels") {
-        updates.push(`"${key}" = $${i++}`);
-        values.push(JSON.stringify(value));
+      if (key === "countries" || key === "channels") {
+        updates.push(`"${key}" = $${i++}`); values.push(JSON.stringify(value));
       } else if (key === "payload") {
-        updates.push(`"payload" = $${i++}`);
-        values.push(JSON.stringify(value));
+        updates.push(`"payload" = $${i++}`); values.push(JSON.stringify(value));
       } else {
-        updates.push(`"${key}" = $${i++}`);
-        values.push(value);
+        updates.push(`"${key}" = $${i++}`); values.push(value);
       }
     }
-
     if (!updates.length) {
       return NextResponse.json({ error: "No fields provided to update" }, { status: 400 });
     }
 
     values.push(id, organizationId);
-
     const res = await pool.query(
-      `
-      UPDATE "automationRules"
-      SET ${updates.join(", ")}, "updatedAt" = NOW()
-      WHERE id = $${i++} AND "organizationId" = $${i}
-      RETURNING *
-      `,
+      `UPDATE "automationRules"
+          SET ${updates.join(", ")}, "updatedAt" = NOW()
+        WHERE id = $${i++} AND "organizationId" = $${i}
+      RETURNING *`,
       values,
     );
-
     if (!res.rowCount) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
 
     const row = res.rows[0];
     row.countries = JSON.parse(row.countries || "[]");
-    row.orderCurrencyIn = JSON.parse(row.orderCurrencyIn || "[]");
     row.channels = JSON.parse(row.channels || "[]");
     row.payload = typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : (row.payload ?? {});
     return NextResponse.json(row);
