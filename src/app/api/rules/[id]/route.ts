@@ -30,7 +30,20 @@ const updateSchema = z.object({
   orderCurrencyIn: z.array(z.string()).optional(),
   action: actionEnum.optional(),
   channels: z.array(channelsEnum).optional(),
-  payload: z.record(z.any()).optional(),
+  payload: z
+    .object({
+      couponId: z.string().optional().nullable(),
+      code: z.string().optional(),
+      templateSubject: z.string().optional(),
+      templateMessage: z.string().optional(),
+      url: z.string().url().optional().nullable(),
+      productIds: z.array(z.string()).optional(),
+      collectionId: z.string().optional(),
+      // NEW: product condition
+      onlyIfProductIdsAny: z.array(z.string()).optional(),
+    })
+    .partial()
+    .optional(),
 });
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
@@ -56,7 +69,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     row.countries = JSON.parse(row.countries || "[]");
     row.orderCurrencyIn = JSON.parse(row.orderCurrencyIn || "[]");
     row.channels = JSON.parse(row.channels || "[]");
-
+    row.payload = typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : (row.payload ?? {});
     return NextResponse.json(row);
   } catch (e) {
     console.error("[GET /api/rules/:id] error", e);
@@ -80,7 +93,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     for (const [key, value] of Object.entries(parsed)) {
       if (value === undefined) continue;
-
       if (key === "countries" || key === "orderCurrencyIn" || key === "channels") {
         updates.push(`"${key}" = $${i++}`);
         values.push(JSON.stringify(value));
@@ -115,7 +127,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     row.countries = JSON.parse(row.countries || "[]");
     row.orderCurrencyIn = JSON.parse(row.orderCurrencyIn || "[]");
     row.channels = JSON.parse(row.channels || "[]");
-
+    row.payload = typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : (row.payload ?? {});
     return NextResponse.json(row);
   } catch (error: any) {
     console.error("[PATCH /api/rules/:id] error", error);

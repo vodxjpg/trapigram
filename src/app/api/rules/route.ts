@@ -33,18 +33,24 @@ const baseRule = z.object({
 
 const sendCouponPayload = z.object({
   couponId: z.string().optional().nullable(),
-  code: z.string().optional(),            // fallback if you prefer plain code
+  code: z.string().optional(),
   templateSubject: z.string().optional(),
-  templateMessage: z.string().optional(), // HTML allowed
+  templateMessage: z.string().optional(),
   url: z.string().url().optional().nullable(),
+
+  // NEW: product condition for this rule
+  onlyIfProductIdsAny: z.array(z.string()).optional(),
 });
 
 const productRecoPayload = z.object({
   productIds: z.array(z.string()).optional(),
   collectionId: z.string().optional(),
   templateSubject: z.string().optional(),
-  templateMessage: z.string().optional(), // HTML allowed
+  templateMessage: z.string().optional(),
   url: z.string().url().optional().nullable(),
+
+  // NEW: product condition for this rule
+  onlyIfProductIdsAny: z.array(z.string()).optional(),
 });
 
 const createSchema = z.discriminatedUnion("action", [
@@ -93,6 +99,7 @@ export async function GET(req: NextRequest) {
       countries: JSON.parse(r.countries || "[]"),
       orderCurrencyIn: JSON.parse(r.orderCurrencyIn || "[]"),
       channels: JSON.parse(r.channels || "[]"),
+      payload: typeof r.payload === "string" ? JSON.parse(r.payload || "{}") : (r.payload ?? {}),
     }));
 
     return NextResponse.json({ rules, totalPages, currentPage: page });
@@ -111,7 +118,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = createSchema.parse(body);
 
-    const id = crypto.randomUUID(); // UUID string, stored in TEXT (as requested)
+    const id = crypto.randomUUID(); // TEXT id is fine
 
     const res = await pool.query(
       `
@@ -143,7 +150,7 @@ export async function POST(req: NextRequest) {
     row.countries = JSON.parse(row.countries || "[]");
     row.orderCurrencyIn = JSON.parse(row.orderCurrencyIn || "[]");
     row.channels = JSON.parse(row.channels || "[]");
-
+    row.payload = typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : (row.payload ?? {});
     return NextResponse.json(row, { status: 201 });
   } catch (error: any) {
     console.error("[POST /api/rules] error", error);
