@@ -230,7 +230,7 @@ export async function GET(req: NextRequest) {
   return runGenerateInvoices(req);
 }
 
-/** Original behavior preserved: POST + secret for manual/internal triggers. */
+/** Original behavior preserved: POST + secret for manual/internal trigger. */
 export async function POST(req: NextRequest) {
   return runGenerateInvoices(req);
 }
