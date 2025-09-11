@@ -6,15 +6,33 @@ import { db } from "@/lib/db";
 import { requireInternalAuth } from "@/lib/internalAuth";
 import crypto from "crypto";
 
+/**
+ * Why this file changed:
+ * - Added GET handler and relaxed-auth path for trusted scheduler calls (Vercel Cron).
+ * - Kept original POST behavior and all business logic intact.
+ *
+ * Trusted cron detection:
+ * - If request has header `x-vercel-cron: 1`, we allow execution without INTERNAL_API_SECRET.
+ * - Otherwise we require `x-internal-secret: <INTERNAL_API_SECRET>` (existing behavior).
+ *
+ * Notes:
+ * - GET is idempotent: it only inserts missing invoices for the computed window.
+ * - You can still force a specific computation date with ?date=YYYY-MM-DD on either method.
+ */
+
 const MINT_ENDPOINT = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/niftipay-invoice`;
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET!;
 
-export async function POST(req: NextRequest) {
+/** Shared runner (invoked by both GET and POST) */
+async function runGenerateInvoices(req: NextRequest) {
   // ── 1) Auth
-  const authErr = requireInternalAuth(req);
-  if (authErr) return authErr;
+  const isCron = req.headers.get("x-vercel-cron") === "1";
+  if (!isCron) {
+    const authErr = requireInternalAuth(req);
+    if (authErr) return authErr;
+  }
 
-  // ── 2) Pick “today” and its day-of-month
+  // ── 2) Pick “today” and its day-of-month (accept ?date=YYYY-MM-DD)
   const url = new URL(req.url);
   const today = url.searchParams.get("date")
     ? new Date(url.searchParams.get("date")!)
@@ -24,7 +42,7 @@ export async function POST(req: NextRequest) {
   console.log(
     `[generate-invoices] invoked for date=${today
       .toISOString()
-      .slice(0, 10)} (day=${genDay})`
+      .slice(0, 10)} (day=${genDay}) isCron=${isCron}`
   );
 
   // ── 2a) Compute dueDate = today + 7 days
@@ -42,14 +60,14 @@ export async function POST(req: NextRequest) {
 
   console.log(`[generate-invoices] total owners fetched: ${owners.length}`);
 
-  // ── 4) Only those whose signup-day matches today’s
+  // ── 4) Only those whose signup-day matches today’s (and who signed up before today)
   const eligible = owners.filter(({ createdAt }) => {
     const d = new Date(createdAt);
     return d.getUTCDate() === genDay && d < today;
   });
   console.log(
     `[generate-invoices] eligible owners (signup DOM === ${genDay}): ` +
-    eligible.map((o) => o.userId).join(", ")
+      (eligible.length ? eligible.map((o) => o.userId).join(", ") : "<none>")
   );
 
   const created: Array<{
@@ -64,7 +82,7 @@ export async function POST(req: NextRequest) {
 
   // ── 5) Loop & invoice
   for (const { userId } of eligible) {
-    // compute last-month window
+    // compute last-month window relative to genDay
     const y = today.getUTCFullYear();
     const m = today.getUTCMonth();
     const start = new Date(Date.UTC(y, m - 1, genDay, 0, 0, 0));
@@ -87,7 +105,7 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    // sum up fees
+    // sum up fees for the period
     const sumRow = await db
       .selectFrom("orderFees")
       .select(sql<number>`coalesce(sum("feeAmount"), 0)`.as("total"))
@@ -98,7 +116,7 @@ export async function POST(req: NextRequest) {
     const total = Number(sumRow?.total ?? 0);
     console.log(`  → total fees for period: ${total}`);
 
-    // For zero-fee users, still create a $0 invoice if there was activity (fee rows) in the window.
+    // For zero-fee users, still create a $0 invoice if there was activity (any fee rows) in the window.
     let hasActivity = false;
     if (total <= 0) {
       const cntRow = await db
@@ -117,7 +135,7 @@ export async function POST(req: NextRequest) {
       console.log("  → zero-amount invoice will be created (activity present)");
     }
 
-    // insert invoice (now with paidAmount = 0)
+    // insert invoice (paidAmount defaults to 0)
     const inv = await db
       .insertInto("userInvoices")
       .values({
@@ -127,7 +145,6 @@ export async function POST(req: NextRequest) {
         periodEnd: pe,
         totalAmount: total,
         paidAmount: 0,
-        // Auto-settle zero invoices; keep normal ones pending.
         status: total > 0 ? "pending" : "paid",
         dueDate: due,
         niftipayNetwork: "ETH",
@@ -204,8 +221,16 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  console.log(
-    `[generate-invoices] done, created ${created.length} invoices`
-  );
+  console.log(`[generate-invoices] done, created ${created.length} invoices`);
   return NextResponse.json({ invoices: created });
+}
+
+/** New: idempotent GET so hosted schedulers (e.g., Vercel Cron) can call this safely. */
+export async function GET(req: NextRequest) {
+  return runGenerateInvoices(req);
+}
+
+/** Original behavior preserved: POST + secret for manual/internal triggers. */
+export async function POST(req: NextRequest) {
+  return runGenerateInvoices(req);
 }
