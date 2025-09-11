@@ -3,9 +3,18 @@ import { pgPool as pool } from "@/lib/db";
 import { sendNotification, type NotificationChannel } from "@/lib/notifications";
 
 type EventType =
-  | "order_placed" | "order_pending_payment" | "order_paid" | "order_completed"
-  | "order_cancelled" | "order_refunded" | "order_partially_paid" | "order_shipped"
-  | "order_message" | "ticket_created" | "ticket_replied" | "manual"
+  | "order_placed"
+  | "order_pending_payment"
+  | "order_paid"
+  | "order_completed"
+  | "order_cancelled"
+  | "order_refunded"
+  | "order_partially_paid"
+  | "order_shipped"
+  | "order_message"
+  | "ticket_created"
+  | "ticket_replied"
+  | "manual"
   | "customer_inactive";
 
 type RuleRow = {
@@ -15,10 +24,10 @@ type RuleRow = {
   enabled: boolean;
   priority: number;
   event: EventType;
-  countries: string;          // JSON string
+  countries: string; // JSON string
   action: "send_coupon" | "product_recommendation";
-  channels: string;           // JSON string
-  payload: any;               // JSON or object
+  channels: string; // JSON string
+  payload: any; // JSON or object
 };
 
 type ConditionsGroup = {
@@ -30,7 +39,10 @@ type ConditionsGroup = {
   >;
 };
 
+/* -------------------------------- helpers -------------------------------- */
+
 async function getOrderProductIds(orderId: string): Promise<string[]> {
+  if (!orderId) return [];
   const { rows: o } = await pool.query(
     `SELECT "cartId" FROM orders WHERE id = $1 LIMIT 1`,
     [orderId],
@@ -38,7 +50,9 @@ async function getOrderProductIds(orderId: string): Promise<string[]> {
   const cartId = o[0]?.cartId;
   if (!cartId) return [];
   const { rows } = await pool.query(
-    `SELECT "productId","affiliateProductId" FROM "cartProducts" WHERE "cartId" = $1`,
+    `SELECT "productId","affiliateProductId"
+       FROM "cartProducts"
+      WHERE "cartId" = $1`,
     [cartId],
   );
   const ids = new Set<string>();
@@ -50,6 +64,7 @@ async function getOrderProductIds(orderId: string): Promise<string[]> {
 }
 
 async function getOrderEURTotal(orderId: string): Promise<number | null> {
+  if (!orderId) return null;
   const { rows } = await pool.query(
     `SELECT "EURtotal" FROM "orderRevenue" WHERE "orderId" = $1 LIMIT 1`,
     [orderId],
@@ -59,6 +74,10 @@ async function getOrderEURTotal(orderId: string): Promise<number | null> {
   return Number.isFinite(v) ? v : 0;
 }
 
+/**
+ * Returns number of days since the latest "paid" or "completed" order.
+ * If the client has never ordered, returns +Infinity.
+ */
 async function getDaysSinceLastPaidOrCompletedOrder(
   organizationId: string,
   clientId: string | null,
@@ -79,7 +98,7 @@ async function getDaysSinceLastPaidOrCompletedOrder(
     [organizationId, clientId],
   );
   const lastTs: Date | null = rows[0]?.last_ts ?? null;
-  if (!lastTs) return Number.POSITIVE_INFINITY; // never ordered
+  if (!lastTs) return Number.POSITIVE_INFINITY;
   const last = new Date(lastTs);
   const now = new Date();
   const ms = now.getTime() - last.getTime();
@@ -92,7 +111,7 @@ function evalConditions(
     hasProduct: (ids: string[]) => boolean;
     eurTotal: number | null;
     daysSinceLastOrder: number | null;
-  }
+  },
 ): boolean {
   if (!grp || !Array.isArray(grp.items) || !grp.items.length) return true; // no conditions = pass
   const evalOne = (c: ConditionsGroup["items"][number]) => {
@@ -103,14 +122,18 @@ function evalConditions(
     }
     if (c.kind === "no_order_days_gte") {
       if (ctx.daysSinceLastOrder == null) return false;
-      // if user never ordered, treat as Infinity (always true for any positive threshold)
-      const d = ctx.daysSinceLastOrder === Number.POSITIVE_INFINITY ? Infinity : ctx.daysSinceLastOrder;
+      const d =
+        ctx.daysSinceLastOrder === Number.POSITIVE_INFINITY
+          ? Infinity
+          : ctx.daysSinceLastOrder;
       return d >= (Number(c.days) || 0);
     }
     return false;
   };
   return grp.op === "OR" ? grp.items.some(evalOne) : grp.items.every(evalOne);
 }
+
+/* ----------------------------- main processor ---------------------------- */
 
 export async function processAutomationRules(opts: {
   organizationId: string;
@@ -123,10 +146,17 @@ export async function processAutomationRules(opts: {
   url?: string | null;
 }) {
   const {
-    organizationId, event, country = null,
-    variables = {}, clientId = null, userId = null, url = null, orderId = null,
+    organizationId,
+    event,
+    country = null,
+    variables = {},
+    clientId = null,
+    userId = null,
+    url = null,
+    orderId = null,
   } = opts;
 
+  // Pull enabled rules for this event, ordered by priority.
   const res = await pool.query(
     `
     SELECT id,"organizationId",name,enabled,priority,event,
@@ -140,44 +170,67 @@ export async function processAutomationRules(opts: {
     [organizationId, event],
   );
 
-  const productIds = orderId ? await getOrderProductIds(orderId) : [];
+  // Context values available for conditions.
+  const productIdsInOrder = orderId ? await getOrderProductIds(orderId) : [];
   const eurTotal = orderId ? await getOrderEURTotal(orderId) : null;
-  const daysSinceLastOrder = await getDaysSinceLastPaidOrCompletedOrder(organizationId, clientId ?? null);
+  const daysSinceLastOrder = await getDaysSinceLastPaidOrCompletedOrder(
+    organizationId,
+    clientId ?? null,
+  );
 
   for (const raw of res.rows as RuleRow[]) {
     const countries: string[] = JSON.parse(raw.countries || "[]");
-    if (countries.length && (!country || !countries.includes(country))) continue;
+    if (countries.length && (!country || !countries.includes(country))) {
+      continue; // country filter not matched
+    }
 
     const channels: NotificationChannel[] = JSON.parse(raw.channels || "[]");
-    const payload = typeof raw.payload === "string" ? JSON.parse(raw.payload || "{}") : (raw.payload ?? {});
+    const payload =
+      typeof raw.payload === "string"
+        ? JSON.parse(raw.payload || "{}")
+        : raw.payload ?? {};
     const conditions: ConditionsGroup | undefined = payload?.conditions;
 
     const match = evalConditions(conditions, {
-      hasProduct: (ids) => ids.some((id) => productIds.includes(id)),
+      hasProduct: (ids) => ids.some((id) => productIdsInOrder.includes(id)),
       eurTotal,
       daysSinceLastOrder,
     });
     if (!match) continue;
 
+    // Build message & variables per action.
     let subject: string | undefined = payload.templateSubject || undefined;
     let message: string = payload.templateMessage || "";
     const vars: Record<string, string> = { ...variables };
 
     if (raw.action === "send_coupon") {
-      if (payload.code && !vars.coupon) vars.coupon = String(payload.code);
-      if (!message) message = `<p>Use code <b>{coupon}</b> on your next order.</p>`;
+      // No fallback code anymore — we deliver a couponId token to templates
+      if (payload.couponId && !vars.coupon_id) {
+        vars.coupon_id = String(payload.couponId);
+      }
+      if (!message) {
+        message = `<p>You’ve received a coupon for your next order.</p>`;
+      }
     } else if (raw.action === "product_recommendation") {
-      if (payload.productIds?.length && !vars.product_ids) vars.product_ids = payload.productIds.join(",");
-      if (!message) message = `<p>We think you'll love these: {product_ids}</p>`;
+      const ids: string[] = Array.isArray(payload.productIds)
+        ? payload.productIds
+        : [];
+      if (ids.length && !vars.product_ids) {
+        vars.product_ids = ids.join(",");
+      }
+      if (!message) {
+        message = `<p>We think you'll love these: {product_ids}</p>`;
+      }
     }
+
     if (!message.trim()) message = "<p>Notification</p>";
 
     await sendNotification({
       organizationId,
-      type: "order_message",
+      type: raw.action === "send_coupon" ? "coupon_sent" : "product_recommendation",
       message,
       subject,
-      channels,
+      channels, // only "email" | "telegram"
       variables: vars,
       country,
       clientId,

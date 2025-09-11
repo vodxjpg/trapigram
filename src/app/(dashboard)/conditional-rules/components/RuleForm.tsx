@@ -19,8 +19,10 @@ import {
 } from "@/components/ui/select";
 import ChannelsPicker, { Channel } from "./ChannelPicker";
 import OrgCountriesSelect from "./OrgCountriesSelect";
+import CouponSelect from "./CouponSelect";
+import ProductMulti from "./ProductMulti";
 
-const channelsEnum = z.enum(["email", "telegram"]); // slimmed
+const channelsEnum = z.enum(["email", "telegram"]);
 
 export const RuleSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -28,7 +30,6 @@ export const RuleSchema = z.object({
   enabled: z.boolean().default(true),
   priority: z.coerce.number().int().min(0).default(100),
 
-  // trimmed triggers + customer_inactive
   event: z.enum([
     "order_placed",
     "order_partially_paid",
@@ -40,22 +41,19 @@ export const RuleSchema = z.object({
     "customer_inactive",
   ]),
 
-  // countries only (from org list)
   countries: z.array(z.string()).default([]),
 
-  // actions are chosen via dropdown; payload shared
   action: z.enum(["send_coupon", "product_recommendation"]),
   channels: z.array(channelsEnum).min(1, "Pick at least one channel"),
+
   payload: z.object({
+    // couponId required when action = send_coupon (checked on submit)
     couponId: z.string().optional().nullable(),
-    code: z.string().optional(),
     templateSubject: z.string().optional(),
     templateMessage: z.string().optional(),
     url: z.string().url().optional().nullable(),
     productIds: z.array(z.string()).optional(),
     collectionId: z.string().optional(),
-
-    // optional conditions (kept if you already wired ConditionBuilder)
     conditions: z
       .object({
         op: z.enum(["AND", "OR"]),
@@ -102,8 +100,17 @@ export default function RuleForm({
 
   const disabled = form.formState.isSubmitting;
   const watch = form.watch();
+  const [couponError, setCouponError] = React.useState<string | null>(null);
 
   async function onSubmit(values: RuleFormValues) {
+    // require coupon for send_coupon
+    if (values.action === "send_coupon" && !values.payload.couponId) {
+      setCouponError("Please select a coupon.");
+      return;
+    }
+
+    if (couponError) return;
+
     const url = mode === "create" ? "/api/rules" : `/api/rules/${id}`;
     const method = mode === "create" ? "POST" : "PATCH";
     const res = await fetch(url, {
@@ -113,7 +120,7 @@ export default function RuleForm({
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      alert(body?.error || "Failed to save rule");
+      alert(typeof body?.error === "string" ? body.error : "Failed to save rule");
       return;
     }
     router.push("/conditional-rules");
@@ -184,7 +191,7 @@ export default function RuleForm({
         </div>
       </section>
 
-      {/* Countries from org list (with select-all/clear) */}
+      {/* Countries from org list */}
       <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
         <h2 className="text-lg font-semibold">Conditions</h2>
         <OrgCountriesSelect
@@ -192,13 +199,13 @@ export default function RuleForm({
           onChange={(codes) => form.setValue("countries", codes)}
           disabled={disabled}
         />
-        {/* If you already have a ConditionBuilder for AND/OR + items, render it here */}
-        {/* <ConditionBuilder ... /> */}
+        {/* If you have a ConditionBuilder, render it here */}
       </section>
 
       {/* Action */}
       <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
         <h2 className="text-lg font-semibold">Action</h2>
+
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label>Action type</Label>
@@ -231,35 +238,20 @@ export default function RuleForm({
 
         {watch.action === "send_coupon" && (
           <div className="grid md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="couponId">Coupon ID (or leave empty and use code)</Label>
-              <Input
-                id="couponId"
-                value={(form.watch("payload") as any)?.couponId || ""}
-                onChange={(e) =>
-                  form.setValue("payload", {
-                    ...form.getValues("payload"),
-                    couponId: e.target.value,
-                  })
-                }
-                disabled={disabled}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="code">Fallback Code</Label>
-              <Input
-                id="code"
-                placeholder="SUMMER25"
-                value={(form.watch("payload") as any)?.code || ""}
-                onChange={(e) =>
-                  form.setValue("payload", {
-                    ...form.getValues("payload"),
-                    code: e.target.value,
-                  })
-                }
-                disabled={disabled}
-              />
-            </div>
+            <CouponSelect
+              value={(form.watch("payload") as any)?.couponId || null}
+              onChange={(id) =>
+                form.setValue("payload", {
+                  ...form.getValues("payload"),
+                  couponId: id,
+                })
+              }
+              ruleCountries={form.watch("countries")}
+              disabled={disabled}
+              error={couponError}
+              setError={setCouponError}
+            />
+
             <div className="space-y-2 md:col-span-2">
               <Label htmlFor="templateSubject">Subject</Label>
               <Input
@@ -307,70 +299,64 @@ export default function RuleForm({
         )}
 
         {watch.action === "product_recommendation" && (
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="productIds">Product IDs (comma-separated)</Label>
-              <Input
-                id="productIds"
-                placeholder="prod_1,prod_2"
-                value={((form.watch("payload") as any)?.productIds || []).join(",")}
-                onChange={(e) =>
-                  form.setValue("payload", {
-                    ...form.getValues("payload"),
-                    productIds: e.target.value
-                      .split(",")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  })
-                }
-                disabled={disabled}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="collectionId">Collection ID (optional)</Label>
-              <Input
-                id="collectionId"
-                value={(form.watch("payload") as any)?.collectionId || ""}
-                onChange={(e) =>
-                  form.setValue("payload", {
-                    ...form.getValues("payload"),
-                    collectionId: e.target.value,
-                  })
-                }
-                disabled={disabled}
-              />
-            </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="templateSubject2">Subject</Label>
-              <Input
-                id="templateSubject2"
-                value={(form.watch("payload") as any)?.templateSubject || ""}
-                onChange={(e) =>
-                  form.setValue("payload", {
-                    ...form.getValues("payload"),
-                    templateSubject: e.target.value,
-                  })
-                }
-                disabled={disabled}
-              />
-            </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="templateMessage2">Message (HTML allowed)</Label>
-              <Textarea
-                id="templateMessage2"
-                rows={5}
-                value={(form.watch("payload") as any)?.templateMessage || ""}
-                onChange={(e) =>
-                  form.setValue("payload", {
-                    ...form.getValues("payload"),
-                    templateMessage: e.target.value,
-                  })
-                }
-                disabled={disabled}
-              />
-            </div>
-          </div>
-        )}
+  <div className="grid md:grid-cols-2 gap-4">
+    <ProductMulti
+      label="Products to recommend"
+      value={((form.watch("payload") as any)?.productIds || []) as string[]}
+      onChange={(ids) =>
+        form.setValue("payload", {
+          ...form.getValues("payload"),
+          productIds: ids,
+        })
+      }
+      disabled={disabled}
+    />
+
+    <div className="space-y-2">
+      <Label htmlFor="collectionId">Collection ID (optional)</Label>
+      <Input
+        id="collectionId"
+        value={(form.watch("payload") as any)?.collectionId || ""}
+        onChange={(e) =>
+          form.setValue("payload", {
+            ...form.getValues("payload"),
+            collectionId: e.target.value,
+          })
+        }
+        disabled={disabled}
+      />
+    </div>
+
+    <div className="space-y-2 md:col-span-2">
+      <Label>Subject</Label>
+      <Input
+        value={(form.watch("payload") as any)?.templateSubject || ""}
+        onChange={(e) =>
+          form.setValue("payload", {
+            ...form.getValues("payload"),
+            templateSubject: e.target.value,
+          })
+        }
+        disabled={disabled}
+      />
+    </div>
+
+    <div className="space-y-2 md:col-span-2">
+      <Label>Message (HTML allowed)</Label>
+      <Textarea
+        rows={5}
+        value={(form.watch("payload") as any)?.templateMessage || ""}
+        onChange={(e) =>
+          form.setValue("payload", {
+            ...form.getValues("payload"),
+            templateMessage: e.target.value,
+          })
+        }
+        disabled={disabled}
+      />
+    </div>
+  </div>
+)}
       </section>
 
       <div className="flex gap-3">

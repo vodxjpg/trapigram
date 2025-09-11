@@ -3,13 +3,13 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
-const channelsEnum = z.enum(["email", "telegram"]); // ⬅️ only these two
+const channelsEnum = z.enum(["email", "telegram"]);
 const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
 const eventEnum = z.enum([
   "order_placed","order_pending_payment","order_paid","order_completed",
   "order_cancelled","order_refunded","order_partially_paid","order_shipped",
   "order_message","ticket_created","ticket_replied","manual",
-  "customer_inactive", // ⬅️ new trigger
+  "customer_inactive",
 ]);
 
 const conditionsSchema = z.object({
@@ -18,7 +18,7 @@ const conditionsSchema = z.object({
     z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
       z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
-      z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }), // ⬅️ new
+      z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
     ])
   ).min(1),
 }).partial().refine(v => !v.items || !!v.op, { message: "Provide op when items exist", path: ["op"] });
@@ -34,8 +34,7 @@ const baseRule = z.object({
 });
 
 const sendCouponPayload = z.object({
-  couponId: z.string().optional().nullable(),
-  code: z.string().optional(),
+  couponId: z.string().min(1),                 // REQUIRED now
   templateSubject: z.string().optional(),
   templateMessage: z.string().optional(),
   url: z.string().url().optional().nullable(),
@@ -55,6 +54,12 @@ const createSchema = z.discriminatedUnion("action", [
   baseRule.extend({ action: z.literal("send_coupon"), payload: sendCouponPayload }),
   baseRule.extend({ action: z.literal("product_recommendation"), payload: productRecoPayload }),
 ]);
+
+function couponCoversCountries(couponCountries: string[], ruleCountries: string[]) {
+  if (!ruleCountries?.length) return true;
+  if (!couponCountries?.length) return false;
+  return ruleCountries.every((c) => couponCountries.includes(c));
+}
 
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
@@ -108,6 +113,30 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const parsed = createSchema.parse(body);
+
+    // Server-side coupon compatibility check
+    if (parsed.action === "send_coupon") {
+      const { rows: [coupon] } = await pool.query(
+        `SELECT id, countries FROM coupons WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,
+        [parsed.payload.couponId, organizationId],
+      );
+      if (!coupon) {
+        return NextResponse.json({ error: "Coupon not found for this organization." }, { status: 400 });
+      }
+      const couponCountries: string[] = Array.isArray(coupon.countries)
+        ? coupon.countries
+        : JSON.parse(coupon.countries || "[]");
+
+      const ruleCountries = parsed.countries ?? [];
+      if (!couponCoversCountries(couponCountries, ruleCountries)) {
+        // show missing ones
+        const missing = ruleCountries.filter((c) => !couponCountries.includes(c));
+        return NextResponse.json(
+          { error: `Coupon isn’t valid for: ${missing.join(", ")}` },
+          { status: 400 }
+        );
+      }
+    }
 
     const id = crypto.randomUUID();
     const res = await pool.query(

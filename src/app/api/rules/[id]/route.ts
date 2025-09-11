@@ -3,7 +3,7 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
-const channelsEnum = z.enum(["email", "telegram"]); // ⬅️ slimmed
+const channelsEnum = z.enum(["email", "telegram"]);
 const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
 const eventEnum = z.enum([
   "order_placed","order_pending_payment","order_paid","order_completed",
@@ -32,13 +32,24 @@ const updateSchema = z.object({
   countries: z.array(z.string()).optional(),
   action: actionEnum.optional(),
   channels: z.array(channelsEnum).optional(),
-  payload: z.record(z.any()).optional().refine((p) => {
-    if (!p) return true;
-    if (!("conditions" in p)) return true;
-    const r = conditionsSchema.safeParse(p.conditions);
-    return r.success;
-  }, { message: "Invalid payload.conditions" }),
+  payload: z
+    .record(z.any())
+    .optional()
+    .refine((p) => !p || !("couponId" in p) || typeof p.couponId === "string", {
+      message: "payload.couponId must be a string",
+    })
+    .refine((p) => {
+      if (!p || !("conditions" in p)) return true;
+      const r = conditionsSchema.safeParse(p.conditions);
+      return r.success;
+    }, { message: "Invalid payload.conditions" }),
 });
+
+function couponCoversCountries(couponCountries: string[], ruleCountries: string[]) {
+  if (!ruleCountries?.length) return true;
+  if (!couponCountries?.length) return false;
+  return ruleCountries.every((c) => couponCountries.includes(c));
+}
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const ctx = await getContext(req);
@@ -77,6 +88,42 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const body = await req.json();
     const parsed = updateSchema.parse(body);
 
+    // Load existing to compute final values for validation
+    const { rows: [existing] } = await pool.query(
+      `SELECT countries, action, payload
+         FROM "automationRules"
+        WHERE id = $1 AND "organizationId" = $2`,
+      [id, organizationId]
+    );
+    if (!existing) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+
+    const finalCountries: string[] =
+      parsed.countries ?? (Array.isArray(existing.countries) ? existing.countries : JSON.parse(existing.countries || "[]"));
+    const finalAction: string = parsed.action ?? existing.action;
+    const finalPayload: any = parsed.payload ?? (typeof existing.payload === "string" ? JSON.parse(existing.payload || "{}") : existing.payload || {});
+
+    // Validate coupon compatibility if action is send_coupon and couponId present (either new or already set)
+    if (finalAction === "send_coupon" && finalPayload?.couponId) {
+      const { rows: [coupon] } = await pool.query(
+        `SELECT id, countries FROM coupons WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,
+        [finalPayload.couponId, organizationId],
+      );
+      if (!coupon) {
+        return NextResponse.json({ error: "Coupon not found for this organization." }, { status: 400 });
+      }
+      const couponCountries: string[] = Array.isArray(coupon.countries)
+        ? coupon.countries
+        : JSON.parse(coupon.countries || "[]");
+
+      if (!couponCoversCountries(couponCountries, finalCountries)) {
+        const missing = finalCountries.filter((c: string) => !couponCountries.includes(c));
+        return NextResponse.json(
+          { error: `Coupon isn’t valid for: ${missing.join(", ")}` },
+          { status: 400 }
+        );
+      }
+    }
+
     const updates: string[] = [];
     const values: any[] = [];
     let i = 1;
@@ -91,6 +138,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         updates.push(`"${key}" = $${i++}`); values.push(value);
       }
     }
+
     if (!updates.length) {
       return NextResponse.json({ error: "No fields provided to update" }, { status: 400 });
     }
