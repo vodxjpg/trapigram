@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Search } from "lucide-react";
 
-type ProductOpt = { value: string; label: string; meta: { price?: number; isAffiliate?: boolean } };
+type ProductOpt = { value: string; label: string; meta: { price?: number } };
 type Group = GroupBase<ProductOpt>;
 
 const DEBOUNCE_MS = 400;
@@ -25,14 +25,13 @@ export default function ProductMulti({
 }) {
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
   const [shopProducts, setShopProducts] = useState<any[]>([]);
-  const [affProducts, setAffProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [term, setTerm] = useState("");
-  const [remote, setRemote] = useState<{ shop: any[]; aff: any[] }>({ shop: [], aff: [] });
+  const [remoteShop, setRemoteShop] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
 
-  // Load all categories → map {id -> name}
+  // Load categories
   useEffect(() => {
     (async () => {
       try {
@@ -42,7 +41,7 @@ export default function ProductMulti({
           const rows: Array<{ id: string; name: string }> = data.categories ?? data.items ?? [];
           setCategoryMap(Object.fromEntries(rows.map((c) => [c.id, c.name])));
         } else {
-          // fallback: best-effort pagination
+          // best-effort fallback
           let page = 1;
           const pageSize = 200;
           const acc: Array<{ id: string; name: string }> = [];
@@ -57,61 +56,42 @@ export default function ProductMulti({
             if (page >= totalPages) break;
             page += 1;
           }
-          if (acc.length) {
-            setCategoryMap(Object.fromEntries(acc.map((c) => [c.id, c.name])));
-          }
+          if (acc.length) setCategoryMap(Object.fromEntries(acc.map((c) => [c.id, c.name])));
         }
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     })();
   }, []);
 
-  // Load product catalogs (shop + affiliate)
+  // Load shop products
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const [shopRes, affRes] = await Promise.all([
-          fetch("/api/products?page=1&pageSize=1000"),
-          fetch("/api/affiliate/products?limit=1000"),
-        ]);
-        if (!shopRes.ok || !affRes.ok) throw new Error("Failed products load");
-        const shop = (await shopRes.json()).products || [];
-        const aff = (await affRes.json()).products || [];
-        setShopProducts(shop);
-        setAffProducts(aff);
-      } catch {
-        setShopProducts([]);
-        setAffProducts([]);
+        const r = await fetch("/api/products?page=1&pageSize=1000");
+        const data = r.ok ? await r.json() : { products: [] };
+        setShopProducts(data.products || []);
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
-  // Debounced remote search (augment the list)
+  // Debounced remote search (shop only)
   useEffect(() => {
     const q = term.trim();
     if (q.length < 3) {
-      setRemote({ shop: [], aff: [] });
+      setRemoteShop([]);
       setSearching(false);
       return;
     }
     const t = setTimeout(async () => {
       setSearching(true);
       try {
-        const [s, a] = await Promise.all([
-          fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=50`)
-            .then((r) => (r.ok ? r.json() : { products: [] }))
-            .then((d) => d.products || []),
-          fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=50`)
-            .then((r) => (r.ok ? r.json() : { products: [] }))
-            .then((d) => d.products || []),
-        ]);
-        setRemote({ shop: s, aff: a });
+        const r = await fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=50`);
+        const data = r.ok ? await r.json() : { products: [] };
+        setRemoteShop(data.products || []);
       } catch {
-        setRemote({ shop: [], aff: [] });
+        setRemoteShop([]);
       } finally {
         setSearching(false);
       }
@@ -119,7 +99,6 @@ export default function ProductMulti({
     return () => clearTimeout(t);
   }, [term]);
 
-  // Helpers
   const catLabel = (id?: string) => (id ? categoryMap[id] || id : "Uncategorized");
 
   const groupShop = (arr: any[]): Group[] => {
@@ -131,7 +110,7 @@ export default function ProductMulti({
       (buckets[label] ||= []).push({
         value: p.id,
         label: `${p.title} — ${price}`,
-        meta: { price, isAffiliate: false },
+        meta: { price },
       });
     }
     return Object.entries(buckets)
@@ -139,40 +118,17 @@ export default function ProductMulti({
       .map(([label, opts]) => ({ label, options: opts.sort((x, y) => x.label.localeCompare(y.label)) }));
   };
 
-  const mapAff = (arr: any[]): Group => {
-    const opts: ProductOpt[] = arr.map((a: any) => {
-      const price = Object.values(a.pointsPrice ?? {})[0] ?? 0;
-      return {
-        value: a.id,
-        label: `${a.title} — ${price} pts`,
-        meta: { price, isAffiliate: true },
-      };
-    });
-    return { label: "Affiliate", options: opts.sort((x, y) => x.label.localeCompare(y.label)) };
-  };
-
   // Base groups (local)
-  const baseGroups: Group[] = useMemo(() => {
-    const groups: Group[] = [];
-    groups.push(...groupShop(shopProducts));
-    if (affProducts?.length) groups.push(mapAff(affProducts));
-    return groups;
-  }, [shopProducts, affProducts, categoryMap]);
+  const baseGroups: Group[] = useMemo(() => groupShop(shopProducts), [shopProducts, categoryMap]);
 
   // Merge in remote (exclude already-present ids)
   const mergedGroups: Group[] = useMemo(() => {
     const present = new Set<string>(
       baseGroups.flatMap((g) => g.options.map((o) => o.value)),
     );
-
-    const extraShop = groupShop(
-      (remote.shop || []).filter((p: any) => !present.has(p.id)),
-    );
-    const extraAffArr = (remote.aff || []).filter((p: any) => !present.has(p.id));
-    const extraAff = extraAffArr.length ? [mapAff(extraAffArr)] : [];
-
-    return [...baseGroups, ...extraShop, ...extraAff];
-  }, [baseGroups, remote]);
+    const extraShop = groupShop((remoteShop || []).filter((p: any) => !present.has(p.id)));
+    return [...baseGroups, ...extraShop];
+  }, [baseGroups, remoteShop]);
 
   // Current selection objects
   const selected = useMemo(() => {
@@ -185,7 +141,7 @@ export default function ProductMulti({
     <div className="space-y-2">
       <Label>{label}</Label>
 
-      {/* Small search bar on top (client + remote debounce) */}
+      {/* Small search bar */}
       <div className="p-2 border rounded-md flex items-center gap-2">
         <Search className="h-4 w-4 text-muted-foreground" />
         <Input

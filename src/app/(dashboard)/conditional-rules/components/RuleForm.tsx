@@ -21,6 +21,9 @@ import ChannelsPicker, { Channel } from "./ChannelPicker";
 import OrgCountriesSelect from "./OrgCountriesSelect";
 import CouponSelect from "./CouponSelect";
 import ProductMulti from "./ProductMulti";
+import ConditionsBuilder, {
+  type ConditionsGroup,
+} from "./ConditionsBuilder";
 
 const channelsEnum = z.enum(["email", "telegram"]);
 
@@ -47,21 +50,30 @@ export const RuleSchema = z.object({
   channels: z.array(channelsEnum).min(1, "Pick at least one channel"),
 
   payload: z.object({
-    // couponId required when action = send_coupon (checked on submit)
-    couponId: z.string().optional().nullable(),
+    couponId: z.string().optional().nullable(), // required if action = send_coupon (validated on submit)
     templateSubject: z.string().optional(),
     templateMessage: z.string().optional(),
     url: z.string().url().optional().nullable(),
+
     productIds: z.array(z.string()).optional(),
-    collectionId: z.string().optional(),
+
     conditions: z
       .object({
         op: z.enum(["AND", "OR"]),
         items: z.array(
           z.discriminatedUnion("kind", [
-            z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
-            z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
-            z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
+            z.object({
+              kind: z.literal("contains_product"),
+              productIds: z.array(z.string()).min(1),
+            }),
+            z.object({
+              kind: z.literal("order_total_gte_eur"),
+              amount: z.coerce.number().min(0),
+            }),
+            z.object({
+              kind: z.literal("no_order_days_gte"),
+              days: z.coerce.number().int().min(1),
+            }),
           ])
         ).min(1),
       })
@@ -108,7 +120,6 @@ export default function RuleForm({
       setCouponError("Please select a coupon.");
       return;
     }
-
     if (couponError) return;
 
     const url = mode === "create" ? "/api/rules" : `/api/rules/${id}`;
@@ -126,6 +137,10 @@ export default function RuleForm({
     router.push("/conditional-rules");
     router.refresh();
   }
+
+  const currentCond =
+    ((form.watch("payload") as any)?.conditions as ConditionsGroup | undefined) ??
+    { op: "AND", items: [] };
 
   return (
     <form className="grid gap-6" onSubmit={form.handleSubmit(onSubmit)}>
@@ -191,15 +206,28 @@ export default function RuleForm({
         </div>
       </section>
 
-      {/* Countries from org list */}
+      {/* Countries & Conditions */}
       <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
         <h2 className="text-lg font-semibold">Conditions</h2>
+
+        {/* Countries (org-only, with Select All / Deselect All) */}
         <OrgCountriesSelect
           value={form.watch("countries")}
           onChange={(codes) => form.setValue("countries", codes)}
           disabled={disabled}
         />
-        {/* If you have a ConditionBuilder, render it here */}
+
+        {/* ConditionsBuilder with add/remove buttons */}
+        <ConditionsBuilder
+          value={currentCond}
+          onChange={(v) =>
+            form.setValue("payload", {
+              ...form.getValues("payload"),
+              conditions: v,
+            })
+          }
+          disabled={disabled}
+        />
       </section>
 
       {/* Action */}
@@ -299,64 +327,49 @@ export default function RuleForm({
         )}
 
         {watch.action === "product_recommendation" && (
-  <div className="grid md:grid-cols-2 gap-4">
-    <ProductMulti
-      label="Products to recommend"
-      value={((form.watch("payload") as any)?.productIds || []) as string[]}
-      onChange={(ids) =>
-        form.setValue("payload", {
-          ...form.getValues("payload"),
-          productIds: ids,
-        })
-      }
-      disabled={disabled}
-    />
+          <div className="grid md:grid-cols-2 gap-4">
+            <ProductMulti
+              label="Products to recommend"
+              value={((form.watch("payload") as any)?.productIds || []) as string[]}
+              onChange={(ids) =>
+                form.setValue("payload", {
+                  ...form.getValues("payload"),
+                  productIds: ids,
+                })
+              }
+              disabled={disabled}
+            />
 
-    <div className="space-y-2">
-      <Label htmlFor="collectionId">Collection ID (optional)</Label>
-      <Input
-        id="collectionId"
-        value={(form.watch("payload") as any)?.collectionId || ""}
-        onChange={(e) =>
-          form.setValue("payload", {
-            ...form.getValues("payload"),
-            collectionId: e.target.value,
-          })
-        }
-        disabled={disabled}
-      />
-    </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Subject</Label>
+              <Input
+                value={(form.watch("payload") as any)?.templateSubject || ""}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    templateSubject: e.target.value,
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
 
-    <div className="space-y-2 md:col-span-2">
-      <Label>Subject</Label>
-      <Input
-        value={(form.watch("payload") as any)?.templateSubject || ""}
-        onChange={(e) =>
-          form.setValue("payload", {
-            ...form.getValues("payload"),
-            templateSubject: e.target.value,
-          })
-        }
-        disabled={disabled}
-      />
-    </div>
-
-    <div className="space-y-2 md:col-span-2">
-      <Label>Message (HTML allowed)</Label>
-      <Textarea
-        rows={5}
-        value={(form.watch("payload") as any)?.templateMessage || ""}
-        onChange={(e) =>
-          form.setValue("payload", {
-            ...form.getValues("payload"),
-            templateMessage: e.target.value,
-          })
-        }
-        disabled={disabled}
-      />
-    </div>
-  </div>
-)}
+            <div className="space-y-2 md:col-span-2">
+              <Label>Message (HTML allowed)</Label>
+              <Textarea
+                rows={5}
+                value={(form.watch("payload") as any)?.templateMessage || ""}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    templateMessage: e.target.value,
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
+          </div>
+        )}
       </section>
 
       <div className="flex gap-3">

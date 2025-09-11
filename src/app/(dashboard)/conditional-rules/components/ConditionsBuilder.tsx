@@ -6,11 +6,12 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import ProductMulti from "./ProductMulti";
 
 export type ConditionItem =
   | { kind: "contains_product"; productIds: string[] }
   | { kind: "order_total_gte_eur"; amount: number }
-  | { kind: "no_order_days_gte"; days: number }; // ⬅️ new
+  | { kind: "no_order_days_gte"; days: number };
 
 export type ConditionsGroup = {
   op: "AND" | "OR";
@@ -99,22 +100,12 @@ export default function ConditionsBuilder({
             </div>
 
             {it.kind === "contains_product" && (
-              <div className="grid gap-2">
-                <Label>Product IDs (comma separated)</Label>
-                <Input
-                  placeholder="prod_123,prod_456"
-                  value={(it.productIds || []).join(",")}
-                  onChange={(e) =>
-                    updateItem(idx, {
-                      productIds: e.target.value
-                        .split(",")
-                        .map((s) => s.trim())
-                        .filter(Boolean),
-                    })
-                  }
-                  disabled={disabled}
-                />
-              </div>
+              <ProductMulti
+                label="Products"
+                value={it.productIds || []}
+                onChange={(ids) => updateItem(idx, { productIds: ids })}
+                disabled={disabled}
+              />
             )}
 
             {it.kind === "order_total_gte_eur" && (
