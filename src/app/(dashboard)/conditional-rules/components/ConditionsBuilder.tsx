@@ -9,7 +9,8 @@ import {
 
 export type ConditionItem =
   | { kind: "contains_product"; productIds: string[] }
-  | { kind: "order_total_gte_eur"; amount: number };
+  | { kind: "order_total_gte_eur"; amount: number }
+  | { kind: "no_order_days_gte"; days: number }; // ⬅️ new
 
 export type ConditionsGroup = {
   op: "AND" | "OR";
@@ -36,9 +37,9 @@ export default function ConditionsBuilder({
   const changeKind = (idx: number, kind: ConditionItem["kind"]) => {
     const next = [...value.items];
     next[idx] =
-      kind === "contains_product"
-        ? { kind, productIds: [] }
-        : { kind, amount: 0 };
+      kind === "contains_product" ? { kind, productIds: [] }
+      : kind === "order_total_gte_eur" ? { kind, amount: 0 }
+      : { kind, days: 30 };
     onChange({ ...value, items: next });
   };
 
@@ -86,6 +87,7 @@ export default function ConditionsBuilder({
                 <SelectContent>
                   <SelectItem value="contains_product">Contains product</SelectItem>
                   <SelectItem value="order_total_gte_eur">Order total ≥ EUR</SelectItem>
+                  <SelectItem value="no_order_days_gte">No order in ≥ days</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -122,8 +124,22 @@ export default function ConditionsBuilder({
                   type="number"
                   min={0}
                   step="0.01"
-                  value={Number.isFinite(it.amount as any) ? String(it.amount) : ""}
-                  onChange={(e) => updateItem(idx, { amount: Number(e.target.value || 0) })}
+                  value={Number.isFinite((it as any).amount) ? String((it as any).amount) : ""}
+                  onChange={(e) => updateItem(idx, { amount: Number(e.target.value || 0) } as any)}
+                  disabled={disabled}
+                />
+              </div>
+            )}
+
+            {it.kind === "no_order_days_gte" && (
+              <div className="grid gap-2">
+                <Label>Days threshold</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  step="1"
+                  value={Number.isFinite((it as any).days) ? String((it as any).days) : "30"}
+                  onChange={(e) => updateItem(idx, { days: Number(e.target.value || 1) } as any)}
                   disabled={disabled}
                 />
               </div>

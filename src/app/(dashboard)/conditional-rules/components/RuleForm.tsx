@@ -20,7 +20,7 @@ import ActionsBuilder, { ActionItem } from "./ActionsBuilder";
 const eventEnum = z.enum([
   "order_placed","order_pending_payment","order_paid","order_completed",
   "order_cancelled","order_refunded","order_partially_paid","order_shipped",
-  "order_message","ticket_created","ticket_replied","manual",
+  "order_message","ticket_created","ticket_replied","manual", "customer_inactive",
 ]);
 
 const BaseSchema = z.object({
@@ -200,6 +200,7 @@ export default function RuleForm({
                     <SelectValue placeholder="Select event" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="customer_inactive">Customer inactive</SelectItem>
                     <SelectItem value="order_placed">Order placed</SelectItem>
                     <SelectItem value="order_partially_paid">Order partially paid</SelectItem>
                     <SelectItem value="order_pending_payment">Order pending payment</SelectItem>

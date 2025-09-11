@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 
-export type Channel = "email" | "telegram" | "in_app" | "webhook";
+export type Channel = "email" | "telegram"; // ⬅️ only these two
 
 export default function ChannelsPicker({
   value,
@@ -18,8 +18,6 @@ export default function ChannelsPicker({
     () => [
       { key: "email" as const, label: "Email" },
       { key: "telegram" as const, label: "Telegram" },
-      { key: "in_app" as const, label: "In-app" },
-      { key: "webhook" as const, label: "Webhook" },
     ],
     [],
   );

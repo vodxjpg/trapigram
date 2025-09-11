@@ -3,12 +3,13 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
-const channelsEnum = z.enum(["email", "telegram", "in_app", "webhook"]);
+const channelsEnum = z.enum(["email", "telegram"]); // ⬅️ slimmed
 const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
 const eventEnum = z.enum([
   "order_placed","order_pending_payment","order_paid","order_completed",
   "order_cancelled","order_refunded","order_partially_paid","order_shipped",
   "order_message","ticket_created","ticket_replied","manual",
+  "customer_inactive",
 ]);
 
 const conditionsSchema = z.object({
@@ -17,6 +18,7 @@ const conditionsSchema = z.object({
     z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
       z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
+      z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
     ])
   ).min(1),
 }).partial();
@@ -26,7 +28,7 @@ const updateSchema = z.object({
   description: z.string().optional(),
   enabled: z.boolean().optional(),
   priority: z.coerce.number().int().min(0).optional(),
-  event: eventEnum.optional(),          // still a single trigger
+  event: eventEnum.optional(),
   countries: z.array(z.string()).optional(),
   action: actionEnum.optional(),
   channels: z.array(channelsEnum).optional(),

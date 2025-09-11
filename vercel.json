@@ -19,6 +19,9 @@
     {
       "path": "/api/internal/cron/notifications-drain",
       "schedule": "*/1 * * * *"
+    },
+    { "path": "/api/internal/triggers/customer-inactive?days=30&limit=1000",      
+      "schedule": "0 9 * * *"
     }
   ]
 }

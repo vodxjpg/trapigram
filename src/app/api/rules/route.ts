@@ -3,12 +3,13 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
-const channelsEnum = z.enum(["email", "telegram", "in_app", "webhook"]);
+const channelsEnum = z.enum(["email", "telegram"]); // ⬅️ only these two
 const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
 const eventEnum = z.enum([
   "order_placed","order_pending_payment","order_paid","order_completed",
   "order_cancelled","order_refunded","order_partially_paid","order_shipped",
   "order_message","ticket_created","ticket_replied","manual",
+  "customer_inactive", // ⬅️ new trigger
 ]);
 
 const conditionsSchema = z.object({
@@ -17,6 +18,7 @@ const conditionsSchema = z.object({
     z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
       z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
+      z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }), // ⬅️ new
     ])
   ).min(1),
 }).partial().refine(v => !v.items || !!v.op, { message: "Provide op when items exist", path: ["op"] });
@@ -26,9 +28,9 @@ const baseRule = z.object({
   description: z.string().optional().default(""),
   enabled: z.boolean().default(true),
   priority: z.coerce.number().int().min(0).default(100),
-  event: eventEnum,
+  event: eventEnum, // single trigger
   countries: z.array(z.string()).optional().default([]),
-  channels: z.array(channelsEnum).min(1), // per-action channels (we still fan-out)
+  channels: z.array(channelsEnum).min(1),
 });
 
 const sendCouponPayload = z.object({
@@ -71,7 +73,6 @@ export async function GET(req: NextRequest) {
           AND ($2 = '' OR name ILIKE $3 OR event ILIKE $3 OR action ILIKE $3)`,
       [organizationId, search, `%${search}%`],
     );
-
     const totalRows = Number(countRes.rows[0].count);
     const totalPages = Math.ceil(totalRows / pageSize);
 

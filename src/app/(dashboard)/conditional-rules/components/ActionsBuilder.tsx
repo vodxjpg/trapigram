@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -43,13 +42,8 @@ export default function ActionsBuilder({
   setActions: (a: ActionItem[]) => void;
   disabled?: boolean;
 }) {
-  const add = (type: ActionItem["type"]) => {
-    setActions([
-      ...actions,
-      type === "send_coupon"
-        ? { type, channels: ["email"], payload: {} }
-        : { type, channels: ["email"], payload: {} },
-    ]);
+  const add = () => {
+    setActions([...actions, { type: "send_coupon", channels: ["email"], payload: {} }]);
   };
   const remove = (idx: number) => setActions(actions.filter((_, i) => i !== idx));
 
@@ -74,7 +68,7 @@ export default function ActionsBuilder({
             <Select
               value={a.type}
               onValueChange={(v) =>
-                setAt(idx, { type: v as ActionItem["type"], payload: {}, channels: a.channels })
+                setAt(idx, { type: v as ActionItem["type"], payload: {} })
               }
               disabled={disabled}
             >
@@ -201,12 +195,7 @@ export default function ActionsBuilder({
         </div>
       ))}
 
-      <div className="flex gap-2">
-        <Button type="button" onClick={() => add("send_coupon")} disabled={disabled}>+ Add “Send coupon”</Button>
-        <Button type="button" variant="outline" onClick={() => add("product_recommendation")} disabled={disabled}>
-          + Add “Recommend product”
-        </Button>
-      </div>
+      <Button type="button" onClick={add} disabled={disabled}>+ Add action</Button>
     </div>
   );
 }
