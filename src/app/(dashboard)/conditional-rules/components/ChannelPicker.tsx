@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 
-export type Channel = "email" | "telegram"; // ⬅️ only these two
+export type Channel = "email" | "telegram";
 
 export default function ChannelsPicker({
   value,
@@ -19,7 +19,7 @@ export default function ChannelsPicker({
       { key: "email" as const, label: "Email" },
       { key: "telegram" as const, label: "Telegram" },
     ],
-    [],
+    []
   );
 
   const toggle = (k: Channel) => {

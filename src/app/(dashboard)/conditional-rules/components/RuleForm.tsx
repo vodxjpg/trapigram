@@ -11,49 +11,81 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
-import { CountriesMulti } from "./ConditionFields";
-import ConditionsBuilder, { ConditionsGroup, ConditionItem } from "./ConditionsBuilder";
-import ActionsBuilder, { ActionItem } from "./ActionsBuilder";
+import ChannelsPicker, { Channel } from "./ChannelPicker";
+import OrgCountriesSelect from "./OrgCountriesSelect";
 
-const eventEnum = z.enum([
-  "order_placed","order_pending_payment","order_paid","order_completed",
-  "order_cancelled","order_refunded","order_partially_paid","order_shipped",
-  "order_message","ticket_created","ticket_replied","manual", "customer_inactive",
-]);
+const channelsEnum = z.enum(["email", "telegram"]); // slimmed
 
-const BaseSchema = z.object({
-  name: z.string().min(1),
+export const RuleSchema = z.object({
+  name: z.string().min(1, "Name is required"),
   description: z.string().optional().nullable(),
   enabled: z.boolean().default(true),
   priority: z.coerce.number().int().min(0).default(100),
-  event: eventEnum,                    // SINGLE trigger
+
+  // trimmed triggers + customer_inactive
+  event: z.enum([
+    "order_placed",
+    "order_partially_paid",
+    "order_pending_payment",
+    "order_paid",
+    "order_completed",
+    "order_cancelled",
+    "order_refunded",
+    "customer_inactive",
+  ]),
+
+  // countries only (from org list)
   countries: z.array(z.string()).default([]),
+
+  // actions are chosen via dropdown; payload shared
+  action: z.enum(["send_coupon", "product_recommendation"]),
+  channels: z.array(channelsEnum).min(1, "Pick at least one channel"),
+  payload: z.object({
+    couponId: z.string().optional().nullable(),
+    code: z.string().optional(),
+    templateSubject: z.string().optional(),
+    templateMessage: z.string().optional(),
+    url: z.string().url().optional().nullable(),
+    productIds: z.array(z.string()).optional(),
+    collectionId: z.string().optional(),
+
+    // optional conditions (kept if you already wired ConditionBuilder)
+    conditions: z
+      .object({
+        op: z.enum(["AND", "OR"]),
+        items: z.array(
+          z.discriminatedUnion("kind", [
+            z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
+            z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
+            z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
+          ])
+        ).min(1),
+      })
+      .partial()
+      .optional(),
+  }),
 });
 
-type FormValues = z.infer<typeof BaseSchema>;
+export type RuleFormValues = z.infer<typeof RuleSchema>;
 
 export default function RuleForm({
+  defaultValues,
   mode,
   id,
-  defaultValues,
-  existingRule, // when editing an existing single rule
 }: {
+  defaultValues?: Partial<RuleFormValues>;
   mode: "create" | "edit";
   id?: string;
-  defaultValues?: Partial<FormValues>;
-  existingRule?: {
-    event: z.infer<typeof eventEnum>;
-    action: "send_coupon" | "product_recommendation";
-    channels: ("email" | "telegram" | "in_app" | "webhook")[];
-    payload: any;
-  };
 }) {
   const router = useRouter();
-
-  const form = useForm<FormValues>({
-    resolver: zodResolver(BaseSchema),
+  const form = useForm<RuleFormValues>({
+    resolver: zodResolver(RuleSchema),
     defaultValues: {
       name: "",
       description: "",
@@ -61,116 +93,36 @@ export default function RuleForm({
       priority: 100,
       event: "order_paid",
       countries: [],
+      action: "send_coupon",
+      channels: ["email"],
+      payload: {},
       ...defaultValues,
     },
   });
 
-  // Conditions (single group with AND/OR)
-  const [conds, setConds] = React.useState<ConditionsGroup>(() => {
-    const fromExisting = existingRule?.payload?.conditions;
-    return fromExisting?.items?.length
-      ? { op: fromExisting.op ?? "AND", items: fromExisting.items as ConditionItem[] }
-      : { op: "AND", items: [] };
-  });
-
-  // Actions (+/−). In edit mode we seed from the single existing rule.
-  const [actions, setActions] = React.useState<ActionItem[]>(() => {
-    if (mode === "edit" && existingRule) {
-      const a: ActionItem =
-        existingRule.action === "send_coupon"
-          ? {
-              type: "send_coupon",
-              channels: existingRule.channels as any,
-              payload: {
-                couponId: existingRule.payload?.couponId ?? "",
-                code: existingRule.payload?.code ?? "",
-                templateSubject: existingRule.payload?.templateSubject ?? "",
-                templateMessage: existingRule.payload?.templateMessage ?? "",
-                url: existingRule.payload?.url ?? "",
-              },
-            }
-          : {
-              type: "product_recommendation",
-              channels: existingRule.channels as any,
-              payload: {
-                productIds: existingRule.payload?.productIds ?? [],
-                collectionId: existingRule.payload?.collectionId ?? "",
-                templateSubject: existingRule.payload?.templateSubject ?? "",
-                templateMessage: existingRule.payload?.templateMessage ?? "",
-                url: existingRule.payload?.url ?? "",
-              },
-            };
-      return [a];
-    }
-    return [{ type: "send_coupon", channels: ["email"], payload: {} }];
-  });
-
   const disabled = form.formState.isSubmitting;
+  const watch = form.watch();
 
-  async function createRuleForAction(action: ActionItem, base: FormValues) {
-    const body = {
-      name: base.name,
-      description: base.description,
-      enabled: base.enabled,
-      priority: base.priority,
-      event: base.event,
-      countries: base.countries,
-      action: action.type,
-      channels: action.channels,
-      payload: { ...(action.payload as any), conditions: conds.items.length ? conds : undefined },
-    };
-    const res = await fetch("/api/rules", {
-      method: "POST",
+  async function onSubmit(values: RuleFormValues) {
+    const url = mode === "create" ? "/api/rules" : `/api/rules/${id}`;
+    const method = mode === "create" ? "POST" : "PATCH";
+    const res = await fetch(url, {
+      method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(values),
     });
-    if (!res.ok) throw new Error(await res.text());
-  }
-
-  async function onSubmit(values: FormValues) {
-    if (!actions.length) {
-      alert("Please add at least one action.");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      alert(body?.error || "Failed to save rule");
       return;
     }
-
-    if (mode === "edit" && id && existingRule) {
-      // Strategy: PATCH the first action into the current rule,
-      // and for any extra actions create new rules. If user removed the only action, delete.
-      if (actions.length === 0) {
-        await fetch(`/api/rules/${id}`, { method: "DELETE" });
-      } else {
-        const first = actions[0];
-        const res = await fetch(`/api/rules/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: values.name,
-            description: values.description,
-            enabled: values.enabled,
-            priority: values.priority,
-            event: values.event,
-            countries: values.countries,
-            action: first.type,
-            channels: first.channels,
-            payload: { ...(first.payload as any), conditions: conds.items.length ? conds : undefined },
-          }),
-        });
-        if (!res.ok) throw new Error(await res.text());
-        // Create any additional actions as new rules
-        const extra = actions.slice(1);
-        await Promise.all(extra.map((a) => createRuleForAction(a, values)));
-      }
-    } else {
-      // CREATE: fan-out — one DB rule per action
-      await Promise.all(actions.map((a) => createRuleForAction(a, values)));
-    }
-
     router.push("/conditional-rules");
     router.refresh();
   }
 
   return (
     <form className="grid gap-6" onSubmit={form.handleSubmit(onSubmit)}>
+      {/* Basic */}
       <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-2">
@@ -179,7 +131,13 @@ export default function RuleForm({
           </div>
           <div className="space-y-2">
             <Label htmlFor="priority">Priority</Label>
-            <Input id="priority" type="number" min={0} {...form.register("priority", { valueAsNumber: true })} disabled={disabled} />
+            <Input
+              id="priority"
+              type="number"
+              min={0}
+              {...form.register("priority", { valueAsNumber: true })}
+              disabled={disabled}
+            />
           </div>
         </div>
 
@@ -190,17 +148,16 @@ export default function RuleForm({
 
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Trigger event</Label>
+            <Label>Trigger</Label>
             <Controller
               control={form.control}
               name="event"
               render={({ field }) => (
                 <Select disabled={disabled} onValueChange={field.onChange} value={field.value}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select event" />
+                    <SelectValue placeholder="Select trigger" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="customer_inactive">Customer inactive</SelectItem>
                     <SelectItem value="order_placed">Order placed</SelectItem>
                     <SelectItem value="order_partially_paid">Order partially paid</SelectItem>
                     <SelectItem value="order_pending_payment">Order pending payment</SelectItem>
@@ -208,11 +165,7 @@ export default function RuleForm({
                     <SelectItem value="order_completed">Order completed</SelectItem>
                     <SelectItem value="order_cancelled">Order cancelled</SelectItem>
                     <SelectItem value="order_refunded">Order refunded</SelectItem>
-                    <SelectItem value="order_shipped">Order shipped</SelectItem>
-                    <SelectItem value="order_message">Order message</SelectItem>
-                    <SelectItem value="ticket_created">Ticket created</SelectItem>
-                    <SelectItem value="ticket_replied">Ticket replied</SelectItem>
-                    <SelectItem value="manual">Manual</SelectItem>
+                    <SelectItem value="customer_inactive">Customer inactive</SelectItem>
                   </SelectContent>
                 </Select>
               )}
@@ -231,25 +184,205 @@ export default function RuleForm({
         </div>
       </section>
 
+      {/* Countries from org list (with select-all/clear) */}
       <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
         <h2 className="text-lg font-semibold">Conditions</h2>
-        <CountriesMulti control={form.control} name="countries" disabled={disabled} />
-        <ConditionsBuilder value={conds} onChange={setConds} disabled={disabled} />
+        <OrgCountriesSelect
+          value={form.watch("countries")}
+          onChange={(codes) => form.setValue("countries", codes)}
+          disabled={disabled}
+        />
+        {/* If you already have a ConditionBuilder for AND/OR + items, render it here */}
+        {/* <ConditionBuilder ... /> */}
       </section>
 
+      {/* Action */}
       <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
-        <h2 className="text-lg font-semibold">Actions</h2>
-        <ActionsBuilder actions={actions} setActions={setActions} disabled={disabled} />
+        <h2 className="text-lg font-semibold">Action</h2>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Action type</Label>
+            <Controller
+              control={form.control}
+              name="action"
+              render={({ field }) => (
+                <Select disabled={disabled} onValueChange={field.onChange} value={field.value}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select action" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="send_coupon">Send coupon</SelectItem>
+                    <SelectItem value="product_recommendation">Recommend product</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Channels</Label>
+            <ChannelsPicker
+              value={form.watch("channels") as Channel[]}
+              onChange={(v) => form.setValue("channels", v)}
+              disabled={disabled}
+            />
+          </div>
+        </div>
+
+        {watch.action === "send_coupon" && (
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="couponId">Coupon ID (or leave empty and use code)</Label>
+              <Input
+                id="couponId"
+                value={(form.watch("payload") as any)?.couponId || ""}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    couponId: e.target.value,
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="code">Fallback Code</Label>
+              <Input
+                id="code"
+                placeholder="SUMMER25"
+                value={(form.watch("payload") as any)?.code || ""}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    code: e.target.value,
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="templateSubject">Subject</Label>
+              <Input
+                id="templateSubject"
+                value={(form.watch("payload") as any)?.templateSubject || ""}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    templateSubject: e.target.value,
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="templateMessage">Message (HTML allowed)</Label>
+              <Textarea
+                id="templateMessage"
+                rows={5}
+                value={(form.watch("payload") as any)?.templateMessage || ""}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    templateMessage: e.target.value,
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="url">URL (optional)</Label>
+              <Input
+                id="url"
+                value={(form.watch("payload") as any)?.url || ""}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    url: e.target.value,
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
+          </div>
+        )}
+
+        {watch.action === "product_recommendation" && (
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="productIds">Product IDs (comma-separated)</Label>
+              <Input
+                id="productIds"
+                placeholder="prod_1,prod_2"
+                value={((form.watch("payload") as any)?.productIds || []).join(",")}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    productIds: e.target.value
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="collectionId">Collection ID (optional)</Label>
+              <Input
+                id="collectionId"
+                value={(form.watch("payload") as any)?.collectionId || ""}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    collectionId: e.target.value,
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="templateSubject2">Subject</Label>
+              <Input
+                id="templateSubject2"
+                value={(form.watch("payload") as any)?.templateSubject || ""}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    templateSubject: e.target.value,
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="templateMessage2">Message (HTML allowed)</Label>
+              <Textarea
+                id="templateMessage2"
+                rows={5}
+                value={(form.watch("payload") as any)?.templateMessage || ""}
+                onChange={(e) =>
+                  form.setValue("payload", {
+                    ...form.getValues("payload"),
+                    templateMessage: e.target.value,
+                  })
+                }
+                disabled={disabled}
+              />
+            </div>
+          </div>
+        )}
       </section>
 
       <div className="flex gap-3">
         <Button type="submit" disabled={disabled}>
-          {mode === "create" ? "Create rule(s)" : "Save changes"}
+          {mode === "create" ? "Create rule" : "Save changes"}
         </Button>
         <Button
           type="button"
           variant="outline"
-          onClick={() => { history.length > 1 ? router.back() : router.push("/conditional-rules"); }}
+          onClick={() => {
+            history.length > 1 ? router.back() : router.push("/conditional-rules");
+          }}
           disabled={disabled}
         >
           Cancel
