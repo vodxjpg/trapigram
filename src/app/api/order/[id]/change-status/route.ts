@@ -584,6 +584,9 @@ const DATE_COL_FOR_STATUS: Record<string, string | undefined> = {
 const FIRST_NOTIFY_STATUSES = ["paid"] as const;
 const isActive = (s: string) => ACTIVE.includes(s);
 const isInactive = (s: string) => INACTIVE.includes(s);
+/** Treat these as "paid-like" for revenue/fees capturing */
+const isPaidLikeStatus = (s: string) =>
+  s === "paid" || s === "pending_payment" || s === "completed";
 
 
 /* util: build {product_list} for a given cart (normal  affiliate, grouped) */
@@ -1281,19 +1284,49 @@ export async function PATCH(
         })();
 
 
-        // Generate revenue for siblings when they become PAID or PENDING_PAYMENT as part of the cascade
-        if (newStatus === "paid" || newStatus === "pending_payment") {
+        // Generate revenue/fees for siblings when they become PAID-LIKE as part of the cascade
+        if (newStatus === "paid" || newStatus === "pending_payment" || newStatus === "completed") {
+
           const { rows: sibs } = await pool.query(
             `SELECT id, "organizationId"
          FROM orders
         WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
           AND id <> $2
-          AND status IN ('paid','pending_payment')`,
+         AND status IN ('paid','pending_payment','completed')`,
+
             [baseKey, id],
           );
-          await Promise.allSettled(
-            sibs.map((s) => getRevenue(s.id, s.organizationId))
-          );
+          // 1) Revenue for each sibling in paid-like state
+          await Promise.allSettled(sibs.map((s) => getRevenue(s.id, s.organizationId)));
+
+          // 2) Platform fee capture for each sibling in paid-like state
+          try {
+            const sibFeesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
+            const sibFeeHeaders: Record<string, string> = { "Content-Type": "application/json" };
+            if (process.env.INTERNAL_API_SECRET) {
+              sibFeeHeaders["x-internal-secret"] = process.env.INTERNAL_API_SECRET;
+            }
+            await Promise.allSettled(
+              sibs.map(async (s) => {
+                const r = await fetch(sibFeesUrl, {
+                  method: "POST",
+                  headers: sibFeeHeaders,
+                  body: JSON.stringify({ orderId: s.id }),
+                });
+                if (!r.ok) {
+                  const t = await r.text().catch(() => "");
+                  console.error(
+                    `[fees][cascade] sibling ${s.id} ← ${r.status} ${r.statusText}; body=${t || "<empty>"}`
+                  );
+                } else {
+                  console.log(`[fees][cascade] ok – captured fee for sibling order ${s.id}`);
+                }
+              })
+            );
+          } catch (e) {
+            console.warn("[fees][cascade] failed to capture sibling fees:", e);
+          }
+
 
         }
 
@@ -1499,11 +1532,9 @@ export async function PATCH(
       }
     }
 
-    // ─── trigger revenue/fee **only** on the first transition to PAID ───
-    if (
-      (newStatus === "paid" || newStatus === "pending_payment") &&
-      (ord.status !== "paid" && ord.status !== "pending_payment")
-    ) {
+    // ─── trigger revenue/fee **only** on the first transition to a PAID-LIKE status ───
+    // (paid | pending_payment | completed) – captures cases where orders jump directly to "completed".
+    if (isPaidLikeStatus(newStatus) && !isPaidLikeStatus(ord.status)) {
       try {
         // 1) update revenue (await to ensure it actually happens before the function exits)
         try {
