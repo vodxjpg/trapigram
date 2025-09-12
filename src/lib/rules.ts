@@ -246,11 +246,7 @@ export async function processAutomationRules(opts: {
         vars.coupon_id = String(payload.couponId);
       }
       const code = await getCouponCode(organizationId, payload.couponId);
-      if (code) {
-        replacements.coupon = escapeHtml(code);
-      } else {
-        replacements.coupon = "";
-      }
+      replacements.coupon = code ? escapeHtml(code) : "";
       if (!message) {
         message = `<p>You’ve received a coupon: {coupon}</p>`;
       }
@@ -262,14 +258,17 @@ export async function processAutomationRules(opts: {
         vars.product_ids = ids.join(",");
       }
       const titles = await getProductTitles(organizationId, ids);
-      if (titles.length) {
-        replacements.recommended_products =
-          `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`;
-      } else {
-        replacements.recommended_products = "";
-      }
+      const listHtml =
+        titles.length
+          ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`
+          : "";
+      // Preferred placeholder
+      replacements.selected_products = listHtml;
+      // Back-compat placeholder
+      replacements.recommended_products = listHtml;
+
       if (!message) {
-        message = `<p>We think you'll love these:</p>{recommended_products}`;
+        message = `<p>We think you'll love these:</p>{selected_products}`;
       }
     }
 

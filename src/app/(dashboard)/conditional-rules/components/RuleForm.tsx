@@ -482,7 +482,10 @@ export default function RuleForm({
                     modules={quillModules}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Placeholders: <code>{`{recommended_products}`}</code> (selected product titles)
+                    Placeholders: <code>{`{selected_products}`}</code> (HTML list of chosen products).<br />
+                    <span className="opacity-70">
+                      Also accepts <code>{`{recommended_products}`}</code> for backward compatibility.
+                    </span>
                   </p>
                 </div>
               </div>
