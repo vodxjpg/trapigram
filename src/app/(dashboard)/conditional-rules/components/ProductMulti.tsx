@@ -1,16 +1,13 @@
+// src/app/(dashboard)/conditional-rules/components/ProductMulti.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Select, { GroupBase } from "react-select";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Search } from "lucide-react";
 
 type ProductOpt = { value: string; label: string; meta: { price?: number } };
 type Group = GroupBase<ProductOpt>;
-
-const DEBOUNCE_MS = 400;
 
 export default function ProductMulti({
   value,
@@ -26,10 +23,6 @@ export default function ProductMulti({
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
   const [shopProducts, setShopProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const [term, setTerm] = useState("");
-  const [remoteShop, setRemoteShop] = useState<any[]>([]);
-  const [searching, setSearching] = useState(false);
 
   // Load categories
   useEffect(() => {
@@ -62,7 +55,7 @@ export default function ProductMulti({
     })();
   }, []);
 
-  // Load shop products
+  // Load shop products (no affiliate)
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -75,29 +68,6 @@ export default function ProductMulti({
       }
     })();
   }, []);
-
-  // Debounced remote search (shop only)
-  useEffect(() => {
-    const q = term.trim();
-    if (q.length < 3) {
-      setRemoteShop([]);
-      setSearching(false);
-      return;
-    }
-    const t = setTimeout(async () => {
-      setSearching(true);
-      try {
-        const r = await fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=50`);
-        const data = r.ok ? await r.json() : { products: [] };
-        setRemoteShop(data.products || []);
-      } catch {
-        setRemoteShop([]);
-      } finally {
-        setSearching(false);
-      }
-    }, DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [term]);
 
   const catLabel = (id?: string) => (id ? categoryMap[id] || id : "Uncategorized");
 
@@ -119,33 +89,23 @@ export default function ProductMulti({
   };
 
   // Base groups (local)
-  const baseGroups: Group[] = useMemo(() => groupShop(shopProducts), [shopProducts, categoryMap]);
-
-  // Merge in remote (exclude already-present ids)
-  const mergedGroups: Group[] = useMemo(() => {
-    const present = new Set<string>(
-      baseGroups.flatMap((g) => g.options.map((o) => o.value)),
-    );
-    const extraShop = groupShop((remoteShop || []).filter((p: any) => !present.has(p.id)));
-    return [...baseGroups, ...extraShop];
-  }, [baseGroups, remoteShop]);
+  const groups: Group[] = useMemo(() => groupShop(shopProducts), [shopProducts, categoryMap]);
 
   // Current selection objects
   const selected = useMemo(() => {
     const all = new Map<string, ProductOpt>();
-    for (const g of mergedGroups) for (const o of g.options) all.set(o.value, o);
+    for (const g of groups) for (const o of g.options) all.set(o.value, o);
     return value.map((id) => all.get(id)).filter(Boolean) as ProductOpt[];
-  }, [value, mergedGroups]);
+  }, [value, groups]);
 
   return (
     <div className="space-y-2">
       <Label>{label}</Label>
 
-     
       <Select<ProductOpt, true, Group>
         isMulti
         isDisabled={disabled || loading}
-        options={mergedGroups}
+        options={groups}
         value={selected}
         onChange={(opts) => onChange(opts.map((o) => o.value))}
         closeMenuOnSelect={false}
@@ -154,7 +114,7 @@ export default function ProductMulti({
       />
 
       <div className="text-xs text-muted-foreground">
-        {searching ? "Searching…" : `${selected.length} selected`}
+        {`${selected.length} selected`}
       </div>
       <Separator />
     </div>

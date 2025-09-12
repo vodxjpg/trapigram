@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -17,13 +16,12 @@ type Coupon = {
   id: string;
   name: string;
   code: string;
-  countries: string[]; // parsed on API
+  countries: string[];
 };
 
 function isCouponCompatible(couponCountries: string[], ruleCountries: string[]) {
-  if (!ruleCountries?.length) return true; // no restriction
+  if (!ruleCountries?.length) return true;
   if (!couponCountries?.length) return false;
-  // require coupon.countries ⊇ rule.countries
   return ruleCountries.every((c) => couponCountries.includes(c));
 }
 
@@ -48,7 +46,6 @@ export default function CouponSelect({
   useEffect(() => {
     let mounted = true;
     setLoading(true);
-    // load many at once (paginate high)
     fetch(`/api/coupons?page=1&pageSize=1000`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Failed to fetch coupons"))))
       .then((data) => {
@@ -70,7 +67,6 @@ export default function CouponSelect({
     };
   }, []);
 
-  // if countries change and current coupon becomes incompatible → clear & show error
   useEffect(() => {
     if (!value) return;
     const current = coupons.find((c) => c.id === value);
@@ -108,7 +104,7 @@ export default function CouponSelect({
                 ", "
               )}.`
             );
-            return; // cannot select incompatible (items are also disabled)
+            return;
           }
           setError?.(null);
           onChange(id || null);

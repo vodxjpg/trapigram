@@ -133,6 +133,41 @@ function evalConditions(
   return grp.op === "OR" ? grp.items.some(evalOne) : grp.items.every(evalOne);
 }
 
+/* ----------------------- placeholders + formatting ----------------------- */
+
+function escapeHtml(s: string) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function replacePlaceholders(html: string, map: Record<string, string>): string {
+  let out = html || "";
+  for (const [k, v] of Object.entries(map)) {
+    out = out.replace(new RegExp(`\\{${k}\\}`, "g"), v ?? "");
+  }
+  return out;
+}
+
+async function getCouponCode(organizationId: string, couponId: string | null | undefined) {
+  if (!couponId) return null;
+  const { rows } = await pool.query(
+    `SELECT code FROM coupons WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,
+    [couponId, organizationId],
+  );
+  return rows[0]?.code ?? null;
+}
+
+async function getProductTitles(organizationId: string, ids: string[]) {
+  if (!ids?.length) return [] as string[];
+  const { rows } = await pool.query(
+    `SELECT id, title FROM products WHERE "organizationId" = $1 AND id = ANY($2::uuid[])`,
+    [organizationId, ids],
+  );
+  return rows.map((r) => String(r.title || ""));
+}
+
 /* ----------------------------- main processor ---------------------------- */
 
 export async function processAutomationRules(opts: {
@@ -203,13 +238,21 @@ export async function processAutomationRules(opts: {
     let message: string = payload.templateMessage || "";
     const vars: Record<string, string> = { ...variables };
 
+    // Placeholder values
+    const replacements: Record<string, string> = {};
+
     if (raw.action === "send_coupon") {
-      // No fallback code anymore — we deliver a couponId token to templates
       if (payload.couponId && !vars.coupon_id) {
         vars.coupon_id = String(payload.couponId);
       }
+      const code = await getCouponCode(organizationId, payload.couponId);
+      if (code) {
+        replacements.coupon = escapeHtml(code);
+      } else {
+        replacements.coupon = "";
+      }
       if (!message) {
-        message = `<p>You’ve received a coupon for your next order.</p>`;
+        message = `<p>You’ve received a coupon: {coupon}</p>`;
       }
     } else if (raw.action === "product_recommendation") {
       const ids: string[] = Array.isArray(payload.productIds)
@@ -218,11 +261,20 @@ export async function processAutomationRules(opts: {
       if (ids.length && !vars.product_ids) {
         vars.product_ids = ids.join(",");
       }
+      const titles = await getProductTitles(organizationId, ids);
+      if (titles.length) {
+        replacements.recommended_products =
+          `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`;
+      } else {
+        replacements.recommended_products = "";
+      }
       if (!message) {
-        message = `<p>We think you'll love these: {product_ids}</p>`;
+        message = `<p>We think you'll love these:</p>{recommended_products}`;
       }
     }
 
+    // expand placeholders
+    message = replacePlaceholders(message, replacements);
     if (!message.trim()) message = "<p>Notification</p>";
 
     await sendNotification({
@@ -230,7 +282,7 @@ export async function processAutomationRules(opts: {
       type: raw.action === "send_coupon" ? "coupon_sent" : "product_recommendation",
       message,
       subject,
-      channels, // only "email" | "telegram"
+      channels, // "email" | "telegram"
       variables: vars,
       country,
       clientId,

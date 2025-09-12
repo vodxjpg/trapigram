@@ -34,20 +34,17 @@ const baseRule = z.object({
 });
 
 const sendCouponPayload = z.object({
-  couponId: z.string().min(1),                 // REQUIRED now
+  couponId: z.string().min(1),                 // REQUIRED
   templateSubject: z.string().optional(),
-  templateMessage: z.string().optional(),
-  url: z.string().url().optional().nullable(),
+  templateMessage: z.string().optional(),      // HTML
   conditions: conditionsSchema.optional(),
 });
 
 const productRecoPayload = z.object({
   productIds: z.array(z.string()).optional(),
-  collectionId: z.string().optional(),
   templateSubject: z.string().optional(),
-  templateMessage: z.string().optional(),
-  url: z.string().url().optional().nullable(),
-  conditions: conditionsSchema.optional(),
+  templateMessage: z.string().optional(),      // HTML
+  conditions: z.any().optional(),              // carried at top-level rule in UI; still allow if present
 });
 
 const createSchema = z.discriminatedUnion("action", [
@@ -113,6 +110,23 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const parsed = createSchema.parse(body);
+
+    // Validate condition kinds are compatible with trigger
+    const items = parsed.payload?.conditions?.items ?? [];
+    const event = parsed.event as string;
+
+    if (/^order_/.test(event) && items.some((i: any) => i.kind === "no_order_days_gte")) {
+      return NextResponse.json(
+        { error: "Condition 'no_order_days_gte' is not valid for order events." },
+        { status: 400 }
+      );
+    }
+    if (event === "customer_inactive" && items.some((i: any) => i.kind !== "no_order_days_gte")) {
+      return NextResponse.json(
+        { error: "Only 'no_order_days_gte' is allowed for 'customer_inactive'." },
+        { status: 400 }
+      );
+    }
 
     // Server-side coupon compatibility check
     if (parsed.action === "send_coupon") {

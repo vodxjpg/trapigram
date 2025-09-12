@@ -90,7 +90,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     // Load existing to compute final values for validation
     const { rows: [existing] } = await pool.query(
-      `SELECT countries, action, payload
+      `SELECT countries, action, event, payload
          FROM "automationRules"
         WHERE id = $1 AND "organizationId" = $2`,
       [id, organizationId]
@@ -100,9 +100,27 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const finalCountries: string[] =
       parsed.countries ?? (Array.isArray(existing.countries) ? existing.countries : JSON.parse(existing.countries || "[]"));
     const finalAction: string = parsed.action ?? existing.action;
-    const finalPayload: any = parsed.payload ?? (typeof existing.payload === "string" ? JSON.parse(existing.payload || "{}") : existing.payload || {});
+    const finalEvent: string = parsed.event ?? existing.event;
+    const finalPayload: any =
+      parsed.payload ??
+      (typeof existing.payload === "string" ? JSON.parse(existing.payload || "{}") : existing.payload || {});
 
-    // Validate coupon compatibility if action is send_coupon and couponId present (either new or already set)
+    // Validate condition kinds against the final event
+    const cItems = finalPayload?.conditions?.items ?? [];
+    if (/^order_/.test(finalEvent) && cItems.some((i: any) => i.kind === "no_order_days_gte")) {
+      return NextResponse.json(
+        { error: "Condition 'no_order_days_gte' is not valid for order events." },
+        { status: 400 }
+      );
+    }
+    if (finalEvent === "customer_inactive" && cItems.some((i: any) => i.kind !== "no_order_days_gte")) {
+      return NextResponse.json(
+        { error: "Only 'no_order_days_gte' is allowed for 'customer_inactive'." },
+        { status: 400 }
+      );
+    }
+
+    // Validate coupon compatibility if action is send_coupon and couponId present
     if (finalAction === "send_coupon" && finalPayload?.couponId) {
       const { rows: [coupon] } = await pool.query(
         `SELECT id, countries FROM coupons WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,

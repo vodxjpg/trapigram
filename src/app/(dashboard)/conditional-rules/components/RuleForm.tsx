@@ -75,9 +75,8 @@ const SingleActionSchema = z.object({
   payload: z.object({
     couponId: z.string().optional().nullable(), // required when type = send_coupon (validated client-side)
     templateSubject: z.string().optional(),
-    templateMessage: z.string().optional(),     // HTML from Quill
+    templateMessage: z.string().optional(), // HTML from Quill
     productIds: z.array(z.string()).optional(), // for product_recommendation
-    // url REMOVED
   }),
 });
 
@@ -109,6 +108,22 @@ export const RuleSchema = z.object({
 
 export type RuleFormValues = z.infer<typeof RuleSchema>;
 type ActionItem = z.infer<typeof SingleActionSchema>;
+
+type ConditionKind = "contains_product" | "order_total_gte_eur" | "no_order_days_gte";
+const ORDER_EVENTS = new Set([
+  "order_placed",
+  "order_partially_paid",
+  "order_pending_payment",
+  "order_paid",
+  "order_completed",
+  "order_cancelled",
+  "order_refunded",
+]);
+const allowedKindsForEvent = (ev: string): ConditionKind[] => {
+  if (ev === "customer_inactive") return ["no_order_days_gte"];
+  if (ORDER_EVENTS.has(ev as any)) return ["contains_product", "order_total_gte_eur"];
+  return ["contains_product", "order_total_gte_eur", "no_order_days_gte"];
+};
 
 export default function RuleForm({
   defaultValues,
@@ -237,8 +252,9 @@ export default function RuleForm({
 
   const conditions: ConditionsGroup =
     watch.conditions ?? ({ op: "AND", items: [] } as ConditionsGroup);
-
   const actions = watch.actions;
+  const currentEvent = watch.event;
+  const allowedKinds = allowedKindsForEvent(currentEvent);
 
   const updateAction = (idx: number, patch: Partial<ActionItem>) => {
     const next = [...actions];
@@ -344,6 +360,7 @@ export default function RuleForm({
           value={conditions}
           onChange={(v) => form.setValue("conditions", v, { shouldDirty: true })}
           disabled={disabled}
+          allowedKinds={allowedKinds}
         />
       </section>
 
@@ -427,6 +444,9 @@ export default function RuleForm({
                     }
                     modules={quillModules}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Placeholders: <code>{`{coupon}`}</code> (selected coupon code)
+                  </p>
                 </div>
               </div>
             )}
@@ -461,6 +481,9 @@ export default function RuleForm({
                     }
                     modules={quillModules}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Placeholders: <code>{`{recommended_products}`}</code> (selected product titles)
+                  </p>
                 </div>
               </div>
             )}

@@ -1,5 +1,7 @@
+// src/app/(dashboard)/conditional-rules/components/ConditionsBuilder.tsx
 "use client";
 
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,36 +20,59 @@ export type ConditionsGroup = {
   items: ConditionItem[];
 };
 
+type Kind = ConditionItem["kind"];
+
 export default function ConditionsBuilder({
   value,
   onChange,
   disabled,
+  allowedKinds = ["contains_product", "order_total_gte_eur", "no_order_days_gte"],
 }: {
   value: ConditionsGroup;
   onChange: (v: ConditionsGroup) => void;
   disabled?: boolean;
+  /** which kinds are selectable for the current trigger */
+  allowedKinds?: Kind[];
 }) {
   const setOp = (op: "AND" | "OR") => onChange({ ...value, op });
 
+  const mkDefaultOf = (k: Kind): ConditionItem =>
+    k === "contains_product"
+      ? { kind: "contains_product", productIds: [] }
+      : k === "order_total_gte_eur"
+      ? { kind: "order_total_gte_eur", amount: 0 }
+      : { kind: "no_order_days_gte", days: 30 };
+
+  // Coerce disallowed items if trigger changes
+  useEffect(() => {
+    if (!allowedKinds?.length) return;
+    const first = allowedKinds[0];
+    const next = value.items.map((it) =>
+      allowedKinds.includes(it.kind) ? it : mkDefaultOf(first)
+    );
+    if (JSON.stringify(next) !== JSON.stringify(value.items)) {
+      onChange({ ...value, items: next });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowedKinds.join(","), value.items]);
+
   const updateItem = (idx: number, patch: Partial<ConditionItem>) => {
     const next = [...value.items];
-    next[idx] = { ...next[idx], ...patch } as ConditionItem;
+    next[idx] = { ...(next[idx] as any), ...patch } as ConditionItem;
     onChange({ ...value, items: next });
   };
 
-  const changeKind = (idx: number, kind: ConditionItem["kind"]) => {
+  const changeKind = (idx: number, kind: Kind) => {
     const next = [...value.items];
-    next[idx] =
-      kind === "contains_product" ? { kind, productIds: [] }
-      : kind === "order_total_gte_eur" ? { kind, amount: 0 }
-      : { kind, days: 30 };
+    next[idx] = mkDefaultOf(kind);
     onChange({ ...value, items: next });
   };
 
   const addItem = () => {
+    if (!allowedKinds.length) return;
     onChange({
       ...value,
-      items: [...value.items, { kind: "contains_product", productIds: [] }],
+      items: [...value.items, mkDefaultOf(allowedKinds[0])],
     });
   };
 
@@ -79,16 +104,22 @@ export default function ConditionsBuilder({
               <Label className="min-w-24">Type</Label>
               <Select
                 value={it.kind}
-                onValueChange={(v) => changeKind(idx, v as ConditionItem["kind"])}
+                onValueChange={(v) => changeKind(idx, v as Kind)}
                 disabled={disabled}
               >
                 <SelectTrigger className="w-64">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="contains_product">Contains product</SelectItem>
-                  <SelectItem value="order_total_gte_eur">Order total ≥ amount</SelectItem>
-                  <SelectItem value="no_order_days_gte">No order in ≥ days</SelectItem>
+                  {allowedKinds.includes("contains_product") && (
+                    <SelectItem value="contains_product">Contains product</SelectItem>
+                  )}
+                  {allowedKinds.includes("order_total_gte_eur") && (
+                    <SelectItem value="order_total_gte_eur">Order total ≥ amount</SelectItem>
+                  )}
+                  {allowedKinds.includes("no_order_days_gte") && (
+                    <SelectItem value="no_order_days_gte">No order in ≥ days</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
 
@@ -139,9 +170,15 @@ export default function ConditionsBuilder({
         ))}
       </div>
 
-      <Button type="button" onClick={addItem} disabled={disabled}>
+      <Button type="button" onClick={addItem} disabled={disabled || !allowedKinds.length}>
         + Add condition
       </Button>
+
+      {!allowedKinds.length && (
+        <p className="text-xs text-muted-foreground">
+          No conditions are available for this trigger.
+        </p>
+      )}
     </div>
   );
 }
