@@ -2,6 +2,7 @@
 "use client";
 
 import * as React from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
@@ -13,38 +14,70 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 
 import ChannelsPicker, { Channel } from "./ChannelPicker";
 import OrgCountriesSelect from "./OrgCountriesSelect";
 import CouponSelect from "./CouponSelect";
 import ProductMulti from "./ProductMulti";
-import ConditionsBuilder, { type ConditionsGroup } from "./ConditionsBuilder";
+import ConditionsBuilder, {
+  type ConditionsGroup,
+} from "./ConditionsBuilder";
+
+// WYSIWYG like notification templates
+const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
+import "react-quill-new/dist/quill.snow.css";
+
+const quillModules = {
+  toolbar: [
+    [{ header: [1, 2, false] }],
+    ["bold", "italic", "underline"],
+    [{ list: "ordered" }, { list: "bullet" }],
+    ["clean"],
+  ],
+};
 
 const channelsEnum = z.enum(["email", "telegram"]);
 const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
 
-const ConditionsSchema = z.object({
-  op: z.enum(["AND", "OR"]),
-  items: z.array(
-    z.discriminatedUnion("kind", [
-      z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
-      z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
-      z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
-    ])
-  ).min(1),
-}).partial();
+const ConditionsSchema = z
+  .object({
+    op: z.enum(["AND", "OR"]),
+    items: z
+      .array(
+        z.discriminatedUnion("kind", [
+          z.object({
+            kind: z.literal("contains_product"),
+            productIds: z.array(z.string()).min(1),
+          }),
+          z.object({
+            kind: z.literal("order_total_gte_eur"),
+            amount: z.coerce.number().min(0),
+          }),
+          z.object({
+            kind: z.literal("no_order_days_gte"),
+            days: z.coerce.number().int().min(1),
+          }),
+        ])
+      )
+      .min(1),
+  })
+  .partial();
 
 const SingleActionSchema = z.object({
   type: actionEnum,
   channels: z.array(channelsEnum).min(1, "Pick at least one channel"),
   payload: z.object({
-    couponId: z.string().optional().nullable(),           // required when type = send_coupon
+    couponId: z.string().optional().nullable(), // required when type = send_coupon (validated client-side)
     templateSubject: z.string().optional(),
-    templateMessage: z.string().optional(),
-    url: z.string().url().optional().nullable(),
-    productIds: z.array(z.string()).optional(),           // for product_recommendation
+    templateMessage: z.string().optional(),     // HTML from Quill
+    productIds: z.array(z.string()).optional(), // for product_recommendation
+    // url REMOVED
   }),
 });
 
@@ -53,6 +86,7 @@ export const RuleSchema = z.object({
   description: z.string().optional().nullable(),
   enabled: z.boolean().default(true),
   priority: z.coerce.number().int().min(0).default(100),
+
   event: z.enum([
     "order_placed",
     "order_partially_paid",
@@ -63,12 +97,13 @@ export const RuleSchema = z.object({
     "order_refunded",
     "customer_inactive",
   ]),
+
   countries: z.array(z.string()).default([]),
 
-  // One set of conditions for the rule (applies to all actions)
+  // one conditions group per rule (applies to all actions)
   conditions: ConditionsSchema.optional(),
 
-  // 🔥 Multiple actions
+  // multiple actions per rule (fan-out to API on submit)
   actions: z.array(SingleActionSchema).min(1, "Add at least one action"),
 });
 
@@ -109,6 +144,7 @@ export default function RuleForm({
   const disabled = form.formState.isSubmitting;
   const watch = form.watch();
 
+  // require coupon for any send_coupon action
   const ensureSendCouponHasCoupon = (): string | null => {
     const acts = form.getValues("actions") || [];
     for (let i = 0; i < acts.length; i++) {
@@ -121,14 +157,13 @@ export default function RuleForm({
   };
 
   async function onSubmit(values: RuleFormValues) {
-    // quick client validation for coupon selection
     const couponErr = ensureSendCouponHasCoupon();
     if (couponErr) {
       alert(couponErr);
       return;
     }
 
-    // Helper: map our multi-action shape → backend’s single-action payload
+    // fan-out: convert each UI action into a single-action backend rule
     const toBackend = (base: RuleFormValues, action: ActionItem) => ({
       name: base.name,
       description: base.description,
@@ -140,20 +175,17 @@ export default function RuleForm({
       channels: action.channels,
       payload: {
         ...action.payload,
-        // carry rule-level conditions down to each rule’s payload
         ...(base.conditions ? { conditions: base.conditions } : {}),
       },
     });
 
     try {
       if (mode === "create") {
-        // Create one rule per action to stay compatible with current API
-        const bodies = values.actions.map((a) => toBackend(values, a));
-        for (const body of bodies) {
+        for (const a of values.actions) {
           const r = await fetch("/api/rules", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
+            body: JSON.stringify(toBackend(values, a)),
           });
           if (!r.ok) {
             const b = await r.json().catch(() => ({}));
@@ -161,36 +193,32 @@ export default function RuleForm({
           }
         }
       } else {
-        // Edit: patch this rule with the first action, create extra rules for the rest
         const [first, ...rest] = values.actions;
         if (!first) throw new Error("At least one action is required");
-
-        // PATCH current rule
+        // patch current rule with first action
         {
-          const body = toBackend(values, first);
           const r = await fetch(`/api/rules/${id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
+            body: JSON.stringify(toBackend(values, first)),
           });
           if (!r.ok) {
             const b = await r.json().catch(() => ({}));
             throw new Error(typeof b?.error === "string" ? b.error : "Failed to save rule");
           }
         }
-
-        // Create additional rules for remaining actions (suffix name)
+        // create a new rule per remaining action
         let idx = 2;
         for (const a of rest) {
-          const clone: RuleFormValues = {
-            ...values,
-            name: `${values.name} — action #${idx}`,
-            actions: [a],
-          };
           const r = await fetch("/api/rules", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(toBackend(clone, a)),
+            body: JSON.stringify(
+              toBackend(
+                { ...values, name: `${values.name} — action #${idx}` },
+                a
+              )
+            ),
           });
           if (!r.ok) {
             const b = await r.json().catch(() => ({}));
@@ -346,7 +374,7 @@ export default function RuleForm({
                 </SelectContent>
               </Select>
 
-              <div className="ml-auto flex items-center gap-2">
+              <div className="ml-auto">
                 <Button
                   type="button"
                   variant="outline"
@@ -368,7 +396,7 @@ export default function RuleForm({
               />
             </div>
 
-            {/* Fields per action type */}
+            {/* Action-specific fields */}
             {a.type === "send_coupon" && (
               <div className="grid md:grid-cols-2 gap-4">
                 <CouponSelect
@@ -382,27 +410,22 @@ export default function RuleForm({
                   <Label>Subject</Label>
                   <Input
                     value={a.payload?.templateSubject ?? ""}
-                    onChange={(e) => updateAction(idx, { payload: { ...a.payload, templateSubject: e.target.value } })}
+                    onChange={(e) =>
+                      updateAction(idx, { payload: { ...a.payload, templateSubject: e.target.value } })
+                    }
                     disabled={disabled}
                   />
                 </div>
 
                 <div className="space-y-2 md:col-span-2">
-                  <Label>Message (HTML allowed)</Label>
-                  <Textarea
-                    rows={5}
+                  <Label>Message (HTML)</Label>
+                  <ReactQuill
+                    theme="snow"
                     value={a.payload?.templateMessage ?? ""}
-                    onChange={(e) => updateAction(idx, { payload: { ...a.payload, templateMessage: e.target.value } })}
-                    disabled={disabled}
-                  />
-                </div>
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label>URL (optional)</Label>
-                  <Input
-                    value={a.payload?.url ?? ""}
-                    onChange={(e) => updateAction(idx, { payload: { ...a.payload, url: e.target.value } })}
-                    disabled={disabled}
+                    onChange={(html) =>
+                      updateAction(idx, { payload: { ...a.payload, templateMessage: html } })
+                    }
+                    modules={quillModules}
                   />
                 </div>
               </div>
@@ -421,27 +444,22 @@ export default function RuleForm({
                   <Label>Subject</Label>
                   <Input
                     value={a.payload?.templateSubject ?? ""}
-                    onChange={(e) => updateAction(idx, { payload: { ...a.payload, templateSubject: e.target.value } })}
+                    onChange={(e) =>
+                      updateAction(idx, { payload: { ...a.payload, templateSubject: e.target.value } })
+                    }
                     disabled={disabled}
                   />
                 </div>
 
                 <div className="space-y-2 md:col-span-2">
-                  <Label>Message (HTML allowed)</Label>
-                  <Textarea
-                    rows={5}
+                  <Label>Message (HTML)</Label>
+                  <ReactQuill
+                    theme="snow"
                     value={a.payload?.templateMessage ?? ""}
-                    onChange={(e) => updateAction(idx, { payload: { ...a.payload, templateMessage: e.target.value } })}
-                    disabled={disabled}
-                  />
-                </div>
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label>URL (optional)</Label>
-                  <Input
-                    value={a.payload?.url ?? ""}
-                    onChange={(e) => updateAction(idx, { payload: { ...a.payload, url: e.target.value } })}
-                    disabled={disabled}
+                    onChange={(html) =>
+                      updateAction(idx, { payload: { ...a.payload, templateMessage: html } })
+                    }
+                    modules={quillModules}
                   />
                 </div>
               </div>
