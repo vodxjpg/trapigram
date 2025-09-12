@@ -21,6 +21,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { HelpCircle } from "lucide-react";
+
 import ChannelsPicker, { Channel } from "./ChannelPicker";
 import OrgCountriesSelect from "./OrgCountriesSelect";
 import CouponSelect from "./CouponSelect";
@@ -118,6 +126,24 @@ const allowedKindsForEvent = (ev: string): ConditionKind[] => {
   return ["contains_product", "order_total_gte_eur", "no_order_days_gte"];
 };
 
+// Small helper to show a shadcn tooltip icon inline with labels
+function Hint({ text, className }: { text: string; className?: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label="Help"
+          className={`inline-flex items-center text-muted-foreground hover:text-foreground focus:outline-none ${className || ""}`}
+        >
+          <HelpCircle className="h-4 w-4" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs text-sm">{text}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export default function RuleForm({
   defaultValues,
   mode,
@@ -152,7 +178,6 @@ export default function RuleForm({
     if (!defaultValues) return;
     const dv: any = defaultValues;
 
-    // if this looks like an old rule { action, channels, payload }
     if (dv.action && !dv.actions) {
       const action: ActionItem["type"] = dv.action;
       const payload = dv.payload || {};
@@ -177,7 +202,6 @@ export default function RuleForm({
       return;
     }
 
-    // already new shape
     form.reset({ ...(dv as RuleFormValues) });
   }, [defaultValues]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -215,7 +239,7 @@ export default function RuleForm({
       event: values.event,
       countries: values.countries,
       channels: values.channels,
-      action: "multi", // <— new server-side mode
+      action: "multi", // server-side mode
       payload: {
         templateSubject: values.templateSubject,
         templateMessage: values.templateMessage,
@@ -265,212 +289,261 @@ export default function RuleForm({
   };
 
   return (
-    <form className="grid gap-6" onSubmit={form.handleSubmit(onSubmit)}>
-      {/* Basic */}
-      <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="name">Name</Label>
-            <Input id="name" {...form.register("name")} disabled={disabled} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="priority">Priority</Label>
-            <Input
-              id="priority"
-              type="number"
-              min={0}
-              {...form.register("priority", { valueAsNumber: true })}
-              disabled={disabled}
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="description">Description</Label>
-          <Textarea id="description" rows={3} {...form.register("description")} disabled={disabled} />
-        </div>
-
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Trigger</Label>
-            <Controller
-              control={form.control}
-              name="event"
-              render={({ field }) => (
-                <Select disabled={disabled} onValueChange={field.onChange} value={field.value}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select trigger" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="order_placed">Order placed</SelectItem>
-                    <SelectItem value="order_partially_paid">Order partially paid</SelectItem>
-                    <SelectItem value="order_pending_payment">Order pending payment</SelectItem>
-                    <SelectItem value="order_paid">Order paid</SelectItem>
-                    <SelectItem value="order_completed">Order completed</SelectItem>
-                    <SelectItem value="order_cancelled">Order cancelled</SelectItem>
-                    <SelectItem value="order_refunded">Order refunded</SelectItem>
-                    <SelectItem value="customer_inactive">Customer inactive</SelectItem>
-                  </SelectContent>
-                </Select>
-              )}
-            />
-          </div>
-
-          <div className="flex items-end gap-2">
-            <Switch
-              id="enabled"
-              checked={form.watch("enabled")}
-              onCheckedChange={(v) => form.setValue("enabled", v)}
-              disabled={disabled}
-            />
-            <Label htmlFor="enabled">Enabled</Label>
-          </div>
-        </div>
-      </section>
-
-      {/* Countries & Conditions */}
-      <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
-        <h2 className="text-lg font-semibold">Conditions</h2>
-
-        <OrgCountriesSelect
-          value={form.watch("countries")}
-          onChange={(codes) => form.setValue("countries", codes)}
-          disabled={disabled}
-        />
-
-        <ConditionsBuilder
-          value={watch.conditions ?? ({ op: "AND", items: [] } as ConditionsGroup)}
-          onChange={(v) => form.setValue("conditions", v, { shouldDirty: true })}
-          disabled={disabled}
-          allowedKinds={allowedKinds}
-        />
-      </section>
-
-      {/* Delivery */}
-      <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
-        <h2 className="text-lg font-semibold">Delivery</h2>
-        <div className="space-y-2">
-          <Label>Channels</Label>
-          <ChannelsPicker
-            value={form.watch("channels") as Channel[]}
-            onChange={(v) => form.setValue("channels", v)}
-            disabled={disabled}
-          />
-        </div>
-      </section>
-
-      {/* Actions (data only) */}
-      <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Actions</h2>
-        <Button type="button" onClick={addAction} disabled={disabled}>
-            + Add action
-          </Button>
-        </div>
-
-        {actions.map((a, idx) => (
-          <div key={idx} className="rounded-xl border p-4 md:p-6 grid gap-4">
-            <div className="flex items-center gap-3">
-              <Label className="min-w-24">Type</Label>
-              <Select
-                value={a.type}
-                onValueChange={(v) => updateAction(idx, { type: v as ActionItem["type"], payload: {} })}
-                disabled={disabled}
-              >
-                <SelectTrigger className="w-64">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="send_coupon">Send coupon</SelectItem>
-                  <SelectItem value="product_recommendation">Recommend product</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <div className="ml-auto">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => removeAction(idx)}
-                  disabled={disabled || actions.length <= 1}
-                >
-                  − Remove
-                </Button>
+    <TooltipProvider delayDuration={150}>
+      <form className="grid gap-6" onSubmit={form.handleSubmit(onSubmit)}>
+        {/* Basic */}
+        <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="name">Name</Label>
+                <Hint text="A short label you’ll recognize later in the rules list." />
               </div>
+              <Input id="name" {...form.register("name")} disabled={disabled} />
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="priority">Priority</Label>
+                <Hint text="Lower number runs earlier. Ties are broken by the newest rule. Priority does not stop other rules from running." />
+              </div>
+              <Input
+                id="priority"
+                type="number"
+                min={0}
+                {...form.register("priority", { valueAsNumber: true })}
+                disabled={disabled}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="description">Description</Label>
+              <Hint text="Optional note for teammates. Customers never see this." />
+            </div>
+            <Textarea id="description" rows={3} {...form.register("description")} disabled={disabled} />
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Label>Trigger</Label>
+                <Hint text="When should this rule check and run? Choose an order status or 'customer inactive'." />
+              </div>
+              <Controller
+                control={form.control}
+                name="event"
+                render={({ field }) => (
+                  <Select disabled={disabled} onValueChange={field.onChange} value={field.value}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select trigger" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="order_placed">Order placed</SelectItem>
+                      <SelectItem value="order_partially_paid">Order partially paid</SelectItem>
+                      <SelectItem value="order_pending_payment">Order pending payment</SelectItem>
+                      <SelectItem value="order_paid">Order paid</SelectItem>
+                      <SelectItem value="order_completed">Order completed</SelectItem>
+                      <SelectItem value="order_cancelled">Order cancelled</SelectItem>
+                      <SelectItem value="order_refunded">Order refunded</SelectItem>
+                      <SelectItem value="customer_inactive">Customer inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </div>
 
-            {a.type === "send_coupon" && (
-              <div className="grid gap-4">
-                <CouponSelect
-                  value={a.payload?.couponId ?? null}
-                  onChange={(id) => updateAction(idx, { payload: { ...a.payload, couponId: id } })}
-                  ruleCountries={form.watch("countries")}
-                  disabled={disabled}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Will populate <code>{`{coupon}`}</code> in the message body.
-                </p>
+            <div className="flex items-end gap-2">
+              <Switch
+                id="enabled"
+                checked={form.watch("enabled")}
+                onCheckedChange={(v) => form.setValue("enabled", v)}
+                disabled={disabled}
+              />
+              <div className="flex items-center gap-2">
+                <Label htmlFor="enabled">Enabled</Label>
+                <Hint text="Turn off to keep the rule without running it. You can re-enable anytime." />
               </div>
-            )}
-
-            {a.type === "product_recommendation" && (
-              <div className="grid gap-4">
-                <ProductMulti
-                  label="Products to recommend"
-                  value={(a.payload?.productIds ?? []) as string[]}
-                  onChange={(ids) => updateAction(idx, { payload: { ...a.payload, productIds: ids } })}
-                  disabled={disabled}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Will populate <code>{`{selected_products}`}</code> (and <code>{`{recommended_products}`}</code>) in the message body.
-                </p>
-              </div>
-            )}
+            </div>
           </div>
-        ))}
-      </section>
+        </section>
 
-      {/* Shared Message — moved to the end for clarity */}
-      <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
-        <h2 className="text-lg font-semibold">Message</h2>
+        {/* Countries & Conditions */}
+        <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">Conditions</h2>
+            <Hint text="Extra filters the order/customer must pass. e.g. order total ≥ amount, contains a product, or no orders for N days." />
+          </div>
 
-        <div className="space-y-2">
-          <Label>Subject</Label>
-          <Input
-            value={watch.templateSubject ?? ""}
-            onChange={(e) => form.setValue("templateSubject", e.target.value, { shouldDirty: true })}
+          <OrgCountriesSelect
+            value={form.watch("countries")}
+            onChange={(codes) => form.setValue("countries", codes)}
             disabled={disabled}
           />
-        </div>
 
-        <div className="space-y-2">
-          <Label>Body (HTML)</Label>
-          <ReactQuill
-            theme="snow"
-            value={watch.templateMessage ?? ""}
-            onChange={(html) => form.setValue("templateMessage", html, { shouldDirty: true })}
-            modules={quillModules}
+          <ConditionsBuilder
+            value={watch.conditions ?? ({ op: "AND", items: [] } as ConditionsGroup)}
+            onChange={(v) => form.setValue("conditions", v, { shouldDirty: true })}
+            disabled={disabled}
+            allowedKinds={allowedKinds}
           />
-          <p className="text-xs text-muted-foreground">
-            Placeholders: <code>{`{coupon}`}</code>, <code>{`{selected_products}`}</code> (or <code>{`{recommended_products}`}</code>).
-          </p>
-        </div>
-      </section>
+        </section>
 
-      <div className="flex gap-3">
-        <Button type="submit" disabled={disabled}>
-          {mode === "create" ? "Create rule" : "Save changes"}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            history.length > 1 ? router.back() : router.push("/conditional-rules");
-          }}
-          disabled={disabled}
-        >
-          Cancel
-        </Button>
-      </div>
-    </form>
+        {/* Delivery */}
+        <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">Delivery</h2>
+            <Hint text="Where to send the message. Pick one or more channels." />
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label>Channels</Label>
+              <Hint text="Email and/or Telegram. We’ll deliver the same message to each selected channel." />
+            </div>
+            <ChannelsPicker
+              value={form.watch("channels") as Channel[]}
+              onChange={(v) => form.setValue("channels", v)}
+              disabled={disabled}
+            />
+          </div>
+        </section>
+
+        {/* Actions (data only) */}
+        <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold">Actions</h2>
+              <Hint text="What to include in the message. You can combine actions (e.g., send a coupon and recommend products) and use placeholders in one body." />
+            </div>
+            <Button type="button" onClick={addAction} disabled={disabled}>
+              + Add action
+            </Button>
+          </div>
+
+          {actions.map((a, idx) => (
+            <div key={idx} className="rounded-xl border p-4 md:p-6 grid gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Label className="min-w-24">Type</Label>
+                  <Hint text="Choose the kind of content this action contributes: a coupon or a set of products." />
+                </div>
+                <Select
+                  value={a.type}
+                  onValueChange={(v) => updateAction(idx, { type: v as ActionItem["type"], payload: {} })}
+                  disabled={disabled}
+                >
+                  <SelectTrigger className="w-64">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="send_coupon">Send coupon</SelectItem>
+                    <SelectItem value="product_recommendation">Recommend product</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <div className="ml-auto">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => removeAction(idx)}
+                    disabled={disabled || actions.length <= 1}
+                  >
+                    − Remove
+                  </Button>
+                </div>
+              </div>
+
+              {a.type === "send_coupon" && (
+                <div className="grid gap-4">
+                  <div className="flex items-center gap-2">
+                    <Label>Coupon</Label>
+                    <Hint text="Pick a coupon valid for the selected countries. In the message body, use {coupon} to show its code." />
+                  </div>
+                  <CouponSelect
+                    value={a.payload?.couponId ?? null}
+                    onChange={(id) => updateAction(idx, { payload: { ...a.payload, couponId: id } })}
+                    ruleCountries={form.watch("countries")}
+                    disabled={disabled}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Will populate <code>{`{coupon}`}</code> in the message body.
+                  </p>
+                </div>
+              )}
+
+              {a.type === "product_recommendation" && (
+                <div className="grid gap-4">
+                  <div className="flex items-center gap-2">
+                    <Label>Products to recommend</Label>
+                    <Hint text="Pick one or more products. In the message body, use {selected_products} to render them as a list." />
+                  </div>
+                  <ProductMulti
+                    label="Products to recommend"
+                    value={(a.payload?.productIds ?? []) as string[]}
+                    onChange={(ids) => updateAction(idx, { payload: { ...a.payload, productIds: ids } })}
+                    disabled={disabled}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Will populate <code>{`{selected_products}`}</code> (and <code>{`{recommended_products}`}</code>) in the message body.
+                  </p>
+                </div>
+              )}
+            </div>
+          ))}
+        </section>
+
+        {/* Shared Message — at the end for clarity */}
+        <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">Message</h2>
+            <Hint text="One message for all selected actions. Use placeholders to pull in the coupon and/or products." />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label>Subject</Label>
+              <Hint text="Subject for email notifications. Telegram ignores this field." />
+            </div>
+            <Input
+              value={watch.templateSubject ?? ""}
+              onChange={(e) => form.setValue("templateSubject", e.target.value, { shouldDirty: true })}
+              disabled={disabled}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label>Body (HTML)</Label>
+              <Hint text="Write your message with formatting. Helpful placeholders: {coupon}, {selected_products}. We’ll render the products as a list." />
+            </div>
+            <ReactQuill
+              theme="snow"
+              value={watch.templateMessage ?? ""}
+              onChange={(html) => form.setValue("templateMessage", html, { shouldDirty: true })}
+              modules={quillModules}
+            />
+            <p className="text-xs text-muted-foreground">
+              Placeholders: <code>{`{coupon}`}</code>, <code>{`{selected_products}`}</code> (or <code>{`{recommended_products}`}</code>).
+            </p>
+          </div>
+        </section>
+
+        <div className="flex gap-3">
+          <Button type="submit" disabled={disabled}>
+            {mode === "create" ? "Create rule" : "Save changes"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              history.length > 1 ? router.back() : router.push("/conditional-rules");
+            }}
+            disabled={disabled}
+          >
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </TooltipProvider>
   );
 }
