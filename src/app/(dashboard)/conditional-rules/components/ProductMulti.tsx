@@ -141,17 +141,7 @@ export default function ProductMulti({
     <div className="space-y-2">
       <Label>{label}</Label>
 
-      {/* Small search bar */}
-      <div className="p-2 border rounded-md flex items-center gap-2">
-        <Search className="h-4 w-4 text-muted-foreground" />
-        <Input
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
-          placeholder="Search products (min 3 chars for remote)"
-          className="h-8"
-        />
-      </div>
-
+     
       <Select<ProductOpt, true, Group>
         isMulti
         isDisabled={disabled || loading}

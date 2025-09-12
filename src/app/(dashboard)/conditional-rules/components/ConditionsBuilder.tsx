@@ -87,7 +87,7 @@ export default function ConditionsBuilder({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="contains_product">Contains product</SelectItem>
-                  <SelectItem value="order_total_gte_eur">Order total ≥ EUR</SelectItem>
+                  <SelectItem value="order_total_gte_eur">Order total ≥ amount</SelectItem>
                   <SelectItem value="no_order_days_gte">No order in ≥ days</SelectItem>
                 </SelectContent>
               </Select>
