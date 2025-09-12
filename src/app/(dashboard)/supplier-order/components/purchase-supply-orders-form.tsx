@@ -158,7 +158,7 @@ export default function PurchaseOrderSupply({
     const [currentOrderId, setCurrentOrderId] = useState<string | null>(initialOrderId ?? null);
     const [orderStatus, setOrderStatus] = useState<OrderStatus | null>(null);
     const isLocked = orderStatus === "completed";
-    const isPending = orderStatus === "pending"
+    const isPending = orderStatus === "pending" || orderStatus === "completed"
 
     /* When editing, hydrate from API */
     useEffect(() => {
