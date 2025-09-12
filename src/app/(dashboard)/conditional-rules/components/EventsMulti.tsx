@@ -3,6 +3,8 @@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 
+
+// List of events that trigger the action
 const EVENTS = [
   "order_placed",
   "order_partially_paid",
