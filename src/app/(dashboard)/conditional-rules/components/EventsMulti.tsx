@@ -11,11 +11,6 @@ const EVENTS = [
   "order_completed",
   "order_cancelled",
   "order_refunded",
-  "order_shipped",
-  "order_message",
-  "ticket_created",
-  "ticket_replied",
-  "manual",
 ] as const;
 
 export type EventKey = (typeof EVENTS)[number];
