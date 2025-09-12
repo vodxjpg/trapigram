@@ -359,38 +359,11 @@ export default function RuleForm({
         </div>
       </section>
 
-      {/* Shared Message */}
-      <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
-        <h2 className="text-lg font-semibold">Message</h2>
-
-        <div className="space-y-2">
-          <Label>Subject</Label>
-          <Input
-            value={watch.templateSubject ?? ""}
-            onChange={(e) => form.setValue("templateSubject", e.target.value, { shouldDirty: true })}
-            disabled={disabled}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>Body (HTML)</Label>
-          <ReactQuill
-            theme="snow"
-            value={watch.templateMessage ?? ""}
-            onChange={(html) => form.setValue("templateMessage", html, { shouldDirty: true })}
-            modules={quillModules}
-          />
-          <p className="text-xs text-muted-foreground">
-            Placeholders: <code>{`{coupon}`}</code>, <code>{`{selected_products}`}</code> (or <code>{`{recommended_products}`}</code>).
-          </p>
-        </div>
-      </section>
-
       {/* Actions (data only) */}
       <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Actions</h2>
-          <Button type="button" onClick={addAction} disabled={disabled}>
+        <Button type="button" onClick={addAction} disabled={disabled}>
             + Add action
           </Button>
         </div>
@@ -454,6 +427,33 @@ export default function RuleForm({
             )}
           </div>
         ))}
+      </section>
+
+      {/* Shared Message — moved to the end for clarity */}
+      <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
+        <h2 className="text-lg font-semibold">Message</h2>
+
+        <div className="space-y-2">
+          <Label>Subject</Label>
+          <Input
+            value={watch.templateSubject ?? ""}
+            onChange={(e) => form.setValue("templateSubject", e.target.value, { shouldDirty: true })}
+            disabled={disabled}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Body (HTML)</Label>
+          <ReactQuill
+            theme="snow"
+            value={watch.templateMessage ?? ""}
+            onChange={(html) => form.setValue("templateMessage", html, { shouldDirty: true })}
+            modules={quillModules}
+          />
+          <p className="text-xs text-muted-foreground">
+            Placeholders: <code>{`{coupon}`}</code>, <code>{`{selected_products}`}</code> (or <code>{`{recommended_products}`}</code>).
+          </p>
+        </div>
       </section>
 
       <div className="flex gap-3">
