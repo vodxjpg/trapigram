@@ -10,20 +10,23 @@ type Row = {
     image: string | null;
     sku: string;
     quantity: string | number;
+    received: string | number;
     createdAt: Date;
 };
 
 function groupSumById(rows: Row[]) {
-    const byId = new Map<string, Row & { quantity: number }>();
+    const byId = new Map<string, Row & { quantity: number; received: number }>();
 
     for (const r of rows) {
-        const qty = Number(r.quantity) || 0; // quantity arrives as string → coerce
+        const qty = Number(r.quantity) || 0;
+        const rec = Number(r.received) || 0 // quantity arrives as string → coerce
         if (!byId.has(r.id)) {
             // keep the first row’s metadata; quantity as number
-            byId.set(r.id, { ...r, quantity: qty });
+            byId.set(r.id, { ...r, quantity: qty, received: rec });
         } else {
             const cur = byId.get(r.id)!;
             cur.quantity += qty;
+            cur.received += rec;
             // optional: decide which createdAt to keep (earliest, latest, etc.)
             // cur.createdAt = cur.createdAt < r.createdAt ? cur.createdAt : r.createdAt;
         }

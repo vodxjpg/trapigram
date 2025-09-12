@@ -219,7 +219,7 @@ export default function PurchaseSupplyOrdersDataTable() {
                         className="font-medium text-primary hover:underline"
                         prefetch={false}
                     >
-                        {row.original.orderKey ?? "—"}
+                        #{row.original.orderKey ?? "—"}
                     </Link>
                 ),
             },
@@ -278,6 +278,7 @@ export default function PurchaseSupplyOrdersDataTable() {
                 cell: ({ row }) => {
                     const { id, status } = row.original;
                     const canComplete = status === "draft";
+                    const isCompleted = status === "completed";
                     return (
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -291,8 +292,8 @@ export default function PurchaseSupplyOrdersDataTable() {
 
                                 {/* NEW: Edit */}
                                 <DropdownMenuItem
-                                    disabled={canComplete}
-                                    onClick={() => !canComplete && handleCompleteOrder(id)}
+                                    disabled={isCompleted}
+                                    onClick={() => !isCompleted && handleCompleteOrder(id)}
                                 >
                                     <CheckCircle2 className="mr-2 h-4 w-4" />
                                     Complete order

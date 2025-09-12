@@ -123,7 +123,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         u."supplierCartId",
         u.note,
         u.status,
-        u.draft,
         u."expectedAt",
         u."createdAt",
         u."updatedAt",
