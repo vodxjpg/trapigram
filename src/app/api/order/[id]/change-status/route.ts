@@ -1037,9 +1037,15 @@ export async function PATCH(
       };
       const orderCurrency = currencyFromCountry(ord.country);
       await processAutomationRules({
-        organizationId, event: eventMap[newStatus], country: ord.country ?? null, orderCurrency,
+        organizationId,
+        event: eventMap[newStatus],
+        country: ord.country ?? null,
+        orderCurrency,
         variables: { order_id: id, order_number: ord.orderKey, order_status: newStatus, order_currency: orderCurrency },
-        clientId: ord.clientId ?? null, userId: null, url: `/orders/${id}`
+        clientId: ord.clientId ?? null,
+        userId: null,
+        url: `/orders/${id}`,
+        orderId: id, // ← needed for "per order" rule scope de-dupe
       });
     } catch (e) { console.warn("[rules] base order hook failed", e); }
 
@@ -1216,9 +1222,15 @@ export async function PATCH(
               };
               const sbCurrency = currencyFromCountry(sb.country);
               await processAutomationRules({
-                organizationId: sb.organizationId, event: eventMap[newStatus], country: sb.country, orderCurrency: sbCurrency,
+                              organizationId: sb.organizationId,
+                event: eventMap[newStatus],
+                country: sb.country,
+                orderCurrency: sbCurrency,
                 variables: { order_id: sb.id, order_number: sb.orderKey, order_status: newStatus, order_currency: sbCurrency },
-                clientId: sb.clientId ?? null, userId: null, url: `/orders/${sb.id}`
+                clientId: sb.clientId ?? null,
+                userId: null,
+                url: `/orders/${sb.id}`,
+                orderId: sb.id, // ← needed for "per order" rule scope de-dupe (supplier sibling)
               });
             } catch (e) { console.warn("[rules] supplier sibling hook failed", sb.id, e); }
 

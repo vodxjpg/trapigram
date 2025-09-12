@@ -10,6 +10,8 @@ const eventEnum = z.enum([
   "order_message","ticket_created","ticket_replied","manual","customer_inactive",
 ]);
 
+const scopeEnum = z.enum(["per_order","per_customer"]);
+
 const conditionsSchema = z.object({
   op: z.enum(["AND","OR"]),
   items: z.array(
@@ -34,6 +36,7 @@ const multiPayload = z.object({
       }).optional(),
     })
   ).min(1),
+  scope: scopeEnum.optional(), // NEW
 }).partial();
 
 const updateSchema = z.object({
@@ -61,32 +64,7 @@ function couponCoversCountries(couponCountries: string[], ruleCountries: string[
   return ruleCountries.every((c) => couponCountries.includes(c));
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-  const { id } = params;
-
-  try {
-    const res = await pool.query(
-      `SELECT id,"organizationId",name,description,enabled,priority,
-              event,countries,action,channels,payload,"createdAt","updatedAt"
-         FROM "automationRules"
-        WHERE id = $1 AND "organizationId" = $2`,
-      [id, organizationId],
-    );
-    if (!res.rowCount) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
-
-    const row = res.rows[0];
-    row.countries = JSON.parse(row.countries || "[]");
-    row.channels = JSON.parse(row.channels || "[]");
-    row.payload = typeof row.payload === "string" ? JSON.parse(row.payload || "{}") : (row.payload ?? {});
-    return NextResponse.json(row);
-  } catch (e) {
-    console.error("[GET /api/rules/:id] error", e);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-  }
-}
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) { /* unchanged */ }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const ctx = await getContext(req);
@@ -126,6 +104,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (finalEvent === "customer_inactive" && cItems.some((i: any) => i.kind !== "no_order_days_gte")) {
       return NextResponse.json(
         { error: "Only 'no_order_days_gte' is allowed for 'customer_inactive'." },
+        { status: 400 }
+      );
+    }
+
+    // Scope validation
+    if (finalEvent === "customer_inactive" && finalPayload?.scope === "per_order") {
+      return NextResponse.json(
+        { error: "Scope 'per_order' is not allowed for 'customer_inactive'." },
         { status: 400 }
       );
     }

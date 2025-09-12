@@ -29,13 +29,15 @@ import {
 } from "@/components/ui/tooltip";
 import { HelpCircle } from "lucide-react";
 
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+
 import ChannelsPicker, { Channel } from "./ChannelPicker";
 import OrgCountriesSelect from "./OrgCountriesSelect";
 import CouponSelect from "./CouponSelect";
 import ProductMulti from "./ProductMulti";
 import ConditionsBuilder, { type ConditionsGroup } from "./ConditionsBuilder";
 
-// WYSIWYG editor (same as notification templates)
+// WYSIWYG editor
 const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
 import "react-quill-new/dist/quill.snow.css";
 
@@ -50,6 +52,7 @@ const quillModules = {
 
 const channelsEnum = z.enum(["email", "telegram"]);
 const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
+const scopeEnum = z.enum(["per_order","per_customer"]); // NEW
 
 // UI action item (no subject/body here—shared at rule level)
 const UiActionSchema = z.object({
@@ -98,7 +101,10 @@ export const RuleSchema = z.object({
 
   // shared subject/body for all actions
   templateSubject: z.string().optional(),
-  templateMessage: z.string().optional(), // HTML from Quill
+  templateMessage: z.string().optional(),
+
+  // run scope (lives in payload on the server)
+  runScope: scopeEnum.default("per_order"), // NEW
 
   // one conditions group per rule (applies to all actions)
   conditions: ConditionsSchema.optional(),
@@ -126,7 +132,7 @@ const allowedKindsForEvent = (ev: string): ConditionKind[] => {
   return ["contains_product", "order_total_gte_eur", "no_order_days_gte"];
 };
 
-// Small helper to show a shadcn tooltip icon inline with labels
+// Helper: tooltip icon
 function Hint({ text, className }: { text: string; className?: string }) {
   return (
     <Tooltip>
@@ -149,13 +155,12 @@ export default function RuleForm({
   mode,
   id,
 }: {
-  defaultValues?: Partial<RuleFormValues> | any; // accept legacy shape when editing
+  defaultValues?: Partial<RuleFormValues> | any;
   mode: "create" | "edit";
   id?: string;
 }) {
   const router = useRouter();
 
-  // sensible defaults
   const form = useForm<RuleFormValues>({
     resolver: zodResolver(RuleSchema),
     defaultValues: {
@@ -168,19 +173,25 @@ export default function RuleForm({
       channels: ["email"],
       templateSubject: "",
       templateMessage: "",
+      runScope: "per_order", // default for order events
       conditions: { op: "AND", items: [] },
       actions: [{ type: "send_coupon", payload: {} }],
     },
   });
 
-  // normalize legacy defaultValues (single-action rule) into the new multi format
+  // Normalize legacy defaults AND pick up payload.scope if present
   React.useEffect(() => {
     if (!defaultValues) return;
     const dv: any = defaultValues;
 
+    const payload = dv.payload || {};
+    const inferredScope: "per_order" | "per_customer" =
+      dv.event === "customer_inactive"
+        ? "per_customer"
+        : (payload.scope === "per_customer" ? "per_customer" : "per_order");
+
     if (dv.action && !dv.actions) {
       const action: ActionItem["type"] = dv.action;
-      const payload = dv.payload || {};
       const actions: ActionItem[] =
         action === "send_coupon"
           ? [{ type: "send_coupon", payload: { couponId: payload.couponId ?? null } }]
@@ -196,13 +207,17 @@ export default function RuleForm({
         channels: Array.isArray(dv.channels) ? (dv.channels as Channel[]) : ["email"],
         templateSubject: payload.templateSubject ?? "",
         templateMessage: payload.templateMessage ?? "",
+        runScope: inferredScope,
         conditions: payload.conditions ?? { op: "AND", items: [] },
         actions,
       } as RuleFormValues);
       return;
     }
 
-    form.reset({ ...(dv as RuleFormValues) });
+    form.reset({
+      ...(dv as RuleFormValues),
+      runScope: inferredScope,
+    });
   }, [defaultValues]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const disabled = form.formState.isSubmitting;
@@ -211,7 +226,13 @@ export default function RuleForm({
   const currentEvent = watch.event;
   const allowedKinds = allowedKindsForEvent(currentEvent);
 
-  // require coupon if a coupon action exists
+  // If user selects "customer_inactive", force per_customer in the UI.
+  React.useEffect(() => {
+    if (currentEvent === "customer_inactive" && watch.runScope !== "per_customer") {
+      form.setValue("runScope", "per_customer", { shouldDirty: true });
+    }
+  }, [currentEvent]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const ensureCouponIfUsed = (): string | null => {
     const acts = form.getValues("actions") || [];
     for (let i = 0; i < acts.length; i++) {
@@ -230,7 +251,6 @@ export default function RuleForm({
       return;
     }
 
-    // build the new server payload (single rule with multi actions & shared body)
     const serverBody = {
       name: values.name,
       description: values.description,
@@ -239,12 +259,13 @@ export default function RuleForm({
       event: values.event,
       countries: values.countries,
       channels: values.channels,
-      action: "multi", // server-side mode
+      action: "multi",
       payload: {
         templateSubject: values.templateSubject,
         templateMessage: values.templateMessage,
         conditions: values.conditions,
         actions: values.actions,
+        scope: values.runScope, // NEW → backend uses this for dedupe
       },
     };
 
@@ -365,6 +386,53 @@ export default function RuleForm({
                 <Hint text="Turn off to keep the rule without running it. You can re-enable anytime." />
               </div>
             </div>
+          </div>
+        </section>
+
+        {/* Run scope (per order / per customer) */}
+        <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">Run scope</h2>
+            <Hint text="Decide how often this rule can fire. Per order = once for each order. Per customer = only once ever for that customer." />
+          </div>
+          <div className="space-y-2">
+            <RadioGroup
+              value={watch.runScope}
+              onValueChange={(v) => form.setValue("runScope", v as "per_order" | "per_customer", { shouldDirty: true })}
+              className="grid md:grid-cols-2 gap-3"
+            >
+              <label className="flex items-start gap-3 rounded-xl border p-3">
+                <RadioGroupItem
+                  value="per_order"
+                  id="scope-order"
+                  disabled={disabled || watch.event === "customer_inactive"}
+                />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">Per order</span>
+                    <Hint text="We’ll run this rule once for each order that matches. If a customer places 3 orders, it can run 3 times (one per order)." />
+                  </div>
+                  {watch.event === "customer_inactive" && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Not available for “customer inactive” (there’s no order for that trigger).
+                    </p>
+                  )}
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 rounded-xl border p-3">
+                <RadioGroupItem value="per_customer" id="scope-customer" disabled={disabled} />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">Per customer</span>
+                    <Hint text="We’ll run this rule only once for each customer, across all time. Even if they make future orders, it won’t re-run." />
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Tip: For re-engagement cycles, consider separate rules (e.g., a different coupon at 60/120 days).
+                  </p>
+                </div>
+              </label>
+            </RadioGroup>
           </div>
         </section>
 

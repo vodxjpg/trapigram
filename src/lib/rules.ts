@@ -39,6 +39,8 @@ type ConditionsGroup = {
   >;
 };
 
+type RunScope = "per_order" | "per_customer";
+
 /* -------------------------------- helpers -------------------------------- */
 
 async function getOrderProductIds(orderId: string): Promise<string[]> {
@@ -165,6 +167,56 @@ async function getProductTitles(organizationId: string, ids: string[]) {
   return rows.map((r) => String(r.title || ""));
 }
 
+/* -------------------------- scope & dedupe locking ------------------------- */
+
+function resolveScope(event: EventType, payload: any): RunScope {
+  // UI sends payload.scope; default logic here for safety:
+  // - customer_inactive can only be per_customer
+  // - order_* default per_order
+  const uiScope = payload?.scope as RunScope | undefined;
+  if (event === "customer_inactive") return "per_customer";
+  return uiScope === "per_customer" ? "per_customer" : "per_order";
+}
+
+/**
+ * Try to acquire a one-time lock so the rule fires only once per scope.
+ * We key by a synthetic dedupeKey and rely on a UNIQUE index.
+ *
+ * - per_order:  rule:<ruleId>:order:<orderId>
+ * - per_customer: rule:<ruleId>:client:<clientId>
+ */
+async function tryAcquireRuleLock(opts: {
+  organizationId: string;
+  ruleId: string;
+  event: EventType;
+  scope: RunScope;
+  clientId: string | null;
+  orderId: string | null;
+}): Promise<boolean> {
+  const { organizationId, ruleId, event, scope, clientId, orderId } = opts;
+
+  // If scope needs an ID that's missing, we can't lock confidently → skip send.
+  if (scope === "per_order" && !orderId) return false;
+  if (scope === "per_customer" && !clientId) return false;
+
+  const dedupeKey =
+    scope === "per_order"
+      ? `rule:${ruleId}:order:${orderId}`
+      : `rule:${ruleId}:client:${clientId}`;
+
+  const { rowCount } = await pool.query(
+    `
+    INSERT INTO "automationRuleLocks"
+      ("organizationId","ruleId","event","clientId","orderId","dedupeKey","createdAt")
+    VALUES ($1,$2,$3,$4,$5,$6,NOW())
+    ON CONFLICT ("organizationId","dedupeKey") DO NOTHING
+  `,
+    [organizationId, ruleId, event, clientId, orderId, dedupeKey],
+  );
+
+  return rowCount > 0; // true → first time; false → already sent before
+}
+
 /* ----------------------------- main processor ---------------------------- */
 
 export async function processAutomationRules(opts: {
@@ -228,6 +280,22 @@ export async function processAutomationRules(opts: {
     });
     if (!match) continue;
 
+    // Determine dedupe scope and acquire a lock.
+    const scope = resolveScope(raw.event, payload);
+    const acquired = await tryAcquireRuleLock({
+      organizationId,
+      ruleId: raw.id,
+      event: raw.event,
+      scope,
+      clientId: clientId ?? null,
+      orderId: orderId ?? null,
+    });
+
+    if (!acquired) {
+      // Already ran for this scope — skip sending.
+      continue;
+    }
+
     // shared (may exist in single-action too)
     const subject: string | undefined = payload.templateSubject || undefined;
     let message: string = payload.templateMessage || "";
@@ -258,7 +326,6 @@ export async function processAutomationRules(opts: {
         if (!vars.product_ids) vars.product_ids = ids.join(",");
       }
 
-      // sensible default if empty body
       if (!message) {
         message = `<p>Here’s an update for you.</p>{selected_products}{coupon}`;
       }
@@ -283,7 +350,7 @@ export async function processAutomationRules(opts: {
 
     await sendNotification({
       organizationId,
-      type: "automation_rule", // generic; change if you prefer event-based types
+      type: "automation_rule",
       message,
       subject,
       channels,
