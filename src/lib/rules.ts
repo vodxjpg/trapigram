@@ -25,7 +25,7 @@ type RuleRow = {
   priority: number;
   event: EventType;
   countries: string; // JSON string
-  action: "send_coupon" | "product_recommendation";
+  action: "send_coupon" | "product_recommendation" | "multi";
   channels: string; // JSON string
   payload: any; // JSON or object
 };
@@ -136,10 +136,7 @@ function evalConditions(
 /* ----------------------- placeholders + formatting ----------------------- */
 
 function escapeHtml(s: string) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function replacePlaceholders(html: string, map: Record<string, string>): string {
@@ -215,9 +212,7 @@ export async function processAutomationRules(opts: {
 
   for (const raw of res.rows as RuleRow[]) {
     const countries: string[] = JSON.parse(raw.countries || "[]");
-    if (countries.length && (!country || !countries.includes(country))) {
-      continue; // country filter not matched
-    }
+    if (countries.length && (!country || !countries.includes(country))) continue;
 
     const channels: NotificationChannel[] = JSON.parse(raw.channels || "[]");
     const payload =
@@ -233,55 +228,65 @@ export async function processAutomationRules(opts: {
     });
     if (!match) continue;
 
-    // Build message & variables per action.
-    let subject: string | undefined = payload.templateSubject || undefined;
+    // shared (may exist in single-action too)
+    const subject: string | undefined = payload.templateSubject || undefined;
     let message: string = payload.templateMessage || "";
+
+    // Build placeholder map depending on rule mode
+    const replacements: Record<string, string> = {};
     const vars: Record<string, string> = { ...variables };
 
-    // Placeholder values
-    const replacements: Record<string, string> = {};
+    if (raw.action === "multi") {
+      const acts: Array<{ type: string; payload?: any }> = Array.isArray(payload.actions) ? payload.actions : [];
 
-    if (raw.action === "send_coupon") {
-      if (payload.couponId && !vars.coupon_id) {
-        vars.coupon_id = String(payload.couponId);
+      // coupon
+      const couponAct = acts.find((a) => a.type === "send_coupon");
+      if (couponAct?.payload?.couponId) {
+        const code = await getCouponCode(organizationId, couponAct.payload.couponId);
+        if (code) replacements.coupon = escapeHtml(code);
+        if (!vars.coupon_id) vars.coupon_id = String(couponAct.payload.couponId);
       }
+
+      // products
+      const prodAct = acts.find((a) => a.type === "product_recommendation");
+      const ids: string[] = Array.isArray(prodAct?.payload?.productIds) ? prodAct.payload.productIds : [];
+      if (ids.length) {
+        const titles = await getProductTitles(organizationId, ids);
+        const listHtml = titles.length ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : "";
+        replacements.selected_products = listHtml;
+        replacements.recommended_products = listHtml; // back-compat
+        if (!vars.product_ids) vars.product_ids = ids.join(",");
+      }
+
+      // sensible default if empty body
+      if (!message) {
+        message = `<p>Here’s an update for you.</p>{selected_products}{coupon}`;
+      }
+    } else if (raw.action === "send_coupon") {
       const code = await getCouponCode(organizationId, payload.couponId);
       replacements.coupon = code ? escapeHtml(code) : "";
-      if (!message) {
-        message = `<p>You’ve received a coupon: {coupon}</p>`;
-      }
+      if (payload.couponId && !vars.coupon_id) vars.coupon_id = String(payload.couponId);
+      if (!message) message = `<p>You’ve received a coupon: {coupon}</p>`;
     } else if (raw.action === "product_recommendation") {
-      const ids: string[] = Array.isArray(payload.productIds)
-        ? payload.productIds
-        : [];
-      if (ids.length && !vars.product_ids) {
-        vars.product_ids = ids.join(",");
-      }
+      const ids: string[] = Array.isArray(payload.productIds) ? payload.productIds : [];
+      if (ids.length && !vars.product_ids) vars.product_ids = ids.join(",");
       const titles = await getProductTitles(organizationId, ids);
-      const listHtml =
-        titles.length
-          ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`
-          : "";
-      // Preferred placeholder
+      const listHtml = titles.length ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : "";
       replacements.selected_products = listHtml;
-      // Back-compat placeholder
       replacements.recommended_products = listHtml;
-
-      if (!message) {
-        message = `<p>We think you'll love these:</p>{selected_products}`;
-      }
+      if (!message) message = `<p>We think you'll love these:</p>{selected_products}`;
     }
 
-    // expand placeholders
+    // apply placeholders
     message = replacePlaceholders(message, replacements);
     if (!message.trim()) message = "<p>Notification</p>";
 
     await sendNotification({
       organizationId,
-      type: raw.action === "send_coupon" ? "coupon_sent" : "product_recommendation",
+      type: "automation_rule", // generic; change if you prefer event-based types
       message,
       subject,
-      channels, // "email" | "telegram"
+      channels,
       variables: vars,
       country,
       clientId,

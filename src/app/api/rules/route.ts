@@ -4,52 +4,70 @@ import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
 const channelsEnum = z.enum(["email", "telegram"]);
-const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
 const eventEnum = z.enum([
   "order_placed","order_pending_payment","order_paid","order_completed",
   "order_cancelled","order_refunded","order_partially_paid","order_shipped",
-  "order_message","ticket_created","ticket_replied","manual",
-  "customer_inactive",
+  "order_message","ticket_created","ticket_replied","manual","customer_inactive",
 ]);
 
-const conditionsSchema = z.object({
-  op: z.enum(["AND","OR"]),
-  items: z.array(
-    z.discriminatedUnion("kind", [
-      z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
-      z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
-      z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
-    ])
+const conditionsSchema = z
+  .object({
+    op: z.enum(["AND","OR"]),
+    items: z.array(
+      z.discriminatedUnion("kind", [
+        z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
+        z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
+        z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
+      ])
+    ).min(1),
+  })
+  .partial()
+  .refine(v => !v.items || !!v.op, { message: "Provide op when items exist", path: ["op"] });
+
+/** legacy single-action payloads */
+const sendCouponPayload = z.object({
+  couponId: z.string().min(1),
+  templateSubject: z.string().optional(),
+  templateMessage: z.string().optional(),
+  conditions: conditionsSchema.optional(),
+});
+const productRecoPayload = z.object({
+  productIds: z.array(z.string()).optional(),
+  templateSubject: z.string().optional(),
+  templateMessage: z.string().optional(),
+  conditions: conditionsSchema.optional(),
+});
+
+/** new multi-action payload */
+const multiPayload = z.object({
+  templateSubject: z.string().optional(),
+  templateMessage: z.string().optional(),
+  conditions: conditionsSchema.optional(),
+  actions: z.array(
+    z.object({
+      type: z.enum(["send_coupon","product_recommendation"]),
+      payload: z.object({
+        couponId: z.string().optional(),
+        productIds: z.array(z.string()).optional(),
+      }).optional(),
+    })
   ).min(1),
-}).partial().refine(v => !v.items || !!v.op, { message: "Provide op when items exist", path: ["op"] });
+});
 
 const baseRule = z.object({
   name: z.string().min(1),
   description: z.string().optional().default(""),
   enabled: z.boolean().default(true),
   priority: z.coerce.number().int().min(0).default(100),
-  event: eventEnum, // single trigger
+  event: eventEnum,
   countries: z.array(z.string()).optional().default([]),
   channels: z.array(channelsEnum).min(1),
-});
-
-const sendCouponPayload = z.object({
-  couponId: z.string().min(1),                 // REQUIRED
-  templateSubject: z.string().optional(),
-  templateMessage: z.string().optional(),      // HTML
-  conditions: conditionsSchema.optional(),
-});
-
-const productRecoPayload = z.object({
-  productIds: z.array(z.string()).optional(),
-  templateSubject: z.string().optional(),
-  templateMessage: z.string().optional(),      // HTML
-  conditions: z.any().optional(),              // carried at top-level rule in UI; still allow if present
 });
 
 const createSchema = z.discriminatedUnion("action", [
   baseRule.extend({ action: z.literal("send_coupon"), payload: sendCouponPayload }),
   baseRule.extend({ action: z.literal("product_recommendation"), payload: productRecoPayload }),
+  baseRule.extend({ action: z.literal("multi"), payload: multiPayload }),
 ]);
 
 function couponCoversCountries(couponCountries: string[], ruleCountries: string[]) {
@@ -111,44 +129,56 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = createSchema.parse(body);
 
-    // Validate condition kinds are compatible with trigger
+    // validate condition kinds allowed by event
     const items = parsed.payload?.conditions?.items ?? [];
-    const event = parsed.event as string;
+    const ev = parsed.event as string;
 
-    if (/^order_/.test(event) && items.some((i: any) => i.kind === "no_order_days_gte")) {
+    if (/^order_/.test(ev) && items.some((i: any) => i.kind === "no_order_days_gte")) {
       return NextResponse.json(
         { error: "Condition 'no_order_days_gte' is not valid for order events." },
         { status: 400 }
       );
     }
-    if (event === "customer_inactive" && items.some((i: any) => i.kind !== "no_order_days_gte")) {
+    if (ev === "customer_inactive" && items.some((i: any) => i.kind !== "no_order_days_gte")) {
       return NextResponse.json(
         { error: "Only 'no_order_days_gte' is allowed for 'customer_inactive'." },
         { status: 400 }
       );
     }
 
-    // Server-side coupon compatibility check
-    if (parsed.action === "send_coupon") {
-      const { rows: [coupon] } = await pool.query(
-        `SELECT id, countries FROM coupons WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,
-        [parsed.payload.couponId, organizationId],
-      );
-      if (!coupon) {
-        return NextResponse.json({ error: "Coupon not found for this organization." }, { status: 400 });
-      }
-      const couponCountries: string[] = Array.isArray(coupon.countries)
-        ? coupon.countries
-        : JSON.parse(coupon.countries || "[]");
+    // coupon-country compatibility (legacy single + multi)
+    const ruleCountries = parsed.countries ?? [];
+    const couponIdsToCheck: string[] = [];
 
-      const ruleCountries = parsed.countries ?? [];
-      if (!couponCoversCountries(couponCountries, ruleCountries)) {
-        // show missing ones
-        const missing = ruleCountries.filter((c) => !couponCountries.includes(c));
-        return NextResponse.json(
-          { error: `Coupon isn’t valid for: ${missing.join(", ")}` },
-          { status: 400 }
+    if (parsed.action === "send_coupon") {
+      couponIdsToCheck.push(parsed.payload.couponId);
+    } else if (parsed.action === "multi") {
+      for (const a of parsed.payload.actions) {
+        if (a.type === "send_coupon" && a.payload?.couponId) {
+          couponIdsToCheck.push(a.payload.couponId);
+        }
+      }
+    }
+
+    if (couponIdsToCheck.length) {
+      const unique = [...new Set(couponIdsToCheck.filter(Boolean))];
+      if (unique.length) {
+        const { rows } = await pool.query(
+          `SELECT id, countries FROM coupons
+            WHERE "organizationId" = $1 AND id = ANY($2::uuid[])`,
+          [organizationId, unique],
         );
+        const map = new Map(rows.map(r => [String(r.id), Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]")]));
+        for (const cid of unique) {
+          const cc = map.get(String(cid));
+          if (!cc) {
+            return NextResponse.json({ error: "Coupon not found for this organization." }, { status: 400 });
+          }
+          if (!couponCoversCountries(cc, ruleCountries)) {
+            const missing = ruleCountries.filter((c) => !cc.includes(c));
+            return NextResponse.json({ error: `Coupon isn’t valid for: ${missing.join(", ")}` }, { status: 400 });
+          }
+        }
       }
     }
 

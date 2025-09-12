@@ -25,11 +25,9 @@ import ChannelsPicker, { Channel } from "./ChannelPicker";
 import OrgCountriesSelect from "./OrgCountriesSelect";
 import CouponSelect from "./CouponSelect";
 import ProductMulti from "./ProductMulti";
-import ConditionsBuilder, {
-  type ConditionsGroup,
-} from "./ConditionsBuilder";
+import ConditionsBuilder, { type ConditionsGroup } from "./ConditionsBuilder";
 
-// WYSIWYG like notification templates
+// WYSIWYG editor (same as notification templates)
 const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
 import "react-quill-new/dist/quill.snow.css";
 
@@ -45,40 +43,29 @@ const quillModules = {
 const channelsEnum = z.enum(["email", "telegram"]);
 const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
 
+// UI action item (no subject/body here—shared at rule level)
+const UiActionSchema = z.object({
+  type: actionEnum,
+  payload: z.object({
+    couponId: z.string().optional().nullable(),
+    productIds: z.array(z.string()).optional(),
+  }),
+});
+
 const ConditionsSchema = z
   .object({
     op: z.enum(["AND", "OR"]),
     items: z
       .array(
         z.discriminatedUnion("kind", [
-          z.object({
-            kind: z.literal("contains_product"),
-            productIds: z.array(z.string()).min(1),
-          }),
-          z.object({
-            kind: z.literal("order_total_gte_eur"),
-            amount: z.coerce.number().min(0),
-          }),
-          z.object({
-            kind: z.literal("no_order_days_gte"),
-            days: z.coerce.number().int().min(1),
-          }),
+          z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
+          z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
+          z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
         ])
       )
       .min(1),
   })
   .partial();
-
-const SingleActionSchema = z.object({
-  type: actionEnum,
-  channels: z.array(channelsEnum).min(1, "Pick at least one channel"),
-  payload: z.object({
-    couponId: z.string().optional().nullable(), // required when type = send_coupon (validated client-side)
-    templateSubject: z.string().optional(),
-    templateMessage: z.string().optional(), // HTML from Quill
-    productIds: z.array(z.string()).optional(), // for product_recommendation
-  }),
-});
 
 export const RuleSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -99,15 +86,21 @@ export const RuleSchema = z.object({
 
   countries: z.array(z.string()).default([]),
 
+  channels: z.array(channelsEnum).min(1, "Pick at least one channel"),
+
+  // shared subject/body for all actions
+  templateSubject: z.string().optional(),
+  templateMessage: z.string().optional(), // HTML from Quill
+
   // one conditions group per rule (applies to all actions)
   conditions: ConditionsSchema.optional(),
 
-  // multiple actions per rule (fan-out to API on submit)
-  actions: z.array(SingleActionSchema).min(1, "Add at least one action"),
+  // multiple actions; they only carry data (couponId/productIds)
+  actions: z.array(UiActionSchema).min(1, "Add at least one action"),
 });
 
 export type RuleFormValues = z.infer<typeof RuleSchema>;
-type ActionItem = z.infer<typeof SingleActionSchema>;
+type ActionItem = z.infer<typeof UiActionSchema>;
 
 type ConditionKind = "contains_product" | "order_total_gte_eur" | "no_order_days_gte";
 const ORDER_EVENTS = new Set([
@@ -130,11 +123,13 @@ export default function RuleForm({
   mode,
   id,
 }: {
-  defaultValues?: Partial<RuleFormValues>;
+  defaultValues?: Partial<RuleFormValues> | any; // accept legacy shape when editing
   mode: "create" | "edit";
   id?: string;
 }) {
   const router = useRouter();
+
+  // sensible defaults
   const form = useForm<RuleFormValues>({
     resolver: zodResolver(RuleSchema),
     defaultValues: {
@@ -144,23 +139,56 @@ export default function RuleForm({
       priority: 100,
       event: "order_paid",
       countries: [],
+      channels: ["email"],
+      templateSubject: "",
+      templateMessage: "",
       conditions: { op: "AND", items: [] },
-      actions: [
-        {
-          type: "send_coupon",
-          channels: ["email"],
-          payload: {},
-        },
-      ],
-      ...defaultValues,
+      actions: [{ type: "send_coupon", payload: {} }],
     },
   });
 
+  // normalize legacy defaultValues (single-action rule) into the new multi format
+  React.useEffect(() => {
+    if (!defaultValues) return;
+    const dv: any = defaultValues;
+
+    // if this looks like an old rule { action, channels, payload }
+    if (dv.action && !dv.actions) {
+      const action: ActionItem["type"] = dv.action;
+      const payload = dv.payload || {};
+      const actions: ActionItem[] =
+        action === "send_coupon"
+          ? [{ type: "send_coupon", payload: { couponId: payload.couponId ?? null } }]
+          : [{ type: "product_recommendation", payload: { productIds: payload.productIds ?? [] } }];
+
+      form.reset({
+        name: dv.name ?? "",
+        description: dv.description ?? "",
+        enabled: dv.enabled ?? true,
+        priority: dv.priority ?? 100,
+        event: dv.event ?? "order_paid",
+        countries: Array.isArray(dv.countries) ? dv.countries : [],
+        channels: Array.isArray(dv.channels) ? (dv.channels as Channel[]) : ["email"],
+        templateSubject: payload.templateSubject ?? "",
+        templateMessage: payload.templateMessage ?? "",
+        conditions: payload.conditions ?? { op: "AND", items: [] },
+        actions,
+      } as RuleFormValues);
+      return;
+    }
+
+    // already new shape
+    form.reset({ ...(dv as RuleFormValues) });
+  }, [defaultValues]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const disabled = form.formState.isSubmitting;
   const watch = form.watch();
+  const actions = watch.actions;
+  const currentEvent = watch.event;
+  const allowedKinds = allowedKindsForEvent(currentEvent);
 
-  // require coupon for any send_coupon action
-  const ensureSendCouponHasCoupon = (): string | null => {
+  // require coupon if a coupon action exists
+  const ensureCouponIfUsed = (): string | null => {
     const acts = form.getValues("actions") || [];
     for (let i = 0; i < acts.length; i++) {
       const a = acts[i];
@@ -172,89 +200,46 @@ export default function RuleForm({
   };
 
   async function onSubmit(values: RuleFormValues) {
-    const couponErr = ensureSendCouponHasCoupon();
-    if (couponErr) {
-      alert(couponErr);
+    const err = ensureCouponIfUsed();
+    if (err) {
+      alert(err);
       return;
     }
 
-    // fan-out: convert each UI action into a single-action backend rule
-    const toBackend = (base: RuleFormValues, action: ActionItem) => ({
-      name: base.name,
-      description: base.description,
-      enabled: base.enabled,
-      priority: base.priority,
-      event: base.event,
-      countries: base.countries,
-      action: action.type,
-      channels: action.channels,
+    // build the new server payload (single rule with multi actions & shared body)
+    const serverBody = {
+      name: values.name,
+      description: values.description,
+      enabled: values.enabled,
+      priority: values.priority,
+      event: values.event,
+      countries: values.countries,
+      channels: values.channels,
+      action: "multi", // <— new server-side mode
       payload: {
-        ...action.payload,
-        ...(base.conditions ? { conditions: base.conditions } : {}),
+        templateSubject: values.templateSubject,
+        templateMessage: values.templateMessage,
+        conditions: values.conditions,
+        actions: values.actions,
       },
+    };
+
+    const url = mode === "create" ? "/api/rules" : `/api/rules/${id}`;
+    const method = mode === "create" ? "POST" : "PATCH";
+
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(serverBody),
     });
-
-    try {
-      if (mode === "create") {
-        for (const a of values.actions) {
-          const r = await fetch("/api/rules", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(toBackend(values, a)),
-          });
-          if (!r.ok) {
-            const b = await r.json().catch(() => ({}));
-            throw new Error(typeof b?.error === "string" ? b.error : "Failed to create rule");
-          }
-        }
-      } else {
-        const [first, ...rest] = values.actions;
-        if (!first) throw new Error("At least one action is required");
-        // patch current rule with first action
-        {
-          const r = await fetch(`/api/rules/${id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(toBackend(values, first)),
-          });
-          if (!r.ok) {
-            const b = await r.json().catch(() => ({}));
-            throw new Error(typeof b?.error === "string" ? b.error : "Failed to save rule");
-          }
-        }
-        // create a new rule per remaining action
-        let idx = 2;
-        for (const a of rest) {
-          const r = await fetch("/api/rules", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(
-              toBackend(
-                { ...values, name: `${values.name} — action #${idx}` },
-                a
-              )
-            ),
-          });
-          if (!r.ok) {
-            const b = await r.json().catch(() => ({}));
-            throw new Error(typeof b?.error === "string" ? b.error : "Failed to create extra action");
-          }
-          idx += 1;
-        }
-      }
-
-      router.push("/conditional-rules");
-      router.refresh();
-    } catch (err: any) {
-      alert(err?.message || "Failed to save rule(s)");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      alert(typeof body?.error === "string" ? body.error : "Failed to save rule");
+      return;
     }
+    router.push("/conditional-rules");
+    router.refresh();
   }
-
-  const conditions: ConditionsGroup =
-    watch.conditions ?? ({ op: "AND", items: [] } as ConditionsGroup);
-  const actions = watch.actions;
-  const currentEvent = watch.event;
-  const allowedKinds = allowedKindsForEvent(currentEvent);
 
   const updateAction = (idx: number, patch: Partial<ActionItem>) => {
     const next = [...actions];
@@ -265,10 +250,7 @@ export default function RuleForm({
   const addAction = () => {
     form.setValue(
       "actions",
-      [
-        ...actions,
-        { type: "send_coupon", channels: ["email"], payload: {} },
-      ],
+      [...actions, { type: "send_coupon", payload: {} }],
       { shouldDirty: true }
     );
   };
@@ -357,14 +339,54 @@ export default function RuleForm({
         />
 
         <ConditionsBuilder
-          value={conditions}
+          value={watch.conditions ?? ({ op: "AND", items: [] } as ConditionsGroup)}
           onChange={(v) => form.setValue("conditions", v, { shouldDirty: true })}
           disabled={disabled}
           allowedKinds={allowedKinds}
         />
       </section>
 
-      {/* Actions (multiple) */}
+      {/* Delivery */}
+      <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
+        <h2 className="text-lg font-semibold">Delivery</h2>
+        <div className="space-y-2">
+          <Label>Channels</Label>
+          <ChannelsPicker
+            value={form.watch("channels") as Channel[]}
+            onChange={(v) => form.setValue("channels", v)}
+            disabled={disabled}
+          />
+        </div>
+      </section>
+
+      {/* Shared Message */}
+      <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
+        <h2 className="text-lg font-semibold">Message</h2>
+
+        <div className="space-y-2">
+          <Label>Subject</Label>
+          <Input
+            value={watch.templateSubject ?? ""}
+            onChange={(e) => form.setValue("templateSubject", e.target.value, { shouldDirty: true })}
+            disabled={disabled}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Body (HTML)</Label>
+          <ReactQuill
+            theme="snow"
+            value={watch.templateMessage ?? ""}
+            onChange={(html) => form.setValue("templateMessage", html, { shouldDirty: true })}
+            modules={quillModules}
+          />
+          <p className="text-xs text-muted-foreground">
+            Placeholders: <code>{`{coupon}`}</code>, <code>{`{selected_products}`}</code> (or <code>{`{recommended_products}`}</code>).
+          </p>
+        </div>
+      </section>
+
+      {/* Actions (data only) */}
       <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Actions</h2>
@@ -403,91 +425,31 @@ export default function RuleForm({
               </div>
             </div>
 
-            {/* Channels per action */}
-            <div className="space-y-2">
-              <Label>Channels</Label>
-              <ChannelsPicker
-                value={a.channels as Channel[]}
-                onChange={(v) => updateAction(idx, { channels: v as Channel[] })}
-                disabled={disabled}
-              />
-            </div>
-
-            {/* Action-specific fields */}
             {a.type === "send_coupon" && (
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid gap-4">
                 <CouponSelect
                   value={a.payload?.couponId ?? null}
                   onChange={(id) => updateAction(idx, { payload: { ...a.payload, couponId: id } })}
                   ruleCountries={form.watch("countries")}
                   disabled={disabled}
                 />
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Subject</Label>
-                  <Input
-                    value={a.payload?.templateSubject ?? ""}
-                    onChange={(e) =>
-                      updateAction(idx, { payload: { ...a.payload, templateSubject: e.target.value } })
-                    }
-                    disabled={disabled}
-                  />
-                </div>
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Message (HTML)</Label>
-                  <ReactQuill
-                    theme="snow"
-                    value={a.payload?.templateMessage ?? ""}
-                    onChange={(html) =>
-                      updateAction(idx, { payload: { ...a.payload, templateMessage: html } })
-                    }
-                    modules={quillModules}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Placeholders: <code>{`{coupon}`}</code> (selected coupon code)
-                  </p>
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  Will populate <code>{`{coupon}`}</code> in the message body.
+                </p>
               </div>
             )}
 
             {a.type === "product_recommendation" && (
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid gap-4">
                 <ProductMulti
                   label="Products to recommend"
                   value={(a.payload?.productIds ?? []) as string[]}
                   onChange={(ids) => updateAction(idx, { payload: { ...a.payload, productIds: ids } })}
                   disabled={disabled}
                 />
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Subject</Label>
-                  <Input
-                    value={a.payload?.templateSubject ?? ""}
-                    onChange={(e) =>
-                      updateAction(idx, { payload: { ...a.payload, templateSubject: e.target.value } })
-                    }
-                    disabled={disabled}
-                  />
-                </div>
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Message (HTML)</Label>
-                  <ReactQuill
-                    theme="snow"
-                    value={a.payload?.templateMessage ?? ""}
-                    onChange={(html) =>
-                      updateAction(idx, { payload: { ...a.payload, templateMessage: html } })
-                    }
-                    modules={quillModules}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Placeholders: <code>{`{selected_products}`}</code> (HTML list of chosen products).<br />
-                    <span className="opacity-70">
-                      Also accepts <code>{`{recommended_products}`}</code> for backward compatibility.
-                    </span>
-                  </p>
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  Will populate <code>{`{selected_products}`}</code> (and <code>{`{recommended_products}`}</code>) in the message body.
+                </p>
               </div>
             )}
           </div>
@@ -496,7 +458,7 @@ export default function RuleForm({
 
       <div className="flex gap-3">
         <Button type="submit" disabled={disabled}>
-          {mode === "create" ? "Create rule(s)" : "Save changes"}
+          {mode === "create" ? "Create rule" : "Save changes"}
         </Button>
         <Button
           type="button"

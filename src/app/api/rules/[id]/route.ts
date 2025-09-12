@@ -4,12 +4,10 @@ import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
 const channelsEnum = z.enum(["email", "telegram"]);
-const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
 const eventEnum = z.enum([
   "order_placed","order_pending_payment","order_paid","order_completed",
   "order_cancelled","order_refunded","order_partially_paid","order_shipped",
-  "order_message","ticket_created","ticket_replied","manual",
-  "customer_inactive",
+  "order_message","ticket_created","ticket_replied","manual","customer_inactive",
 ]);
 
 const conditionsSchema = z.object({
@@ -23,6 +21,21 @@ const conditionsSchema = z.object({
   ).min(1),
 }).partial();
 
+const multiPayload = z.object({
+  templateSubject: z.string().optional(),
+  templateMessage: z.string().optional(),
+  conditions: conditionsSchema.optional(),
+  actions: z.array(
+    z.object({
+      type: z.enum(["send_coupon","product_recommendation"]),
+      payload: z.object({
+        couponId: z.string().optional(),
+        productIds: z.array(z.string()).optional(),
+      }).optional(),
+    })
+  ).min(1),
+}).partial();
+
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
@@ -30,17 +43,14 @@ const updateSchema = z.object({
   priority: z.coerce.number().int().min(0).optional(),
   event: eventEnum.optional(),
   countries: z.array(z.string()).optional(),
-  action: actionEnum.optional(),
+  action: z.enum(["send_coupon","product_recommendation","multi"]).optional(),
   channels: z.array(channelsEnum).optional(),
   payload: z
-    .record(z.any())
+    .union([multiPayload, z.record(z.any())])
     .optional()
-    .refine((p) => !p || !("couponId" in p) || typeof p.couponId === "string", {
-      message: "payload.couponId must be a string",
-    })
     .refine((p) => {
-      if (!p || !("conditions" in p)) return true;
-      const r = conditionsSchema.safeParse(p.conditions);
+      if (!p || !("conditions" in (p as any))) return true;
+      const r = conditionsSchema.safeParse((p as any).conditions);
       return r.success;
     }, { message: "Invalid payload.conditions" }),
 });
@@ -120,25 +130,33 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       );
     }
 
-    // Validate coupon compatibility if action is send_coupon and couponId present
+    // Validate coupon compatibility for any coupon present (single or multi)
+    const couponIds: string[] = [];
     if (finalAction === "send_coupon" && finalPayload?.couponId) {
-      const { rows: [coupon] } = await pool.query(
-        `SELECT id, countries FROM coupons WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,
-        [finalPayload.couponId, organizationId],
-      );
-      if (!coupon) {
-        return NextResponse.json({ error: "Coupon not found for this organization." }, { status: 400 });
+      couponIds.push(finalPayload.couponId);
+    }
+    if (finalAction === "multi" && Array.isArray(finalPayload?.actions)) {
+      for (const a of finalPayload.actions) {
+        if (a?.type === "send_coupon" && a?.payload?.couponId) {
+          couponIds.push(a.payload.couponId);
+        }
       }
-      const couponCountries: string[] = Array.isArray(coupon.countries)
-        ? coupon.countries
-        : JSON.parse(coupon.countries || "[]");
-
-      if (!couponCoversCountries(couponCountries, finalCountries)) {
-        const missing = finalCountries.filter((c: string) => !couponCountries.includes(c));
-        return NextResponse.json(
-          { error: `Coupon isn’t valid for: ${missing.join(", ")}` },
-          { status: 400 }
-        );
+    }
+    if (couponIds.length) {
+      const unique = [...new Set(couponIds)];
+      const { rows } = await pool.query(
+        `SELECT id, countries FROM coupons
+          WHERE "organizationId" = $1 AND id = ANY($2::uuid[])`,
+        [organizationId, unique],
+      );
+      const map = new Map(rows.map(r => [String(r.id), Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]")]));
+      for (const cid of unique) {
+        const cc = map.get(String(cid));
+        if (!cc) return NextResponse.json({ error: "Coupon not found for this organization." }, { status: 400 });
+        if (!couponCoversCountries(cc, finalCountries)) {
+          const missing = finalCountries.filter((c: string) => !cc.includes(c));
+          return NextResponse.json({ error: `Coupon isn’t valid for: ${missing.join(", ")}` }, { status: 400 });
+        }
       }
     }
 
