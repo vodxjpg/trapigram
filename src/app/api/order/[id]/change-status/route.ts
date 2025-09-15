@@ -1809,13 +1809,9 @@ export async function PATCH(
       }
 
       /* ─────────────────────────────────────────────────────────────
-      *  Affiliate / referral bonuses
-      *     – ONLY once, when the order first becomes PAID
+      *  Affiliate / referral bonuses – ONLY once, when the order first becomes PAID
       * ──────────────────────────────────────────────────────────── */
-      if (
-        (newStatus === "paid" || newStatus === "pending_payment") &&
-        (ord.status !== "paid" && ord.status !== "pending_payment")
-      ) {
+      if (newStatus === "paid" && ord.status !== "paid") {
         /*  1) fetch affiliate-settings (points & steps) */
         /* ── grab settings (use real column names, alias them to old variable names) ── */
         const { rows: [affSet] } = await pool.query(
@@ -1868,7 +1864,7 @@ export async function PATCH(
           );
         }
         /*  3) spending milestones for *buyer*  (step-based)        */
-        if (stepEur > 0 && ptsPerStep > 0) {
+          if (stepEur > 0 && ptsPerStep > 0) {
           /* --------------------------------------------------------------
            * Lifetime spend in **EUR** – we rely on orderRevenue which was
            * (re)-generated a few lines above for this order.
