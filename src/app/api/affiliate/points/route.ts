@@ -21,9 +21,16 @@ const createSchema = z.object({
 });
 
 const querySchema = z.object({
-  id: z.string().optional(),
+  id: z.string().optional(), // filter by clientId
   page: z.coerce.number().min(1).default(1),
   pageSize: z.coerce.number().min(1).max(100).default(10),
+
+  // NEW filters
+  search: z.string().trim().optional(),                 // matches action/description/client names
+  action: z.string().trim().optional(),                 // exact action
+  direction: z.enum(["gains", "losses"]).optional(),    // points > 0 | < 0
+  dateFrom: z.coerce.date().optional(),                 // ISO → Date
+  dateTo: z.coerce.date().optional(),                   // ISO → Date
 });
 
 /*───────── helper – balance upsert ─────────*/
@@ -59,64 +66,117 @@ export async function GET(req: NextRequest) {
   const qp = querySchema.parse(
     Object.fromEntries(new URL(req.url).searchParams.entries()),
   );
-  const { id, page, pageSize } = qp;
 
-  // separate WHEREs: one for the count (no alias),
-  // one for the joined select (qualify with apl.)
-  const whereCount: string[] = [`"organizationId" = $1`];
-  const whereJoined: string[] = [`apl."organizationId" = $1`];
+  const {
+    id,
+    page,
+    pageSize,
+    search,
+    action,
+    direction,
+    dateFrom,
+    dateTo,
+  } = qp;
+
+  // Build WHERE with parameter indexing that stays consistent for count + select
   const vals: any[] = [organizationId];
+  const where: string[] = [`apl."organizationId" = $1`];
+
+  const push = (v: any) => {
+    vals.push(v);
+    return `$${vals.length}`;
+  };
+
   if (id) {
-    whereCount.push(`"clientId" = $2`);
-    whereJoined.push(`apl."clientId" = $2`);
-    vals.push(id);
+    const p = push(id);
+    where.push(`apl."clientId" = ${p}`);
   }
 
-  const [{ count }] = (
-    await pool.query(
-      `SELECT COUNT(*) FROM "affiliatePointLogs" WHERE ${whereCount.join(" AND ")}`,
-      vals,
-    )
-  ).rows;
-  const totalPages = Math.max(1, Math.ceil(Number(count) / pageSize));
+  if (action) {
+    const p = push(action);
+    where.push(`apl."action" = ${p}`);
+  }
 
-  const { rows } = await pool.query(
-    `
- SELECT
-   apl.id,
-   apl."clientId",
-   apl."organizationId",
-   apl.points,
-   apl.action,
-   apl.description,
-   apl."sourceClientId",
-   apl."createdAt",
-   apl."updatedAt",
-   /* human label for clientId */
-   COALESCE(
-     NULLIF(c.username, ''),
-     NULLIF(TRIM(COALESCE(c."firstName",'') || ' ' || COALESCE(c."lastName",'')), ''),
-     NULLIF(c."userId", ''),
-     apl."clientId"
-   ) AS "clientLabel",
-   /* human label for sourceClientId */
-   COALESCE(
-     NULLIF(sc.username, ''),
-     NULLIF(TRIM(COALESCE(sc."firstName",'') || ' ' || COALESCE(sc."lastName",'')), ''),
-     NULLIF(sc."userId", ''),
-     apl."sourceClientId"
-   ) AS "sourceClientLabel"
- FROM "affiliatePointLogs" apl
- LEFT JOIN clients c
-   ON c.id = apl."clientId" AND c."organizationId" = apl."organizationId"
- LEFT JOIN clients sc
-   ON sc.id = apl."sourceClientId" AND sc."organizationId" = apl."organizationId"
-WHERE ${whereJoined.join(" AND ")}
- ORDER BY apl."createdAt" DESC
- LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}
- `,
-    [...vals, pageSize, (page - 1) * pageSize],
-  );
+  if (direction === "gains") {
+    where.push(`apl.points > 0`);
+  } else if (direction === "losses") {
+    where.push(`apl.points < 0`);
+  }
+
+  if (dateFrom) {
+    const p = push(dateFrom);
+    where.push(`apl."createdAt" >= ${p}`);
+  }
+  if (dateTo) {
+    const p = push(dateTo);
+    where.push(`apl."createdAt" <= ${p}`);
+  }
+
+  if (search && search.trim()) {
+    const p = push(`%${search.trim()}%`);
+    where.push(`(
+      apl.action ILIKE ${p}
+      OR apl.description ILIKE ${p}
+      OR c.username ILIKE ${p}
+      OR c."firstName" ILIKE ${p}
+      OR c."lastName" ILIKE ${p}
+      OR sc.username ILIKE ${p}
+      OR sc."firstName" ILIKE ${p}
+      OR sc."lastName" ILIKE ${p}
+      OR apl."clientId"::text ILIKE ${p}
+      OR apl."sourceClientId"::text ILIKE ${p}
+    )`);
+  }
+
+  // COUNT with the same joins so search-by-client works in totals
+  const countSql = `
+    SELECT COUNT(*) FROM "affiliatePointLogs" apl
+    LEFT JOIN clients c
+      ON c.id = apl."clientId" AND c."organizationId" = apl."organizationId"
+    LEFT JOIN clients sc
+      ON sc.id = apl."sourceClientId" AND sc."organizationId" = apl."organizationId"
+    WHERE ${where.join(" AND ")}
+  `;
+  const countRes = await pool.query(countSql, vals);
+  const total = Number(countRes.rows?.[0]?.count ?? 0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  // SELECT page
+  const selectSql = `
+    SELECT
+      apl.id,
+      apl."clientId",
+      apl."organizationId",
+      apl.points,
+      apl.action,
+      apl.description,
+      apl."sourceClientId",
+      apl."createdAt",
+      apl."updatedAt",
+      /* human label for clientId */
+      COALESCE(
+        NULLIF(c.username, ''),
+        NULLIF(TRIM(COALESCE(c."firstName",'') || ' ' || COALESCE(c."lastName",'')), ''),
+        NULLIF(c."userId", ''),
+        apl."clientId"
+      ) AS "clientLabel",
+      /* human label for sourceClientId */
+      COALESCE(
+        NULLIF(sc.username, ''),
+        NULLIF(TRIM(COALESCE(sc."firstName",'') || ' ' || COALESCE(sc."lastName",'')), ''),
+        NULLIF(sc."userId", ''),
+        apl."sourceClientId"
+      ) AS "sourceClientLabel"
+    FROM "affiliatePointLogs" apl
+    LEFT JOIN clients c
+      ON c.id = apl."clientId" AND c."organizationId" = apl."organizationId"
+    LEFT JOIN clients sc
+      ON sc.id = apl."sourceClientId" AND sc."organizationId" = apl."organizationId"
+    WHERE ${where.join(" AND ")}
+    ORDER BY apl."createdAt" DESC
+    LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}
+  `;
+  const { rows } = await pool.query(selectSql, [...vals, pageSize, (page - 1) * pageSize]);
 
   return NextResponse.json({ logs: rows, totalPages, currentPage: page });
 }

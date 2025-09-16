@@ -19,7 +19,8 @@ import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { RefreshCcw, Zap, ShieldAlert, ShieldOff } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { RefreshCcw, Zap, ShieldAlert, ShieldOff, ChevronLeft, ChevronRight, Clock } from "lucide-react";
 
 countriesLib.registerLocale(enLocale);
 
@@ -43,13 +44,13 @@ type OrderRow = {
   id: string;
   orderKey: string;
   status:
-    | "open"
-    | "underpaid"
-    | "pending_payment"
-    | "paid"
-    | "cancelled"
-    | "refunded"
-    | "completed";
+  | "open"
+  | "underpaid"
+  | "pending_payment"
+  | "paid"
+  | "cancelled"
+  | "refunded"
+  | "completed";
   createdAt: string;
   total: number;
   trackingNumber?: string | null;
@@ -60,6 +61,185 @@ type SecretMeta = {
   hasPhrase: boolean;
   updatedAt: string | null; // ISO string or null
 };
+
+/* ==================== Affiliate Logs (client-scoped, 10 rows/page) ==================== */
+type Log = {
+  id: string;
+  organizationId: string;
+  clientId: string;
+  points: number;
+  action: string;
+  description: string | null;
+  sourceClientId: string | null;
+  createdAt: string;
+  clientLabel?: string;
+  sourceClientLabel?: string;
+};
+
+function ClientAffiliateLogs({ clientId }: { clientId: string }) {
+  const [logs, setLogs] = useState<Log[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(1);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+
+  const fallbackId = (id: string | null | undefined) =>
+    id ? id.slice(0, 8) + "…" : "-";
+
+  const loadLogs = async () => {
+    setLoading(true);
+    try {
+      const url = new URL(`/api/affiliate/points`, window.location.origin);
+      url.searchParams.set("page", String(page));
+      url.searchParams.set("pageSize", String(pageSize));
+      url.searchParams.set("clientId", clientId); // server-side filter
+
+      const r = await fetch(url.toString(), {
+        headers: {
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
+        },
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "Fetch failed");
+      const { logs, totalPages, currentPage } = await r.json();
+
+      // Safety: ensure only this client's logs render
+      const scoped = (Array.isArray(logs) ? logs : []).filter(
+        (l: Log) => l.clientId === clientId
+      );
+
+      setLogs(scoped);
+      setTotalPages(totalPages ?? 1);
+      setPage(currentPage ?? page);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to load affiliate logs");
+      setLogs([]);
+      setTotalPages(1);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setPage(1); // reset if client changes
+  }, [clientId]);
+
+  useEffect(() => {
+    void loadLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, clientId]);
+
+  return (
+    <Card className="p-4">
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>ID</TableHead>
+              <TableHead>Date</TableHead>
+              <TableHead>Δ Points</TableHead>
+              <TableHead>Action</TableHead>
+              <TableHead>Description</TableHead>
+              <TableHead>Source Client</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center">
+                  Loading logs…
+                </TableCell>
+              </TableRow>
+            ) : logs.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center">
+                  No logs
+                </TableCell>
+              </TableRow>
+            ) : (
+              logs.map((l) => (
+                <TableRow key={l.id}>
+                  <TableCell className="font-mono text-xs">
+                    {l.id.slice(0, 8)}…
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <Clock className="h-4 w-4 opacity-70" />
+                      {new Date(l.createdAt).toLocaleString()}
+                    </div>
+                  </TableCell>
+                  <TableCell className={l.points >= 0 ? "text-green-600" : "text-red-600"}>
+                    {l.points > 0 ? "+" : ""}
+                    {l.points}
+                  </TableCell>
+                  <TableCell>{l.action}</TableCell>
+                  <TableCell>{l.description ?? "-"}</TableCell>
+                  <TableCell>
+                    {l.sourceClientId ? (
+                      <Link href={`/clients/${l.sourceClientId}/info`}>
+                        {l.sourceClientLabel || fallbackId(l.sourceClientId)}
+                      </Link>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* pagination */}
+      <div className="flex items-center justify-between mt-4">
+        <span className="text-sm text-muted-foreground">
+          Page {page} of {totalPages}
+        </span>
+        <div className="flex items-center space-x-2">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setPage(1)}
+            disabled={page === 1 || loading}
+            aria-label="First page"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4 -ml-2" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1 || loading}
+            aria-label="Previous page"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages || loading}
+            aria-label="Next page"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setPage(totalPages)}
+            disabled={page === totalPages || loading}
+            aria-label="Last page"
+          >
+            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="h-4 w-4 -ml-2" />
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* ==================== end: Affiliate Logs ==================== */
 
 export default function ClientDetailView({ clientId }: Props) {
   const router = useRouter();
@@ -99,15 +279,15 @@ export default function ClientDetailView({ clientId }: Props) {
   const fmtMoney = (n: number) => `$${(n ?? 0).toFixed(2)}`;
 
   const statusCls = (s: OrderRow["status"]) =>
-    ({
-      open: "bg-blue-100 text-blue-800",
-      paid: "bg-green-100 text-green-800",
-      underpaid: "bg-orange-100 text-orange-800",
-      pending_payment: "bg-yellow-500",
-      cancelled: "bg-red-100 text-red-800",
-      refunded: "bg-red-100 text-red-800",
-      completed: "bg-purple-100 text-purple-800",
-    }[s] ?? "bg-gray-100 text-gray-800");
+  ({
+    open: "bg-blue-100 text-blue-800",
+    paid: "bg-green-100 text-green-800",
+    underpaid: "bg-orange-100 text-orange-800",
+    pending_payment: "bg-yellow-500",
+    cancelled: "bg-red-100 text-red-800",
+    refunded: "bg-red-100 text-red-800",
+    completed: "bg-purple-100 text-purple-800",
+  }[s] ?? "bg-gray-100 text-gray-800");
 
   // Load client & recent orders
   useEffect(() => {
@@ -118,7 +298,6 @@ export default function ClientDetailView({ clientId }: Props) {
         const [clientRes, ordersRes] = await Promise.all([
           fetch(`/api/clients/${clientId}`, {
             headers: {
-              // note: if you truly need this header client-side, ensure it's public-safe
               "x-internal-secret": process.env.INTERNAL_API_SECRET || "",
             },
           }),
@@ -146,12 +325,11 @@ export default function ClientDetailView({ clientId }: Props) {
     })();
   }, [canView, clientId, router]);
 
-  // Fetch per-client secret settings + meta once we have client.userId
+  // Secret phrase info
   const refreshSecretInfo = useCallback(async () => {
     if (!client?.userId) return;
     setLoadingSecret(true);
     try {
-      // 1) settings (enabled, reverify, forceAt)
       const sRes = await fetch(
         `/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/settings`,
       );
@@ -162,39 +340,34 @@ export default function ClientDetailView({ clientId }: Props) {
         setSecretEnabled(null);
       }
 
-      // 2) meta (has phrase? last updatedAt?) – try dedicated meta endpoint first
-       // 2) meta (has phrase? last updatedAt?) – try dedicated meta endpoint first
-  let meta: SecretMeta | null = null;
-  try {
-    const mRes = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/meta`);
-    if (mRes.ok) {
-      const m = await mRes.json();
-      meta = { hasPhrase: !!m.hasPhrase, updatedAt: m.updatedAt ?? null };
-    }
-  } catch {/* ignore */}
+      let meta: SecretMeta | null = null;
+      try {
+        const mRes = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}/meta`);
+        if (mRes.ok) {
+          const m = await mRes.json();
+          meta = { hasPhrase: !!m.hasPhrase, updatedAt: m.updatedAt ?? null };
+        }
+      } catch { /* noop */ }
 
-  // ⬇️ NEW: fallback to GET /api/clients/secret-phrase/[userId]
-  if (!meta) {
-    try {
-      const gRes = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}`);
-      if (gRes.ok) {
-        const g = await gRes.json();
-        meta = { hasPhrase: !!g.hasPhrase, updatedAt: g.updatedAt ?? null };
+      if (!meta) {
+        try {
+          const gRes = await fetch(`/api/clients/secret-phrase/${encodeURIComponent(client.userId)}`);
+          if (gRes.ok) {
+            const g = await gRes.json();
+            meta = { hasPhrase: !!g.hasPhrase, updatedAt: g.updatedAt ?? null };
+          }
+        } catch { /* noop */ }
       }
-    } catch {/* ignore */}
-  }
 
-
-      // Fallback: some installs may expose these fields in /api/clients/:id
       if (!meta) {
         const hasViaClient =
           typeof client.hasSecretPhrase === "boolean" ||
           typeof client.secretPhraseUpdatedAt === "string";
         meta = hasViaClient
           ? {
-              hasPhrase: !!client.hasSecretPhrase || !!client.secretPhraseUpdatedAt,
-              updatedAt: client.secretPhraseUpdatedAt ?? null,
-            }
+            hasPhrase: !!client.hasSecretPhrase || !!client.secretPhraseUpdatedAt,
+            updatedAt: client.secretPhraseUpdatedAt ?? null,
+          }
           : { hasPhrase: false, updatedAt: null };
       }
 
@@ -264,8 +437,6 @@ export default function ClientDetailView({ clientId }: Props) {
     }
   };
 
-  // Clear the stored phrase (customer forgot). After this, the bot will ask them to set a new one.
-  // This calls DELETE /api/clients/secret-phrase/[userId] (same route file as POST/PATCH).
   const handleResetPhrase = async () => {
     if (!client?.userId) return;
     if (
@@ -392,8 +563,8 @@ export default function ClientDetailView({ clientId }: Props) {
                   ? "Disabling…"
                   : "Disable for this client"
                 : togglingEnabled
-                ? "Enabling…"
-                : "Enable for this client"}
+                  ? "Enabling…"
+                  : "Enable for this client"}
             </Button>
             <Button
               onClick={handleResetPhrase}
@@ -414,92 +585,105 @@ export default function ClientDetailView({ clientId }: Props) {
         </CardContent>
       </Card>
 
-      {/* Recent orders */}
+      {/* Activity: Orders + Affiliate Logs (tabs) */}
       <Card>
         <CardHeader>
-          <CardTitle>Recent orders (last 10)</CardTitle>
+          <CardTitle>Activity</CardTitle>
         </CardHeader>
         <CardContent>
-          {orders.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No orders yet.</p>
-          ) : (
-            <>
-              {/* Desktop/tablet */}
-              <div className="hidden sm:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Order #</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Total</TableHead>
-                      <TableHead>Shipping</TableHead>
-                      <TableHead>Tracking</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
+          <Tabs defaultValue="orders" className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="orders" className="w-full">Recent orders (last 10)</TabsTrigger>
+              <TabsTrigger value="affiliate" className="w-full">Affiliate log</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="orders">
+              {orders.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No orders yet.</p>
+              ) : (
+                <>
+                  {/* Desktop/tablet */}
+                  <div className="hidden sm:block">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Order #</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Total</TableHead>
+                          <TableHead>Shipping</TableHead>
+                          <TableHead>Tracking</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {orders.map((o) => (
+                          <TableRow key={o.id}>
+                            <TableCell>
+                              <Link
+                                href={`/orders/${o.id}`}
+                                className="underline underline-offset-2 font-medium"
+                              >
+                                {o.orderKey}
+                              </Link>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className={statusCls(o.status)}>
+                                {o.status.charAt(0).toUpperCase() + o.status.slice(1)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{fmtDate(o.createdAt)}</TableCell>
+                            <TableCell>{fmtMoney(o.total)}</TableCell>
+                            <TableCell>{o.shippingCompany ?? "—"}</TableCell>
+                            <TableCell>{o.trackingNumber ?? "—"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Mobile list */}
+                  <div className="sm:hidden space-y-3">
                     {orders.map((o) => (
-                      <TableRow key={o.id}>
-                        <TableCell>
+                      <div key={o.id} className="rounded-lg border p-3">
+                        <div className="flex items-center justify-between">
                           <Link
                             href={`/orders/${o.id}`}
                             className="underline underline-offset-2 font-medium"
                           >
-                            {o.orderKey}
+                            #{o.orderKey}
                           </Link>
-                        </TableCell>
-                        <TableCell>
                           <Badge variant="outline" className={statusCls(o.status)}>
                             {o.status.charAt(0).toUpperCase() + o.status.slice(1)}
                           </Badge>
-                        </TableCell>
-                        <TableCell>{fmtDate(o.createdAt)}</TableCell>
-                        <TableCell>{fmtMoney(o.total)}</TableCell>
-                        <TableCell>{o.shippingCompany ?? "—"}</TableCell>
-                        <TableCell>{o.trackingNumber ?? "—"}</TableCell>
-                      </TableRow>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {fmtDate(o.createdAt)}
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                          <div>
+                            <div className="text-muted-foreground">Total</div>
+                            <div>{fmtMoney(o.total)}</div>
+                          </div>
+                          <div>
+                            <div className="text-muted-foreground">Shipping</div>
+                            <div className="truncate">{o.shippingCompany ?? "—"}</div>
+                          </div>
+                          <div className="col-span-2">
+                            <div className="text-muted-foreground">Tracking</div>
+                            <div className="truncate">{o.trackingNumber ?? "—"}</div>
+                          </div>
+                        </div>
+                      </div>
                     ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              {/* Mobile list */}
-              <div className="sm:hidden space-y-3">
-                {orders.map((o) => (
-                  <div key={o.id} className="rounded-lg border p-3">
-                    <div className="flex items-center justify-between">
-                      <Link
-                        href={`/orders/${o.id}`}
-                        className="underline underline-offset-2 font-medium"
-                      >
-                        #{o.orderKey}
-                      </Link>
-                      <Badge variant="outline" className={statusCls(o.status)}>
-                        {o.status.charAt(0).toUpperCase() + o.status.slice(1)}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {fmtDate(o.createdAt)}
-                    </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <div className="text-muted-foreground">Total</div>
-                        <div>{fmtMoney(o.total)}</div>
-                      </div>
-                      <div>
-                        <div className="text-muted-foreground">Shipping</div>
-                        <div className="truncate">{o.shippingCompany ?? "—"}</div>
-                      </div>
-                      <div className="col-span-2">
-                        <div className="text-muted-foreground">Tracking</div>
-                        <div className="truncate">{o.trackingNumber ?? "—"}</div>
-                      </div>
-                    </div>
                   </div>
-                ))}
-              </div>
-            </>
-          )}
+                </>
+              )}
+            </TabsContent>
+
+            <TabsContent value="affiliate">
+              <ClientAffiliateLogs clientId={clientId} />
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     </div>

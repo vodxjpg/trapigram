@@ -9,6 +9,12 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
   Drawer,
   DrawerClose,
   DrawerContent,
@@ -33,6 +39,7 @@ type Row = {
 type Warehouse = { id: string; name: string; countries: string[] };
 type GridCell = { ordered: number; received: number };
 type Grid = Record<string, Record<string, GridCell>>; // wid -> country -> cell
+type SupplierInfo = { name: string | null; email: string | null; phone: string | null };
 
 export default function ReceiveOrderPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -42,6 +49,7 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
   const [rows, setRows] = useState<Row[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [resultLines, setResultLines] = useState<any[]>([]); // raw per-warehouse/country rows from API (`result`)
+  const [supplier, setSupplier] = useState<SupplierInfo | null>(null);
 
   // Drawer state (per-product receive allocations)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -61,7 +69,18 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
         });
         if (!orderRes.ok) throw new Error("Failed to load order");
         const { order } = await orderRes.json();
+        console.log(order)
+        // Extract supplier info defensively from either nested or flat fields
+        const sup: SupplierInfo = {
+          name: order?.supplier?.name ?? order?.supplierName ?? order?.name ?? null,
+          email: order?.supplier?.email ?? order?.supplierEmail ?? order?.email ?? null,
+          phone: order?.supplier?.phone ?? order?.supplierPhone ?? order?.phone ?? null,
+        };
+        setSupplier(sup);
         const cartId: string = order?.supplierCartId;
+        if (!cartId) {
+          throw new Error("Order has no supplier cart");
+        }
 
         // 2) Load cart lines for this order
         const linesRes = await fetch(`/api/suppliersCart/${cartId}`, {
@@ -281,6 +300,34 @@ export default function ReceiveOrderPage({ params }: { params: { id: string } })
 
   return (
     <div className="container mx-auto py-6 space-y-4">
+      {/* Supplier Information card (top of page) */}
+      <Card className="my-10 sm:my-8">
+        <CardHeader className="pb-2">
+          <CardTitle>Supplier Information</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <div className="text-xs text-muted-foreground">Name</div>
+              <div className="font-medium">
+                {supplier?.name ?? (loading ? "Loading…" : "—")}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Email</div>
+              <div className="font-medium">
+                {supplier?.email ? <a href={`mailto:${supplier.email}`}>{supplier.email}</a> : (loading ? "Loading…" : "—")}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Phone</div>
+              <div className="font-medium">
+                {supplier?.phone ?? (loading ? "Loading…" : "—")}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Received Items</h1>
         <div className="flex gap-2">

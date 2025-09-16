@@ -21,6 +21,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             `
       SELECT
         so.id,
+        so."orderKey",
         so."supplierId",
         so."supplierCartId",
         so.note,
@@ -28,6 +29,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         so."expectedAt",
         so."createdAt",
         so."updatedAt",
+        s.name,
+        s.email,
+        s.phone,
         json_build_object(
           'id', s.id,
           'name', s.name,
@@ -149,3 +153,27 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 }
 
+export async function DELETE(req: NextRequest, { params }: RouteParams) {
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+
+    const { organizationId } = ctx;
+    const { id } = params;
+
+    if (!id) {
+        return NextResponse.json({ error: "Missing order id" }, { status: 400 });
+    }
+
+    try {
+        const status = "draft"
+
+        const deleteQuery = `DELETE FROM "supplierOrders" WHERE id = $1 AND status = $2 AND "organizationId" = $3 RETURNING *`
+        const deleteResult = await pool.query(deleteQuery, [id, status, organizationId])
+        const result = deleteResult.rows[0]
+
+        return NextResponse.json({ result }, { status: 200 });
+    } catch (error) {
+        console.error("DELETE /api/suppliersOrder/[id] error:", error);
+        return NextResponse.json({ error: "Internal server error." }, { status: 500 })
+    }
+}

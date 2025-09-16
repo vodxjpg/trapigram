@@ -25,10 +25,20 @@ import {
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MoreHorizontal, CheckCircle2, Plus, FileSpreadsheet, FileText } from "lucide-react";
+import { MoreHorizontal, CheckCircle2, Plus, FileSpreadsheet, FileText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 
@@ -65,6 +75,11 @@ export default function PurchaseSupplyOrdersDataTable() {
     const [orders, setOrders] = useState<PurchaseSupplyOrder[]>([]);
     const [totalPages, setTotalPages] = useState<number>(1);
 
+    // delete dialog state
+    const [deleteOpen, setDeleteOpen] = useState(false);
+    const [deleteId, setDeleteId] = useState<string | null>(null);
+    const [deleting, setDeleting] = useState(false);
+
     // fetch list
     useEffect(() => {
         const ctrl = new AbortController();
@@ -92,80 +107,169 @@ export default function PurchaseSupplyOrdersDataTable() {
     }, [page, pageSize, query, statusFilter]);
 
     // actions
-    const fetchAggregatedItems = async (orderId: string) => {
-        // 1) get order → supplierCartId
+    const fetchOrderForExport = async (orderId: string) => {
+        // 1) Order (for header + supplier info)
         const orderRes = await fetch(`/api/suppliersOrder/${orderId}`, { cache: "no-store" });
         if (!orderRes.ok) throw new Error("Failed to load order");
         const { order } = await orderRes.json();
+        const orderKey = order?.orderKey ?? null;
+
+        // robust supplier extraction in case the API shape varies
+        const supplier = order?.supplier ?? {};
+        const supplierName = supplier?.name ?? order?.supplierName ?? "";
+        const supplierEmail = supplier?.email ?? order?.supplierEmail ?? "";
+        const supplierPhone = supplier?.phone ?? order?.supplierPhone ?? "";
+
+        const header = {
+            orderId,
+            orderKey,
+            status: order?.status ?? "",
+            expectedAt: order?.expectedAt ?? null,
+            createdAt: order?.createdAt ?? null,
+            supplierName,
+            supplierEmail,
+            supplierPhone,
+        };
+
+        // 2) Items (aggregate by product)
         const cartId: string = order?.supplierCartId;
         if (!cartId) throw new Error("Order has no cart");
 
-        // 2) get cart lines
         const linesRes = await fetch(`/api/suppliersCart/${cartId}`, { cache: "no-store" });
         if (!linesRes.ok) throw new Error("Failed to load order items");
         const data = await linesRes.json();
         const items: any[] = data?.resultCartProducts ?? [];
 
-        // 3) aggregate by productId (global quantities)
-        const map = new Map<string, { orderKey: number; name: string; sku: string; quantity: number; received: number }>();
+        const map = new Map<
+            string,
+            { orderKey: number; name: string; sku: string; quantity: number; received: number }
+        >();
+
         for (const it of items) {
             const pid = it.productId ?? it.id;
             const prev = map.get(pid);
             const nextQty = Number(it.quantity ?? 0) + (prev?.quantity ?? 0);
-            const nextRed = Number(it.received ?? 0) + (prev?.received ?? 0);
+            const nextRec = Number(it.received ?? 0) + (prev?.received ?? 0);
             map.set(pid, {
-                orderKey: it.orderKey,
+                orderKey,
                 name: it.title,
                 sku: it.sku,
                 quantity: nextQty,
-                received: nextRed
+                received: nextRec,
             });
         }
-        return Array.from(map.values());
+
+        const rows = Array.from(map.values());
+        return { header, rows };
     };
+
 
     const exportOrderXLSX = async (id: string) => {
         try {
-            const rows = await fetchAggregatedItems(id);
+            const { header, rows } = await fetchOrderForExport(id);
+            console.log(rows)
             const XLSX = await import("xlsx");
+
+            // Build header block (above the table)
+            const headerAoa = [
+                ["Order", `#${header.orderKey ?? "—"} (${header.orderId})`],
+                ["Status", header.status || "—"],
+                ["Expected At", header.expectedAt ? format(new Date(header.expectedAt), "PPP") : "—"],
+                ["Supplier Name", header.supplierName || "—"],
+                ["Supplier Email", header.supplierEmail || "—"],
+                ["Supplier Phone", header.supplierPhone || "—"],
+            ];
+
+            const ws = XLSX.utils.aoa_to_sheet(headerAoa);
+
+            // Leave one blank row then place the items table
+            const startRow = headerAoa.length + 2; // 1-based in Excel, but utils uses 0-based indexes
             const sheetRows = rows.map(r => ({
                 OrderKey: r.orderKey,
                 Name: r.name,
                 SKU: r.sku,
                 Quantity: r.quantity,
-                Received: r.received
+                Received: r.received,
             }));
-            const ws = XLSX.utils.json_to_sheet(sheetRows);
+            XLSX.utils.sheet_add_json(ws, sheetRows, { origin: { r: startRow - 1, c: 0 } });
+
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Items");
+            XLSX.utils.book_append_sheet(wb, ws, "Order");
             XLSX.writeFile(wb, `order-${id}.xlsx`);
         } catch (e: any) {
             toast.error(e?.message || "Failed to export XLSX");
         }
     };
 
+
     const exportOrderPDF = async (id: string) => {
         try {
-            const rows = await fetchAggregatedItems(id);
+            const { header, rows } = await fetchOrderForExport(id);
             const { pdf, Document, Page, Text, View, StyleSheet } = await import("@react-pdf/renderer");
 
             const styles = StyleSheet.create({
                 page: { padding: 24, fontSize: 12 },
-                header: { fontSize: 16, marginBottom: 12 },
+                title: { fontSize: 16, marginBottom: 12 },
+                infoBox: { padding: 10, borderWidth: 1, borderColor: "#ddd", marginBottom: 14 },
+                infoTitle: { fontSize: 12, fontWeight: 700, marginBottom: 6 },
+                infoRow: { flexDirection: "row", marginBottom: 3 },
+                infoLabel: { width: 110, fontWeight: 700 },
+                infoValue: { flexGrow: 1 },
                 row: { flexDirection: "row", borderBottomWidth: 1, borderColor: "#eee", paddingVertical: 6 },
-                th: { fontWeight: 700 },
+                th: { fontWeight: 700, backgroundColor: "#fafafa" },
                 cellOrderKey: { width: "10%" },
                 cellName: { width: "50%" },
                 cellSku: { width: "30%" },
                 cellQty: { width: "10%", textAlign: "right" },
+                metaRow: { flexDirection: "row", marginBottom: 8 },
             });
 
             const Doc = (
                 <Document>
                     <Page size="A4" style={styles.page}>
-                        <Text style={styles.header}>Order {id} — Items</Text>
+                        <Text style={styles.title}>Order #{header.orderKey ?? "—"} ({header.orderId})</Text>
+
+                        {/* Order meta (status / dates) */}
+                        <View style={styles.infoBox}>
+                            <Text style={styles.infoTitle}>Order Information</Text>
+                            <View style={styles.infoRow}>
+                                <Text style={styles.infoLabel}>Status</Text>
+                                <Text style={styles.infoValue}>{header.status || "—"}</Text>
+                            </View>
+                            <View style={styles.infoRow}>
+                                <Text style={styles.infoLabel}>Expected At</Text>
+                                <Text style={styles.infoValue}>
+                                    {header.expectedAt ? format(new Date(header.expectedAt), "PPP") : "—"}
+                                </Text>
+                            </View>
+                            <View style={styles.infoRow}>
+                                <Text style={styles.infoLabel}>Created At</Text>
+                                <Text style={styles.infoValue}>
+                                    {header.createdAt ? format(new Date(header.createdAt), "PPP p") : "—"}
+                                </Text>
+                            </View>
+                        </View>
+
+                        {/* Supplier info */}
+                        <View style={styles.infoBox}>
+                            <Text style={styles.infoTitle}>Supplier Information</Text>
+                            <View style={styles.infoRow}>
+                                <Text style={styles.infoLabel}>Name</Text>
+                                <Text style={styles.infoValue}>{header.supplierName || "—"}</Text>
+                            </View>
+                            <View style={styles.infoRow}>
+                                <Text style={styles.infoLabel}>Email</Text>
+                                <Text style={styles.infoValue}>{header.supplierEmail || "—"}</Text>
+                            </View>
+                            <View style={styles.infoRow}>
+                                <Text style={styles.infoLabel}>Phone</Text>
+                                <Text style={styles.infoValue}>{header.supplierPhone || "—"}</Text>
+                            </View>
+                        </View>
+
+                        {/* Items table */}
                         <View style={[styles.row, styles.th]}>
-                            <Text style={styles.cellOrderKey}>Name</Text>
+                            <Text style={styles.cellOrderKey}>OrderKey</Text>
                             <Text style={styles.cellName}>Name</Text>
                             <Text style={styles.cellSku}>SKU</Text>
                             <Text style={styles.cellQty}>Quantity</Text>
@@ -173,7 +277,7 @@ export default function PurchaseSupplyOrdersDataTable() {
                         </View>
                         {rows.map((r, i) => (
                             <View key={i} style={styles.row}>
-                                <Text style={styles.cellOrderKey}>{r.orderKey}</Text>
+                                <Text style={styles.cellOrderKey}>{String(r.orderKey ?? "")}</Text>
                                 <Text style={styles.cellName}>{r.name}</Text>
                                 <Text style={styles.cellSku}>{r.sku}</Text>
                                 <Text style={styles.cellQty}>{r.quantity}</Text>
@@ -198,6 +302,7 @@ export default function PurchaseSupplyOrdersDataTable() {
         }
     };
 
+
     const handleCompleteOrder = (id: string) => {
         // Navigate to the receive/complete page for this order
         router.push(`/supplier-order/${id}/complete`);
@@ -206,6 +311,24 @@ export default function PurchaseSupplyOrdersDataTable() {
     const handleExportPDF = (id: string) => {
         // Open an export endpoint in a new tab; adapt to your API if needed
         window.open(`/api/suppliersOrder/${id}/export?format=pdf`, "_blank");
+    };
+
+    // NEW: Delete (only for drafts) using shadcn AlertDialog
+    const handleDeleteOrder = async () => {
+        if (!deleteId) return;
+        try {
+            setDeleting(true);
+            const res = await fetch(`/api/suppliersOrder/${deleteId}`, { method: "DELETE" });
+            if (!res.ok) throw new Error(await res.text().catch(() => "Failed to delete order"));
+            setOrders((prev) => prev.filter((o) => o.id !== deleteId));
+            toast.success("Draft order deleted");
+            setDeleteOpen(false);
+            setDeleteId(null);
+        } catch (e: any) {
+            toast.error(e?.message || "Could not delete order");
+        } finally {
+            setDeleting(false);
+        }
     };
 
     const columns = useMemo<ColumnDef<PurchaseSupplyOrder>[]>(
@@ -307,6 +430,22 @@ export default function PurchaseSupplyOrdersDataTable() {
                                     <FileText className="mr-2 h-4 w-4" />
                                     Export to PDF
                                 </DropdownMenuItem>
+                                {/* Draft-only Delete */}
+                                {status === "draft" && (
+                                    <>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                            className="text-destructive focus:text-destructive"
+                                            onClick={() => {
+                                                setDeleteId(id);
+                                                setDeleteOpen(true);
+                                            }}
+                                        >
+                                            <Trash2 className="mr-2 h-4 w-4" />
+                                            Delete
+                                        </DropdownMenuItem>
+                                    </>
+                                )}
                             </DropdownMenuContent>
                         </DropdownMenu>
                     );
@@ -474,6 +613,28 @@ export default function PurchaseSupplyOrdersDataTable() {
                     </Button>
                 </div>
             </div>
+
+            {/* AlertDialog for deleting drafts */}
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete draft order?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This action cannot be undone. This will permanently remove the draft purchase order.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={handleDeleteOrder}
+                            disabled={deleting}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
+                            {deleting ? "Deleting…" : "Delete"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

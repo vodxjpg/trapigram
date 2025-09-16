@@ -65,7 +65,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     try {
         const body = await req.json().catch(() => ({} as any));
-        console.log(body)
 
         //Get all products from order
         const supplierCartQuery = `SELECT "supplierCartId" FROM "supplierOrders" WHERE id = $1`
