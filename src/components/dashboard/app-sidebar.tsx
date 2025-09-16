@@ -68,6 +68,7 @@ const data = {
         { title: "Stock management", url: "/products/stock-management" },
         { title: "Inventory count", url: "/inventory" },
         { title: "Suppliers", url: "/suppliers" },
+        { title: "Purchase orders", url: "/supplier-order" },
         { title: "Warehouses", url: "/warehouses" },
       ],
     },
