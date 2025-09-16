@@ -1863,7 +1863,7 @@ export async function PATCH(
             [id],
           );
         }
-        /*  3) spending milestones for *buyer*  (step-based)        */
+        /*  3) spending milestones for *buyer*  (step-based)*/
           if (stepEur > 0 && ptsPerStep > 0) {
           /* --------------------------------------------------------------
            * Lifetime spend in **EUR** – we rely on orderRevenue which was
