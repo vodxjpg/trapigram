@@ -450,6 +450,11 @@ The Trapyfy Team
                   description: "Let your customers by bank transfer",
                   instructions: null, // "none"
                 },
+                {
+                  name: "Paypal",
+                  description: "Let your customers pay you by Paypal with Friends & Family",
+                  instructions: null,
+                },
               ];
 
               for (const def of defaults) {
