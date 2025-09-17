@@ -81,18 +81,20 @@ const formSchema = z.object({
     .min(1, "Select at least one product or variation"),
   steps: z.array(stepSchema).min(1, "Add at least one step"),
   // NEW: optional list of client IDs this rule applies to. If empty → applies to everyone.
-  customers: z.array(z.string().min(1)).default([]),
+  clients: z.array(z.string().min(1)).default([]),
 });
 
 type FormValues = z.infer<typeof formSchema>;
 
 interface Props {
-  discountRuleData?: FormValues & {
+  discountRuleData?: {
     id: string;
+    name: string;
     countries: string[];
     products: { productId: string | null; variationId: string | null }[];
     steps: { fromUnits: number; toUnits: number; price: number }[];
-    customers?: string[];
+    clients?: string[];   // preferred (new API)
+    customers?: string[]; // legacy (fallback)
   };
   isEditing?: boolean;
 }
@@ -118,7 +120,7 @@ export function DiscountRuleForm({
       countries: [],
       products: [],
       steps: [{ fromUnits: 1, toUnits: 2, price: 0.01 }],
-      customers: [],
+      clients: [],
     },
     mode: "onSubmit",
   });
@@ -185,7 +187,12 @@ export function DiscountRuleForm({
           // guard invalid zero price coming from old data
           price: s.price > 0 ? s.price : 0.01,
         })),
-        customers: discountRuleData.customers ?? [],
+        // Accept both shapes from the API, prefer the new 'clients'
+        clients: Array.isArray(discountRuleData.clients)
+          ? discountRuleData.clients
+          : Array.isArray(discountRuleData.customers)
+            ? discountRuleData.customers
+            : [],
       });
       // eslint-disable-next-line no-console
       console.debug(`${LOG} form reset from loaded data`);
@@ -342,15 +349,15 @@ export function DiscountRuleForm({
         const newOpts = allItems.flatMap((p: any) =>
           p.productType === "simple"
             ? [
-                {
-                  value: { productId: p.id, variationId: null },
-                  label: p.title,
-                },
-              ]
+              {
+                value: { productId: p.id, variationId: null },
+                label: p.title,
+              },
+            ]
             : p.variations.map((v: any) => ({
-                value: { productId: null, variationId: v.id },
-                label: `${p.title} (${Object.values(v.attributes).join(", ")})`,
-              }))
+              value: { productId: null, variationId: v.id },
+              label: `${p.title} (${Object.values(v.attributes).join(", ")})`,
+            }))
         );
         setProductOptions((prev) => {
           const map = new Map(
@@ -475,7 +482,7 @@ export function DiscountRuleForm({
   /*  Matches the "Select + search"   */
   /*  pattern from order-form.tsx     */
   /* ──────────────────────────────── */
-  const [clients, setClients] = useState<Client[]>([]);
+  const [allClients, setAllClients] = useState<Client[]>([]);
   const [clientsLoading, setClientsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [searching, setSearching] = useState(false);
@@ -491,15 +498,15 @@ export function DiscountRuleForm({
 
   // Local filter so it reacts as you type immediately
   const filteredClients = useMemo(() => {
-    if (searchTerm.trim().length < 3) return clients;
+    if (searchTerm.trim().length < 3) return allClients;
     const t = searchTerm.toLowerCase();
-    return clients.filter(
+    return allClients.filter(
       (c) =>
         c.username?.toLowerCase().includes(t) ||
         c.email?.toLowerCase().includes(t) ||
         `${c.firstName} ${c.lastName}`.toLowerCase().includes(t)
     );
-  }, [clients, searchTerm]);
+  }, [allClients, searchTerm]);
 
   useEffect(() => {
     // load initial page of clients
@@ -513,7 +520,7 @@ export function DiscountRuleForm({
           },
         });
         const { clients: list } = await res.json();
-        setClients(list || []);
+        setAllClients(list || []);
       } catch {
         toast.error("Failed loading clients");
       } finally {
@@ -555,10 +562,11 @@ export function DiscountRuleForm({
   }, [searchTerm]);
 
   // helper: add a client ID into the field value
-  const addCustomerId = (id: string) => {
-    const current = form.getValues("customers") || [];
+  const addClientId = (id: string) => {
+    const current = form.getValues("clients") || [];
     if (!current.includes(id)) {
-      form.setValue("customers", [...current, id], { shouldDirty: true });
+      form.setValue("clients", [...current, id], { shouldDirty: true });
+
     }
   };
 
@@ -693,7 +701,7 @@ export function DiscountRuleForm({
             {/* Scope: Customers (optional) */}
             <FormField
               control={form.control}
-              name="customers"
+              name="clients"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>
@@ -712,7 +720,7 @@ export function DiscountRuleForm({
                     )}
                     {(field.value || []).map((id) => {
                       const obj =
-                        clients.find((c) => c.id === id) ||
+                        allClients.find((c) => c.id === id) ||
                         searchResults.find((c) => c.id === id);
                       const label = obj ? labelForClient(obj) : id;
                       return (
@@ -745,10 +753,10 @@ export function DiscountRuleForm({
                       onValueChange={(val) => {
                         setTempCustomer("");
                         const obj =
-                          [...clients, ...searchResults].find(
+                          [...allClients, ...searchResults].find(
                             (c) => c.id === val
                           ) || null;
-                        if (obj && !field.value.includes(val)) addCustomerId(val);
+                        if (obj && !field.value.includes(val)) addClientId(val);
                         setResults([]);
                         setSearchTerm("");
                       }}
@@ -800,7 +808,7 @@ export function DiscountRuleForm({
                           {searchResults
                             .filter(
                               (c) =>
-                                !clients.some((lc) => lc.id === c.id) &&
+                                !allClients.some((lc) => lc.id === c.id) &&
                                 !(field.value || []).includes(c.id)
                             )
                             .map((c) => (
@@ -868,8 +876,8 @@ export function DiscountRuleForm({
                   catQuery.trim()
                     ? "No categories match your search"
                     : catPage < catTotalPages
-                    ? "Scroll to load more…"
-                    : "No more categories"
+                      ? "Scroll to load more…"
+                      : "No more categories"
                 }
                 isLoading={catLoading}
                 {...selectPortalProps}
