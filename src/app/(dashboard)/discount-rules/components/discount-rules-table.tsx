@@ -1,7 +1,7 @@
 // src/app/(dashboard)/discount-rules/components/discount-rules-table.tsx
 "use client";
 
-import { useEffect, useState, startTransition, type FormEvent } from "react";
+import { useEffect, useState, startTransition, type FormEvent, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
@@ -61,6 +61,7 @@ import { toast } from "sonner";
 /* ------------------------------------------------------------------ */
 type Step = { fromUnits: number; toUnits: number; price: number };
 type ProdItem = { productId: string | null; variationId: string | null };
+
 type TierPricing = {
   id: string;
   name: string;
@@ -68,8 +69,19 @@ type TierPricing = {
   active: boolean;
   steps: Step[];
   products: ProdItem[];
-  // NEW: list of client IDs. Empty → applies to everyone.
+  // NEW primary
+  clients?: string[];
+  // Legacy fallback
   customers?: string[];
+};
+
+type Client = {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  username?: string;
+  email?: string;
+  country?: string;
 };
 
 /* ------------------------------------------------------------------ */
@@ -104,6 +116,10 @@ export function DiscountRulesTable() {
   const debounced = useDebounce(query, 300);
 
   const [ruleToDelete, setRuleToDelete] = useState<TierPricing | null>(null);
+
+  // clients lookup (id -> Client)
+  const [clientsById, setClientsById] = useState<Record<string, Client>>({});
+  const [clientsLoadedOnce, setClientsLoadedOnce] = useState(false);
 
   /* ── redirect if no view ───────────────────────────────────────── */
   useEffect(() => {
@@ -142,6 +158,47 @@ export function DiscountRulesTable() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewLoading, page, pageSize, debounced]);
 
+  /* ── preload some clients to resolve names for chips ───────────── */
+  // Strategy: after rules load, collect all unique client IDs, then
+  // fetch a reasonably large page of clients (server returns "clients").
+  // We merge into a local map; if some IDs aren't found, we fall back to ID.
+  useEffect(() => {
+    const allIds = new Set<string>();
+    rules.forEach((r) =>
+      (r.clients ?? r.customers ?? []).forEach((id) => {
+        if (id) allIds.add(id);
+      })
+    );
+    if (allIds.size === 0) return;
+
+    // If we never loaded clients, load a big chunk once.
+    if (clientsLoadedOnce) return;
+    (async () => {
+      try {
+        const res = await fetch(`/api/clients?page=1&pageSize=500`, {
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+          },
+        });
+        if (!res.ok) throw new Error("Failed to load clients");
+        const json = await res.json();
+        const list: Client[] = Array.isArray(json.clients) ? json.clients : [];
+        if (list.length > 0) {
+          setClientsById((prev) => {
+            const next = { ...prev };
+            list.forEach((c) => {
+              next[c.id] = c;
+            });
+            return next;
+          });
+        }
+        setClientsLoadedOnce(true);
+      } catch {
+        // non-fatal; we'll show IDs if names unavailable
+      }
+    })();
+  }, [rules, clientsLoadedOnce]);
+
   /* ── handlers ──────────────────────────────────────────────────── */
   const handleSearchSubmit = (e: FormEvent) => e.preventDefault();
 
@@ -174,10 +231,41 @@ export function DiscountRulesTable() {
   };
 
   /* ── helpers ───────────────────────────────────────────────────── */
-  const renderCustomers = (arr?: string[]) => {
-    if (!arr || arr.length === 0) return "All";
-    if (arr.length === 1) return "1 customer";
-    return `${arr.length} customers`;
+  const displayClient = (c?: Client) => {
+    if (!c) return "";
+    const name = `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim();
+    if (name && c.username) return `${name} (${c.username})`;
+    return name || c.username || c.email || c.id;
+  };
+
+  const getClientLabelById = (id: string) => {
+    const c = clientsById[id];
+    return displayClient(c) || id;
+  };
+
+  const getRuleClientIds = (r: TierPricing) => (r.clients ?? r.customers ?? []).filter(Boolean);
+
+  const renderCustomersChips = (ids?: string[]) => {
+    const arr = Array.isArray(ids) ? ids : [];
+    if (arr.length === 0) return <span>All</span>;
+
+    const firstTwo = arr.slice(0, 2);
+    const extra = arr.length - firstTwo.length;
+
+    return (
+      <div className="flex flex-wrap items-center gap-1">
+        {firstTwo.map((id) => (
+          <Badge key={id} variant="outline" className="max-w-[180px] truncate">
+            {getClientLabelById(id)}
+          </Badge>
+        ))}
+        {extra > 0 && (
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            +{extra} more
+          </span>
+        )}
+      </div>
+    );
   };
 
   /* ── guards ────────────────────────────────────────────────────── */
@@ -215,7 +303,6 @@ export function DiscountRulesTable() {
               <TableHead>Name</TableHead>
               <TableHead>Active</TableHead>
               <TableHead>Countries</TableHead>
-              {/* NEW */}
               <TableHead>Customers</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -236,7 +323,7 @@ export function DiscountRulesTable() {
             ) : (
               rules.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell>{r.name}</TableCell>
+                  <TableCell className="font-medium">{r.name}</TableCell>
                   <TableCell>
                     <Switch
                       checked={r.active}
@@ -245,14 +332,17 @@ export function DiscountRulesTable() {
                     />
                   </TableCell>
                   <TableCell>
-                    {r.countries.map((c) => (
-                      <Badge key={c} variant="outline" className="mr-1">
-                        {c}
-                      </Badge>
-                    ))}
+                    <div className="flex flex-wrap gap-1">
+                      {r.countries.map((c) => (
+                        <Badge key={c} variant="outline">
+                          {c}
+                        </Badge>
+                      ))}
+                    </div>
                   </TableCell>
-                  {/* NEW */}
-                  <TableCell>{renderCustomers(r.customers)}</TableCell>
+                  <TableCell>
+                    {renderCustomersChips(getRuleClientIds(r))}
+                  </TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>

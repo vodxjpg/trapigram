@@ -21,21 +21,22 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select as UISelect,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  SelectGroup,
-  SelectLabel,
-  SelectSeparator,
-} from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-
-import { X, Search } from "lucide-react";
-
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "@/components/ui/command";
+import { X, Check } from "lucide-react";
 import countriesLib from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 import { getCountries } from "libphonenumber-js";
@@ -487,14 +488,14 @@ export function DiscountRuleForm({
   const [searchTerm, setSearchTerm] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchResults, setResults] = useState<Client[]>([]);
-  const [tempCustomer, setTempCustomer] = useState(""); // selected value in the dropdown
+  const [clientsOpen, setClientsOpen] = useState(false)
   const DEBOUNCE_MS = 400;
 
-  const labelForClient = (c: Client) =>
-    `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim() ||
-    c.username ||
-    c.email ||
-    c.id;
+  const displayClient = (c: Client) => {
+    const name = `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim();
+    if (name && c.username) return `${name} (${c.username})`;
+    return name || c.username || c.email || c.id;
+  };
 
   // Local filter so it reacts as you type immediately
   const filteredClients = useMemo(() => {
@@ -504,7 +505,7 @@ export function DiscountRuleForm({
       (c) =>
         c.username?.toLowerCase().includes(t) ||
         c.email?.toLowerCase().includes(t) ||
-        `${c.firstName} ${c.lastName}`.toLowerCase().includes(t)
+        `${c.firstName ?? ""} ${c.lastName ?? ""}`.toLowerCase().includes(t)
     );
   }, [allClients, searchTerm]);
 
@@ -569,6 +570,22 @@ export function DiscountRuleForm({
 
     }
   };
+
+  // Button label like "Add customers" / "2 selected"
+  const clientsSummary = useMemo(() => {
+    const ids = form.watch("clients") || [];
+    if (ids.length === 0) return "Add customers";
+    if (ids.length <= 2) {
+      const labels = ids
+        .map((id) => {
+          const c = allClients.find((x) => x.id === id) || searchResults.find((x) => x.id === id);
+          return c ? displayClient(c) : id;
+        })
+        .join(", ");
+      return labels;
+    }
+    return `${ids.length} selected`;
+  }, [form, allClients, searchResults]);
 
   // Utility: ensure mobile keyboards don’t keep a Select open over the submit button
   const closeOpenMenus = () => {
@@ -722,7 +739,7 @@ export function DiscountRuleForm({
                       const obj =
                         allClients.find((c) => c.id === id) ||
                         searchResults.find((c) => c.id === id);
-                      const label = obj ? labelForClient(obj) : id;
+                      const label = obj ? displayClient(obj) : id;
                       return (
                         <Badge
                           key={id}
@@ -746,96 +763,52 @@ export function DiscountRuleForm({
                     })}
                   </div>
 
-                  {/* Add customer dropdown (same search pattern as order form) */}
+                  {/* Multi-select (ReactSelect) with built-in search */}
                   <div className="mt-3">
-                    <UISelect
-                      value={tempCustomer}
-                      onValueChange={(val) => {
-                        setTempCustomer("");
-                        const obj =
-                          [...allClients, ...searchResults].find(
-                            (c) => c.id === val
-                          ) || null;
-                        if (obj && !field.value.includes(val)) addClientId(val);
-                        setResults([]);
-                        setSearchTerm("");
-                      }}
-                      disabled={clientsLoading}
-                    >
-                      <SelectTrigger>
-                        <SelectValue
-                          placeholder={
-                            clientsLoading
-                              ? "Loading…"
-                              : "Add customer (search or pick)"
+                    {(() => {
+                      // Build options: local filtered + remote (de-duped) excluding already selected
+                      const selectedIds = new Set(field.value || []);
+                      const local = filteredClients.filter(c => !selectedIds.has(c.id));
+                      const remote = searchResults
+                        .filter(c => !selectedIds.has(c.id) && !local.some(l => l.id === c.id));
+                      const options = [...local, ...remote].map((c) => ({
+                        value: c.id,
+                        label: displayClient(c),
+                      }));
+                      // Selected values need labels for nice chips (we hide chips, but keep correct value shape)
+                      const selectedOptions = (field.value || []).map((id) => {
+                        const c =
+                          allClients.find((x) => x.id === id) ||
+                          searchResults.find((x) => x.id === id);
+                        return { value: id, label: c ? displayClient(c) : id };
+                      });
+                      return (
+                        <ReactSelect
+                          isMulti
+                          options={options}
+                          value={selectedOptions}
+                          onChange={(opts) =>
+                            field.onChange((opts as { value: string }[]).map((o) => o.value))
                           }
+                          onInputChange={(val, meta) => {
+                            if (meta.action === "input-change") setSearchTerm(val);
+                          }}
+                          isLoading={clientsLoading || searching}
+                          closeMenuOnSelect={false}     // keep menu open to pick many
+                          placeholder={
+                            clientsLoading ? "Loading…" : "Search or pick clients…"
+                          }
+                          noOptionsMessage={() =>
+                            (searchTerm.trim().length < 3)
+                              ? "Type at least 3 characters to search"
+                              : "No matches"
+                          }
+                          // Hide ReactSelect’s own chips; we show badges above instead.
+                          components={{ MultiValue: () => null }}
+                          {...selectPortalProps}
                         />
-                      </SelectTrigger>
-                      <SelectContent className="w-[520px]">
-                        {/* Search */}
-                        <div className="p-3 border-b flex items-center gap-2">
-                          <Search className="h-4 w-4 text-muted-foreground" />
-                          <Input
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            placeholder="Search (min 3 chars)"
-                            className="h-8"
-                          />
-                        </div>
-
-                        <ScrollArea className="max-h-72">
-                          {/* Local clients */}
-                          <SelectGroup>
-                            <SelectLabel>Clients</SelectLabel>
-                            {filteredClients
-                              .filter(
-                                (c) => !(field.value || []).includes(c.id)
-                              )
-                              .map((c) => (
-                                <SelectItem key={c.id} value={c.id}>
-                                  <span className="block max-w-[460px] truncate">
-                                    {labelForClient(c)} — {c.username} (
-                                    {c.email})
-                                  </span>
-                                </SelectItem>
-                              ))}
-                          </SelectGroup>
-
-                          {/* Divider only if we have remote results */}
-                          {searchResults.length > 0 && <SelectSeparator />}
-
-                          {/* Remote results (exclude already selected & already shown) */}
-                          {searchResults
-                            .filter(
-                              (c) =>
-                                !allClients.some((lc) => lc.id === c.id) &&
-                                !(field.value || []).includes(c.id)
-                            )
-                            .map((c) => (
-                              <SelectItem key={c.id} value={c.id}>
-                                <span className="block max-w-[460px] truncate">
-                                  {labelForClient(c)} — {c.username} ({c.email})
-                                  <span className="ml-1 text-xs text-muted-foreground">
-                                    (remote)
-                                  </span>
-                                </span>
-                              </SelectItem>
-                            ))}
-
-                          {searching && (
-                            <div className="px-3 py-2 text-sm text-muted-foreground">
-                              Searching…
-                            </div>
-                          )}
-                          {!searching && searchTerm && searchResults.length === 0 && (
-                            <div className="px-3 py-2 text-sm text-muted-foreground">
-                              No matches
-                            </div>
-                          )}
-                        </ScrollArea>
-                      </SelectContent>
-                    </UISelect>
-
+                      );
+                    })()}
                     {(field.value || []).length > 0 && (
                       <div className="mt-2">
                         <Button
