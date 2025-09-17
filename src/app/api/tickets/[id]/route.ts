@@ -44,6 +44,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
            tickets.title,
            tickets.priority,
            tickets.status,
+           tickets."ticketKey",
            tickets."createdAt"
     FROM   tickets
     JOIN   clients ON tickets."clientId" = clients.id

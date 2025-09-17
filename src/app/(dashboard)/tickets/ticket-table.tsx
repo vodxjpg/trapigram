@@ -40,6 +40,7 @@ type Ticket = {
   priority: "low" | "medium" | "high";
   status: "open" | "in-progress" | "closed";
   createdAt: string;
+  ticketKey: number
 };
 
 export function TicketsTable() {
@@ -78,7 +79,6 @@ export function TicketsTable() {
         return await res.json();
       })
       .then(({ tags }) => {
-        console.log(tags);
         setAllTags(
           tags.map((t: { description: string }) => ({
             value: t.description,
@@ -220,6 +220,7 @@ export function TicketsTable() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Ticket Key</TableHead>
               <TableHead>Title</TableHead>
               <TableHead>Tags</TableHead>
               <TableHead>Priority</TableHead>
@@ -244,6 +245,7 @@ export function TicketsTable() {
             ) : (
               filtered.map((t) => (
                 <TableRow key={t.id}>
+                  <TableCell>{t.ticketKey}</TableCell>
                   <TableCell>{t.title}</TableCell>
                   <TableCell>
                     {(tagsMap[t.id] || []).map((desc) => (
@@ -306,26 +308,26 @@ export function TicketsTable() {
           Page {currentPage} of {totalPages}
         </div>
         <div className="flex items-center space-x-2">
-        <div className="flex-row sm:flex-col">
-          <p className="text-sm font-medium">Rows per page</p>
-          <Select
-            value={pageSize.toString()}
-            onValueChange={(v) => {
-              setPageSize(Number(v));
-              setCurrentPage(1);
-            }}
-          >
-            <SelectTrigger className="h-8 w-[70px]">
-              <SelectValue placeholder={pageSize} />
-            </SelectTrigger>
-            <SelectContent side="top">
-              {[5, 10, 20, 50, 100].map((n) => (
-                <SelectItem key={n} value={n.toString()}>
-                  {n}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex-row sm:flex-col">
+            <p className="text-sm font-medium">Rows per page</p>
+            <Select
+              value={pageSize.toString()}
+              onValueChange={(v) => {
+                setPageSize(Number(v));
+                setCurrentPage(1);
+              }}
+            >
+              <SelectTrigger className="h-8 w-[70px]">
+                <SelectValue placeholder={pageSize} />
+              </SelectTrigger>
+              <SelectContent side="top">
+                {[5, 10, 20, 50, 100].map((n) => (
+                  <SelectItem key={n} value={n.toString()}>
+                    {n}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Button
             variant="outline"

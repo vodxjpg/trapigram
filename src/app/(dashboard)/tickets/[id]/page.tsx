@@ -48,6 +48,7 @@ type TicketHeader = {
   lastName?: string | null;
   username?: string | null;
   createdAt: Date;
+  ticketKey: number
 };
 
 type TicketMessage = {
@@ -69,6 +70,18 @@ const fmtLocal = (iso: string | null) =>
       timeStyle: "short",
     })
     : "—";
+
+// Emphasize the ticket key as a 6-digit, monospace-ish code like #000123
+const formatTicketKey = (
+  v: number | string | null | undefined
+): string => {
+  if (v === null || v === undefined) return "—";
+  // try to coerce to number; if not numeric, show the raw value with a hash
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return `#${String(v)}`;
+  return `#${Math.trunc(n).toString().padStart(6, "0")}`;
+};
+
 
 /* -------------------------------------------------------------------------- */
 /*  Component                                                                 */
@@ -375,6 +388,16 @@ export default function TicketDetail() {
       <Card>
         {/* -------- header ------------------------------------------------- */}
         <CardHeader className="space-y-3">
+          {/* Row 0 — Emphasized ticket key */}
+          <div>
+            <Badge
+              variant="outline"
+              className="rounded-full px-3 py-1 text-base font-mono tracking-widest bg-primary/10 text-primary border-primary/30"
+              title={`Ticket ${header.ticketKey}`}
+            >
+              {formatTicketKey(header.ticketKey)}
+            </Badge>
+          </div>
           {/* Row 1 — Title (single line) */}
           <div className="flex items-start justify-between gap-3">
             <CardTitle
@@ -491,7 +514,7 @@ export default function TicketDetail() {
                 </SelectContent>
               </Select>
             </div>
-            </div> 
+          </div>
         </CardHeader>
 
         {/* -------- messages --------------------------------------------- */}

@@ -8,6 +8,7 @@ import {
   sendNotification,
   NotificationChannel,
 } from "@/lib/notifications";
+import type { PoolClient } from "pg";
 
 /* ────────────────────────────────────────────────────────────────── *
  * Zod schemas                                                        *
@@ -25,6 +26,23 @@ const ticketSchema = z.object({
  * Optional query: ?page=&pageSize=&search=&clientId=
  * NO permission enforcement                                           *
  * ────────────────────────────────────────────────────────────────── */
+
+/** Get next per-org ticketKey safely within a transaction */
+async function getNextTicketKeyTx(client: PoolClient, organizationId: string): Promise<number> {
+  // Lock scoped to this org to avoid races from concurrent requests
+  await client.query(
+    `SELECT pg_advisory_xact_lock(hashtext($1))`,
+    [`tickets:${organizationId}`]
+  );
+
+  const { rows } = await client.query<{ next: number }>(
+    `SELECT COALESCE(MAX("ticketKey"), 0) + 1 AS next
+     FROM tickets
+     WHERE "organizationId" = $1`,
+    [organizationId]
+  );
+  return Number(rows[0]?.next ?? 1);
+}
 
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
@@ -89,7 +107,7 @@ export async function GET(req: NextRequest) {
     const listSQL = `
       SELECT id,
              "organizationId", "clientId",
-             title, priority, status,
+             title, priority, status, "ticketKey",
              "createdAt", "updatedAt"
         FROM tickets
        WHERE ${where.join(" AND ")}
@@ -118,18 +136,20 @@ export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
+  const client = await pool.connect();
 
   try {
     const data = ticketSchema.parse(await req.json());
 
     // create ticket
     const ticketId = uuidv4();
+    const ticketKey = getNextTicketKeyTx(client, organizationId)
     const insertSQL = `
       INSERT INTO tickets
         (id, "organizationId", "clientId",
-         title, priority, status,
+         title, priority, status, "ticketKey",
          "createdAt", "updatedAt")
-      VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
       RETURNING *;
     `;
     const inserted = (await pool.query(insertSQL, [
@@ -139,6 +159,7 @@ export async function POST(req: NextRequest) {
       data.title,
       data.priority,
       data.status,
+      ticketKey
     ])).rows[0];
 
     // notify client
