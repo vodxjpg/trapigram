@@ -1,3 +1,4 @@
+// src/lib/tier-pricing.ts
 import { db } from "@/lib/db";
 
 /* ─── types ────────────────────────────────────────────────────────── */
@@ -20,7 +21,7 @@ export type Tier = {
 /* ─── fetch helpers ────────────────────────────────────────────────── */
 /**
  * Load all ACTIVE tier-pricing rules for an organization.
- * Includes countries, products, steps, and (NEW) customers.
+ * Includes countries, products, steps, and customers (targeted client IDs).
  */
 export async function tierPricing(organizationId: string): Promise<Tier[]> {
   const rows = await db
@@ -57,20 +58,29 @@ export async function tierPricing(organizationId: string): Promise<Tier[]> {
         price: Number(s.price),
       }));
 
-      // NEW: load targeted customers (if any)
-      // expects a join table: tierPricingCustomers(tierPricingId, clientId)
-      let customers: string[] = [];
+      // Targeted clients (primary: tierPricingClients; legacy fallback: tierPricingCustomers)
+      const targeted: string[] = [];
       try {
-        const custRows = await db
+        const clientRows = await db
+          .selectFrom("tierPricingClients")
+          .select(["clientId"])
+          .where("tierPricingId", "=", r.id)
+          .execute();
+        targeted.push(...clientRows.map((c: any) => String(c.clientId)));
+      } catch {
+        // If the table doesn't exist, ignore.
+      }
+      try {
+        const legacyRows = await db
           .selectFrom("tierPricingCustomers")
           .select(["clientId"])
           .where("tierPricingId", "=", r.id)
           .execute();
-        customers = custRows.map((c: any) => String(c.clientId));
+        targeted.push(...legacyRows.map((c: any) => String(c.clientId)));
       } catch {
-        // If the table doesn't exist yet, just leave customers empty (= general rule).
-        customers = [];
+        // If the legacy table doesn't exist, ignore.
       }
+      const customers = Array.from(new Set(targeted.filter(Boolean)));
 
       return {
         ...r,
@@ -107,7 +117,9 @@ export function getStepsFor(
   const matchesBase = (t: Tier) => {
     const inCountry = t.countries?.includes(country);
     const matchesProduct = t.products?.some(
-      (p) => p.productId === productOrVariationId || p.variationId === productOrVariationId
+      (p) =>
+        p.productId === productOrVariationId ||
+        p.variationId === productOrVariationId
     );
     return inCountry && matchesProduct;
   };
@@ -122,7 +134,9 @@ export function getStepsFor(
   );
 
   const general = tiers.filter(
-    (t) => matchesBase(t) && (!Array.isArray(t.customers) || t.customers.length === 0)
+    (t) =>
+      matchesBase(t) &&
+      (!Array.isArray(t.customers) || t.customers.length === 0)
   );
 
   // Prefer targeted tiers, else general
