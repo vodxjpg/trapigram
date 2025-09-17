@@ -41,8 +41,8 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/currency";
+
 /* ——————————————————— TYPES ——————————————————— */
 interface OrderFormWithFetchProps {
   orderId?: string;
@@ -64,7 +64,7 @@ interface Product {
 interface OrderItem {
   product: Product;
   quantity: number;
-  isAffiliate: boolean;
+  isAffiliate?: boolean;
 }
 interface ShippingMethod {
   id: string;
@@ -80,7 +80,6 @@ interface ShippingCompany {
   id: string;
   name: string;
 }
-
 interface OrderItemLine {
   id: string;
   title: string;
@@ -92,18 +91,17 @@ interface OrderItemLine {
   isAffiliate: boolean;
 }
 
-const NIFTIPAY_BASE =
-  (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com")
-    .replace(/\/+$/, ""); // strip trailing “/” just in case
+const NIFTIPAY_BASE = (
+  process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com"
+).replace(/\/+$/, "");
 const DEBOUNCE_MS = 400;
+
 type NiftipayNet = { chain: string; asset: string; label: string };
 
 // Mirror create-form: fetch Niftipay networks via our backend proxy
 async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
   const r = await fetch("/api/niftipay/payment-methods");
-  if (!r.ok) {
-    throw new Error(await r.text().catch(() => "Niftipay methods failed"));
-  }
+  if (!r.ok) throw new Error(await r.text().catch(() => "Niftipay methods failed"));
   const { methods } = await r.json();
   return (methods || []).map((m: any) => ({
     chain: m.chain,
@@ -112,12 +110,9 @@ async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
   }));
 }
 
-/* ─── friendly error helper ───────────────────────────────────────────── */
-// Map common backend messages → clearer toasts for the user.
+/* ——— Friendly errors ——— */
 function showFriendlyCreateOrderError(raw?: string | null): boolean {
   const msg = (raw || "").toLowerCase();
-
-  // Shipping
   if (msg.includes("no shipping methods available")) {
     toast.error("You need to create a shipping method first");
     return true;
@@ -130,12 +125,10 @@ function showFriendlyCreateOrderError(raw?: string | null): boolean {
     toast.error("You need to set up a shipping company first");
     return true;
   }
-  // Niftipay
   if (msg.includes("niftipay not configured for tenant")) {
     toast.error("You need to configure Niftipay or another payment method");
     return true;
   }
-
   if (
     msg.includes("no payment methods") ||
     msg.includes("payment method required") ||
@@ -148,6 +141,23 @@ function showFriendlyCreateOrderError(raw?: string | null): boolean {
   return false;
 }
 
+/* ——— Helpers (match Create page behavior/UX) ——— */
+
+// Sum stock across all warehouses for a specific country
+const stockForCountry = (
+  stockData: Product["stockData"] | undefined,
+  country: string
+): number =>
+  Object.values(stockData || {}).reduce(
+    (sum, wh) => sum + (wh?.[country] ?? 0),
+    0
+  );
+
+// Quantity currently in cart for a given product
+const inCartQty = (pid: string, items: OrderItem[]) =>
+  items.reduce((sum, it) => sum + (it.product.id === pid ? it.quantity : 0), 0);
+
+// Aggregate server lines by product (hide price-bucket details in UI to match Create page)
 function mergeLinesByProduct(
   lines: Array<{
     id: string;
@@ -160,91 +170,46 @@ function mergeLinesByProduct(
 ) {
   const map: Record<
     string,
-    { quantity: number; subtotal: number; lines: typeof lines }
+    { quantity: number; subtotal: number; unitPrice: number; isAffiliate: boolean; sample: any }
   > = {};
-
-  for (const line of lines) {
-    if (!map[line.id]) {
-      map[line.id] = {
+  for (const l of lines) {
+    if (!map[l.id]) {
+      map[l.id] = {
         quantity: 0,
         subtotal: 0,
-        lines: [],
+        unitPrice: l.unitPrice,
+        isAffiliate: l.isAffiliate,
+        sample: l,
       };
     }
-    map[line.id].quantity += line.quantity;
-    map[line.id].subtotal += line.subtotal;
-    map[line.id].lines.push(line);
+    map[l.id].quantity += l.quantity;
+    map[l.id].subtotal += l.subtotal;
   }
-
-  return Object.values(map).map(({ lines, quantity, subtotal }) => ({
-    ...lines[0], // Keep the first line’s metadata (title, sku, etc.)
-    quantity, // Summed quantity
-    subtotal, // Summed subtotal
+  return Object.entries(map).map(([id, v]) => ({
+    id,
+    quantity: v.quantity,
+    subtotal: v.subtotal,
+    unitPrice: v.unitPrice,
+    isAffiliate: v.isAffiliate,
+    sample: v.sample,
   }));
 }
 
-function groupByProduct(lines: OrderItemLine[]) {
-  return lines.reduce(
-    (acc, line) => {
-      let bucket = acc.find((b) => b.id === line.id);
-      if (!bucket) {
-        bucket = {
-          id: line.id,
-          title: line.title,
-          sku: line.sku,
-          description: line.description,
-          image: line.image,
-          isAffiliate: line.isAffiliate,
-          priceBuckets: [] as { unitPrice: number; quantity: number }[],
-        };
-        acc.push(bucket);
-      }
-      // find the matching price‐bucket
-      const pb = bucket.priceBuckets.find(
-        (p) => p.unitPrice === line.unitPrice
-      );
-      if (pb) {
-        pb.quantity += line.quantity;
-      } else {
-        bucket.priceBuckets.push({
-          unitPrice: line.unitPrice,
-          quantity: line.quantity,
-        });
-      }
-      return acc;
-    },
-    [] as Array<{
-      id: string;
-      title: string;
-      sku: string;
-      description: string;
-      image: string;
-      isAffiliate: boolean;
-      priceBuckets: { unitPrice: number; quantity: number }[];
-    }>
-  );
-}
-
-async function fetchJsonVerbose(
-  url: string,
-  opts: RequestInit = {},
-  tag = url,
-) {
+async function fetchJsonVerbose(url: string, opts: RequestInit = {}, tag = url) {
   const res = await fetch(url, { credentials: "include", ...opts });
   let body: any = null;
   try {
-    body = await res.clone().json();   // clone → still readable later
-  } catch { /* not JSON */ }
-
+    body = await res.clone().json();
+  } catch { }
   console.log(`[${tag}]`, res.status, body ?? "(non-json)");
   return res;
 }
-
 
 export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
   const { data: activeOrg } = authClient.useActiveOrganization();
   const merchantId = activeOrg?.id ?? "";
+
   /* ——————————————————— STATE ——————————————————— */
   const [orderData, setOrderData] = useState<any | null>(null);
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
@@ -255,10 +220,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
   const [stockErrors, setStockErrors] = useState<Record<string, number>>({});
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
+
   useEffect(() => {
     (async () => {
       try {
-        // Try all-at-once endpoint
         const res = await fetch("/api/product-categories?all=1").catch(() => null);
         if (res && res.ok) {
           const data = await res.json();
@@ -267,21 +232,16 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           setCategoryMap(Object.fromEntries(rows.map((c) => [c.id, c.name])));
           return;
         }
-        // Fallback: client-side pagination
+        // fallback pagination
         let page = 1;
         const pageSize = 200;
         const acc: Array<{ id: string; name: string }> = [];
-        // eslint-disable-next-line no-constant-condition
         while (true) {
-          const r = await fetch(
-            `/api/product-categories?page=${page}&pageSize=${pageSize}`
-          ).catch(() => null);
+          const r = await fetch(`/api/product-categories?page=${page}&pageSize=${pageSize}`).catch(() => null);
           if (!r || !r.ok) break;
           const data = await r.json().catch(() => ({}));
           const rows = Array.isArray(data.categories) ? data.categories : [];
-          acc.push(
-            ...rows.map((c: any) => ({ id: c.id, name: c.name }))
-          );
+          acc.push(...rows.map((c: any) => ({ id: c.id, name: c.name })));
           const totalPages = Number(data.totalPages || 1);
           if (page >= totalPages) break;
           page += 1;
@@ -289,9 +249,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         if (acc.length) {
           setCategoryMap(Object.fromEntries(acc.map((c) => [c.id, c.name])));
         }
-      } catch {
-        // noop; will fall back to showing raw IDs
-      }
+      } catch { }
     })();
   }, []);
 
@@ -314,23 +272,21 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [productsLoading, setProductsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
+
   // keep text while typing; coerce on blur/use
   const [quantityText, setQuantityText] = useState("1");
   const parseQty = (s: string) => {
     const n = parseInt(s, 10);
     return Number.isFinite(n) && n > 0 ? n : 1;
   };
+
   /* ▼ product-search state (local + remote) */
   const [prodTerm, setProdTerm] = useState("");
   const [prodSearching, setProdSearching] = useState(false);
   const [prodResults, setProdResults] = useState<Product[]>([]);
 
-  const [addresses, setAddresses] = useState<{ id: string; address: string }[]>(
-    []
-  );
-  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(
-    null
-  );
+  const [addresses, setAddresses] = useState<{ id: string; address: string }[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [newAddress, setNewAddress] = useState("");
 
   const [showNewCoupon, setShowNewCoupon] = useState(false);
@@ -339,33 +295,30 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [couponApplied, setCouponApplied] = useState(false);
   const [couponCode, setCouponCode] = useState("");
 
-  const [discountType, setDiscountType] = useState<"percentage" | "fixed">(
-    "fixed"
-  );
-  const [discount, setDiscount] = useState<number>(0); // ← number, never null
-  const [value, setValue] = useState<number>(0); // ← “
+  const [discountType, setDiscountType] = useState<"percentage" | "fixed">("fixed");
+  const [discount, setDiscount] = useState<number>(0);
+  const [value, setValue] = useState<number>(0);
 
   const [shippingLoading, setShippingLoading] = useState(true);
   const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
-    []
-  );
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
   const [selectedShippingCompany, setSelectedShippingCompany] = useState("");
   const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
-  const [rawLines, setRawLines] = useState<OrderItemLine[]>([]);
+
   interface PaymentMethod {
     id: string;
     name: string;
     apiKey?: string | null;
+    active?: boolean;
   }
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
-  const [niftipayNetworks, setNiftipayNetworks] = useState<
-    { chain: string; asset: string; label: string }[]
-  >([]);
+  const [niftipayNetworks, setNiftipayNetworks] = useState<NiftipayNet[]>([]);
   const [niftipayLoading, setNiftipayLoading] = useState(false);
   const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
+
   /* ——————————————————— HELPERS ——————————————————— */
+  const findProduct = (id: string) => [...products, ...prodResults].find((p) => p.id === id);
   const calcRowSubtotal = (p: Product, qty: number) =>
     (p.regularPrice[clientCountry] ?? p.price) * qty;
 
@@ -376,27 +329,33 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       });
       const { resultCartProducts } = await res.json();
 
-      // 1️⃣ update rawLines (for grouped UI)
-      setRawLines(resultCartProducts);
+      // Aggregate like Create page UI (one row per product)
+      const aggregated = mergeLinesByProduct(resultCartProducts);
 
-      // 2️⃣ update orderItems (for subtotal/total logic)
-      setOrderItems(
-        resultCartProducts.map((l) => ({
+      // Map to <OrderItem>, hydrating stock/flags from catalog when available
+      const items: OrderItem[] = aggregated.map((l) => {
+        const pMatch = findProduct(l.id);
+        return {
           product: {
             id: l.id,
-            title: l.title,
-            sku: l.sku,
-            description: l.description,
-            image: l.image,
-            regularPrice: { [clientCountry]: l.unitPrice },
+            title: l.sample.title,
+            sku: l.sample.sku,
+            description: l.sample.description,
+            image: l.sample.image,
+            // keep unit price per line as “price” (same as Create mapping)
             price: l.unitPrice,
+            regularPrice: { [clientCountry]: l.unitPrice, ...(pMatch?.regularPrice ?? {}) },
+            stockData: pMatch?.stockData ?? {},
+            allowBackorders: pMatch?.allowBackorders,
             subtotal: l.subtotal,
-            stockData: {},
-          },
+            isAffiliate: l.isAffiliate,
+          } as Product,
           quantity: l.quantity,
           isAffiliate: l.isAffiliate,
-        }))
-      );
+        };
+      });
+
+      setOrderItems(items);
     } catch (e: any) {
       toast.error(e.message || "Failed loading cart");
     }
@@ -405,18 +364,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   /* ——————————————————— EFFECTS ——————————————————— */
   useEffect(() => {
     const sum = orderItems
-      .filter((item) => !item.isAffiliate) // ← ignore affiliate lines
+      .filter((item) => !item.isAffiliate)
       .reduce(
-        (acc, item) =>
-          acc +
-          (item.product.subtotal ??
-            calcRowSubtotal(item.product, item.quantity)),
+        (acc, item) => acc + (item.product.subtotal ?? calcRowSubtotal(item.product, item.quantity)),
         0
       );
     setSubtotal(sum);
   }, [orderItems, clientCountry]);
 
-  // total recalculation
+  // total recalculation (keep existing behavior on edit)
   useEffect(() => {
     if (!orderData) return;
     const shipping = orderData.shipping ?? 0;
@@ -426,7 +382,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     setDiscountType(couponApplied ? discountType : orderData.discountType);
     setDiscount(Number(couponDisc));
 
-    // include both coupon‐ and points‐discount
     setTotal(subtotal + shipping - Number(couponDisc) - Number(pointsDisc));
   }, [
     subtotal,
@@ -444,7 +399,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       try {
         const res = await fetch(
           `/api/order/${orderId}?organizationId=${activeOrg?.id}`,
-          { credentials: 'include' }
+          { credentials: "include" }
         );
         const data = await res.json();
         setOrderData(data);
@@ -476,8 +431,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     loadCart();
   }, [cartId, clientCountry]);
 
-  const groupedItems = groupByProduct(rawLines);
-
   /* ——————————————————— LOAD STATIC DATA ——————————————————— */
   useEffect(() => {
     loadProducts();
@@ -487,7 +440,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   async function loadProducts() {
     setProductsLoading(true);
     try {
-      // no custom headers needed
       const [normRes, affRes] = await Promise.all([
         fetch("/api/products?page=1&pageSize=1000"),
         fetch("/api/affiliate/products?limit=1000"),
@@ -496,13 +448,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         throw new Error("Failed to fetch product lists");
       }
 
-      const { products: norm } = await normRes.json(); // [{ id,…, regularPrice, stockData, … }]
-      const { products: aff } = await affRes.json(); // [{ id,…, pointsPrice, cost, stock?, … }]
+      const { products: norm } = await normRes.json();
+      const { products: aff } = await affRes.json();
 
-      // map both into our UI shape
       const all: Product[] = [
-        // 1) real products
-        ...norm.map((p) => ({
+        ...norm.map((p: any) => ({
           id: p.id,
           allowBackorders: !!p.allowBackorders,
           title: p.title,
@@ -510,28 +460,20 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           description: p.description,
           image: p.image,
           regularPrice: p.regularPrice,
-          // use the first country’s salePrice or regularPrice as fallback price
           price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
           stockData: p.stockData,
           isAffiliate: false,
           subtotal: 0,
           categories: p.categories ?? [],
         })),
-
-        // 2) affiliate products
-        ...aff.map((a) => {
-          // pick “first” level then “first” country to derive a flat points → € price
-          const lvlKeys = Object.keys(a.pointsPrice);
-          const countryKeys = lvlKeys.length
-            ? Object.keys(a.pointsPrice[lvlKeys[0]])
-            : [];
+        ...aff.map((a: any) => {
+          const lvlKeys = Object.keys(a.pointsPrice ?? {});
+          const countryKeys = lvlKeys.length ? Object.keys(a.pointsPrice[lvlKeys[0]] ?? {}) : [];
           const firstCountry = countryKeys[0] ?? "";
-          const price = a.cost[firstCountry] ?? 0;
+          const price = (a.cost ?? {})[firstCountry] ?? 0;
 
-          // build a regularPrice map so the UI can treat it the same:
-          // use cost in every country as the “currency” price
           const regularPrice: Record<string, number> = Object.fromEntries(
-            Object.entries(a.cost).map(([country, c]) => [country, c])
+            Object.entries(a.cost ?? {}).map(([country, c]) => [country, c as number])
           );
 
           return {
@@ -547,10 +489,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             isAffiliate: true,
             subtotal: 0,
             categories: [],
-          };
+          } as Product;
         }),
       ];
-
       setProducts(all);
     } catch (e: any) {
       console.error(e);
@@ -561,15 +502,14 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   }
 
   /* ────────────────────────────────────────────────────────────
-   Fetch payment methods + (if Niftipay) chains/assets
-──────────────────────────────────────────────────────────── */
+   Payment methods + (if Niftipay) networks
+  ───────────────────────────────────────────────────────────── */
   useEffect(() => {
     (async () => {
       try {
         const pmRes = await fetch("/api/payment-methods");
         const { methods } = await pmRes.json();
         if (!Array.isArray(methods) || methods.length === 0) {
-          // Proactive guidance for edit flow as well
           toast.error("You need to set up a payment method first");
         }
         const init = methods.find(
@@ -577,21 +517,16 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             m.name?.toLowerCase?.() === orderData?.shippingInfo?.payment?.toLowerCase()
         )?.id;
         if (init) setSelectedPaymentMethod(init);
+        setPaymentMethods(methods);
       } catch {
         toast.error("Failed loading payment methods");
       }
     })();
   }, [orderData]);
 
-  // Load Niftipay networks the same way as the create form (via backend proxy)
   useEffect(() => {
     const pm = paymentMethods.find((p) => p.id === selectedPaymentMethod);
-    // 🔧 also bail if Niftipay is inactive / misconfigured
-    if (
-      !pm ||
-      !/niftipay/i.test(pm.name || "") ||
-      (pm as any).active === false
-    ) {
+    if (!pm || !/niftipay/i.test(pm.name || "") || (pm as any).active === false) {
       setNiftipayNetworks([]);
       setSelectedNiftipay("");
       return;
@@ -601,7 +536,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       try {
         const nets = await fetchNiftipayNetworks();
         setNiftipayNetworks(nets);
-        // auto-pick first option if none selected (parity with create form)
         if (!selectedNiftipay && nets[0]) {
           setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
         }
@@ -616,8 +550,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     })();
   }, [selectedPaymentMethod, paymentMethods, selectedNiftipay]);
 
-  // Optional: if nothing is selected (e.g., editing an old order), preselect Niftipay
-  // 🔧 Smart default selection – prefer active, non-Niftipay methods
   useEffect(() => {
     if (selectedPaymentMethod) return;
     const active = (paymentMethods as any[]).filter((m) => m.active !== false);
@@ -626,17 +558,14 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     if (pick) setSelectedPaymentMethod(pick.id);
   }, [paymentMethods, selectedPaymentMethod]);
 
-
-  /* ─── country-aware catalogue (affiliates always pass; backorders allowed) ─── */
+  /* ─── country-aware catalogue (affiliates always visible; backorders allowed) ─── */
   const countryProducts = products.filter((p) => {
-    if (p.isAffiliate) return true; // affiliates always visible
-    // stock in client's country across warehouses
-    const totalStock = Object.values(p.stockData).reduce(
-      (sum, e) => sum + (e[clientCountry] || 0),
+    if (p.isAffiliate) return true;
+    const totalStock = Object.values(p.stockData || {}).reduce(
+      (sum, e: any) => sum + (e?.[clientCountry] || 0),
       0
     );
     if (totalStock > 0) return true;
-    // show when backorders are enabled
     return p.allowBackorders === true;
   });
 
@@ -645,26 +574,28 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     if (prodTerm.trim().length < 3) return countryProducts;
     const q = prodTerm.toLowerCase();
     return countryProducts.filter(
-      p =>
-        p.title.toLowerCase().includes(q) ||
-        p.sku.toLowerCase().includes(q),
+      (p) => p.title.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
     );
   }, [countryProducts, prodTerm]);
 
-  /* ─── debounced remote search (/api/products & /api/affiliate/products) ── */
+  /* ─── debounced remote search ── */
   useEffect(() => {
     const q = prodTerm.trim();
     if (q.length < 3) {
-      setProdResults([]); setProdSearching(false); return;
+      setProdResults([]);
+      setProdSearching(false);
+      return;
     }
     const t = setTimeout(async () => {
       try {
         setProdSearching(true);
         const [shop, aff] = await Promise.all([
           fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`)
-            .then(r => r.json()).then(d => d.products as any[]),
+            .then((r) => r.json())
+            .then((d) => d.products as any[]),
           fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`)
-            .then(r => r.json()).then(d => d.products as any[]),
+            .then((r) => r.json())
+            .then((d) => d.products as any[]),
         ]);
 
         const mapShop = (p: any): Product => ({
@@ -674,7 +605,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           stockData: p.stockData,
           subtotal: 0,
           isAffiliate: false,
-          categories: p.categories ?? []
+          categories: p.categories ?? [],
         });
         const mapAff = (a: any): Product => ({
           id: a.id,
@@ -683,9 +614,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           description: a.description,
           image: a.image,
           regularPrice: Object.fromEntries(
-            Object.entries(a.cost).map(([cc, c]) => [cc, c]),
+            Object.entries(a.cost ?? {}).map(([cc, c]) => [cc, c as number])
           ),
-          price: Object.values(a.pointsPrice)[0] ?? 0,
+          price: Object.values(a.pointsPrice ?? {})[0] ?? 0,
           stockData: a.stock ?? {},
           subtotal: 0,
           isAffiliate: true,
@@ -693,8 +624,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         });
 
         setProdResults([...shop.map(mapShop), ...aff.map(mapAff)]);
-      } catch { setProdResults([]); }
-      finally { setProdSearching(false); }
+      } catch {
+        setProdResults([]);
+      } finally {
+        setProdSearching(false);
+      }
     }, DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [prodTerm]);
@@ -702,34 +636,25 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   /* helper: keep remote rows in `products` so Select can resolve labels */
   const pickProduct = (id: string, obj: Product) => {
     setSelectedProduct(id);
-    if (!products.some(p => p.id === id)) setProducts(prev => [...prev, obj]);
-    setProdTerm(""); setProdResults([]);
+    if (!products.some((p) => p.id === id)) setProducts((prev) => [...prev, obj]);
+    setProdTerm("");
+    setProdResults([]);
   };
 
   const loadShipping = async () => {
     setShippingLoading(true);
     try {
-      const [shipRes, compRes] = await Promise.all([
-        fetch("/api/shipments"),
-        fetch("/api/shipping-companies"),
-      ]);
+      const [shipRes, compRes] = await Promise.all([fetch("/api/shipments"), fetch("/api/shipping-companies")]);
       const shipData = await shipRes.json();
       const compData = await compRes.json();
       setShippingMethods(shipData.shipments);
-      // Proactively guide when none exist
       if (!shipData?.shipments?.length) {
         toast.error("You need to create a shipping method first");
       }
-      {
-        const companies: ShippingCompany[] =
-          compData?.companies ?? compData?.shippingMethods ?? [];
-        setShippingCompanies(companies);
-        if (!companies.length) {
-          toast.error("You need to set up a shipping company first");
-        }
-      }
-      if (!shipData?.shipments?.length) {
-        toast.error("You need to create a shipping method first");
+      const companies: ShippingCompany[] = compData?.companies ?? compData?.shippingMethods ?? [];
+      setShippingCompanies(companies);
+      if (!companies.length) {
+        toast.error("You need to set up a shipping company first");
       }
     } catch (err: any) {
       if (!showFriendlyCreateOrderError(err?.message)) {
@@ -740,30 +665,20 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     }
   };
 
-  // Auto-select the shipping method once both orderData and shippingMethods are ready
+  // Auto-select shipping method/company from order
   useEffect(() => {
     if (orderData && shippingMethods.length) {
       const match = shippingMethods.find(
-        (m) =>
-          // if your API gives you the ID:
-          m.id === orderData.shippingInfo.method ||
-          // or if it gives you the title:
-          m.title === orderData.shippingInfo.method
+        (m) => m.id === orderData.shippingInfo.method || m.title === orderData.shippingInfo.method
       );
-      console.log(match);
       if (match) setSelectedShippingMethod(match.id);
     }
   }, [orderData, shippingMethods]);
 
-  // Auto-select the shipping company once both orderData and shippingCompanies are ready
   useEffect(() => {
     if (orderData && shippingCompanies.length) {
       const match = shippingCompanies.find(
-        (c) =>
-          // if your API gives you the ID:
-          c.id === orderData.shippingInfo.company ||
-          // or if it gives you the name:
-          c.name === orderData.shippingInfo.company
+        (c) => c.id === orderData.shippingInfo.company || c.name === orderData.shippingInfo.company
       );
       if (match) setSelectedShippingCompany(match.id);
     }
@@ -772,7 +687,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   // Add new address then re-fetch list and select it
   const handleAddAddress = async () => {
     if (!newAddress || !orderData?.clientId) return;
-    const newAddrText = newAddress; // keep the text before clearing
+    const newAddrText = newAddress;
     try {
       const res = await fetch(`/api/clients/${orderData.clientId}/address`, {
         method: "POST",
@@ -780,47 +695,32 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         body: JSON.stringify({ address: newAddrText }),
       });
       if (!res.ok) throw new Error("Failed to add address");
-      setNewAddress(""); // clear input
+      setNewAddress("");
 
-      // Refresh list
       const upd = await fetch(`/api/clients/${orderData.clientId}/address`);
       const addrData = await upd.json();
       setAddresses(addrData.addresses);
 
-      // Auto-select the one we just added
-      const match = addrData.addresses.find(
-        (a: any) => a.address === newAddrText
-      );
-      if (match) {
-        setSelectedAddressId(match.id);
-      }
+      const match = addrData.addresses.find((a: any) => a.address === newAddrText);
+      if (match) setSelectedAddressId(match.id);
     } catch (err: any) {
       console.error(err);
       toast.error("Could not add address");
     }
   };
 
-  // Apply coupon
+  // Apply coupon (single field on edit)
   const handleApplyCoupon = async () => {
     if (!newCoupon || !orderData?.cartId || !orderData?.id) return;
     try {
-      // First PATCH to apply coupon
-      const patchRes = await fetch(
-        `/api/cart/${orderData.cartId}/apply-coupon`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code: newCoupon, total: subtotal }),
-        }
-      );
+      const patchRes = await fetch(`/api/cart/${orderData.cartId}/apply-coupon`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: newCoupon, total: subtotal }),
+      });
       if (!patchRes.ok) throw new Error("Failed to apply coupon to cart");
       const data = await patchRes.json();
-      const {
-        discountAmount: amt,
-        discountType: dt,
-        discountValue: dv,
-        cc,
-      } = data;
+      const { discountAmount: amt, discountType: dt, discountValue: dv, cc } = data;
 
       if (cc === null) {
         setCouponCode("");
@@ -833,8 +733,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         setCouponApplied(true);
         toast.success("Coupon applied!");
       }
-
-      // Refresh order and reset UI
       setNewCoupon(newCoupon);
       setShowNewCoupon(true);
     } catch (err) {
@@ -842,19 +740,30 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     }
   };
 
-  // — Add product
-  // — Add product
+  /* ——————————————————— PRODUCTS: Add/Remove/Update ——————————————————— */
+
+  // Add product (guard like Create page)
   const addProduct = async () => {
     if (!selectedProduct || !cartId) {
       toast.error("Cart hasn’t been created yet!");
       return;
     }
 
-    const product = products.find((p) => p.id === selectedProduct);
+    const product = [...products, ...prodResults].find((p) => p.id === selectedProduct);
     if (!product) return;
 
+    const hasFiniteStock = Object.keys(product.stockData || {}).length > 0;
+    const base = stockForCountry(product.stockData, clientCountry);
+    const already = inCartQty(product.id, orderItems);
+    const remaining = hasFiniteStock ? Math.max(0, base - already) : Infinity;
+
+    const qty = parseQty(quantityText);
+    if (hasFiniteStock && !product.allowBackorders && (remaining === 0 || qty > remaining)) {
+      toast.error(remaining === 0 ? "Out of stock" : `Only ${remaining} available`);
+      return;
+    }
+
     const unitPrice = product.regularPrice[clientCountry] ?? product.price;
-    const qty = parseQty(quantityText); // <— local qty for request
 
     try {
       const res: Response = await fetch(`/api/cart/${cartId}/add-product`, {
@@ -863,7 +772,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         body: JSON.stringify({
           productId: selectedProduct,
           quantity: qty,
-          price: unitPrice,
+          price: unitPrice, // (edit route expects "price")
           country: clientCountry,
         }),
       });
@@ -877,15 +786,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         throw new Error(msg);
       }
 
-      type AddProductResponse = { product: Product; quantity: number };
-      const {
-        product: added,
-        quantity: returnedQty, // <— rename to avoid shadowing
-      } = (await res.json()) as AddProductResponse;
-
-      // If you don’t use subtotalRow elsewhere, you can remove this line.
-      // const subtotalRow = calcRowSubtotal(added, returnedQty);
-
       await loadCart();
       setSelectedProduct("");
       setQuantityText("1");
@@ -896,8 +796,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     }
   };
 
-
-  // — Remove Product
+  // Remove product
   const removeProduct = async (productId: string, idx: number) => {
     if (!cartId) {
       toast.error("No cart created yet!");
@@ -925,14 +824,8 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     }
   };
 
-  // — Update product quantity
-  // — Update product quantity
-  // src/app/(dashboard)/orders/[id]/edit/orderForm.tsx
-
-  const updateQuantity = async (
-    productId: string,
-    action: "add" | "subtract"
-  ) => {
+  // Update product quantity
+  const updateQuantity = async (productId: string, action: "add" | "subtract") => {
     if (!cartId) {
       toast.error("Cart hasn’t been created yet!");
       return;
@@ -948,76 +841,65 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         console.error("PATCH /order failed", body);
         throw new Error(body.error || "Failed to update quantity");
       }
-
-      // 🎯 Consume the PATCH response and immediately update UI
-      // 🎯 consume the PATCH response
+      // Server returns { lines: [...] }
       const { lines } = await res.json();
 
-      // 1️⃣ keep **all** rows so bucket-view can distinguish unit prices
-      setRawLines(lines);
-
-      // 2️⃣ aggregate only for sidebar math
+      // aggregate to match Create page UI
       const aggregated = mergeLinesByProduct(lines);
-      setOrderItems(
-        aggregated.map((l: any) => ({
+      const mapped: OrderItem[] = aggregated.map((l: any) => {
+        const prev = orderItems.find((it) => it.product.id === l.id);
+        const pMatch = findProduct(l.id);
+        return {
           product: {
             id: l.id,
-            title: l.title,
-            sku: l.sku,
-            description: l.description,
-            image: l.image,
-            regularPrice: { [clientCountry]: l.unitPrice },
+            title: l.sample.title,
+            sku: l.sample.sku,
+            description: l.sample.description,
+            image: l.sample.image,
             price: l.unitPrice,
+            regularPrice: { [clientCountry]: l.unitPrice, ...(pMatch?.regularPrice ?? {}) },
+            stockData: prev?.product.stockData ?? pMatch?.stockData ?? {},
+            allowBackorders: prev?.product.allowBackorders ?? pMatch?.allowBackorders,
             subtotal: l.subtotal,
-            stockData: {},
           },
           quantity: l.quantity,
           isAffiliate: l.isAffiliate,
-        }))
-      );
+        };
+      });
 
-      toast.success(
-        `Quantity ${action === "add" ? "increased" : "decreased"}!`
-      );
+      setOrderItems(mapped);
+      toast.success(`Quantity ${action === "add" ? "increased" : "decreased"}!`);
     } catch (err: any) {
       toast.error(err.message);
     }
   };
 
-  // New: update order
+  // Update order (shipping/payment etc.)
   const handleUpdateOrder = async () => {
     if (!orderData?.id) return;
 
     try {
-      /* --- 0. Niftipay coin switch: cancel old invoice → create new (same reference) --- */
-      const pmObj = paymentMethods.find(p => p.id === selectedPaymentMethod);
+      const pmObj = paymentMethods.find((p) => p.id === selectedPaymentMethod);
       const oldPM = orderData.shippingInfo.payment?.toLowerCase();
       const newPM = pmObj?.name.toLowerCase();
 
-      /* extract previous network:asset if we have orderMeta */
       const prevNA =
         orderData.orderMeta?.[0]?.order
           ? `${orderData.orderMeta[0].order.network}:${orderData.orderMeta[0].order.asset}`
           : null;
 
       const needDelete =
-        oldPM === "niftipay" && (
-              /* A */ newPM !== "niftipay" ||
-              /* B */ (newPM === "niftipay" &&
-            prevNA &&                     // we know the previous invoice
-            selectedNiftipay &&           // user picked a coin
-            selectedNiftipay !== prevNA)  // … and it changed
-        );
+        oldPM === "niftipay" &&
+        ((newPM !== "niftipay") ||
+          (newPM === "niftipay" && prevNA && selectedNiftipay && selectedNiftipay !== prevNA));
 
       if (needDelete) {
-        const niftipayMethod = paymentMethods.find(p => p.name.toLowerCase() === "niftipay");
+        const niftipayMethod = paymentMethods.find((p) => p.name.toLowerCase() === "niftipay");
         const key = niftipayMethod?.apiKey;
         if (!key) {
           toast.error("Niftipay API key missing");
           return;
         }
-
-        // 0a) look up the invoice id by reference
         const findRes = await fetchJsonVerbose(
           `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
           { credentials: "omit", headers: { "x-api-key": key } },
@@ -1029,8 +911,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         }
         const { orders: found = [] } = await findRes.clone().json().catch(() => ({ orders: [] }));
         const existing = found.find((o: any) => o.reference === orderData.orderKey);
-
-        // 0b) cancel it if not already cancelled (fires webhook)
         if (existing && existing.status !== "cancelled") {
           const patch = await fetchJsonVerbose(
             `${NIFTIPAY_BASE}/api/orders/${existing.id}`,
@@ -1051,13 +931,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         }
       }
 
-      /* --- 1. Patch the order itself --- */
-      const selectedAddressText = addresses.find(a => a.id === selectedAddressId)?.address ?? null;
-
-
-
-
-      const headers: HeadersInit = { "Content-Type": "application/json" };
+      const selectedAddressText = addresses.find((a) => a.id === selectedAddressId)?.address ?? null;
 
       const res = await fetchJsonVerbose(
         `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
@@ -1074,7 +948,8 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             shippingCompany: selectedShippingCompany,
             paymentMethodId: selectedPaymentMethod,
           }),
-        });
+        }
+      );
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -1085,15 +960,12 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         return;
       }
 
-      /* --- 2. (Re-)create Niftipay invoice if it’s the chosen method --- */
       if (newPM === "niftipay") {
-        // 🔧 If Niftipay isn't configured (no networks), don't block other methods
         if (!niftipayNetworks.length) {
           toast.error("Niftipay isn’t configured. Choose another payment method.");
           return;
         }
         const key = pmObj?.apiKey;
-
         if (!key) {
           toast.error("Niftipay API key missing");
           return;
@@ -1103,7 +975,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         }
 
         const [chain, asset] = selectedNiftipay.split(":");
-        // 2a) Always delete any existing invoice first to avoid duplicates
         await fetchJsonVerbose(
           `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
           {
@@ -1111,38 +982,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             method: "DELETE",
             headers: { "x-api-key": key },
           },
-          "DELETE OLD Niftipay",
+          "DELETE OLD Niftipay"
         );
-        console.log("[Trapigram] Old Niftipay invoice deleted (if existed)");
-
-        // 2b) Now create the new one
-        console.log("[Trapigram] Creating new Niftipay order", {
-          reference: orderData.orderKey,
-          chain,
-          asset,
-          merchantId,
-          payload: {
-            network: chain,
-            asset,
-            amount: total,
-            currency: orderData.currency ?? "EUR",
-            firstName: orderData.client.firstName,
-            lastName: orderData.client.lastName,
-            email: orderData.client.email || "user@trapyfy.com",
-            merchantId,
-            reference: orderData.orderKey,
-          }
-        });
-
-        console.log("pmObj", pmObj);
-
 
         const niftipayRes = await fetch(`${NIFTIPAY_BASE}/api/orders?replaceCancelled=1`, {
           method: "POST",
           credentials: "omit",
           headers: {
             "Content-Type": "application/json",
-            "x-api-key": pmObj!.apiKey!,   // ✅  always include when talking to Niftipay
+            "x-api-key": pmObj!.apiKey!,
           },
           body: JSON.stringify({
             network: chain,
@@ -1159,10 +1007,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
         if (!niftipayRes.ok) {
           const errorBody = await niftipayRes.json().catch(() => ({ error: "Unknown error" }));
-          console.error("[Trapigram] Failed to create new Niftipay order", {
-            status: niftipayRes.status,
-            error: errorBody.error,
-          });
           const rawMsg = errorBody?.error;
           if (!showFriendlyCreateOrderError(rawMsg)) {
             toast.error(rawMsg || "Failed to create new Niftipay order");
@@ -1171,16 +1015,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         }
 
         const niftipayMeta = await niftipayRes.json();
-        console.log("[Trapigram] Niftipay order created successfully", niftipayMeta);
-
-        // Update Trapigram order with Niftipay metadata
-        await fetch(
-          `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ orderMeta: [niftipayMeta] }),
-          });
+        await fetch(`/api/order/${orderData.id}?organizationId=${activeOrg?.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderMeta: [niftipayMeta] }),
+        });
         toast.success(`Niftipay invoice created: send ${niftipayMeta.order.amount} ${asset}`);
       }
 
@@ -1193,7 +1032,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     }
   };
 
-
+  /* ——————————————————— RENDER ——————————————————— */
   return (
     <div className="container mx-auto py-6">
       <h1 className="text-3xl font-bold mb-6">Update Order</h1>
@@ -1201,8 +1040,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT COLUMN */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Show Username */}
-          {/* Order information -------------------------------------------------- */}
+          {/* Order information (keep this card) */}
           <Card>
             <CardHeader>
               <CardTitle>Order Information</CardTitle>
@@ -1232,8 +1070,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             </CardContent>
           </Card>
 
-          {/* Product Selection */}
-
+          {/* Product Selection (mirror Create page layout/UX) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1243,99 +1080,96 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             <CardContent className="space-y-4">
               {orderItems.length > 0 && (
                 <div className="space-y-4 mb-4">
-                  {groupedItems.map((item) => {
-                    const totalQty = item.priceBuckets.reduce(
-                      (a, p) => a + p.quantity,
-                      0
-                    );
-                    const firstBucket = item.priceBuckets[0];
-                    return (
-                      <div key={item.id} className="border rounded-lg p-4">
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center space-x-4">
-                            {item.image ? (
-                              <Image
-                                src={item.image}
-                                alt={item.title}
-                                width={80}
-                                height={80}
-                                className="rounded-md"
-                              />
-                            ) : (
-                              <div className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-400">
-                                No image
-                              </div>
-                            )}
-                            <div>
-                              <h3 className="font-medium">{item.title}</h3>
-                              <p className="text-sm text-gray-500">
-                                SKU: {item.sku}
-                              </p>
-                              <div
-                                className="text-sm"
-                                dangerouslySetInnerHTML={{
-                                  __html: item.description,
-                                }}
-                              />
-                            </div>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() =>
-                              removeProduct(item.id, /* idx not used */ 0)
-                            }
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                  {orderItems.map(({ product, quantity }, idx) => {
+                    const price = product.regularPrice?.[clientCountry] ?? product.price;
 
-                        <div className="mt-4 flex justify-between items-center">
-                          {/* quantity controls */}
-                          <div className="flex items-center space-x-2">
+                    // For stock line we prefer product.stockData; if empty, hydrate from catalog
+                    const pHydrate = product.stockData && Object.keys(product.stockData).length
+                      ? product
+                      : (findProduct(product.id) ?? product);
+
+                    const base = stockForCountry(pHydrate.stockData, clientCountry);
+                    const used = inCartQty(product.id, orderItems);
+                    const remaining = Math.max(0, base - used);
+                    const finite = Object.keys(pHydrate.stockData || {}).length > 0;
+                    const disablePlus = finite && !pHydrate.allowBackorders && remaining === 0;
+
+                    return (
+                      <div
+                        key={product.id}
+                        className={
+                          "flex items-center gap-4 p-4 border rounded-lg" +
+                          (stockErrors[product.id] ? " border-red-500" : "")
+                        }
+                      >
+                        {product.image ? (
+                          <Image
+                            src={product.image}
+                            alt={product.title}
+                            width={80}
+                            height={80}
+                            className="rounded-md"
+                          />
+                        ) : (
+                          <div className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-400">
+                            No image
+                          </div>
+                        )}
+                        <div className="flex-1">
+                          <div className="flex justify-between">
+                            <h3 className="font-medium">{product.title}</h3>
                             <Button
+                              variant="ghost"
                               size="icon"
-                              onClick={() =>
-                                updateQuantity(item.id, "subtract")
-                              }
+                              onClick={() => removeProduct(product.id, idx)}
                             >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <p className="text-sm text-muted-foreground">SKU: {product.sku}</p>
+                          <div
+                            className="text-sm"
+                            dangerouslySetInnerHTML={{ __html: product.description }}
+                          />
+
+                          <div className="flex items-center gap-2 mt-2">
+                            <Button variant="ghost" size="icon" onClick={() => updateQuantity(product.id, "subtract")}>
                               <Minus className="h-4 w-4" />
                             </Button>
-                            <span className="font-medium">
-                              {totalQty} unit{totalQty > 1 ? "s" : ""}
-                            </span>
+                            <span className="font-medium">{quantity}</span>
                             <Button
+                              variant="ghost"
                               size="icon"
-                              onClick={() => updateQuantity(item.id, "add")}
+                              onClick={() => updateQuantity(product.id, "add")}
+                              disabled={disablePlus}
+                              aria-disabled={disablePlus}
+                              title={disablePlus ? "Out of stock" : undefined}
                             >
                               <Plus className="h-4 w-4" />
                             </Button>
                           </div>
-                          {/* cheapest bucket price for header */}
-                          <span className="font-medium">
-                            {formatCurrency(firstBucket.unitPrice, clientCountry)} each
-                          </span>
-                        </div>
 
-                        {/* breakdown of different unit prices */}
-                        {item.priceBuckets.length > 1 && (
-                          <ul className="mt-2 text-sm text-gray-600 space-y-1">
-                            {item.priceBuckets.map((pb) => (
-                              <li key={pb.unitPrice}>
-                                {pb.quantity} × {formatCurrency(pb.unitPrice, clientCountry)}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
+                          {stockErrors[product.id] && (
+                            <p className="text-red-600 text-sm mt-1">
+                              Only {stockErrors[product.id]} available
+                            </p>
+                          )}
 
-                        {/* line subtotal */}
-                        <div className="mt-4 text-right font-medium">
-                          {formatCurrency(
-                            item.priceBuckets.reduce(
-                              (sum, pb) => sum + pb.quantity * pb.unitPrice,
-                              0
-                            ),
-                            clientCountry
+                          <div className="flex justify-between mt-2">
+                            <span className="font-medium">
+                              Unit Price: {formatCurrency(price, clientCountry)}
+                            </span>
+                            <span className="font-medium">
+                              {formatCurrency(product.subtotal ?? price * quantity, clientCountry)}
+                            </span>
+                          </div>
+
+                          {/* Stock (client country), decreased by qty already in cart */}
+                          {Object.keys(pHydrate.stockData || {}).length > 0 && (
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              Stock in {clientCountry || "country"}: {remaining}
+                              {remaining === 0 && pHydrate.allowBackorders ? " (backorder allowed)" : ""}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1343,14 +1177,28 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                   })}
                 </div>
               )}
+
+              {/* Add product row (same UX as Create) */}
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
                   <Label>Select Product</Label>
                   <Select
                     value={selectedProduct}
-                    onValueChange={val => {
-                      const obj = [...products, ...prodResults].find(p => p.id === val);
-                      if (obj) pickProduct(val, obj);
+                    onValueChange={(val) => {
+                      const obj = [...products, ...prodResults].find((p) => p.id === val);
+                      if (!obj) return;
+
+                      const hasFiniteStock = Object.keys(obj.stockData || {}).length > 0;
+                      const base = stockForCountry(obj.stockData, clientCountry);
+                      const remaining = hasFiniteStock
+                        ? Math.max(0, base - inCartQty(obj.id, orderItems))
+                        : Infinity;
+
+                      if (hasFiniteStock && remaining === 0 && !obj.allowBackorders) {
+                        toast.error("This product is out of stock for the selected country.");
+                        return;
+                      }
+                      pickProduct(val, obj);
                     }}
                     disabled={productsLoading}
                   >
@@ -1364,32 +1212,47 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                         <Search className="h-4 w-4 text-muted-foreground" />
                         <Input
                           value={prodTerm}
-                          onChange={e => setProdTerm(e.target.value)}
+                          onChange={(e) => setProdTerm(e.target.value)}
                           placeholder="Search products (min 3 chars)"
                           className="h-8"
                         />
                       </div>
 
                       <ScrollArea className="max-h-72">
+                        {/* Local grouped (shop) */}
                         {groupByCategory(filteredProducts.filter((p) => !p.isAffiliate)).map(
                           ([label, items]) => (
                             <SelectGroup key={label}>
                               <SelectLabel>{label}</SelectLabel>
-                              {items.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.title}
-                                  {" — $"}
-                                  {p.regularPrice[clientCountry] ?? p.price}
-                                  {Object.values(p.stockData).reduce((s, e) => s + (e[clientCountry] || 0), 0) === 0 &&
-                                    p.allowBackorders ? " (backorder)" : ""}
-                                </SelectItem>
+                              {items.map((p) => {
+                                const price = p.regularPrice?.[clientCountry] ?? p.price;
+                                const finite = Object.keys(p.stockData || {}).length > 0;
+                                const base = stockForCountry(p.stockData, clientCountry);
+                                const already = inCartQty(p.id, orderItems);
+                                const remaining = finite ? Math.max(0, base - already) : Infinity;
+                                const shouldDisable = finite ? remaining === 0 && !p.allowBackorders : false;
 
-                              ))}
+                                return (
+                                  <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
+                                    <span className="block max-w-[420px] truncate">
+                                      {p.title} — ${price}
+                                      {finite && (
+                                        <span className="ml-2 text-xs text-muted-foreground">
+                                          Stock: {remaining}
+                                          {remaining === 0 && p.allowBackorders ? " (backorder)" : ""}
+                                          {shouldDisable ? " (out of stock)" : ""}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </SelectItem>
+                                );
+                              })}
                               <SelectSeparator />
                             </SelectGroup>
                           )
                         )}
 
+                        {/* Local affiliate */}
                         {filteredProducts.some((p) => p.isAffiliate) && (
                           <SelectGroup>
                             <SelectLabel>Affiliate</SelectLabel>
@@ -1404,6 +1267,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                           </SelectGroup>
                         )}
 
+                        {/* Remote results (not yet cached) */}
                         {prodResults.length > 0 && (
                           <>
                             {groupByCategory(
@@ -1413,33 +1277,51 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                             ).map(([label, items]) => (
                               <SelectGroup key={`remote-${label}`}>
                                 <SelectLabel>{label} — search</SelectLabel>
-                                {items.map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>
-                                    {p.title} — ${p.price}
-                                    <span className="ml-1 text-xs text-muted-foreground">
-                                      (remote)
-                                    </span>
-                                  </SelectItem>
-                                ))}
+                                {items.map((p) => {
+                                  const price = p.regularPrice?.[clientCountry] ?? p.price;
+                                  const finite = Object.keys(p.stockData || {}).length > 0;
+                                  const base = stockForCountry(p.stockData, clientCountry);
+                                  const already = inCartQty(p.id, orderItems);
+                                  const remaining = finite ? Math.max(0, base - already) : Infinity;
+                                  const shouldDisable = finite ? remaining === 0 && !p.allowBackorders : false;
+                                  return (
+                                    <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
+                                      <span className="block max-w-[420px] truncate">
+                                        {p.title} — ${price}
+                                        <span className="ml-2 text-xs text-muted-foreground">
+                                          {finite ? (
+                                            <>
+                                              Stock: {remaining}
+                                              {remaining === 0 && p.allowBackorders ? " (backorder)" : ""}
+                                              {shouldDisable ? " (out of stock)" : ""}
+                                            </>
+                                          ) : (
+                                            "remote"
+                                          )}
+                                        </span>
+                                      </span>
+                                    </SelectItem>
+                                  );
+                                })}
                                 <SelectSeparator />
                               </SelectGroup>
                             ))}
 
-                            {prodResults.some((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)) && (
-                              <SelectGroup>
-                                <SelectLabel>Affiliate — search</SelectLabel>
-                                {prodResults
-                                  .filter((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id))
-                                  .map((p) => (
-                                    <SelectItem key={p.id} value={p.id}>
-                                      {p.title} — {p.price} pts
-                                      <span className="ml-1 text-xs text-muted-foreground">
-                                        (remote)
-                                      </span>
-                                    </SelectItem>
-                                  ))}
-                              </SelectGroup>
-                            )}
+                            {prodResults.some(
+                              (p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)
+                            ) && (
+                                <SelectGroup>
+                                  <SelectLabel>Affiliate — search</SelectLabel>
+                                  {prodResults
+                                    .filter((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id))
+                                    .map((p) => (
+                                      <SelectItem key={p.id} value={p.id}>
+                                        {p.title} — {p.price} pts
+                                        <span className="ml-1 text-xs text-muted-foreground">(remote)</span>
+                                      </SelectItem>
+                                    ))}
+                                </SelectGroup>
+                              )}
                           </>
                         )}
 
@@ -1450,7 +1332,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                           <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
                         )}
                       </ScrollArea>
-
                     </SelectContent>
                   </Select>
                 </div>
@@ -1480,8 +1361,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             </CardContent>
           </Card>
 
-          {/* Discount Coupon */}
-
+          {/* Discount Coupon (same component layout) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1528,7 +1408,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             </CardContent>
           </Card>
 
-          {/* Shipping Address */}
+          {/* Shipping Address (same layout) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1566,7 +1446,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             </CardContent>
           </Card>
 
-          {/* Shipping Method & Company */}
+          {/* Shipping Method & Company (same layout) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1584,9 +1464,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                   >
                     <SelectTrigger>
                       <SelectValue
-                        placeholder={
-                          shippingLoading ? "Loading…" : "Select method"
-                        }
+                        placeholder={shippingLoading ? "Loading…" : "Select method"}
                       />
                     </SelectTrigger>
                     <SelectContent>
@@ -1607,7 +1485,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                         );
                       })}
                     </SelectContent>
-
                   </Select>
                 </div>
                 {/* Company */}
@@ -1619,9 +1496,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                   >
                     <SelectTrigger>
                       <SelectValue
-                        placeholder={
-                          shippingLoading ? "Loading…" : "Select company"
-                        }
+                        placeholder={shippingLoading ? "Loading…" : "Select company"}
                       />
                     </SelectTrigger>
                     <SelectContent>
@@ -1637,8 +1512,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
             </CardContent>
           </Card>
 
-          {/* Payment Method */}
-          {/* Payment Method (now editable) */}
+          {/* Payment Method (same layout) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1678,17 +1552,12 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                     >
                       <SelectTrigger>
                         <SelectValue
-                          placeholder={
-                            niftipayLoading ? "Loading…" : "Select network"
-                          }
+                          placeholder={niftipayLoading ? "Loading…" : "Select network"}
                         />
                       </SelectTrigger>
                       <SelectContent>
                         {niftipayNetworks.map((n) => (
-                          <SelectItem
-                            key={`${n.chain}:${n.asset}`}
-                            value={`${n.chain}:${n.asset}`}
-                          >
+                          <SelectItem key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
                             {n.label}
                           </SelectItem>
                         ))}
@@ -1698,7 +1567,6 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                 )}
             </CardContent>
           </Card>
-
         </div>
 
         {/* RIGHT COLUMN: Order Summary */}
@@ -1739,17 +1607,14 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                   <div className="flex justify-between text-green-600">
                     <span>Points Discount:</span>
                     <span className="font-medium">
-                      -${orderData.pointsRedeemedAmount.toFixed(2)}
+                      -{formatCurrency(orderData.pointsRedeemedAmount, clientCountry)}
                     </span>
                   </div>
                 )}
                 <div className="flex justify-between text-green-600">
                   <span>
                     Discount
-                    {discountType === "percentage"
-                      ? ` (${value.toFixed(2)}%)`
-                      : ""}
-                    :
+                    {discountType === "percentage" ? ` (${value.toFixed(2)}%)` : ""}:
                   </span>
                   <span className="font-medium">–{formatCurrency(discount, clientCountry)}</span>
                 </div>

@@ -53,6 +53,13 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
+
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -235,7 +242,6 @@ export default function OrdersPage() {
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
-  console.log(orders);
 
   /* ---------------------------------------------------------------- */
   /*  Memoised filtering (no state writes → no render loop)           */
@@ -718,14 +724,35 @@ export default function OrdersPage() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             {canUpdate && (
-                              <DropdownMenuItem
-                                onClick={() =>
-                                  router.push(`/orders/${order.id}/edit`)
-                                }
-                              >
-                                <Edit className="mr-2 h-4 w-4" />
-                                Edit
-                              </DropdownMenuItem>
+                              order.status === "open" ? (
+                                <DropdownMenuItem
+                                  onClick={() => router.push(`/orders/${order.id}/edit`)}
+                                >
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Edit
+                                </DropdownMenuItem>
+                              ) : (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      {/* wrap so the item can still receive hover even when “disabled” */}
+                                      <div>
+                                        <DropdownMenuItem
+                                          onSelect={(e) => e.preventDefault()} // block selection
+                                          aria-disabled="true"
+                                          className="text-muted-foreground cursor-not-allowed"
+                                        >
+                                          <Edit className="mr-2 h-4 w-4" />
+                                          Edit
+                                        </DropdownMenuItem>
+                                      </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="left">
+                                      Order must be <span className="font-semibold">Open</span> to edit.
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )
                             )}
                             {canUpdateTracking && (
                               <DropdownMenuItem

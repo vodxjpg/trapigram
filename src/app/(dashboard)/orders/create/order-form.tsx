@@ -1431,6 +1431,13 @@ export default function OrderForm() {
                 <div className="space-y-4 mb-4">
                   {orderItems.map(({ product, quantity }, idx) => {
                     const price = product.price;
+                    // NEW
+                    const finite = Object.keys(product.stockData || {}).length > 0;
+                    const base = stockForCountry(product, clientCountry);
+                    const used = inCartQty(product.id, orderItems);
+                    const remaining = Math.max(0, base - used);
+                    const disablePlus = finite && !product.allowBackorders && remaining === 0;
+
                     return (
                       <div
                         key={idx}
@@ -1481,9 +1488,13 @@ export default function OrderForm() {
                               variant="ghost"
                               size="icon"
                               onClick={() => updateQuantity(product.id, "add")}
+                              disabled={disablePlus}
+                              aria-disabled={disablePlus}
+                              title={disablePlus ? "Out of stock" : undefined}
                             >
                               <Plus className="h-4 w-4" />
                             </Button>
+
                           </div>
                           {stockErrors[product.id] && (
                             <p className="text-red-600 text-sm mt-1">
