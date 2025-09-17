@@ -1,7 +1,7 @@
 // src/app/(dashboard)/discount-rules/components/discount-rules-table.tsx
 "use client";
 
-import { useEffect, useState, startTransition, type FormEvent, useMemo } from "react";
+import { useEffect, useState, startTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
@@ -69,7 +69,7 @@ type TierPricing = {
   active: boolean;
   steps: Step[];
   products: ProdItem[];
-  // NEW primary
+  // New preferred field
   clients?: string[];
   // Legacy fallback
   customers?: string[];
@@ -117,16 +117,15 @@ export function DiscountRulesTable() {
 
   const [ruleToDelete, setRuleToDelete] = useState<TierPricing | null>(null);
 
-  // clients lookup (id -> Client)
+  // client cache (id -> Client) so we can show "First Last (username)" in table
   const [clientsById, setClientsById] = useState<Record<string, Client>>({});
-  const [clientsLoadedOnce, setClientsLoadedOnce] = useState(false);
 
   /* ── redirect if no view ───────────────────────────────────────── */
   useEffect(() => {
     if (!viewLoading && !canView) router.replace("/discount-rules");
   }, [viewLoading, canView, router]);
 
-  /* ── fetch data ────────────────────────────────────────────────── */
+  /* ── fetch rules ───────────────────────────────────────────────── */
   const fetchRules = async () => {
     if (!canView) return;
     setLoading(true);
@@ -158,46 +157,36 @@ export function DiscountRulesTable() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewLoading, page, pageSize, debounced]);
 
-  /* ── preload some clients to resolve names for chips ───────────── */
-  // Strategy: after rules load, collect all unique client IDs, then
-  // fetch a reasonably large page of clients (server returns "clients").
-  // We merge into a local map; if some IDs aren't found, we fall back to ID.
+  /* ── fetch clients once so we can resolve labels in the table ──── */
   useEffect(() => {
-    const allIds = new Set<string>();
-    rules.forEach((r) =>
-      (r.clients ?? r.customers ?? []).forEach((id) => {
-        if (id) allIds.add(id);
-      })
-    );
-    if (allIds.size === 0) return;
+    // only fetch if we have at least one rule referencing clients
+    const hasAnyClient =
+      rules.find((r) => (r.clients ?? r.customers ?? []).length > 0) != null;
+    if (!hasAnyClient) return;
 
-    // If we never loaded clients, load a big chunk once.
-    if (clientsLoadedOnce) return;
     (async () => {
       try {
+        // Load a large page to cover most cases; fallback to IDs if some are missing.
         const res = await fetch(`/api/clients?page=1&pageSize=500`, {
           headers: {
             "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
           },
         });
-        if (!res.ok) throw new Error("Failed to load clients");
+        if (!res.ok) return; // show IDs if it fails
         const json = await res.json();
         const list: Client[] = Array.isArray(json.clients) ? json.clients : [];
-        if (list.length > 0) {
+        if (list.length) {
           setClientsById((prev) => {
             const next = { ...prev };
-            list.forEach((c) => {
-              next[c.id] = c;
-            });
+            for (const c of list) next[c.id] = c;
             return next;
           });
         }
-        setClientsLoadedOnce(true);
       } catch {
-        // non-fatal; we'll show IDs if names unavailable
+        // non-fatal; we’ll just show raw IDs for any unresolved ones
       }
     })();
-  }, [rules, clientsLoadedOnce]);
+  }, [rules]);
 
   /* ── handlers ──────────────────────────────────────────────────── */
   const handleSearchSubmit = (e: FormEvent) => e.preventDefault();
@@ -231,32 +220,29 @@ export function DiscountRulesTable() {
   };
 
   /* ── helpers ───────────────────────────────────────────────────── */
-  const displayClient = (c?: Client) => {
+  const getRuleClientIds = (r: TierPricing) => (r.clients ?? r.customers ?? []).filter(Boolean);
+
+  const formatClient = (c?: Client) => {
     if (!c) return "";
     const name = `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim();
     if (name && c.username) return `${name} (${c.username})`;
     return name || c.username || c.email || c.id;
   };
 
-  const getClientLabelById = (id: string) => {
-    const c = clientsById[id];
-    return displayClient(c) || id;
-  };
-
-  const getRuleClientIds = (r: TierPricing) => (r.clients ?? r.customers ?? []).filter(Boolean);
+  const clientLabelById = (id: string) => formatClient(clientsById[id]) || id;
 
   const renderCustomersChips = (ids?: string[]) => {
     const arr = Array.isArray(ids) ? ids : [];
     if (arr.length === 0) return <span>All</span>;
 
-    const firstTwo = arr.slice(0, 2);
-    const extra = arr.length - firstTwo.length;
+    const shown = arr.slice(0, 2);
+    const extra = arr.length - shown.length;
 
     return (
       <div className="flex flex-wrap items-center gap-1">
-        {firstTwo.map((id) => (
-          <Badge key={id} variant="outline" className="max-w-[180px] truncate">
-            {getClientLabelById(id)}
+        {shown.map((id) => (
+          <Badge key={id} variant="outline" className="max-w-[220px] truncate">
+            {clientLabelById(id)}
           </Badge>
         ))}
         {extra > 0 && (
