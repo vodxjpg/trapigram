@@ -102,6 +102,14 @@ const data = {
       ],
     },
     {
+      title: "Supplier Orders",
+      url: "/supplier-order",
+      icon: IconReport,
+      items: [
+        { title: "View orders", url: "/supplier-order" },
+      ],
+    },
+    {
       title: "Analytics",
       url: "#",
       icon: IconChartBar,

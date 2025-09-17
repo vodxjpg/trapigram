@@ -346,6 +346,16 @@ export default function DashboardPage() {
             },
           },
           {
+            element: ".SupplierOrders",
+            popover: {
+              title: "Supplier Orders & Reviews",
+              description:
+                "Process incoming supplier orders.",
+              side: "left",
+              align: "start",
+            },
+          },
+          {
             element: ".Analytics",
             popover: {
               title: "Reports",
@@ -457,8 +467,8 @@ export default function DashboardPage() {
                   {totalRevenue === null
                     ? "Loading..."
                     : canShowRevenue
-                    ? formatCurrency(totalRevenue)
-                    : "****"}
+                      ? formatCurrency(totalRevenue)
+                      : "****"}
                 </CardTitle>
                 <CardAction className="flex items-center space-x-2">
                   <Select value={currency} onValueChange={setCurrency} size="sm">
