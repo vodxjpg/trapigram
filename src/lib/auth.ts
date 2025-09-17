@@ -379,6 +379,14 @@ The Trapyfy Team
                 videoUrl: null,
                 parentSectionId: null,
               },
+              {
+                name: "settings",
+                title: "Settings",
+                content:
+                  `Here you can edit setting such as your customer secret phrase and more`,
+                videoUrl: null,
+                parentSectionId: null,
+              },
             ];
 
             const now = new Date();

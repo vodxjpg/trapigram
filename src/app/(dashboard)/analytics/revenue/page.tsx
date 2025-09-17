@@ -768,7 +768,6 @@ export default function OrderReport() {
                 />
               </div>
             </div>
-
             {totals && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
                 {/* Paid (chart-aligned) */}
