@@ -26,6 +26,10 @@ function eachDay(from: Date, to: Date) {
   }
   return days;
 }
+// add this tiny helper near normalizeStatus (optional)
+function isZeroStatus(s: NormStatus, row?: any) {
+  return s === "cancelled" || s === "refunded" || !!row?.cancelled || !!row?.refunded;
+}
 
 // ── dropshipper helpers ──────────────────────────────────────────
 function asArray(meta: unknown): any[] {
@@ -256,6 +260,14 @@ export async function GET(req: NextRequest) {
 
         // normalized status
         m.status = normalizeStatus(m);
+
+        if (isZeroStatus(m.status as NormStatus, m)) {
+          m.totalPrice = 0;
+          m.shippingCost = 0;
+          m.discount = 0;
+          m.cost = 0;
+          m.netProfit = 0;
+        }
 
         // ── DROPSHIPPER (guarded) ────────────────────────────────
         const hasDS = hasDropshipSignal(m.asset, m.orderNumber);
