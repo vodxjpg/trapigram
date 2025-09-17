@@ -200,6 +200,17 @@ function firstPointPrice(pp: any): number {
   return firstCtMap.sale ?? firstCtMap.regular ?? 0;
 }
 
+// Sum stock across all warehouses for a specific country
+const stockForCountry = (p: Product, country: string): number =>
+  Object.values(p.stockData || {}).reduce(
+    (sum, wh) => sum + (wh?.[country] ?? 0),
+    0
+  );
+
+// Quantity currently in cart for a given product
+const inCartQty = (pid: string, items: OrderItem[]) =>
+  items.reduce((sum, it) => sum + (it.product.id === pid ? it.quantity : 0), 0);
+
 const DEBOUNCE_MS = 400;
 export default function OrderForm() {
   const router = useRouter();
@@ -461,20 +472,24 @@ export default function OrderForm() {
       const { resultCartProducts } = dataP;
       if (Array.isArray(resultCartProducts)) {
         setOrderItems(
-          resultCartProducts.map((r: any) => ({
-            product: {
-              id: r.id,
-              title: r.title,
-              sku: r.sku,
-              description: r.description,
-              image: r.image,
-              price: r.unitPrice,
-              regularPrice: {},
-              stockData: {},
-              subtotal: r.subtotal,
-            },
-            quantity: r.quantity,
-          }))
+          resultCartProducts.map((r: any) => {
+            const pMatch = products.find((p) => p.id === r.id);
+            return {
+              product: {
+                id: r.id,
+                title: r.title,
+                sku: r.sku,
+                description: r.description,
+                image: r.image,
+                price: r.unitPrice,
+                regularPrice: pMatch?.regularPrice ?? {},
+                stockData: pMatch?.stockData ?? {},        // ← keep stock here
+                allowBackorders: pMatch?.allowBackorders,
+                subtotal: r.subtotal,
+              },
+              quantity: r.quantity,
+            };
+          })
         );
       }
 
@@ -528,6 +543,13 @@ export default function OrderForm() {
       toast.error(err.message);
     }
   };
+
+  // Sum stock across all warehouses for a specific country code
+  const stockForCountry = (p: Product, country: string): number =>
+    Object.values(p.stockData || {}).reduce(
+      (sum, wh) => sum + (wh?.[country] ?? 0),
+      0
+    );
 
   async function loadProducts() {
     setProductsLoading(true);
@@ -587,7 +609,7 @@ export default function OrderForm() {
           };
         }),
       ];
-
+      console.log(all)
       setProducts(all);
     } catch (e: any) {
       console.error(e);
@@ -853,11 +875,22 @@ export default function OrderForm() {
   // — Add product
   // — Add product  (CREATE form)
   const addProduct = async () => {
-    if (!selectedProduct || !cartId)
-      return toast.error("Cart hasn’t been created yet!");
+    if (!selectedProduct || !cartId) return toast.error("Cart hasn’t been created yet!");
 
-    const product = products.find((p) => p.id === selectedProduct);
+    const product = [...products, ...prodResults].find((p) => p.id === selectedProduct);
     if (!product) return;
+
+    const hasFiniteStock = Object.keys(product.stockData || {}).length > 0;
+    const remaining = hasFiniteStock
+      ? Math.max(0, stockForCountry(product, clientCountry) - inCartQty(product.id, orderItems))
+      : Infinity;
+
+    const qty = parseQty(quantityText);
+    if (hasFiniteStock && !product.allowBackorders && (remaining === 0 || qty > remaining)) {
+      toast.error(remaining === 0 ? "Out of stock" : `Only ${remaining} available`);
+      return;
+    }
+
     const unitPrice = product.regularPrice[clientCountry] ?? product.price;
 
     try {
@@ -886,22 +919,27 @@ export default function OrderForm() {
       /* ▲▲ ——— patch ends here ——— ▲▲ */
 
       const { product: added, quantity: qtyResp } = await res.json();
-      const subtotalRow = calcRowSubtotal(added, qtyResp);
-
+      const chosen = products.find((p) => p.id === added.id);
+      const withStock: Product = {
+        ...added,
+        regularPrice: added.regularPrice ?? chosen?.regularPrice ?? {},
+        stockData: chosen?.stockData ?? added.stockData ?? {},  // ← keep stock
+        allowBackorders: chosen?.allowBackorders ?? added.allowBackorders,
+      };
+      const subtotalRow = calcRowSubtotal(withStock, qtyResp);
 
       setOrderItems((prev) => {
-        if (prev.some((it) => it.product.id === added.id)) {
-          return prev.map((it) =>
-            it.product.id === added.id
-              ? { product: { ...added, subtotal: subtotalRow }, quantity: qty }
+        const exists = prev.some((it) => it.product.id === withStock.id);
+        return exists
+          ? prev.map((it) =>
+            it.product.id === withStock.id
+              ? { product: { ...withStock, subtotal: subtotalRow }, quantity: qtyResp }
               : it
-          );
-        }
-        return [
-          ...prev,
-          { product: { ...added, subtotal: subtotalRow }, quantity: qty },
-        ];
+          )
+          : [...prev, { product: { ...withStock, subtotal: subtotalRow }, quantity: qtyResp }];
       });
+
+
 
       setSelectedProduct("");
       setQuantityText("1");
@@ -959,22 +997,28 @@ export default function OrderForm() {
       // 🔸 NEW: API now returns { lines: […] }
       const { lines } = await res.json();
 
-      const mapped: OrderItem[] = lines.map((l: any) => ({
-        product: {
-          id: l.id,
-          title: l.title,
-          sku: l.sku,
-          description: l.description,
-          image: l.image,
-          price: l.unitPrice,
-          regularPrice: { [clientCountry]: l.unitPrice },
-          stockData: {},
-          subtotal: l.subtotal,
-        },
-        quantity: l.quantity,
-      }));
+      const mapped: OrderItem[] = lines.map((l: any) => {
+        const prev = orderItems.find((it) => it.product.id === l.id);
+        const pMatch = products.find((p) => p.id === l.id);
+        return {
+          product: {
+            id: l.id,
+            title: l.title,
+            sku: l.sku,
+            description: l.description,
+            image: l.image,
+            price: l.unitPrice,
+            regularPrice: { [clientCountry]: l.unitPrice },
+            stockData: prev?.product.stockData ?? pMatch?.stockData ?? {}, // ← keep stock
+            allowBackorders: prev?.product.allowBackorders ?? pMatch?.allowBackorders,
+            subtotal: l.subtotal,
+          },
+          quantity: l.quantity,
+        };
+      });
 
       setOrderItems(mapped);
+
     } catch (err: any) {
       toast.error(err.message || "Could not update quantity");
     }
@@ -1453,13 +1497,25 @@ export default function OrderForm() {
                               Unit Price: {formatCurrency(price, clientCountry)}
                             </span>
                             <span className="font-medium">
-                              $
-                              {formatCurrency(
-                                product.subtotal ?? price * quantity,
-                                clientCountry
-                              )}
+                              ${formatCurrency(product.subtotal ?? price * quantity, clientCountry)}
                             </span>
                           </div>
+                          {/* Stock (client country), decreased by qty already in cart */}
+                          {Object.keys(product.stockData || {}).length > 0 && (
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {(() => {
+                                const base = stockForCountry(product, clientCountry);
+                                const used = inCartQty(product.id, orderItems);
+                                const remaining = Math.max(0, base - used);
+                                return (
+                                  <>
+                                    Stock in {clientCountry || "country"}: {remaining}
+                                    {remaining === 0 && product.allowBackorders ? " (backorder allowed)" : ""}
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -1472,13 +1528,23 @@ export default function OrderForm() {
                   <Select
                     value={selectedProduct}
                     onValueChange={(val) => {
-                      const obj = [...products, ...prodResults].find(
-                        (p) => p.id === val
-                      );
-                      if (obj) pickProduct(val, obj);
+                      const obj = [...products, ...prodResults].find((p) => p.id === val);
+                      if (!obj) return;
+
+                      const hasFiniteStock = Object.keys(obj.stockData || {}).length > 0;
+                      const remaining = hasFiniteStock
+                        ? Math.max(0, stockForCountry(obj, clientCountry) - inCartQty(obj.id, orderItems))
+                        : Infinity;
+
+                      if (hasFiniteStock && remaining === 0 && !obj.allowBackorders) {
+                        toast.error("This product is out of stock for the selected country.");
+                        return;
+                      }
+                      pickProduct(val, obj);
                     }}
                     disabled={productsLoading}
                   >
+
                     <SelectTrigger>
                       <SelectValue
                         placeholder={
@@ -1503,16 +1569,31 @@ export default function OrderForm() {
                           ([label, items]) => (
                             <SelectGroup key={label}>
                               <SelectLabel>{label}</SelectLabel>
-                              {items.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.title}
-                                  {" — $"}
-                                  {p.regularPrice[clientCountry] ?? p.price}
-                                  {Object.values(p.stockData).reduce((s, e) => s + (e[clientCountry] || 0), 0) === 0 &&
-                                    p.allowBackorders ? " (backorder)" : ""}
-                                </SelectItem>
+                              {items.map((p) => {
+                                const price = p.regularPrice[clientCountry] ?? p.price;
+                                const hasFiniteStock = Object.keys(p.stockData || {}).length > 0;
+                                const remaining = hasFiniteStock
+                                  ? Math.max(0, stockForCountry(p, clientCountry) - inCartQty(p.id, orderItems))
+                                  : Infinity;
+                                const shouldDisable = hasFiniteStock
+                                  ? remaining === 0 && !p.allowBackorders
+                                  : false;
 
-                              ))}
+                                return (
+                                  <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
+                                    <span className="block max-w-[420px] truncate">
+                                      {p.title} — ${price}
+                                      {hasFiniteStock && (
+                                        <span className="ml-2 text-xs text-muted-foreground">
+                                          Stock: {remaining}
+                                          {remaining === 0 && p.allowBackorders ? " (backorder)" : ""}
+                                          {shouldDisable ? " (out of stock)" : ""}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </SelectItem>
+                                );
+                              })}
                               <SelectSeparator />
                             </SelectGroup>
                           )
@@ -1538,20 +1619,39 @@ export default function OrderForm() {
                           <>
                             {/* Group remote shop results by category too */}
                             {groupByCategory(
-                              prodResults.filter(
-                                (p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id)
-                              )
+                              prodResults.filter((p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id))
                             ).map(([label, items]) => (
                               <SelectGroup key={`remote-${label}`}>
                                 <SelectLabel>{label} — search</SelectLabel>
-                                {items.map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>
-                                    {p.title} — ${p.price}
-                                    <span className="ml-1 text-xs text-muted-foreground">
-                                      (remote)
-                                    </span>
-                                  </SelectItem>
-                                ))}
+                                {items.map((p) => {
+                                  const price = p.regularPrice?.[clientCountry] ?? p.price;
+                                  const hasFiniteStock = Object.keys(p.stockData || {}).length > 0;
+                                  const remaining = hasFiniteStock
+                                    ? Math.max(0, stockForCountry(p, clientCountry) - inCartQty(p.id, orderItems))
+                                    : Infinity;
+                                  const shouldDisable = hasFiniteStock
+                                    ? remaining === 0 && !p.allowBackorders
+                                    : false;
+
+                                  return (
+                                    <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
+                                      <span className="block max-w-[420px] truncate">
+                                        {p.title} — ${price}
+                                        <span className="ml-2 text-xs text-muted-foreground">
+                                          {hasFiniteStock ? (
+                                            <>
+                                              Stock: {remaining}
+                                              {remaining === 0 && p.allowBackorders ? " (backorder)" : ""}
+                                              {shouldDisable ? " (out of stock)" : ""}
+                                            </>
+                                          ) : (
+                                            "remote"
+                                          )}
+                                        </span>
+                                      </span>
+                                    </SelectItem>
+                                  );
+                                })}
                                 <SelectSeparator />
                               </SelectGroup>
                             ))}
