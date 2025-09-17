@@ -78,6 +78,8 @@ type Product = {
     isAffiliate?: boolean;
     categories?: string[];
     subtotal?: number;
+    /** Optional: some local products show cost instead of price */
+    cost?: number;
 };
 
 type OrderItem = { product: Product; quantity: number };
@@ -121,6 +123,18 @@ function normalizeAllocationsPayload(payload: any): Array<{
         quantity: Number(r.quantity ?? r.qty ?? 0) || 0,
         unitCost: Number(r.unitCost ?? r.cost ?? 0) || 0,
     }));
+}
+
+/** Accent/spacing-insensitive normalization for search */
+function normalizeText(s: string): string {
+    return (s || "")
+        .toLowerCase()
+        .normalize("NFD")
+        // remove diacritics
+        .replace(/\p{Diacritic}/gu, "")
+        // collapse spaces, hyphens, underscores
+        .replace(/[\s\-_]+/g, "")
+        .trim();
 }
 
 /* ------------------------------------------------------------------ */
@@ -260,20 +274,27 @@ export default function PurchaseOrderSupply({
                 const { products: norm } = await normRes.json();
 
                 const all: Product[] = [
-                    ...norm.map((p: any) => ({
-                        id: p.id,
-                        title: p.title,
-                        allowBackorders: !!p.allowBackorders,
-                        sku: p.sku,
-                        description: p.description,
-                        image: p.image,
-                        regularPrice: p.regularPrice,
-                        cost: Math.max(...Object.values(p.cost)),
-                        stockData: p.stockData,
-                        isAffiliate: false,
-                        subtotal: 0,
-                        categories: p.categories ?? [],
-                    }))
+                    ...norm.map((p: any) => {
+                        // guard against empty/undefined cost maps
+                        const costVals = Object.values(p?.cost ?? {}).map((n: any) => Number(n) || 0);
+                        const safeCost = costVals.length ? Math.max(...costVals) : 0;
+                        return {
+                            id: p.id,
+                            title: p.title,
+                            allowBackorders: !!p.allowBackorders,
+                            sku: p.sku,
+                            description: p.description,
+                            image: p.image,
+                            regularPrice: p.regularPrice,
+                            cost: safeCost,
+                            stockData: p.stockData,
+                            isAffiliate: false,
+                            subtotal: 0,
+                            categories: p.categories ?? [],
+                            // keep price present for type completeness; we primarily show `cost` for local
+                            price: Number(Object.values(p?.salePrice ?? p?.regularPrice ?? {})[0] ?? 0),
+                        } as Product;
+                    })
                 ];
                 setProducts(all);
             } catch (e: any) {
@@ -307,14 +328,14 @@ export default function PurchaseOrderSupply({
                 const mapShop = (p: any): Product => ({
                     ...p,
                     allowBackorders: !!p.allowBackorders,
-                    price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
+                    price: Number(Object.values(p?.salePrice ?? p?.regularPrice ?? {})[0] ?? 0),
                     stockData: p.stockData,
                     isAffiliate: false,
                     categories: p.categories ?? [],
                 });
                 const mapAff = (a: any): Product => ({
                     ...a,
-                    price: Object.values(a.pointsPrice)[0] ?? 0,
+                    price: Number(Object.values(a?.pointsPrice ?? {})[0] ?? 0),
                     stockData: a.stock,
                     isAffiliate: true,
                     categories: [],
@@ -331,14 +352,25 @@ export default function PurchaseOrderSupply({
         return () => clearTimeout(t);
     }, [prodTerm]);
 
+    /** Robust local filtering: title, SKU, and category label; accent/spacing-insensitive */
     const filteredProducts = useMemo(() => {
-        const q = prodTerm.trim();
-        if (q.length < 3) return products;
-        const qq = q.toLowerCase();
-        return products.filter(
-            (p) => p.title.toLowerCase().includes(qq) || p.sku.toLowerCase().includes(qq)
-        );
-    }, [products, prodTerm]);
+        const raw = prodTerm.trim();
+        if (raw.length < 3) return products;
+        const q = normalizeText(raw);
+        const matches = (p: Product) => {
+            const title = normalizeText(p.title || "");
+            const sku = normalizeText(p.sku || "");
+            const catId = p.categories?.[0] || "";
+            const catLabel = normalizeText(categoryMap[catId] || catId || "");
+            return title.includes(q) || sku.includes(q) || (!!catLabel && catLabel.includes(q));
+        };
+        return products.filter(matches);
+    }, [products, prodTerm, categoryMap]);
+
+    /** Set of IDs that are currently shown by local filter (for dedup logic with remote results) */
+    const localMatchIdSet = useMemo(() => {
+        return new Set(filteredProducts.map((p) => p.id));
+    }, [filteredProducts]);
 
     const totalSelectedQty = useMemo(
         () => orderItems.reduce((sum, it) => sum + Number(it.quantity ?? 0), 0),
@@ -391,12 +423,12 @@ export default function PurchaseOrderSupply({
                     description: r.description,
                     image: r.image,
                     price: r.unitPrice ?? r.unitCost ?? 0,
-                    regularPrice: {},
-                    stockData: {},
+                    regularPrice: {} as Record<string, number>,
+                    stockData: {} as Record<string, Record<string, number>>,
                     subtotal:
                         r.subtotal ??
                         Number(r.unitPrice ?? r.unitCost ?? 0) * Number(r.quantity ?? 0),
-                },
+                } as Product,
                 quantity: Number(r.quantity ?? 0),
             }));
 
@@ -503,7 +535,7 @@ export default function PurchaseOrderSupply({
             const json = await aRes.json().catch(() => ({} as any));
             const rows = normalizeAllocationsPayload(json?.result);
             // Extract country → cost map robustly (accept {cost:{CL:..}} or {CL:..})
-            const rawCost = json?.stock.cost ?? {};
+            const rawCost = json?.stock?.cost ?? {};
             const countryCostMap: Record<string, number> =
                 (rawCost?.cost ?? rawCost) || {};
 
@@ -684,6 +716,12 @@ export default function PurchaseOrderSupply({
             .join("");
     }
 
+    const showNoMatches =
+        !prodSearching &&
+        prodTerm.trim().length >= 3 &&
+        filteredProducts.length === 0 &&
+        prodResults.length === 0;
+
     /* Render */
     return (
         <div className="container mx-auto py-6">
@@ -849,7 +887,7 @@ export default function PurchaseOrderSupply({
                                                             const disabled = addedProductIds.has(p.id);
                                                             return (
                                                                 <SelectItem key={p.id} value={p.id} disabled={disabled}>
-                                                                    {p.title} — ${p.cost}
+                                                                    {p.title} — {typeof p.cost === "number" ? `$${p.cost.toFixed(2)}` : `$${Number(p.price ?? 0).toFixed(2)}`}
                                                                     {disabled ? " (added)" : ""}
                                                                 </SelectItem>
                                                             );
@@ -858,7 +896,7 @@ export default function PurchaseOrderSupply({
                                                     </SelectGroup>
                                                 ))}
 
-                                                {/* Local affiliate products */}
+                                                {/* Local affiliate products (only if present locally) */}
                                                 {filteredProducts.some((p) => p.isAffiliate) && (
                                                     <SelectGroup>
                                                         <SelectLabel>Affiliate</SelectLabel>
@@ -868,7 +906,7 @@ export default function PurchaseOrderSupply({
                                                                 const disabled = addedProductIds.has(p.id);
                                                                 return (
                                                                     <SelectItem key={p.id} value={p.id} disabled={disabled}>
-                                                                        {p.title} — {p.price} pts
+                                                                        {p.title} — {Number(p.price ?? 0).toFixed(2)} pts
                                                                         {disabled ? " (added)" : ""}
                                                                     </SelectItem>
                                                                 );
@@ -877,12 +915,12 @@ export default function PurchaseOrderSupply({
                                                     </SelectGroup>
                                                 )}
 
-                                                {/* Remote results (not yet cached) */}
+                                                {/* Remote results (dedupe against what's already visible locally) */}
                                                 {prodResults.length > 0 && (
                                                     <>
                                                         {groupByCategory(
                                                             prodResults.filter(
-                                                                (p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id)
+                                                                (p) => !p.isAffiliate && !localMatchIdSet.has(p.id)
                                                             )
                                                         ).map(([label, items]) => (
                                                             <SelectGroup key={`remote-${label}`}>
@@ -895,7 +933,7 @@ export default function PurchaseOrderSupply({
                                                                             value={p.id}
                                                                             disabled={disabled}
                                                                         >
-                                                                            {p.title} — ${p.price}
+                                                                            {p.title} — ${Number(p.price ?? 0).toFixed(2)}
                                                                             <span className="ml-1 text-xs text-muted-foreground">
                                                                                 (remote)
                                                                             </span>
@@ -909,14 +947,14 @@ export default function PurchaseOrderSupply({
 
                                                         {/* Remote affiliate results */}
                                                         {prodResults.some(
-                                                            (p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)
+                                                            (p) => p.isAffiliate && !localMatchIdSet.has(p.id)
                                                         ) && (
                                                                 <SelectGroup>
                                                                     <SelectLabel>Affiliate — search</SelectLabel>
                                                                     {prodResults
                                                                         .filter(
                                                                             (p) =>
-                                                                                p.isAffiliate && !products.some((lp) => lp.id === p.id)
+                                                                                p.isAffiliate && !localMatchIdSet.has(p.id)
                                                                         )
                                                                         .map((p) => {
                                                                             const disabled = addedProductIds.has(p.id);
@@ -926,7 +964,7 @@ export default function PurchaseOrderSupply({
                                                                                     value={p.id}
                                                                                     disabled={disabled}
                                                                                 >
-                                                                                    {p.title} — {p.price} pts
+                                                                                    {p.title} — {Number(p.price ?? 0).toFixed(2)} pts
                                                                                     <span className="ml-1 text-xs text-muted-foreground">
                                                                                         (remote)
                                                                                     </span>
@@ -944,7 +982,7 @@ export default function PurchaseOrderSupply({
                                                         Searching…
                                                     </div>
                                                 )}
-                                                {!prodSearching && prodTerm && prodResults.length === 0 && (
+                                                {showNoMatches && (
                                                     <div className="px-3 py-2 text-sm text-muted-foreground">
                                                         No matches
                                                     </div>
@@ -1116,7 +1154,7 @@ export default function PurchaseOrderSupply({
 
                     <Separator />
 
-                    <div className="overflow-y-auto px-6 py-4 h-[calc(85vh-9rem)] sm:h-[calc(85vh-9rem)]">
+                    <div className="overflow-y-auto px-6 py-4 h+[calc(85vh-9rem)] sm:h-[calc(85vh-9rem)]">
                         {warehouses.length === 0 ? (
                             <p className="text-sm text-muted-foreground">No warehouses found.</p>
                         ) : (
