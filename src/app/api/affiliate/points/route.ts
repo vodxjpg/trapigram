@@ -1,7 +1,9 @@
+// app/api/affiliate/points/route.ts
 /*─────────────────────────────────────────────────────────────────────
   /api/affiliate/points            (rewritten 2025-06-27)
   – persists logs (back-compat with legacy bot fields)
   – keeps running balances in affiliatePointBalances
+  – GET now accepts `clientId` as an alias of `id` (client filter)
 ─────────────────────────────────────────────────────────────────────*/
 
 import { NextRequest, NextResponse } from "next/server";
@@ -21,11 +23,12 @@ const createSchema = z.object({
 });
 
 const querySchema = z.object({
-  id: z.string().optional(), // filter by clientId
+  id: z.string().optional(),          // filter by clientId
+  clientId: z.string().optional(),    // ← alias supported in GET
   page: z.coerce.number().min(1).default(1),
   pageSize: z.coerce.number().min(1).max(100).default(10),
 
-  // NEW filters
+  // Optional filters
   search: z.string().trim().optional(),                 // matches action/description/client names
   action: z.string().trim().optional(),                 // exact action
   direction: z.enum(["gains", "losses"]).optional(),    // points > 0 | < 0
@@ -63,9 +66,12 @@ export async function GET(req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  const qp = querySchema.parse(
-    Object.fromEntries(new URL(req.url).searchParams.entries()),
-  );
+  // Parse query and support `clientId` as an alias of `id`
+  const rawParams = Object.fromEntries(new URL(req.url).searchParams.entries());
+  const qp = querySchema.parse({
+    ...rawParams,
+    id: rawParams.id ?? rawParams.clientId ?? undefined,
+  });
 
   const {
     id,
@@ -234,10 +240,7 @@ export async function POST(req: NextRequest) {
           payload.sourceId ?? null,
         ],
       );
-      console.log(payload.id,
-        organizationId,
-        payload.points,
-        payload.points < 0 ? Math.abs(payload.points) : 0)
+
       /* update running balance */
       await applyBalanceDelta(
         payload.id,
