@@ -1,12 +1,7 @@
 // src/app/(dashboard)/discount-rules/components/discount-rules-table.tsx
 "use client";
 
-import {
-  useEffect,
-  useState,
-  startTransition,
-  type FormEvent,
-} from "react";
+import { useEffect, useState, startTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
@@ -18,28 +13,45 @@ import {
   Edit,
 } from "lucide-react";
 
-import { useDebounce } from "@/hooks/use-debounce";          // ← NEW
-import { authClient }     from "@/lib/auth-client";
+import { useDebounce } from "@/hooks/use-debounce";
+import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
-import { Badge }  from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input }  from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader,
-  AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
-  AlertDialogCancel, AlertDialogAction,
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 
 import { toast } from "sonner";
@@ -47,8 +59,8 @@ import { toast } from "sonner";
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
 /* ------------------------------------------------------------------ */
-type Step      = { fromUnits: number; toUnits: number; price: number };
-type ProdItem  = { productId: string | null; variationId: string | null };
+type Step = { fromUnits: number; toUnits: number; price: number };
+type ProdItem = { productId: string | null; variationId: string | null };
 type TierPricing = {
   id: string;
   name: string;
@@ -56,6 +68,8 @@ type TierPricing = {
   active: boolean;
   steps: Step[];
   products: ProdItem[];
+  // NEW: list of client IDs. Empty → applies to everyone.
+  customers?: string[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -66,23 +80,28 @@ export function DiscountRulesTable() {
 
   /* ── org & permissions ────────────────────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const orgId               = activeOrg?.id ?? null;
+  const orgId = activeOrg?.id ?? null;
 
-  const { hasPermission: canView,   isLoading: viewLoading   } = useHasPermission(orgId, { tierPricing: ["view"] });
-  const { hasPermission: canUpdate, isLoading: updateLoading } = useHasPermission(orgId, { tierPricing: ["update"] });
-  const { hasPermission: canDelete, isLoading: deleteLoading } = useHasPermission(orgId, { tierPricing: ["delete"] });
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { tierPricing: ["view"] }
+  );
+  const { hasPermission: canUpdate, isLoading: updateLoading } =
+    useHasPermission(orgId, { tierPricing: ["update"] });
+  const { hasPermission: canDelete, isLoading: deleteLoading } =
+    useHasPermission(orgId, { tierPricing: ["delete"] });
 
   /* ── state ─────────────────────────────────────────────────────── */
-  const [rules, setRules]     = useState<TierPricing[]>([]);
+  const [rules, setRules] = useState<TierPricing[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [page,      setPage]      = useState(1);
-  const [pageSize,  setPageSize]  = useState(10);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [totalPages, setTotalPages] = useState(1);
 
   // search with debounce
-  const [query,    setQuery]    = useState("");
-  const debounced               = useDebounce(query, 300);      // ← NEW
+  const [query, setQuery] = useState("");
+  const debounced = useDebounce(query, 300);
 
   const [ruleToDelete, setRuleToDelete] = useState<TierPricing | null>(null);
 
@@ -97,13 +116,17 @@ export function DiscountRulesTable() {
     setLoading(true);
     try {
       const qs = new URLSearchParams({
-        page:      String(page),
-        pageSize:  String(pageSize),
-        search:    debounced,
+        page: String(page),
+        pageSize: String(pageSize),
+        search: debounced,
       });
       const res = await fetch(`/api/tier-pricing?${qs.toString()}`);
       if (!res.ok) throw new Error();
-      const { tierPricings, totalPages: tp = 1, currentPage } = await res.json();
+      const {
+        tierPricings,
+        totalPages: tp = 1,
+        currentPage,
+      } = await res.json();
       setRules(tierPricings);
       setTotalPages(tp);
       if (currentPage) setPage(currentPage);
@@ -134,21 +157,28 @@ export function DiscountRulesTable() {
     }
   };
 
-   const toggleActive = async (rule: TierPricing) => {
-       if (!canUpdate) return;
-       try {
-         await fetch(`/api/tier-pricing/${rule.id}/active`, {
-           method: "PATCH",
-           headers: { "Content-Type": "application/json" },
-           body: JSON.stringify({ active: !rule.active }),
-         });
-         setRules(prev =>
-           prev.map(r => (r.id === rule.id ? { ...r, active: !r.active } : r)),
-         );
-       } catch {
-         toast.error("Failed to update status");
-       }
-     };
+  const toggleActive = async (rule: TierPricing) => {
+    if (!canUpdate) return;
+    try {
+      await fetch(`/api/tier-pricing/${rule.id}/active`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: !rule.active }),
+      });
+      setRules((prev) =>
+        prev.map((r) => (r.id === rule.id ? { ...r, active: !r.active } : r))
+      );
+    } catch {
+      toast.error("Failed to update status");
+    }
+  };
+
+  /* ── helpers ───────────────────────────────────────────────────── */
+  const renderCustomers = (arr?: string[]) => {
+    if (!arr || arr.length === 0) return "All";
+    if (arr.length === 1) return "1 customer";
+    return `${arr.length} customers`;
+  };
 
   /* ── guards ────────────────────────────────────────────────────── */
   if (viewLoading || !canView) return null;
@@ -158,7 +188,10 @@ export function DiscountRulesTable() {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
-        <form onSubmit={handleSearchSubmit} className="flex w-full sm:w-auto gap-2">
+        <form
+          onSubmit={handleSearchSubmit}
+          className="flex w-full sm:w-auto gap-2"
+        >
           <Input
             placeholder="Search rules…"
             className="pl-8 w-full"
@@ -182,19 +215,21 @@ export function DiscountRulesTable() {
               <TableHead>Name</TableHead>
               <TableHead>Active</TableHead>
               <TableHead>Countries</TableHead>
+              {/* NEW */}
+              <TableHead>Customers</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={3} className="h-24 text-center">
+                <TableCell colSpan={5} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : rules.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={3} className="h-24 text-center">
+                <TableCell colSpan={5} className="h-24 text-center">
                   No tier-pricing rules.
                 </TableCell>
               </TableRow>
@@ -203,12 +238,12 @@ export function DiscountRulesTable() {
                 <TableRow key={r.id}>
                   <TableCell>{r.name}</TableCell>
                   <TableCell>
-                <Switch
-                  checked={r.active}
-                  onCheckedChange={() => toggleActive(r)}
-                  disabled={!canUpdate}
-                />
-              </TableCell>
+                    <Switch
+                      checked={r.active}
+                      onCheckedChange={() => toggleActive(r)}
+                      disabled={!canUpdate}
+                    />
+                  </TableCell>
                   <TableCell>
                     {r.countries.map((c) => (
                       <Badge key={c} variant="outline" className="mr-1">
@@ -216,6 +251,8 @@ export function DiscountRulesTable() {
                       </Badge>
                     ))}
                   </TableCell>
+                  {/* NEW */}
+                  <TableCell>{renderCustomers(r.customers)}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -225,7 +262,11 @@ export function DiscountRulesTable() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {canUpdate && !updateLoading && (
-                          <DropdownMenuItem onClick={() => router.push(`/discount-rules/${r.id}`)}>
+                          <DropdownMenuItem
+                            onClick={() =>
+                              router.push(`/discount-rules/${r.id}`)
+                            }
+                          >
                             <Edit className="mr-2 h-4 w-4" />
                             Edit
                           </DropdownMenuItem>

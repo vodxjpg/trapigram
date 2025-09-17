@@ -32,6 +32,7 @@ const patchSchema = z.object({
   products: z.array(productItemSchema).min(1).optional(),
   steps: z.array(stepSchema).min(1).optional(),
   active: z.boolean().optional(),
+  customers: z.array(z.string().min(1)).optional(),
 })
 
 /* ─── GET single ──────────────────────── */
@@ -70,6 +71,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       .select(["fromUnits", "toUnits", "price"])
       .where("tierPricingId", "=", id)
       .execute()
+    
+    const customers = await db
+      .selectFrom("tierPricingCustomers")
+      .select(["customerId"])
+      .where("tierPricingId", "=", id)
+      .execute()
 
     console.log(`${LOG}#${rid} GET done`, {
       ms: Date.now() - t0,
@@ -78,7 +85,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       countriesCount: (countries || []).length,
     })
 
-    return NextResponse.json({ ...row, countries, products, steps })
+    return NextResponse.json({ ...row, countries, products, steps, customers: customers.map(c => c.customerId) })
   } catch (err) {
     console.error(`${LOG}#${rid} GET error`, err)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
@@ -153,6 +160,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     if (body.products) {
       await db.deleteFrom("tierPricingProducts").where("tierPricingId", "=", id).execute()
+      if (body.customers) {
+        await db.deleteFrom("tierPricingCustomers").where("tierPricingId", "=", id).execute()
+        for (const customerId of body.customers) {
+          await db
+            .insertInto("tierPricingCustomers")
+            .values({
+              id: uuidv4(),
+              tierPricingId: id,
+              customerId,
+              createdAt: now,
+            })
+            .execute()
+        }
+      }
       for (const p of body.products) {
         await db
           .insertInto("tierPricingProducts")

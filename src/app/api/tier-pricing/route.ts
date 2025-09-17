@@ -31,6 +31,7 @@ const bodySchema = z.object({
   countries: z.array(z.string().length(2)).min(1),
   products: z.array(productItemSchema).min(1),
   steps: z.array(stepSchema).min(1),
+  customers: z.array(z.string().min(1)).optional().default([]),
 })
 
 /* ─── GET list ────────────────────────── */
@@ -66,8 +67,14 @@ export async function GET(req: NextRequest) {
           .select(["fromUnits", "toUnits", "price"])
           .where("tierPricingId", "=", r.id)
           .execute()
+        
+         const customers = await db
+          .selectFrom("tierPricingCustomers")
+          .select(["customerId"])
+          .where("tierPricingId", "=", r.id)
+          .execute()
 
-        return { ...r, countries, products, steps }
+        return { ...r, countries, products, steps, customers: customers.map(c => c.customerId) }
       }),
     )
 
@@ -159,6 +166,20 @@ export async function POST(req: NextRequest) {
           createdAt: now,
         })
         .execute()
+
+        if (body.customers?.length) {
+          for (const customerId of body.customers) {
+            await db
+              .insertInto("tierPricingCustomers")
+              .values({
+                id: uuidv4(),
+                tierPricingId: pricingId,
+                customerId,
+                createdAt: now,
+              })
+              .execute()
+          }
+        }
     }
 
     console.log(`${LOG}#${rid} POST created`, {

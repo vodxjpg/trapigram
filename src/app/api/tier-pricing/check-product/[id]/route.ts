@@ -29,15 +29,16 @@ export async function POST(
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
     }
 
-    const quantity = Number(body?.quantity)
-    const country = body?.clientCountry
-    console.log(`${LOG}#${rid} start`, { organizationId, id, quantity, country })
+    const quantity   = Number(body?.quantity)
+    const country    = body?.clientCountry
+    const customerId = body?.customerId ?? null
+    console.log(`${LOG}#${rid} start`, { organizationId, id, quantity, country, customerId })
 
     const tierPricings = await tierPricing(organizationId)
     const tiers = tierPricings
     console.log(`${LOG}#${rid} loaded tiers`, { count: tiers.length })
 
-    const steps = getStepsFor(tiers, country, id)
+    const steps = getStepsFor(tiers, country, id, customerId)
     const price = getPriceForQuantity(steps, quantity)
 
     console.log(`${LOG}#${rid} result`, {
