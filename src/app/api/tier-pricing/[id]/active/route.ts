@@ -1,4 +1,4 @@
-
+// src/app/api/tier-pricing/[id]/active/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -9,7 +9,7 @@ const bodySchema = z.object({ active: z.boolean() });
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
