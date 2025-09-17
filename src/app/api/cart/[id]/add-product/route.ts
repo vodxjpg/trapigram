@@ -19,17 +19,33 @@ const cartProductSchema = z.object({
   quantity: z.number().int().positive(),
 });
 
-function findTier(tiers: Tier[], country: string, productId: string): Tier | null {
-  return (
-    tiers.find(
-      (t) =>
-        t.countries.includes(country) &&
-        t.products.some(
-          (p) => p.productId === productId || p.variationId === productId,
-        ),
-    ) ?? null
+function findTier(
+  tiers: Tier[],
+  country: string,
+  productId: string,
+  clientId?: string | null,
+): Tier | null {
+  const candidates = tiers.filter(
+    (t) =>
+      t.countries.includes(country) &&
+      t.products.some(
+        (p) => p.productId === productId || p.variationId === productId,
+      ),
   );
+  if (!candidates.length) return null;
+  const targets = (t: Tier): string[] =>
+    (((t as any).clients as string[] | undefined) ??
+      ((t as any).customers as string[] | undefined) ??
+      []) as string[];
+  if (clientId) {
+    const targeted = candidates.find((t) => targets(t).includes(clientId));
+    if (targeted) return targeted;
+  }
+  const global = candidates.find((t) => targets(t).length === 0);
+  return global ?? candidates[0] ?? null;
 }
+ 
+ 
 
 export async function POST(
   req: NextRequest,
@@ -46,6 +62,7 @@ export async function POST(
     /* client context */
     const { rows: clientRows } = await pool.query(
       `SELECT c.country, c."levelId"
+      ,c.id AS "clientId"
          FROM carts ca
          JOIN clients c ON c.id = ca."clientId"
         WHERE ca.id = $1`,
@@ -54,7 +71,7 @@ export async function POST(
     if (!clientRows.length)
       return NextResponse.json({ error: "Cart or client not found" }, { status: 404 });
 
-    const { country, levelId } = clientRows[0];
+   const { country, levelId, clientId } = clientRows[0];
 
     /* price resolution */
     const { price: basePrice, isAffiliate } = await resolveUnitPrice(
@@ -125,7 +142,7 @@ export async function POST(
       let unitPrice = basePrice;
       if (!isAffiliate) {
         const tiers = (await tierPricing(organizationId)) as Tier[];
-        const tier = findTier(tiers, country, body.productId);
+        const tier = findTier(tiers, country, body.productId, clientId);
 
         if (tier) {
           const tierIds = tier.products

@@ -11,6 +11,29 @@ import {
 } from "@/lib/tier-pricing";
 import { resolveUnitPrice } from "@/lib/pricing";
 
+function pickTierForClient(
+    tiers: Tier[],
+    country: string,
+    productId: string,
+    clientId?: string | null,
+): Tier | null {
+    const candidates = tiers.filter(
+        (t) =>
+            t.countries.includes(country) &&
+            t.products.some(
+                (p) => p.productId === productId || p.variationId === productId,
+            ),
+    );
+    if (!candidates.length) return null;
+    const targets = (t: Tier): string[] =>
+        (((t as any).clients as string[] | undefined) ??
+            ((t as any).customers as string[] | undefined) ??
+            []) as string[];
+    const targeted = clientId ? candidates.find((t) => targets(t).includes(clientId)) : undefined;
+    const global = candidates.find((t) => targets(t).length === 0);
+    return targeted ?? global ?? candidates[0] ?? null;
+}
+
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || ""
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || ""
 
@@ -40,6 +63,8 @@ function encryptSecretNode(plain: string): string {
     encrypted += cipher.final("base64")
     return encrypted
 }
+
+
 
 const cartProductSchema = z.object({
     productId: z.string(),
@@ -105,6 +130,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         );
         const country = cRows[0]?.country as string;
         const levelId = cRows[0]?.levelId as string;
+        const { rows: clIdRows } = await pool.query(`SELECT "clientId" FROM carts WHERE id = $1`, [id]);
+        const clientId = clIdRows[0]?.clientId as string | undefined;
 
 
         const released = result.rows[0]?.quantity ?? 0;
@@ -134,14 +161,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         ──────────────────────────────────────────────────────────── */
         if (deleted && !deleted.affiliateProductId) {
             const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
-            const tier = tiers.find(
-                (t) =>
-                    t.countries.includes(country) &&
-                    t.products.some(
-                        (p) =>
-                            p.productId === deleted.productId ||
-                            p.variationId === deleted.productId,
-                    ),
+            const tier = pickTierForClient(
+                tiers,
+                country,
+                deleted.productId,
+                clientId,
             );
 
             if (tier) {

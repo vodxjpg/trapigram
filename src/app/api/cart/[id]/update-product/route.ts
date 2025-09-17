@@ -23,16 +23,26 @@ function findTier(
   tiers: Tier[],
   country: string,
   productId: string,
+  clientId?: string | null,
 ): Tier | null {
-  return (
-    tiers.find(
-      (t) =>
-        t.countries.includes(country) &&
-        t.products.some(
-          (p) => p.productId === productId || p.variationId === productId,
-        ),
-    ) ?? null
-  );
+  const candidates = tiers.filter(
+  (t) =>
+    t.countries.includes(country) &&
+    t.products.some(
+      (p) => p.productId === productId || p.variationId === productId,
+    ),
+);
+if (!candidates.length) return null;
+const targets = (t: Tier): string[] =>
+  (((t as any).clients as string[] | undefined) ??
+    ((t as any).customers as string[] | undefined) ??
+    []) as string[];
+if (clientId) {
+  const targeted = candidates.find((t) => targets(t).includes(clientId));
+  if (targeted) return targeted;
+}
+const global = candidates.find((t) => targets(t).length === 0);
+return global ?? candidates[0] ?? null;
 }
 
 export async function PATCH(
@@ -190,7 +200,7 @@ export async function PATCH(
       let pricePerUnit = basePrice;
       if (!isAffiliate) {
         const tiers = (await tierPricing(organizationId)) as Tier[];
-        const tier = findTier(tiers, country, data.productId);
+        const tier = findTier(tiers, country, data.productId, clientId);
         if (tier) {
           const tierIds = tier.products
             .map((p) => p.productId)
