@@ -1,3 +1,4 @@
+// src/app/(dashboard)/report/order-report.tsx
 // OrderReport page – full file with Countries moved to a new row under Currency/Status/Export
 "use client";
 
@@ -61,7 +62,6 @@ import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Command,
   CommandEmpty,
@@ -71,7 +71,6 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import { Checkbox } from "@/components/ui/checkbox";
 
 // React Select + flags to match Coupon view
 import ReactSelect from "react-select";
@@ -126,8 +125,6 @@ const chartConfig = {
   revenue: { label: "Revenue", color: "var(--color-mobile)" },
 } satisfies ChartConfig;
 
-const ALL_DROPSHIPPERS = "__ALL__";
-
 export default function OrderReport() {
   const router = useRouter();
 
@@ -178,21 +175,16 @@ export default function OrderReport() {
       }
       case "this-month":
         return { from: startOfMonth(now), to: endOfMonth(now) };
-      case "last-month": {
-        const lm = subMonths(now, 1);
-        return { from: startOfMonth(lm), to: endOfMonth(lm) };
-      }
+      case "last-month":
+        return { from: startOfMonth(subMonths(now, 1)), to: endOfMonth(subMonths(now, 1)) };
       case "this-year":
         return { from: startOfYear(now), to: endOfYear(now) };
-      case "last-year": {
-        const ly = subYears(now, 1);
-        return { from: startOfYear(ly), to: endOfYear(ly) };
-      }
+      case "last-year":
+        return { from: startOfYear(subYears(now, 1)), to: endOfYear(subYears(now, 1)) };
       case "all":
         return { from: new Date(0), to: endOfDay(new Date(2099, 11, 31)) };
       case "custom":
       default:
-        // Caller will manage range when preset is custom
         return { from: startOfDay(subDays(now, 30)), to: endOfDay(now) };
     }
   }
@@ -221,7 +213,8 @@ export default function OrderReport() {
   // countries from API + selected (multi)
   const [countries, setCountries] = useState<string[]>([]);
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
-    // Seller filter: retailers (no dropshipper) vs dropshippers (one or many suppliers)
+
+  // Seller filter: retailers (no dropshipper) vs dropshippers (one or many suppliers)
   const [sellerFilter, setSellerFilter] = useState<"retailers" | "dropshippers">("retailers");
   const [selectedDropshippers, setSelectedDropshippers] = useState<string[]>([]);
   const [dsPopoverOpen, setDsPopoverOpen] = useState(false);
@@ -238,7 +231,7 @@ export default function OrderReport() {
 
   const rowsPerPage = 25;
 
-  // fetch data (no country param; filter is client-side)
+  // fetch data (no country/dropshipper param; filtering is client-side)
   useEffect(() => {
     async function fetchOrders() {
       if (!canShow) return;
@@ -247,9 +240,6 @@ export default function OrderReport() {
       try {
         const from = encodeURIComponent(dateRange.from.toISOString());
         const to = encodeURIComponent(dateRange.to.toISOString());
-        const dsParam = dropshipperOrgId
-          ? `&dropshipperOrgId=${encodeURIComponent(dropshipperOrgId)}`
-          : "";
 
         const res = await fetch(
           `/api/report/revenue?from=${from}&to=${to}&currency=${currency}&status=${status}`
@@ -258,7 +248,6 @@ export default function OrderReport() {
         const data = await res.json();
         setOrders(data.orders);
         setChartData(data.chartData);
-        console.log(data.totals);
         setTotals(data.totals ?? null);
         setCountries(
           Array.isArray(data.countries) ? [...data.countries].sort() : []
@@ -275,7 +264,7 @@ export default function OrderReport() {
     }
 
     fetchOrders();
-}, [dateRange, currency, status, canShow]);
+  }, [dateRange, currency, status, canShow]);
 
   const countryOptions = useMemo(
     () =>
@@ -298,7 +287,7 @@ export default function OrderReport() {
   );
   const filteredData = chartData;
 
-    const dropshipperSummary = useMemo(() => {
+  const dropshipperSummary = useMemo(() => {
     if (sellerFilter === "retailers") return "Retailers";
     if (selectedDropshippers.length === 0) return "All suppliers";
     const labels = dropshipperOptions
@@ -311,7 +300,6 @@ export default function OrderReport() {
     const matchesStatus = (o: Order) => {
       switch (status) {
         case "paid":
-          // Prefer explicit status if provided, else fallback to flags
           return o.status ? o.status === "paid" : (!o.cancelled && !o.refunded);
         case "pending_payment":
           return o.status === "pending_payment";
@@ -329,25 +317,26 @@ export default function OrderReport() {
         ? true
         : selectedCountries.includes(o.country);
 
-         const matchesSeller = (o: Order) => {
-   const ds = o.dropshipperOrgId ?? null;
-   if (sellerFilter === "retailers") {
-     return !ds; // orders that don't come from a dropshipper
-   }
-   // dropshippers
-   if (!ds) return false;
-   // If none selected, show all dropshipper orders
-   if (selectedDropshippers.length === 0) return true;
-   return selectedDropshippers.includes(ds);
- };
+    const matchesSeller = (o: Order) => {
+      const ds = o.dropshipperOrgId ?? null;
+      if (sellerFilter === "retailers") {
+        return !ds; // show orders that don't come from a dropshipper
+      }
+      // dropshippers
+      if (!ds) return false;
+      // If none selected, show all dropshipper orders
+      if (selectedDropshippers.length === 0) return true;
+      return selectedDropshippers.includes(ds);
+    };
 
     const list = orders.filter(
-   (o) => matchesStatus(o) && matchesCountries(o) && matchesSeller(o)
- );
+      (o) => matchesStatus(o) && matchesCountries(o) && matchesSeller(o)
+    );
     return list.sort(
       (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
     );
-}, [orders, status, selectedCountries, sellerFilter, selectedDropshippers]);
+  }, [orders, status, selectedCountries, sellerFilter, selectedDropshippers]);
+
   const totalPages = Math.ceil(filteredOrders.length / rowsPerPage);
   const startIndex = (currentPage - 1) * rowsPerPage;
   const endIndex = startIndex + rowsPerPage;
@@ -362,7 +351,6 @@ export default function OrderReport() {
   function handleDatePreset(preset: DatePreset) {
     setDatePreset(preset);
     if (preset === "custom") {
-      // open the date-picker popover; range will be set on Apply
       setTempDateRange({ from: dateRange.from, to: dateRange.to });
       setCustomDateOpen(true);
       return;
@@ -405,15 +393,15 @@ export default function OrderReport() {
       } else {
         netProfitDisplay = o.netProfit;
       }
-       const rowStatus =
-     o.cancelled === true
-       ? "Cancelled"
-       : o.refunded === true
-       ? "Refunded"
-       : o.status === "pending_payment"
-       ? "Pending Payment"
-       : "Paid";
-   return {
+      const rowStatus =
+        o.cancelled === true
+          ? "Cancelled"
+          : o.refunded === true
+          ? "Refunded"
+          : o.status === "pending_payment"
+          ? "Pending Payment"
+          : "Paid";
+      return {
         "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
         "Order Number": o.orderNumber,
         Status: rowStatus,
@@ -532,9 +520,9 @@ export default function OrderReport() {
                           <div className="text-sm text-muted-foreground">
                             {tempDateRange?.from && tempDateRange?.to
                               ? `${format(tempDateRange.from, "MMM dd, yyyy")} - ${format(
-                                tempDateRange.to,
-                                "MMM dd, yyyy"
-                              )}`
+                                  tempDateRange.to,
+                                  "MMM dd, yyyy"
+                                )}`
                               : "Select date range"}
                           </div>
                           <div className="flex gap-2">
@@ -584,9 +572,9 @@ export default function OrderReport() {
                   <span className="text-sm font-medium">Status</span>
                   <Select
                     value={status}
-                                onValueChange={(v) =>
-               setStatus(v as "all" | "paid" | "cancelled" | "refunded" | "pending_payment")
-             }
+                    onValueChange={(v) =>
+                      setStatus(v as "all" | "paid" | "cancelled" | "refunded" | "pending_payment")
+                    }
                     className="w-32"
                   >
                     <SelectTrigger size="sm">
@@ -618,109 +606,98 @@ export default function OrderReport() {
                   Export to Excel
                 </Button>
               </div>
-                {/* Seller filter: Retailers or Dropshippers (with multi-select) */}
-  <div className="flex flex-col gap-2">
-    <div className="flex items-center gap-3">
-      <span className="text-sm font-medium">Filter by</span>
-      <RadioGroup
-        className="flex gap-4"
-        value={sellerFilter}
-        onValueChange={(v) =>
-          setSellerFilter(v as "retailers" | "dropshippers")
-        }
-      >
-        <div className="flex items-center space-x-2">
-          <RadioGroupItem id="retailers" value="retailers" />
-          <label htmlFor="retailers" className="text-sm">
-            Retailers
-          </label>
-        </div>
-        <div className="flex items-center space-x-2">
-          <RadioGroupItem id="dropshippers" value="dropshippers" />
-          <label htmlFor="dropshippers" className="text-sm">
-            Dropshipper
-          </label>
-        </div>
-      </RadioGroup>
-    </div>
-    {sellerFilter === "dropshippers" && (
-      <div className="flex items-center gap-2">
-        <Popover open={dsPopoverOpen} onOpenChange={setDsPopoverOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              className="justify-start min-w-[260px]"
-              aria-haspopup="listbox"
-              aria-expanded={dsPopoverOpen}
-            >
-              {dropshipperSummary}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="p-0 w-[360px]" align="start">
-            <Command>
-              <div className="px-3 pt-3">
-                <CommandInput placeholder="Search supplier..." />
-              </div>
-              <CommandList>
-                <CommandEmpty>No suppliers found.</CommandEmpty>
-                <CommandGroup heading="Suppliers">
-                  {dropshipperOptions.map((d) => {
-                    const checked = selectedDropshippers.includes(d.orgId);
-                    return (
-                      <CommandItem
-                        key={d.orgId}
-                        value={d.label}
-                        onSelect={() => {
-                          setSelectedDropshippers((prev) =>
-                            prev.includes(d.orgId)
-                              ? prev.filter((x) => x !== d.orgId)
-                              : [...prev, d.orgId]
-                          );
-                        }}
+
+              {/* Seller filter: Retailers or Dropshippers (dropdown + dropdown) */}
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium">Filter by</span>
+                <Select
+                  value={sellerFilter}
+                  onValueChange={(v) =>
+                    setSellerFilter(v as "retailers" | "dropshippers")
+                  }
+                >
+                  <SelectTrigger size="sm" className="min-w-[160px]">
+                    <SelectValue placeholder="Seller type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="retailers">Retailers</SelectItem>
+                    <SelectItem value="dropshippers">Dropshipper</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {sellerFilter === "dropshippers" && (
+                  <Popover open={dsPopoverOpen} onOpenChange={setDsPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="justify-start min-w-[260px]"
+                        aria-haspopup="listbox"
+                        aria-expanded={dsPopoverOpen}
                       >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={() => {
-                            setSelectedDropshippers((prev) =>
-                              prev.includes(d.orgId)
-                                ? prev.filter((x) => x !== d.orgId)
-                                : [...prev, d.orgId]
-                            );
-                          }}
-                          className="mr-2"
-                        />
-                        <span>{d.label}</span>
-                      </CommandItem>
-                    );
-                  })}
-                </CommandGroup>
-                <CommandSeparator />
-                <div className="flex items-center justify-between gap-2 p-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() =>
-                      setSelectedDropshippers(dropshipperOptions.map((d) => d.orgId))
-                    }
-                  >
-                    Select all
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setSelectedDropshippers([])}
-                  >
-                    Deselect all
-                  </Button>
-                </div>
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
-      </div>
-    )}
-  </div>
+                        {dropshipperSummary}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="p-0 w-[360px]" align="start">
+                      <Command>
+                        <div className="px-3 pt-3">
+                          <CommandInput placeholder="Search supplier..." />
+                        </div>
+                        <CommandList>
+                          <CommandEmpty>No suppliers found.</CommandEmpty>
+                          <CommandGroup heading="Suppliers">
+                            {dropshipperOptions.map((d) => {
+                              const checked = selectedDropshippers.includes(d.orgId);
+                              return (
+                                <CommandItem
+                                  key={d.orgId}
+                                  value={d.label}
+                                  onSelect={() => {
+                                    setSelectedDropshippers((prev) =>
+                                      prev.includes(d.orgId)
+                                        ? prev.filter((x) => x !== d.orgId)
+                                        : [...prev, d.orgId]
+                                    );
+                                  }}
+                                  className="flex items-center"
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${
+                                      checked ? "opacity-100" : "opacity-0"
+                                    }`}
+                                  />
+                                  <span>{d.label}</span>
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                          <CommandSeparator />
+                          <div className="flex items-center justify-between gap-2 p-2">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() =>
+                                setSelectedDropshippers(
+                                  dropshipperOptions.map((d) => d.orgId)
+                                )
+                              }
+                            >
+                              Select all
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setSelectedDropshippers([])}
+                            >
+                              Deselect all
+                            </Button>
+                          </div>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                )}
+              </div>
             </div>
 
             {/* New Row: Countries multi-select (matches Coupon styling) */}
@@ -896,15 +873,15 @@ export default function OrderReport() {
                             <TableCell className="font-medium">
                               {o.orderNumber}
                             </TableCell>
-                                                <TableCell>
-                      {o.cancelled
-                        ? "Cancelled"
-                        : o.refunded
-                        ? "Refunded"
-                        : o.status === "pending_payment"
-                        ? "Pending Payment"
-                        : "Paid"}
-                    </TableCell>
+                            <TableCell>
+                              {o.cancelled
+                                ? "Cancelled"
+                                : o.refunded
+                                ? "Refunded"
+                                : o.status === "pending_payment"
+                                ? "Pending Payment"
+                                : "Paid"}
+                            </TableCell>
                             <TableCell>
                               <Link href={`/clients/${o.userId || o.id}/info`}>
                                 {o.username || o.userId}
@@ -917,52 +894,58 @@ export default function OrderReport() {
 
                             <TableCell>{o.country}</TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                                }`}
+                              }`}
                             >
                               {fmtMoney(o.totalPrice)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                                }`}
+                              }`}
                             >
                               {fmtMoney(o.shippingCost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                                }`}
+                              }`}
                             >
                               {fmtMoney(o.discount)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                                }`}
+                              }`}
                             >
                               {fmtMoney(o.cost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                              className={`text-right font-medium ${
+                                o.cancelled === true || o.refunded === true
                                   ? "text-red-600"
                                   : ""
-                                }`}
+                              }`}
                             >
                               {o.coin}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${o.cancelled || o.refunded
+                              className={`text-right font-medium ${
+                                o.cancelled || o.refunded
                                   ? "text-red-600"
                                   : o.netProfit >= 0
-                                    ? "text-green-600"
-                                    : "text-red-600"
-                                }`}
+                                  ? "text-green-600"
+                                  : "text-red-600"
+                              }`}
                             >
                               {o.cancelled
                                 ? fmtMoney(0)
@@ -1001,10 +984,10 @@ export default function OrderReport() {
                               totalPages <= 5
                                 ? i + 1
                                 : currentPage <= 3
-                                  ? i + 1
-                                  : currentPage >= totalPages - 2
-                                    ? totalPages - 4 + i
-                                    : currentPage - 2 + i;
+                                ? i + 1
+                                : currentPage >= totalPages - 2
+                                ? totalPages - 4 + i
+                                : currentPage - 2 + i;
                             return (
                               <Button
                                 key={num}
@@ -1107,7 +1090,7 @@ export default function OrderReport() {
                           day: "numeric",
                         });
                       }}
-                     valueFormatter={(v) => fmtMoney(Number(v))}// ← add this if supported
+                      valueFormatter={(v) => fmtMoney(Number(v))}
                       indicator="dot"
                     />
                   }
