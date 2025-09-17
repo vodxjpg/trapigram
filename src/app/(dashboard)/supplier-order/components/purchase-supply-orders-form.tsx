@@ -125,18 +125,6 @@ function normalizeAllocationsPayload(payload: any): Array<{
     }));
 }
 
-/** Accent/spacing-insensitive normalization for search */
-function normalizeText(s: string): string {
-    return (s || "")
-        .toLowerCase()
-        .normalize("NFD")
-        // remove diacritics
-        .replace(/\p{Diacritic}/gu, "")
-        // collapse spaces, hyphens, underscores
-        .replace(/[\s\-_]+/g, "")
-        .trim();
-}
-
 /* ------------------------------------------------------------------ */
 /* Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -352,25 +340,16 @@ export default function PurchaseOrderSupply({
         return () => clearTimeout(t);
     }, [prodTerm]);
 
-    /** Robust local filtering: title, SKU, and category label; accent/spacing-insensitive */
+    /* ▼▼ match the “good” dropdown’s local filtering (title + SKU) ▼▼ */
     const filteredProducts = useMemo(() => {
-        const raw = prodTerm.trim();
-        if (raw.length < 3) return products;
-        const q = normalizeText(raw);
-        const matches = (p: Product) => {
-            const title = normalizeText(p.title || "");
-            const sku = normalizeText(p.sku || "");
-            const catId = p.categories?.[0] || "";
-            const catLabel = normalizeText(categoryMap[catId] || catId || "");
-            return title.includes(q) || sku.includes(q) || (!!catLabel && catLabel.includes(q));
-        };
-        return products.filter(matches);
-    }, [products, prodTerm, categoryMap]);
-
-    /** Set of IDs that are currently shown by local filter (for dedup logic with remote results) */
-    const localMatchIdSet = useMemo(() => {
-        return new Set(filteredProducts.map((p) => p.id));
-    }, [filteredProducts]);
+        if (prodTerm.trim().length < 3) return products;
+        const q = prodTerm.toLowerCase();
+        return products.filter(
+            (p) =>
+                p.title.toLowerCase().includes(q) ||
+                p.sku.toLowerCase().includes(q)
+        );
+    }, [products, prodTerm]);
 
     const totalSelectedQty = useMemo(
         () => orderItems.reduce((sum, it) => sum + Number(it.quantity ?? 0), 0),
@@ -705,7 +684,6 @@ export default function PurchaseOrderSupply({
         }
     };
 
-
     // Build 2-letter initials from a product title
     function getInitials(name: string): string {
         return name
@@ -716,11 +694,16 @@ export default function PurchaseOrderSupply({
             .join("");
     }
 
-    const showNoMatches =
-        !prodSearching &&
-        prodTerm.trim().length >= 3 &&
-        filteredProducts.length === 0 &&
-        prodResults.length === 0;
+    /* ─────────────────────────────────────────────────────────────
+       Match the "good" dropdown behavior for selecting a product
+       – cache remote rows into local state, then reset the search
+    ───────────────────────────────────────────────────────────── */
+    const pickProduct = (id: string, obj: Product) => {
+        setSelectedProduct(id);
+        if (!products.some((p) => p.id === id)) setProducts((prev) => [...prev, obj]);
+        setProdTerm("");
+        setProdResults([]);
+    };
 
     /* Render */
     return (
@@ -852,9 +835,8 @@ export default function PurchaseOrderSupply({
                                     <Select
                                         value={selectedProduct}
                                         onValueChange={(val) => {
-                                            setSelectedProduct(val);
-                                            setProdTerm("");
-                                            setProdResults([]);
+                                            const obj = [...products, ...prodResults].find((p) => p.id === val);
+                                            if (obj) pickProduct(val, obj);
                                         }}
                                         disabled={productsLoading}
                                     >
@@ -915,12 +897,12 @@ export default function PurchaseOrderSupply({
                                                     </SelectGroup>
                                                 )}
 
-                                                {/* Remote results (dedupe against what's already visible locally) */}
+                                                {/* Remote results (not yet cached) – de-dupe against full local list */}
                                                 {prodResults.length > 0 && (
                                                     <>
                                                         {groupByCategory(
                                                             prodResults.filter(
-                                                                (p) => !p.isAffiliate && !localMatchIdSet.has(p.id)
+                                                                (p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id)
                                                             )
                                                         ).map(([label, items]) => (
                                                             <SelectGroup key={`remote-${label}`}>
@@ -947,14 +929,14 @@ export default function PurchaseOrderSupply({
 
                                                         {/* Remote affiliate results */}
                                                         {prodResults.some(
-                                                            (p) => p.isAffiliate && !localMatchIdSet.has(p.id)
+                                                            (p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)
                                                         ) && (
                                                                 <SelectGroup>
                                                                     <SelectLabel>Affiliate — search</SelectLabel>
                                                                     {prodResults
                                                                         .filter(
                                                                             (p) =>
-                                                                                p.isAffiliate && !localMatchIdSet.has(p.id)
+                                                                                p.isAffiliate && !products.some((lp) => lp.id === p.id)
                                                                         )
                                                                         .map((p) => {
                                                                             const disabled = addedProductIds.has(p.id);
@@ -982,7 +964,7 @@ export default function PurchaseOrderSupply({
                                                         Searching…
                                                     </div>
                                                 )}
-                                                {showNoMatches && (
+                                                {!prodSearching && prodTerm && prodResults.length === 0 && (
                                                     <div className="px-3 py-2 text-sm text-muted-foreground">
                                                         No matches
                                                     </div>
@@ -1154,7 +1136,7 @@ export default function PurchaseOrderSupply({
 
                     <Separator />
 
-                    <div className="overflow-y-auto px-6 py-4 h+[calc(85vh-9rem)] sm:h-[calc(85vh-9rem)]">
+                    <div className="overflow-y-auto px-6 py-4 h-[calc(85vh-9rem)] sm:h-[calc(85vh-9rem)]">
                         {warehouses.length === 0 ? (
                             <p className="text-sm text-muted-foreground">No warehouses found.</p>
                         ) : (
