@@ -609,7 +609,6 @@ export default function OrderForm() {
           };
         }),
       ];
-      console.log(all)
       setProducts(all);
     } catch (e: any) {
       console.error(e);
@@ -1049,7 +1048,6 @@ export default function OrderForm() {
       }
 
       const data = await res.json();
-      console.log(data);
       //CouponType is stored in data.couponType
       if (data.discountValue !== undefined && data.discountValue !== null) {
         setCouponValues((prev) => [...prev, Number(data.discountValue)]);

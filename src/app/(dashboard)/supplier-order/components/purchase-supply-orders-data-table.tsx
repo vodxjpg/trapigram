@@ -140,9 +140,10 @@ export default function PurchaseSupplyOrdersDataTable() {
         const data = await linesRes.json();
         const items: any[] = data?.resultCartProducts ?? [];
 
+        // replace the current map + loop in fetchOrderForExport with:
         const map = new Map<
             string,
-            { orderKey: number; name: string; sku: string; quantity: number; received: number }
+            { name: string; sku: string; quantity: number; received: number }
         >();
 
         for (const it of items) {
@@ -151,7 +152,6 @@ export default function PurchaseSupplyOrdersDataTable() {
             const nextQty = Number(it.quantity ?? 0) + (prev?.quantity ?? 0);
             const nextRec = Number(it.received ?? 0) + (prev?.received ?? 0);
             map.set(pid, {
-                orderKey,
                 name: it.title,
                 sku: it.sku,
                 quantity: nextQty,
@@ -163,16 +163,14 @@ export default function PurchaseSupplyOrdersDataTable() {
         return { header, rows };
     };
 
-
     const exportOrderXLSX = async (id: string) => {
         try {
             const { header, rows } = await fetchOrderForExport(id);
-            console.log(rows)
             const XLSX = await import("xlsx");
 
-            // Build header block (above the table)
+            // ⬇️ Header block: show ONLY order key (no internal id)
             const headerAoa = [
-                ["Order", `#${header.orderKey ?? "—"} (${header.orderId})`],
+                ["Order", `#${header.orderKey ?? "—"}`],
                 ["Status", header.status || "—"],
                 ["Expected At", header.expectedAt ? format(new Date(header.expectedAt), "PPP") : "—"],
                 ["Supplier Name", header.supplierName || "—"],
@@ -182,10 +180,9 @@ export default function PurchaseSupplyOrdersDataTable() {
 
             const ws = XLSX.utils.aoa_to_sheet(headerAoa);
 
-            // Leave one blank row then place the items table
-            const startRow = headerAoa.length + 2; // 1-based in Excel, but utils uses 0-based indexes
+            // Items table: remove the OrderKey column completely
+            const startRow = headerAoa.length + 2;
             const sheetRows = rows.map(r => ({
-                OrderKey: r.orderKey,
                 Name: r.name,
                 SKU: r.sku,
                 Quantity: r.quantity,
@@ -195,12 +192,13 @@ export default function PurchaseSupplyOrdersDataTable() {
 
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Order");
-            XLSX.writeFile(wb, `order-${id}.xlsx`);
+
+            // (optional) use the key in the filename; falls back to id if missing
+            XLSX.writeFile(wb, `order-${header.orderKey ?? id}.xlsx`);
         } catch (e: any) {
             toast.error(e?.message || "Failed to export XLSX");
         }
     };
-
 
     const exportOrderPDF = async (id: string) => {
         try {
@@ -217,19 +215,20 @@ export default function PurchaseSupplyOrdersDataTable() {
                 infoValue: { flexGrow: 1 },
                 row: { flexDirection: "row", borderBottomWidth: 1, borderColor: "#eee", paddingVertical: 6 },
                 th: { fontWeight: 700, backgroundColor: "#fafafa" },
-                cellOrderKey: { width: "10%" },
+                // table widths WITHOUT order key column
                 cellName: { width: "50%" },
                 cellSku: { width: "30%" },
                 cellQty: { width: "10%", textAlign: "right" },
-                metaRow: { flexDirection: "row", marginBottom: 8 },
+                cellRecv: { width: "10%", textAlign: "right" },
             });
 
             const Doc = (
                 <Document>
                     <Page size="A4" style={styles.page}>
-                        <Text style={styles.title}>Order #{header.orderKey ?? "—"} ({header.orderId})</Text>
+                        {/* ⬇️ Title: show ONLY order key */}
+                        <Text style={styles.title}>Order #{header.orderKey ?? "—"}</Text>
 
-                        {/* Order meta (status / dates) */}
+                        {/* Order meta */}
                         <View style={styles.infoBox}>
                             <Text style={styles.infoTitle}>Order Information</Text>
                             <View style={styles.infoRow}>
@@ -267,21 +266,19 @@ export default function PurchaseSupplyOrdersDataTable() {
                             </View>
                         </View>
 
-                        {/* Items table */}
+                        {/* Items table WITHOUT order key column */}
                         <View style={[styles.row, styles.th]}>
-                            <Text style={styles.cellOrderKey}>OrderKey</Text>
                             <Text style={styles.cellName}>Name</Text>
                             <Text style={styles.cellSku}>SKU</Text>
                             <Text style={styles.cellQty}>Quantity</Text>
-                            <Text style={styles.cellQty}>Received</Text>
+                            <Text style={styles.cellRecv}>Received</Text>
                         </View>
                         {rows.map((r, i) => (
                             <View key={i} style={styles.row}>
-                                <Text style={styles.cellOrderKey}>{String(r.orderKey ?? "")}</Text>
                                 <Text style={styles.cellName}>{r.name}</Text>
                                 <Text style={styles.cellSku}>{r.sku}</Text>
                                 <Text style={styles.cellQty}>{r.quantity}</Text>
-                                <Text style={styles.cellQty}>{r.received}</Text>
+                                <Text style={styles.cellRecv}>{r.received}</Text>
                             </View>
                         ))}
                     </Page>
@@ -292,7 +289,7 @@ export default function PurchaseSupplyOrdersDataTable() {
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download = `order-${id}.pdf`;
+            a.download = `order-${header.orderKey ?? id}.pdf`; // optional: use key in filename
             document.body.appendChild(a);
             a.click();
             a.remove();
