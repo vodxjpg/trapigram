@@ -770,7 +770,7 @@ export default function OrderReport() {
             </div>
 
             {totals && (
-              <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
                 {/* Paid (chart-aligned) */}
                 <div className="rounded-md border p-4">
                   <div className="text-xs text-muted-foreground">
