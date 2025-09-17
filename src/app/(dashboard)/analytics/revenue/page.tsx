@@ -11,6 +11,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   DownloadIcon,
+  Check,
 } from "lucide-react";
 import {
   format,
@@ -60,6 +61,17 @@ import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "@/components/ui/command";
+import { Checkbox } from "@/components/ui/checkbox";
 
 // React Select + flags to match Coupon view
 import ReactSelect from "react-select";
@@ -209,9 +221,10 @@ export default function OrderReport() {
   // countries from API + selected (multi)
   const [countries, setCountries] = useState<string[]>([]);
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
-
-  // dropshipper filter (orgId) + options from API
-  const [dropshipperOrgId, setDropshipperOrgId] = useState<string>("");
+    // Seller filter: retailers (no dropshipper) vs dropshippers (one or many suppliers)
+  const [sellerFilter, setSellerFilter] = useState<"retailers" | "dropshippers">("retailers");
+  const [selectedDropshippers, setSelectedDropshippers] = useState<string[]>([]);
+  const [dsPopoverOpen, setDsPopoverOpen] = useState(false);
   const [dropshipperOptions, setDropshipperOptions] = useState<
     Array<{ orgId: string; label: string }>
   >([]);
@@ -239,7 +252,7 @@ export default function OrderReport() {
           : "";
 
         const res = await fetch(
-          `/api/report/revenue?from=${from}&to=${to}&currency=${currency}&status=${status}${dsParam}`
+          `/api/report/revenue?from=${from}&to=${to}&currency=${currency}&status=${status}`
         );
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const data = await res.json();
@@ -262,7 +275,7 @@ export default function OrderReport() {
     }
 
     fetchOrders();
-  }, [dateRange, currency, status, dropshipperOrgId, canShow]);
+}, [dateRange, currency, status, canShow]);
 
   const countryOptions = useMemo(
     () =>
@@ -284,6 +297,15 @@ export default function OrderReport() {
     [countryOptions]
   );
   const filteredData = chartData;
+
+    const dropshipperSummary = useMemo(() => {
+    if (sellerFilter === "retailers") return "Retailers";
+    if (selectedDropshippers.length === 0) return "All suppliers";
+    const labels = dropshipperOptions
+      .filter((d) => selectedDropshippers.includes(d.orgId))
+      .map((d) => d.label);
+    return labels.length <= 2 ? labels.join(", ") : `${labels.length} selected`;
+  }, [sellerFilter, selectedDropshippers, dropshipperOptions]);
 
   const filteredOrders = useMemo(() => {
     const matchesStatus = (o: Order) => {
@@ -307,12 +329,25 @@ export default function OrderReport() {
         ? true
         : selectedCountries.includes(o.country);
 
-    const list = orders.filter((o) => matchesStatus(o) && matchesCountries(o));
+         const matchesSeller = (o: Order) => {
+   const ds = o.dropshipperOrgId ?? null;
+   if (sellerFilter === "retailers") {
+     return !ds; // orders that don't come from a dropshipper
+   }
+   // dropshippers
+   if (!ds) return false;
+   // If none selected, show all dropshipper orders
+   if (selectedDropshippers.length === 0) return true;
+   return selectedDropshippers.includes(ds);
+ };
+
+    const list = orders.filter(
+   (o) => matchesStatus(o) && matchesCountries(o) && matchesSeller(o)
+ );
     return list.sort(
       (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
     );
-  }, [orders, status, selectedCountries]);
-
+}, [orders, status, selectedCountries, sellerFilter, selectedDropshippers]);
   const totalPages = Math.ceil(filteredOrders.length / rowsPerPage);
   const startIndex = (currentPage - 1) * rowsPerPage;
   const endIndex = startIndex + rowsPerPage;
@@ -583,32 +618,109 @@ export default function OrderReport() {
                   Export to Excel
                 </Button>
               </div>
-              {/* Dropshipper filter */}
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">Dropshipper</span>
-                <Select
-                  /* When state is "", show the sentinel as the selected value */
-                  value={dropshipperOrgId ? dropshipperOrgId : ALL_DROPSHIPPERS}
-                  onValueChange={(v) =>
-                    setDropshipperOrgId(v === ALL_DROPSHIPPERS ? "" : v)
-                  }
-                >
-                  <SelectTrigger size="sm" className="min-w-[220px]">
-                    <SelectValue placeholder="All dropshippers" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {/* Use non-empty sentinel here */}
-                    <SelectItem key="__all" value={ALL_DROPSHIPPERS}>
-                      All dropshippers
-                    </SelectItem>
-                    {dropshipperOptions.map((d) => (
-                      <SelectItem key={d.orgId} value={d.orgId}>
-                        {d.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {/* Seller filter: Retailers or Dropshippers (with multi-select) */}
+  <div className="flex flex-col gap-2">
+    <div className="flex items-center gap-3">
+      <span className="text-sm font-medium">Filter by</span>
+      <RadioGroup
+        className="flex gap-4"
+        value={sellerFilter}
+        onValueChange={(v) =>
+          setSellerFilter(v as "retailers" | "dropshippers")
+        }
+      >
+        <div className="flex items-center space-x-2">
+          <RadioGroupItem id="retailers" value="retailers" />
+          <label htmlFor="retailers" className="text-sm">
+            Retailers
+          </label>
+        </div>
+        <div className="flex items-center space-x-2">
+          <RadioGroupItem id="dropshippers" value="dropshippers" />
+          <label htmlFor="dropshippers" className="text-sm">
+            Dropshipper
+          </label>
+        </div>
+      </RadioGroup>
+    </div>
+    {sellerFilter === "dropshippers" && (
+      <div className="flex items-center gap-2">
+        <Popover open={dsPopoverOpen} onOpenChange={setDsPopoverOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="justify-start min-w-[260px]"
+              aria-haspopup="listbox"
+              aria-expanded={dsPopoverOpen}
+            >
+              {dropshipperSummary}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="p-0 w-[360px]" align="start">
+            <Command>
+              <div className="px-3 pt-3">
+                <CommandInput placeholder="Search supplier..." />
               </div>
+              <CommandList>
+                <CommandEmpty>No suppliers found.</CommandEmpty>
+                <CommandGroup heading="Suppliers">
+                  {dropshipperOptions.map((d) => {
+                    const checked = selectedDropshippers.includes(d.orgId);
+                    return (
+                      <CommandItem
+                        key={d.orgId}
+                        value={d.label}
+                        onSelect={() => {
+                          setSelectedDropshippers((prev) =>
+                            prev.includes(d.orgId)
+                              ? prev.filter((x) => x !== d.orgId)
+                              : [...prev, d.orgId]
+                          );
+                        }}
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={() => {
+                            setSelectedDropshippers((prev) =>
+                              prev.includes(d.orgId)
+                                ? prev.filter((x) => x !== d.orgId)
+                                : [...prev, d.orgId]
+                            );
+                          }}
+                          className="mr-2"
+                        />
+                        <span>{d.label}</span>
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+                <CommandSeparator />
+                <div className="flex items-center justify-between gap-2 p-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() =>
+                      setSelectedDropshippers(dropshipperOptions.map((d) => d.orgId))
+                    }
+                  >
+                    Select all
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setSelectedDropshippers([])}
+                  >
+                    Deselect all
+                  </Button>
+                </div>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
+    )}
+  </div>
             </div>
 
             {/* New Row: Countries multi-select (matches Coupon styling) */}
