@@ -93,6 +93,8 @@ type OrderStatus = "draft" | "pending" | "completed";
 /* ------------------------------------------------------------------ */
 
 const DEBOUNCE_MS = 400;
+const REMOTE_SEARCH_MIN = 3;  // when to hit the API
+const LOCAL_FILTER_MIN = 1;   // when to start client-side filtering
 
 function firstPointPrice(pp: any): number {
     if (!pp) return 0;
@@ -296,7 +298,7 @@ export default function PurchaseOrderSupply({
     /* Search (remote) */
     useEffect(() => {
         const q = prodTerm.trim();
-        if (q.length < 3) {
+        if (q.length < REMOTE_SEARCH_MIN) {
             setProdResults([]);
             setProdSearching(false);
             return;
@@ -305,30 +307,10 @@ export default function PurchaseOrderSupply({
             try {
                 setProdSearching(true);
                 const [shop, aff] = await Promise.all([
-                    fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`)
-                        .then((r) => r.json())
-                        .then((d) => d.products as any[]),
-                    fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`)
-                        .then((r) => r.json())
-                        .then((d) => d.products as any[]),
+                    fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`).then(r => r.json()).then(d => d.products as any[]),
+                    fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`).then(r => r.json()).then(d => d.products as any[]),
                 ]);
-
-                const mapShop = (p: any): Product => ({
-                    ...p,
-                    allowBackorders: !!p.allowBackorders,
-                    price: Number(Object.values(p?.salePrice ?? p?.regularPrice ?? {})[0] ?? 0),
-                    stockData: p.stockData,
-                    isAffiliate: false,
-                    categories: p.categories ?? [],
-                });
-                const mapAff = (a: any): Product => ({
-                    ...a,
-                    price: Number(Object.values(a?.pointsPrice ?? {})[0] ?? 0),
-                    stockData: a.stock,
-                    isAffiliate: true,
-                    categories: [],
-                });
-
+                // ...mapping stays the same
                 setProdResults([...shop.map(mapShop), ...aff.map(mapAff)]);
             } catch {
                 setProdResults([]);
@@ -336,20 +318,21 @@ export default function PurchaseOrderSupply({
                 setProdSearching(false);
             }
         }, DEBOUNCE_MS);
-
         return () => clearTimeout(t);
     }, [prodTerm]);
 
+
     /* ▼▼ match the “good” dropdown’s local filtering (title + SKU) ▼▼ */
     const filteredProducts = useMemo(() => {
-        if (prodTerm.trim().length < 3) return products;
-        const q = prodTerm.toLowerCase();
+        const q = prodTerm.trim().toLowerCase();
+        if (q.length < LOCAL_FILTER_MIN) return products;  // now filters from 1+ char
         return products.filter(
             (p) =>
                 p.title.toLowerCase().includes(q) ||
                 p.sku.toLowerCase().includes(q)
         );
     }, [products, prodTerm]);
+
 
     const totalSelectedQty = useMemo(
         () => orderItems.reduce((sum, it) => sum + Number(it.quantity ?? 0), 0),
@@ -468,6 +451,39 @@ export default function PurchaseOrderSupply({
             toast.error(err?.message || "Could not add product");
         }
     };
+
+    const removeProductFromCart = async (productId: string) => {
+        if (isLocked || isPending) return;
+        if (!cartId) return toast.error("Generate the suppliers cart first");
+
+        try {
+            const res = await fetch(`/api/suppliersCart/product/${productId}`, {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    supplierCartId: cartId,          // body must include the suppliers cart id
+                    // suppliercartId: cartId,       // ← uncomment if your API expects this exact casing
+                }),
+            });
+
+            if (!res.ok) throw new Error(await res.text().catch(() => "Failed to remove product"));
+
+            // Optimistic local update
+            setOrderItems(prev => prev.filter(it => it.product.id !== productId));
+            setAddedProductIds(prev => {
+                const next = new Set(prev);
+                next.delete(productId);
+                return next;
+            });
+
+            toast.success("Product removed from cart");
+            // Re-sync from server to keep totals/quantities correct
+            await reloadCartLines(cartId);
+        } catch (e: any) {
+            toast.error(e?.message || "Could not remove product");
+        }
+    };
+
 
     /* Edit flow (Drawer) */
     const ensureWarehouses = async (): Promise<Warehouse[]> => {
@@ -812,15 +828,14 @@ export default function PurchaseOrderSupply({
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
-                                                        title="Remove (not implemented)"
+                                                        title="Remove"
                                                         className="flex items-center space-x-1"
-                                                        onClick={() => {
-                                                            toast.info("Remove functionality not implemented yet");
-                                                        }}
-                                                        disabled={isPending}
+                                                        onClick={() => removeProductFromCart(product.id)}
+                                                        disabled={isPending || isLocked}
                                                     >
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
+
                                                 </div>
                                             ))}
                                         </div>
@@ -848,16 +863,17 @@ export default function PurchaseOrderSupply({
 
                                         <SelectContent className="w-[520px]">
                                             {/* Inline search box */}
-                                            <div className="p-3 border-b flex items-center gap-2">
+                                            <div className="p-3 border-b flex items-center gap-2" onKeyDown={(e) => e.stopPropagation()}>
                                                 <Search className="h-4 w-4 text-muted-foreground" />
                                                 <Input
                                                     value={prodTerm}
                                                     onChange={(e) => setProdTerm(e.target.value)}
-                                                    placeholder="Search products (min 3 chars)"
+                                                    onKeyDown={(e) => e.stopPropagation()}   // <- KEY: cancel bubbling to Radix Select
+                                                    autoFocus
+                                                    placeholder="Search products"
                                                     className="h-8"
                                                 />
                                             </div>
-
                                             <ScrollArea className="max-h-72">
                                                 {/* Local (grouped) shop products */}
                                                 {groupByCategory(

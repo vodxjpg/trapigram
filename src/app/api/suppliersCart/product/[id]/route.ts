@@ -66,3 +66,26 @@ export async function PATCH(
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }
+
+export async function DELETE(
+    req: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
+) {
+    const ctx = await getContext(req);
+    if (ctx instanceof NextResponse) return ctx;
+    console.log("DELETE /api/suppliersCart/product/:id")
+    try {
+        const { id } = await params;
+        const body = await req.json()
+        const { supplierCartId } = body
+
+        const emptyOrderQuery = `DELETE FROM "supplierCartProducts" WHERE "supplierCartId" = $1 AND "productId"=$2`
+        const emptyOrderResult = await pool.query(emptyOrderQuery, [supplierCartId, id])
+        const result = emptyOrderResult.rows
+
+        return NextResponse.json({ result }, { status: 200 });
+    } catch (error: any) {
+        console.error("[DELETE /api/suppliersCart/product/:id]", error);
+        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    }
+}
