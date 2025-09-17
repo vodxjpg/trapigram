@@ -1,4 +1,4 @@
-// src/app/api/cart/[id]/update-product/route.ts  ← FULL, runnable file
+// src/app/api/cart/[id]/update-product/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
@@ -26,23 +26,26 @@ function findTier(
   clientId?: string | null,
 ): Tier | null {
   const candidates = tiers.filter(
-  (t) =>
-    t.countries.includes(country) &&
-    t.products.some(
-      (p) => p.productId === productId || p.variationId === productId,
-    ),
-);
-if (!candidates.length) return null;
-const targets = (t: Tier): string[] =>
-  (((t as any).clients as string[] | undefined) ??
-    ((t as any).customers as string[] | undefined) ??
-    []) as string[];
-if (clientId) {
-  const targeted = candidates.find((t) => targets(t).includes(clientId));
-  if (targeted) return targeted;
-}
-const global = candidates.find((t) => targets(t).length === 0);
-return global ?? candidates[0] ?? null;
+    (t) =>
+      t.active === true &&
+      t.countries.includes(country) &&
+      t.products.some(
+        (p) => p.productId === productId || p.variationId === productId,
+      ),
+  );
+  if (!candidates.length) return null;
+
+  const targets = (t: Tier): string[] =>
+    ((((t as any).clients as string[] | undefined) ??
+      ((t as any).customers as string[] | undefined) ??
+      []) as string[]).filter(Boolean);
+
+  if (clientId) {
+    const targeted = candidates.find((t) => targets(t).includes(clientId));
+    if (targeted) return targeted;
+  }
+  const global = candidates.find((t) => targets(t).length === 0);
+  return global ?? null;
 }
 
 export async function PATCH(

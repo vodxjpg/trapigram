@@ -12,6 +12,7 @@ import {
   getPriceForQuantity,
   type Tier,
 } from "@/lib/tier-pricing";
+
 /* ───────────────────────────────────────────────────────────── */
 
 const cartProductSchema = z.object({
@@ -27,25 +28,28 @@ function findTier(
 ): Tier | null {
   const candidates = tiers.filter(
     (t) =>
+      t.active === true &&
       t.countries.includes(country) &&
       t.products.some(
         (p) => p.productId === productId || p.variationId === productId,
       ),
   );
   if (!candidates.length) return null;
+
   const targets = (t: Tier): string[] =>
-    (((t as any).clients as string[] | undefined) ??
+    ((((t as any).clients as string[] | undefined) ??
       ((t as any).customers as string[] | undefined) ??
-      []) as string[];
+      []) as string[]).filter(Boolean);
+
+  // Prefer a tier explicitly targeting this client
   if (clientId) {
     const targeted = candidates.find((t) => targets(t).includes(clientId));
     if (targeted) return targeted;
   }
+  // Otherwise only allow a global tier (no client targets)
   const global = candidates.find((t) => targets(t).length === 0);
-  return global ?? candidates[0] ?? null;
+  return global ?? null;
 }
- 
- 
 
 export async function POST(
   req: NextRequest,
@@ -61,17 +65,19 @@ export async function POST(
 
     /* client context */
     const { rows: clientRows } = await pool.query(
-      `SELECT c.country, c."levelId"
-      ,c.id AS "clientId"
+      `SELECT c.country, c."levelId", c.id AS "clientId"
          FROM carts ca
          JOIN clients c ON c.id = ca."clientId"
         WHERE ca.id = $1`,
       [cartId],
     );
     if (!clientRows.length)
-      return NextResponse.json({ error: "Cart or client not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Cart or client not found" },
+        { status: 404 },
+      );
 
-   const { country, levelId, clientId } = clientRows[0];
+    const { country, levelId, clientId } = clientRows[0];
 
     /* price resolution */
     const { price: basePrice, isAffiliate } = await resolveUnitPrice(
@@ -103,7 +109,11 @@ export async function POST(
         if (pointsNeeded > current) {
           await client.query("ROLLBACK");
           return NextResponse.json(
-            { error: "Insufficient affiliate points", required: pointsNeeded, available: current },
+            {
+              error: "Insufficient affiliate points",
+              required: pointsNeeded,
+              available: current,
+            },
             { status: 400 },
           );
         }
