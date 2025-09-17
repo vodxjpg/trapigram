@@ -289,7 +289,7 @@ export default function OrderReport() {
 
   const dropshipperSummary = useMemo(() => {
     if (sellerFilter === "retailers") return "Retailers";
-    if (selectedDropshippers.length === 0) return "All suppliers";
+    if (selectedDropshippers.length === 0) return "All dropshippers";
     const labels = dropshipperOptions
       .filter((d) => selectedDropshippers.includes(d.orgId))
       .map((d) => d.label);
@@ -451,16 +451,16 @@ export default function OrderReport() {
             <CardTitle>Order Report</CardTitle>
           </CardHeader>
           <CardContent>
-            {/* Top Controls Row: date preset + (custom picker) + currency/status/export */}
-            <div className="flex flex-col sm:flex-row gap-4 mb-2 items-start sm:items-center justify-between">
-              {/* Left: date preset dropdown + optional custom range picker */}
-              <div className="flex flex-wrap items-center gap-2">
+                  {/* Top Controls: responsive grid so mobile doesn't look squished */}
+       <div className="grid gap-3 mb-3 items-start sm:grid-cols-2 lg:grid-cols-3">
+         {/* Date preset + (custom picker) */}
+         <div className="flex flex-wrap items-center gap-2 w-full">
                 <span className="text-sm font-medium">Date</span>
                 <Select
                   value={datePreset}
                   onValueChange={(v) => handleDatePreset(v as DatePreset)}
                 >
-                  <SelectTrigger size="sm" className="min-w-[200px]">
+                  <SelectTrigger size="sm" className="w-full sm:w-[200px]">
                     <SelectValue placeholder="Select range" />
                   </SelectTrigger>
                   <SelectContent>
@@ -491,9 +491,9 @@ export default function OrderReport() {
                   >
                     <PopoverTrigger asChild>
                       <Button
-                        variant="outline"
-                        size="sm"
-                        className="justify-start text-left min-w-[240px] bg-transparent"
+                      variant="outline"
+                       size="sm"
+                       className="justify-start text-left w-full sm:min-w-[240px] bg-transparent"
                       >
                         <CalendarIcon className="mr-2 h-4 w-4" />
                         {dateRange?.from && dateRange?.to ? (
@@ -551,12 +551,12 @@ export default function OrderReport() {
               </div>
 
               {/* Right: currency, status, export */}
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 w-full sm:justify-end">
                 <span className="text-sm font-medium">Currency</span>
                 <Select
                   value={currency}
                   onValueChange={(v) => setCurrency(v as "USD" | "GBP" | "EUR")}
-                  className="w-24"
+                  className="w-full sm:w-24"
                 >
                   <SelectTrigger size="sm">
                     <SelectValue placeholder="Currency" />
@@ -575,7 +575,7 @@ export default function OrderReport() {
                     onValueChange={(v) =>
                       setStatus(v as "all" | "paid" | "cancelled" | "refunded" | "pending_payment")
                     }
-                    className="w-32"
+                    className="w-full sm:w-32"
                   >
                     <SelectTrigger size="sm">
                       <SelectValue placeholder="Status" />
@@ -593,7 +593,7 @@ export default function OrderReport() {
                 <Button
                   variant="default"
                   size="sm"
-                  className="shrink-0"
+                  className="shrink-0 w-full sm:w-auto"
                   onClick={exportToExcel}
                   disabled={!canExportRevenue}
                   title={
@@ -608,7 +608,7 @@ export default function OrderReport() {
               </div>
 
               {/* Seller filter: Retailers or Dropshippers (dropdown + dropdown) */}
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2 w-full">
                 <span className="text-sm font-medium">Filter by</span>
                 <Select
                   value={sellerFilter}
@@ -616,7 +616,7 @@ export default function OrderReport() {
                     setSellerFilter(v as "retailers" | "dropshippers")
                   }
                 >
-                  <SelectTrigger size="sm" className="min-w-[160px]">
+                  <SelectTrigger size="sm" className="w-full sm:w-[160px]">
                     <SelectValue placeholder="Seller type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -631,21 +631,21 @@ export default function OrderReport() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="justify-start min-w-[260px]"
+                        className="justify-start w-full sm:w-[220px]"
                         aria-haspopup="listbox"
                         aria-expanded={dsPopoverOpen}
                       >
                         {dropshipperSummary}
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="p-0 w-[360px]" align="start">
+                    <PopoverContent className="p-0 w-[260px] sm:w-[340px]" align="start">
                       <Command>
                         <div className="px-3 pt-3">
-                          <CommandInput placeholder="Search supplier..." />
+                          <CommandInput placeholder="Search dropshipper..." />
                         </div>
                         <CommandList>
-                          <CommandEmpty>No suppliers found.</CommandEmpty>
-                          <CommandGroup heading="Suppliers">
+                          <CommandEmpty>No Dropshipper found.</CommandEmpty>
+                          <CommandGroup heading="Dropshippers">
                             {dropshipperOptions.map((d) => {
                               const checked = selectedDropshippers.includes(d.orgId);
                               return (
