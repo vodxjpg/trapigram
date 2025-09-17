@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/api/tier-pricing/[id]/route.ts
 // src/app/api/tier-pricing/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -34,7 +35,6 @@ const patchSchema = z.object({
   products: z.array(productItemSchema).min(1).optional(),
   steps: z.array(stepSchema).min(1).optional(),
   active: z.boolean().optional(),
-  // NEW: client targeting
   clients: z.array(z.string().min(1)).optional(),
 });
 
@@ -81,7 +81,6 @@ export async function GET(
       .where("tierPricingId", "=", id)
       .execute();
 
-    // NEW: targeted clients
     const clientRows = await db
       .selectFrom("tierPricingClients")
       .select(["clientId"])
@@ -125,7 +124,7 @@ export async function PATCH(
     const { organizationId } = ctx;
     const { id } = paramsSchema.parse(await params);
 
-    let raw: unknown;
+    let raw: any;
     try {
       raw = await req.json();
     } catch (e) {
@@ -136,9 +135,19 @@ export async function PATCH(
       );
     }
 
+    // ── BACKCOMPAT: map legacy "customers" → "clients" if necessary
+    const normalized = {
+      ...raw,
+      clients: Array.isArray(raw?.clients)
+        ? raw.clients
+        : Array.isArray(raw?.customers)
+        ? raw.customers
+        : undefined, // undefined means "do not change clients"
+    };
+
     let body: z.infer<typeof patchSchema>;
     try {
-      body = patchSchema.parse(raw);
+      body = patchSchema.parse(normalized);
     } catch (e) {
       if (e instanceof z.ZodError) {
         console.error(`${LOG}#${rid} PATCH Zod validation error`, {
@@ -155,7 +164,8 @@ export async function PATCH(
       keys: Object.keys(body),
       stepsCount: body.steps?.length ?? 0,
       productsCount: body.products?.length ?? 0,
-      clientsCount: body.clients?.length ?? 0,
+      clientsCount:
+        Array.isArray(body.clients) ? body.clients.length : "(no change)",
       active: typeof body.active === "boolean" ? body.active : undefined,
       name: body.name,
       countries: body.countries,
@@ -214,7 +224,7 @@ export async function PATCH(
       }
     }
 
-    // NEW: update targeted clients independently
+    // Update targeted clients only when provided
     if (Array.isArray(body.clients)) {
       await db
         .deleteFrom("tierPricingClients")
@@ -237,7 +247,7 @@ export async function PATCH(
       ms: Date.now() - t0,
       setSteps: body.steps?.length ?? 0,
       setProducts: body.products?.length ?? 0,
-      setClients: body.clients?.length ?? 0,
+      setClients: Array.isArray(body.clients) ? body.clients.length : "(no change)",
     });
     return NextResponse.json({ success: true });
   } catch (err) {

@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/api/tier-pricing/route.ts
 // src/app/api/tier-pricing/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -17,7 +18,7 @@ const stepSchema = z.object({
 
 /**
  * IMPORTANT: shared product copies use non-UUID string IDs like "PROD-xxxx" / "VAR-xxxx".
- * We must NOT enforce UUID shape here, only non-empty strings (or null).
+ * Do NOT enforce UUID shape; only non-empty strings (or null).
  */
 const productItemSchema = z
   .object({
@@ -33,7 +34,7 @@ const bodySchema = z.object({
   countries: z.array(z.string().length(2)).min(1),
   products: z.array(productItemSchema).min(1),
   steps: z.array(stepSchema).min(1),
-  // NEW: client targeting (priority over general rules)
+  // primary field
   clients: z.array(z.string().min(1)).optional().default([]),
 });
 
@@ -74,7 +75,7 @@ export async function GET(req: NextRequest) {
           .where("tierPricingId", "=", r.id)
           .execute();
 
-        // NEW: targeted clients
+        // targeted clients
         const clientRows = await db
           .selectFrom("tierPricingClients")
           .select(["clientId"])
@@ -114,7 +115,7 @@ export async function POST(req: NextRequest) {
     if (ctx instanceof NextResponse) return ctx;
     const { organizationId } = ctx;
 
-    let raw: unknown;
+    let raw: any;
     try {
       raw = await req.json();
     } catch (e) {
@@ -125,9 +126,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ── BACKCOMPAT: accept legacy "customers" and normalize to "clients"
+    const normalized = {
+      ...raw,
+      clients: Array.isArray(raw?.clients)
+        ? raw.clients
+        : Array.isArray(raw?.customers)
+        ? raw.customers
+        : [],
+    };
+
     let body: z.infer<typeof bodySchema>;
     try {
-      body = bodySchema.parse(raw);
+      body = bodySchema.parse(normalized);
     } catch (e) {
       if (e instanceof z.ZodError) {
         console.error(`${LOG}#${rid} POST Zod validation error`, {
@@ -144,7 +155,7 @@ export async function POST(req: NextRequest) {
       countries: body.countries,
       productsCount: body.products.length,
       stepsCount: body.steps.length,
-      clientsCount: body.clients?.length ?? 0,
+      clientsCount: body.clients.length,
       firstProduct: body.products[0],
       firstStep: body.steps[0],
     });
@@ -193,8 +204,7 @@ export async function POST(req: NextRequest) {
         .execute();
     }
 
-    // NEW: targeted clients (insert outside product loop)
-    if (body.clients?.length) {
+    if (body.clients.length) {
       for (const clientId of body.clients) {
         await db
           .insertInto("tierPricingClients")
@@ -213,7 +223,7 @@ export async function POST(req: NextRequest) {
       ms: Date.now() - t0,
       insertedSteps: body.steps.length,
       insertedProducts: body.products.length,
-      insertedClients: body.clients?.length ?? 0,
+      insertedClients: body.clients.length,
     });
     return NextResponse.json({ success: true, pricingId }, { status: 201 });
   } catch (err) {

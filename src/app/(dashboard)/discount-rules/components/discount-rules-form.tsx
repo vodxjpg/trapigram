@@ -21,21 +21,22 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select as UISelect,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  SelectGroup,
-  SelectLabel,
-  SelectSeparator,
-} from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-
-import { X, Search } from "lucide-react";
-
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "@/components/ui/command";
+import { X, Check } from "lucide-react";
 import countriesLib from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 import { getCountries } from "libphonenumber-js";
@@ -81,18 +82,20 @@ const formSchema = z.object({
     .min(1, "Select at least one product or variation"),
   steps: z.array(stepSchema).min(1, "Add at least one step"),
   // NEW: optional list of client IDs this rule applies to. If empty → applies to everyone.
-  customers: z.array(z.string().min(1)).default([]),
+  clients: z.array(z.string().min(1)).default([]),
 });
 
 type FormValues = z.infer<typeof formSchema>;
 
 interface Props {
-  discountRuleData?: FormValues & {
+  discountRuleData?: {
     id: string;
+    name: string;
     countries: string[];
     products: { productId: string | null; variationId: string | null }[];
     steps: { fromUnits: number; toUnits: number; price: number }[];
-    customers?: string[];
+    clients?: string[];   // preferred (new API)
+    customers?: string[]; // legacy (fallback)
   };
   isEditing?: boolean;
 }
@@ -118,7 +121,7 @@ export function DiscountRuleForm({
       countries: [],
       products: [],
       steps: [{ fromUnits: 1, toUnits: 2, price: 0.01 }],
-      customers: [],
+      clients: [],
     },
     mode: "onSubmit",
   });
@@ -185,7 +188,12 @@ export function DiscountRuleForm({
           // guard invalid zero price coming from old data
           price: s.price > 0 ? s.price : 0.01,
         })),
-        customers: discountRuleData.customers ?? [],
+        // Accept both shapes from the API, prefer the new 'clients'
+        clients: Array.isArray(discountRuleData.clients)
+          ? discountRuleData.clients
+          : Array.isArray(discountRuleData.customers)
+            ? discountRuleData.customers
+            : [],
       });
       // eslint-disable-next-line no-console
       console.debug(`${LOG} form reset from loaded data`);
@@ -342,15 +350,15 @@ export function DiscountRuleForm({
         const newOpts = allItems.flatMap((p: any) =>
           p.productType === "simple"
             ? [
-                {
-                  value: { productId: p.id, variationId: null },
-                  label: p.title,
-                },
-              ]
+              {
+                value: { productId: p.id, variationId: null },
+                label: p.title,
+              },
+            ]
             : p.variations.map((v: any) => ({
-                value: { productId: null, variationId: v.id },
-                label: `${p.title} (${Object.values(v.attributes).join(", ")})`,
-              }))
+              value: { productId: null, variationId: v.id },
+              label: `${p.title} (${Object.values(v.attributes).join(", ")})`,
+            }))
         );
         setProductOptions((prev) => {
           const map = new Map(
@@ -475,31 +483,31 @@ export function DiscountRuleForm({
   /*  Matches the "Select + search"   */
   /*  pattern from order-form.tsx     */
   /* ──────────────────────────────── */
-  const [clients, setClients] = useState<Client[]>([]);
+  const [allClients, setAllClients] = useState<Client[]>([]);
   const [clientsLoading, setClientsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchResults, setResults] = useState<Client[]>([]);
-  const [tempCustomer, setTempCustomer] = useState(""); // selected value in the dropdown
+  const [clientsOpen, setClientsOpen] = useState(false)
   const DEBOUNCE_MS = 400;
 
-  const labelForClient = (c: Client) =>
-    `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim() ||
-    c.username ||
-    c.email ||
-    c.id;
+  const displayClient = (c: Client) => {
+    const name = `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim();
+    if (name && c.username) return `${name} (${c.username})`;
+    return name || c.username || c.email || c.id;
+  };
 
   // Local filter so it reacts as you type immediately
   const filteredClients = useMemo(() => {
-    if (searchTerm.trim().length < 3) return clients;
+    if (searchTerm.trim().length < 3) return allClients;
     const t = searchTerm.toLowerCase();
-    return clients.filter(
+    return allClients.filter(
       (c) =>
         c.username?.toLowerCase().includes(t) ||
         c.email?.toLowerCase().includes(t) ||
-        `${c.firstName} ${c.lastName}`.toLowerCase().includes(t)
+        `${c.firstName ?? ""} ${c.lastName ?? ""}`.toLowerCase().includes(t)
     );
-  }, [clients, searchTerm]);
+  }, [allClients, searchTerm]);
 
   useEffect(() => {
     // load initial page of clients
@@ -513,7 +521,7 @@ export function DiscountRuleForm({
           },
         });
         const { clients: list } = await res.json();
-        setClients(list || []);
+        setAllClients(list || []);
       } catch {
         toast.error("Failed loading clients");
       } finally {
@@ -555,12 +563,29 @@ export function DiscountRuleForm({
   }, [searchTerm]);
 
   // helper: add a client ID into the field value
-  const addCustomerId = (id: string) => {
-    const current = form.getValues("customers") || [];
+  const addClientId = (id: string) => {
+    const current = form.getValues("clients") || [];
     if (!current.includes(id)) {
-      form.setValue("customers", [...current, id], { shouldDirty: true });
+      form.setValue("clients", [...current, id], { shouldDirty: true });
+
     }
   };
+
+  // Button label like "Add customers" / "2 selected"
+  const clientsSummary = useMemo(() => {
+    const ids = form.watch("clients") || [];
+    if (ids.length === 0) return "Add customers";
+    if (ids.length <= 2) {
+      const labels = ids
+        .map((id) => {
+          const c = allClients.find((x) => x.id === id) || searchResults.find((x) => x.id === id);
+          return c ? displayClient(c) : id;
+        })
+        .join(", ");
+      return labels;
+    }
+    return `${ids.length} selected`;
+  }, [form, allClients, searchResults]);
 
   // Utility: ensure mobile keyboards don’t keep a Select open over the submit button
   const closeOpenMenus = () => {
@@ -693,7 +718,7 @@ export function DiscountRuleForm({
             {/* Scope: Customers (optional) */}
             <FormField
               control={form.control}
-              name="customers"
+              name="clients"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>
@@ -712,9 +737,9 @@ export function DiscountRuleForm({
                     )}
                     {(field.value || []).map((id) => {
                       const obj =
-                        clients.find((c) => c.id === id) ||
+                        allClients.find((c) => c.id === id) ||
                         searchResults.find((c) => c.id === id);
-                      const label = obj ? labelForClient(obj) : id;
+                      const label = obj ? displayClient(obj) : id;
                       return (
                         <Badge
                           key={id}
@@ -738,96 +763,52 @@ export function DiscountRuleForm({
                     })}
                   </div>
 
-                  {/* Add customer dropdown (same search pattern as order form) */}
+                  {/* Multi-select (ReactSelect) with built-in search */}
                   <div className="mt-3">
-                    <UISelect
-                      value={tempCustomer}
-                      onValueChange={(val) => {
-                        setTempCustomer("");
-                        const obj =
-                          [...clients, ...searchResults].find(
-                            (c) => c.id === val
-                          ) || null;
-                        if (obj && !field.value.includes(val)) addCustomerId(val);
-                        setResults([]);
-                        setSearchTerm("");
-                      }}
-                      disabled={clientsLoading}
-                    >
-                      <SelectTrigger>
-                        <SelectValue
-                          placeholder={
-                            clientsLoading
-                              ? "Loading…"
-                              : "Add customer (search or pick)"
+                    {(() => {
+                      // Build options: local filtered + remote (de-duped) excluding already selected
+                      const selectedIds = new Set(field.value || []);
+                      const local = filteredClients.filter(c => !selectedIds.has(c.id));
+                      const remote = searchResults
+                        .filter(c => !selectedIds.has(c.id) && !local.some(l => l.id === c.id));
+                      const options = [...local, ...remote].map((c) => ({
+                        value: c.id,
+                        label: displayClient(c),
+                      }));
+                      // Selected values need labels for nice chips (we hide chips, but keep correct value shape)
+                      const selectedOptions = (field.value || []).map((id) => {
+                        const c =
+                          allClients.find((x) => x.id === id) ||
+                          searchResults.find((x) => x.id === id);
+                        return { value: id, label: c ? displayClient(c) : id };
+                      });
+                      return (
+                        <ReactSelect
+                          isMulti
+                          options={options}
+                          value={selectedOptions}
+                          onChange={(opts) =>
+                            field.onChange((opts as { value: string }[]).map((o) => o.value))
                           }
+                          onInputChange={(val, meta) => {
+                            if (meta.action === "input-change") setSearchTerm(val);
+                          }}
+                          isLoading={clientsLoading || searching}
+                          closeMenuOnSelect={false}     // keep menu open to pick many
+                          placeholder={
+                            clientsLoading ? "Loading…" : "Search or pick clients…"
+                          }
+                          noOptionsMessage={() =>
+                            (searchTerm.trim().length < 3)
+                              ? "Type at least 3 characters to search"
+                              : "No matches"
+                          }
+                          // Hide ReactSelect’s own chips; we show badges above instead.
+                          components={{ MultiValue: () => null }}
+                          {...selectPortalProps}
                         />
-                      </SelectTrigger>
-                      <SelectContent className="w-[520px]">
-                        {/* Search */}
-                        <div className="p-3 border-b flex items-center gap-2">
-                          <Search className="h-4 w-4 text-muted-foreground" />
-                          <Input
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            placeholder="Search (min 3 chars)"
-                            className="h-8"
-                          />
-                        </div>
-
-                        <ScrollArea className="max-h-72">
-                          {/* Local clients */}
-                          <SelectGroup>
-                            <SelectLabel>Clients</SelectLabel>
-                            {filteredClients
-                              .filter(
-                                (c) => !(field.value || []).includes(c.id)
-                              )
-                              .map((c) => (
-                                <SelectItem key={c.id} value={c.id}>
-                                  <span className="block max-w-[460px] truncate">
-                                    {labelForClient(c)} — {c.username} (
-                                    {c.email})
-                                  </span>
-                                </SelectItem>
-                              ))}
-                          </SelectGroup>
-
-                          {/* Divider only if we have remote results */}
-                          {searchResults.length > 0 && <SelectSeparator />}
-
-                          {/* Remote results (exclude already selected & already shown) */}
-                          {searchResults
-                            .filter(
-                              (c) =>
-                                !clients.some((lc) => lc.id === c.id) &&
-                                !(field.value || []).includes(c.id)
-                            )
-                            .map((c) => (
-                              <SelectItem key={c.id} value={c.id}>
-                                <span className="block max-w-[460px] truncate">
-                                  {labelForClient(c)} — {c.username} ({c.email})
-                                  <span className="ml-1 text-xs text-muted-foreground">
-                                    (remote)
-                                  </span>
-                                </span>
-                              </SelectItem>
-                            ))}
-
-                          {searching && (
-                            <div className="px-3 py-2 text-sm text-muted-foreground">
-                              Searching…
-                            </div>
-                          )}
-                          {!searching && searchTerm && searchResults.length === 0 && (
-                            <div className="px-3 py-2 text-sm text-muted-foreground">
-                              No matches
-                            </div>
-                          )}
-                        </ScrollArea>
-                      </SelectContent>
-                    </UISelect>
-
+                      );
+                    })()}
                     {(field.value || []).length > 0 && (
                       <div className="mt-2">
                         <Button
@@ -868,8 +849,8 @@ export function DiscountRuleForm({
                   catQuery.trim()
                     ? "No categories match your search"
                     : catPage < catTotalPages
-                    ? "Scroll to load more…"
-                    : "No more categories"
+                      ? "Scroll to load more…"
+                      : "No more categories"
                 }
                 isLoading={catLoading}
                 {...selectPortalProps}
