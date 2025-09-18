@@ -112,6 +112,10 @@ export function PriceManagement({
                         min="0"
                         step="0.01"
                         value={costData[c] ?? 0}
+                        onFocus={(e) => {
+                          // select current value so typing replaces it
+                          e.currentTarget.select();
+                        }}
                         onChange={(e) =>
                           patchCost(c, Number.parseFloat(e.target.value) || 0)
                         }
@@ -125,6 +129,9 @@ export function PriceManagement({
                         min="0"
                         step="0.01"
                         value={priceData[c]?.regular ?? 0}
+                        onFocus={(e) => {
+                          e.currentTarget.select();
+                        }}
                         onChange={(e) =>
                           patchPrice(c, {
                             regular: Number.parseFloat(e.target.value) || 0,
@@ -140,6 +147,9 @@ export function PriceManagement({
                         min="0"
                         step="0.01"
                         value={priceData[c]?.sale ?? ""}
+                        onFocus={(e) => {
+                          e.currentTarget.select();
+                        }}
                         onChange={(e) =>
                           patchPrice(c, {
                             sale:

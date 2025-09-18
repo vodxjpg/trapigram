@@ -220,7 +220,7 @@ export function TicketsTable() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Ticket Key</TableHead>
+              <TableHead>Ticket #</TableHead>
               <TableHead>Title</TableHead>
               <TableHead>Tags</TableHead>
               <TableHead>Priority</TableHead>

@@ -12,7 +12,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { FormLabel } from "@/components/ui/form"
 import { PriceManagement } from "./price-management"
-import { CostManagement } from "./cost-management"
 import type { Attribute, Variation, Warehouse } from "@/types/product"
 
 // ---------------------------------------------------------------------------
@@ -335,20 +334,14 @@ export function ProductVariations({
                   </div>
                 </div>
 
-                {/* PRICES ---------------------------------------------------- */}
+                {/* PRICES + COST ------------------------------------------- */}
                 <PriceManagement
-                  title="Prices per country"
+                  title="Cost & Prices per country"
                   countries={countries}
                   priceData={v.prices}
-                  onChange={(map) => updatePrice(v.id, map)}
-                />
-
-                {/* COST ------------------------------------------------------ */}
-                <CostManagement
-                  title="Cost per country"
-                  countries={countries}
                   costData={v.cost}
-                  onChange={(map) => updateCost(v.id, map)}
+                  onPriceChange={(map) => updatePrice(v.id, map)}
+                  onCostChange={(map) => updateCost(v.id, map)}
                 />
 
                 {/* STOCK ----------------------------------------------------- */}
@@ -374,7 +367,10 @@ export function ProductVariations({
                                     type="number"
                                     min="0"
                                     className="w-full border rounded-md px-2 py-1 text-sm"
-                                    value={v.stock[w.id][c] || 0}
+                                    value={v.stock[w.id][c] ?? 0}
+                                    onFocus={(e) => {
+                                      e.currentTarget.select()
+                                    }}
                                     onChange={(e) =>
                                       updateStock(v.id, w.id, c, Number(e.target.value) || 0)
                                     }
