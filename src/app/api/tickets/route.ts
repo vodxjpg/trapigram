@@ -136,14 +136,17 @@ export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
-  const client = await pool.connect();
 
+  const client = await pool.connect();
   try {
     const data = ticketSchema.parse(await req.json());
 
-    // create ticket
-    const ticketId = uuidv4();
-    const ticketKey = getNextTicketKeyTx(client, organizationId)
+    // ── Atomic: get next key + insert, under the same transaction & client ──
+    await client.query("BEGIN");
+
+    const ticketId  = uuidv4();
+    const ticketKey = await getNextTicketKeyTx(client, organizationId); // ← await!
+
     const insertSQL = `
       INSERT INTO tickets
         (id, "organizationId", "clientId",
@@ -152,31 +155,40 @@ export async function POST(req: NextRequest) {
       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
       RETURNING *;
     `;
-    const inserted = (await pool.query(insertSQL, [
+
+    const inserted = (await client.query(insertSQL, [
       ticketId,
       organizationId,
       data.clientId,
       data.title,
       data.priority,
       data.status,
-      ticketKey
+      ticketKey,              // now a number, not {}
     ])).rows[0];
 
-    // notify client
+    await client.query("COMMIT");
+
+    // ── Non-transactional work after commit ────────────────────────────
     const { rows: [cli] } = await pool.query(
       `SELECT country FROM clients WHERE id = $1 LIMIT 1`,
       [data.clientId],
     );
     const clientCountry = cli?.country ?? null;
 
-    const channels: NotificationChannel[] = ["email", "in_app"];
+    // (Optional) Keep subject/variables as-is. If you want, include the human key:
+    // subject: `Ticket #${ticketKey} created`,
     await sendNotification({
       organizationId,
       type: "ticket_created",
       subject: `Ticket #${ticketId} created`,
       message: `New ticket created: <strong>${inserted.title}</strong>`,
-      variables: { ticket_number: ticketId, ticket_id: ticketId, ticket_title: inserted.title },
-      channels,
+      variables: {
+        ticket_number: ticketId,
+        ticket_id: ticketId,
+        ticket_title: inserted.title,
+        // optionally add: ticket_key: String(ticketKey)
+      },
+      channels: ["email", "in_app"],
       clientId: inserted.clientId,
       ticketId: ticketId,
       country: clientCountry,
@@ -185,9 +197,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(inserted, { status: 201 });
   } catch (err: any) {
+    try { await client.query("ROLLBACK"); } catch {}
     console.error("[POST /api/tickets] error:", err);
-    if (err instanceof z.ZodError)
+    if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });
+    }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } finally {
+    client.release();
   }
 }
+
