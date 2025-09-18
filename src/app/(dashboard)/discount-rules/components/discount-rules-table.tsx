@@ -119,6 +119,7 @@ export function DiscountRulesTable() {
 
   // client cache (id -> Client) so we can show "First Last (username)"
   const [clientsById, setClientsById] = useState<Record<string, Client>>({});
+  const secretHeader = useMemo(() => ({ "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" }), []);
 
   /* ── redirect if no view ───────────────────────────────────────── */
   useEffect(() => {
@@ -172,11 +173,7 @@ export function DiscountRulesTable() {
     if (referencedClientIds.length === 0) return;
     (async () => {
       try {
-        const res = await fetch(`/api/clients?page=1&pageSize=500`, {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-          },
-        });
+        const res = await fetch(`/api/clients?page=1&pageSize=500`, { headers: secretHeader });
         if (!res.ok) return;
         const json = await res.json();
         const list: Client[] = Array.isArray(json.clients) ? json.clients : [];
@@ -191,11 +188,63 @@ export function DiscountRulesTable() {
         // non-fatal
       }
     })();
-  }, [referencedClientIds.length]);
+  }, [referencedClientIds.length, secretHeader]);
+
+  /* ── resolve missing client IDs via batch endpoint, then per-ID ── */
+  const resolveClientsByIds = useMemo(() => {
+    return async (ids: string[]) => {
+      const uniq = Array.from(new Set(ids));
+      const missing = uniq.filter((id) => !clientsById[id]);
+      if (missing.length === 0) return;
+
+      // 1) try batch in chunks (e.g., 50)
+      const chunkSize = 50;
+      for (let i = 0; i < missing.length; i += chunkSize) {
+        const chunk = missing.slice(i, i + chunkSize);
+        try {
+          const url = `/api/clients?ids=${encodeURIComponent(chunk.join(","))}`;
+          const res = await fetch(url, { headers: secretHeader });
+          if (res.ok) {
+            const js = await res.json();
+            const arr: Client[] = js?.clients || js || [];
+            if (Array.isArray(arr) && arr.length) {
+              setClientsById((prev) => {
+                const next = { ...prev };
+                for (const c of arr) if (c?.id) next[c.id] = c;
+                return next;
+              });
+            }
+          }
+        } catch {
+          // ignore and continue
+        }
+      }
+
+      // 2) fallback: per-id fetch for any still missing
+      const stillMissing = uniq.filter((id) => !clientsById[id]);
+      await Promise.all(
+        stillMissing.map(async (id) => {
+          try {
+            const r = await fetch(`/api/clients/${id}`, { headers: secretHeader });
+            if (r.ok) {
+              const data = await r.json();
+              const c: Client = (data as any)?.client ?? data;
+              if (c?.id) {
+                setClientsById((prev) => ({ ...prev, [c.id]: c }));
+              }
+            }
+          } catch { /* ignore */ }
+        })
+      );
+    };
+  }, [clientsById, secretHeader]);
 
   /* ── fetch any missing client records by ID via search ─────────── */
   useEffect(() => {
     if (referencedClientIds.length === 0) return;
+
+    // First try the explicit resolvers (batch + per-id)
+    resolveClientsByIds(referencedClientIds);
 
     const missing = referencedClientIds.filter((id) => !clientsById[id]);
     if (missing.length === 0) return;
@@ -216,12 +265,7 @@ export function DiscountRulesTable() {
             try {
               // Use search endpoint to find by id (backend should match id/username/email)
               const url = `/api/clients?search=${encodeURIComponent(id)}&page=1&pageSize=5`;
-              const res = await fetch(url, {
-                headers: {
-                  "x-internal-secret":
-                    process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
-                },
-              });
+              const res = await fetch(url, { headers: secretHeader });
               if (!res.ok) return;
               const data = await res.json();
               const list: Client[] = Array.isArray(data.clients)
@@ -246,7 +290,7 @@ export function DiscountRulesTable() {
         setClientsById((prev) => ({ ...prev, ...foundMap }));
       }
     })();
-  }, [referencedClientIds, clientsById]);
+  }, [referencedClientIds, clientsById, resolveClientsByIds, secretHeader]);
 
   /* ── handlers ──────────────────────────────────────────────────── */
   const handleSearchSubmit = (e: FormEvent) => e.preventDefault();
@@ -292,8 +336,8 @@ export function DiscountRulesTable() {
 
   const clientLabelById = (id: string) => {
     const c = clientsById[id];
-    // If not yet resolved, keep showing the raw id briefly (or "…" if preferred)
-    return c ? formatClient(c) : id;
+    // If not yet resolved, show a neutral placeholder instead of a raw ID
+    return c ? formatClient(c) : "Loading…";
   };
 
   const renderCustomersChips = (ids?: string[]) => {

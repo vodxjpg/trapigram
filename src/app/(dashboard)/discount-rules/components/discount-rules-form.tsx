@@ -109,6 +109,18 @@ type Client = {
   country?: string;
 };
 
+// Helper to merge client objects into a map by id
+function upsertIntoMap(
+  map: Record<string, Client>,
+  clients: Client[]
+): Record<string, Client> {
+  const copy = { ...map };
+  clients.forEach((c) => {
+    if (c?.id) copy[c.id] = c;
+  });
+  return copy;
+}
+
 export function DiscountRuleForm({
   discountRuleData,
   isEditing = false,
@@ -484,6 +496,9 @@ export function DiscountRuleForm({
   /*  pattern from order-form.tsx     */
   /* ──────────────────────────────── */
   const [allClients, setAllClients] = useState<Client[]>([]);
+  // Cache for selected/known clients by id, ensures we can display names even if not present in paginated lists
+  const [clientMap, setClientMap] = useState<Record<string, Client>>({});
+
   const [clientsLoading, setClientsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [searching, setSearching] = useState(false);
@@ -496,6 +511,44 @@ export function DiscountRuleForm({
     if (name && c.username) return `${name} (${c.username})`;
     return name || c.username || c.email || c.id;
   };
+
+  // Resolve selected client IDs to client objects; try batch (?ids=) then fall back to per-id
+  const resolveClientsByIds = useMemo(() => {
+    const secret = process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "";
+    return async (ids: string[]) => {
+      const known = new Set<string>([
+        ...Object.keys(clientMap),
+        ...allClients.map((c) => c.id),
+      ]);
+      const missing = Array.from(new Set(ids)).filter((id) => !known.has(id));
+      if (missing.length === 0) return;
+
+      // 1) Try batch GET /api/clients?ids=comma,separated
+      try {
+        const res = await fetch(`/api/clients?ids=${encodeURIComponent(missing.join(","))}`, { headers: { "x-internal-secret": secret } });
+        if (res.ok) {
+          const js = await res.json();
+          const arr: Client[] = js?.clients || js || [];
+          if (Array.isArray(arr) && arr.length) setClientMap((m) => upsertIntoMap(m, arr));
+        }
+      } catch { /* no-op */ }
+
+      // 2) Still missing? Try per-id endpoints /api/clients/:id
+      const still = Array.from(new Set(ids)).filter(
+        (id) => !clientMap[id] && !allClients.some((c) => c.id === id)
+      );
+      await Promise.all(still.map(async (id) => {
+        try {
+          const r = await fetch(`/api/clients/${id}`, { headers: { "x-internal-secret": secret } });
+          if (r.ok) {
+            const data = await r.json();
+            const c: Client = data?.client ?? data;
+            if (c?.id) setClientMap((m) => upsertIntoMap(m, [c]));
+          }
+        } catch { /* no-op */ }
+      }));
+    };
+  }, [clientMap, allClients]);
 
   // Local filter so it reacts as you type immediately
   const filteredClients = useMemo(() => {
@@ -522,6 +575,7 @@ export function DiscountRuleForm({
         });
         const { clients: list } = await res.json();
         setAllClients(list || []);
+        if (Array.isArray(list) && list.length) setClientMap((m) => upsertIntoMap(m, list));
       } catch {
         toast.error("Failed loading clients");
       } finally {
@@ -553,6 +607,7 @@ export function DiscountRuleForm({
         if (!res.ok) throw new Error("Search failed");
         const { clients: found } = await res.json();
         setResults(found || []);
+        if (Array.isArray(found) && found.length) setClientMap((m) => upsertIntoMap(m, found));
       } catch {
         setResults([]);
       } finally {
@@ -567,9 +622,20 @@ export function DiscountRuleForm({
     const current = form.getValues("clients") || [];
     if (!current.includes(id)) {
       form.setValue("clients", [...current, id], { shouldDirty: true });
-
+      // Try to resolve immediately if we have it in local pools
+      const pool = [...allClients, ...searchResults];
+      const found = pool.find((c) => c.id === id);
+      if (found) setClientMap((m) => upsertIntoMap(m, [found]));
     }
   };
+
+  // Whenever the selected client IDs change, resolve any missing labels
+  const watchedClientIds = form.watch("clients");
+  useEffect(() => {
+    if (Array.isArray(watchedClientIds) && watchedClientIds.length) {
+      resolveClientsByIds(watchedClientIds);
+    }
+  }, [watchedClientIds, resolveClientsByIds]);
 
   // Button label like "Add customers" / "2 selected"
   const clientsSummary = useMemo(() => {
@@ -578,14 +644,17 @@ export function DiscountRuleForm({
     if (ids.length <= 2) {
       const labels = ids
         .map((id) => {
-          const c = allClients.find((x) => x.id === id) || searchResults.find((x) => x.id === id);
+          const c =
+            clientMap[id] ||
+            allClients.find((x) => x.id === id) ||
+            searchResults.find((x) => x.id === id);
           return c ? displayClient(c) : id;
         })
         .join(", ");
       return labels;
     }
     return `${ids.length} selected`;
-  }, [form, allClients, searchResults]);
+  }, [form, allClients, searchResults, clientMap]);
 
   // Utility: ensure mobile keyboards don’t keep a Select open over the submit button
   const closeOpenMenus = () => {
@@ -737,6 +806,7 @@ export function DiscountRuleForm({
                     )}
                     {(field.value || []).map((id) => {
                       const obj =
+                        clientMap[id] ||
                         allClients.find((c) => c.id === id) ||
                         searchResults.find((c) => c.id === id);
                       const label = obj ? displayClient(obj) : id;
@@ -778,6 +848,7 @@ export function DiscountRuleForm({
                       // Selected values need labels for nice chips (we hide chips, but keep correct value shape)
                       const selectedOptions = (field.value || []).map((id) => {
                         const c =
+                          clientMap[id] ||
                           allClients.find((x) => x.id === id) ||
                           searchResults.find((x) => x.id === id);
                         return { value: id, label: c ? displayClient(c) : id };
@@ -787,9 +858,14 @@ export function DiscountRuleForm({
                           isMulti
                           options={options}
                           value={selectedOptions}
-                          onChange={(opts) =>
-                            field.onChange((opts as { value: string }[]).map((o) => o.value))
-                          }
+                          onChange={(opts) => {
+                            const ids = (opts as { value: string }[]).map((o) => o.value);
+                            field.onChange(ids);
+                            // Opportunistically upsert any known objects from local pools
+                            const pool = [...allClients, ...searchResults];
+                            const known = pool.filter((c) => ids.includes(c.id));
+                            if (known.length) setClientMap((m) => upsertIntoMap(m, known));
+                          }}
                           onInputChange={(val, meta) => {
                             if (meta.action === "input-change") setSearchTerm(val);
                           }}
