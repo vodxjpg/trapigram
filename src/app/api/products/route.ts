@@ -92,19 +92,25 @@ export async function GET(req: NextRequest) {
     const page = parseInt(searchParams.get("page") || "1");
     const pageSize = parseInt(searchParams.get("pageSize") || "10");
     const search = searchParams.get("search") || "";
-    /* ---------- validated ordering ------------------------------ */
+
+    // validated ordering
     const allowedCols = new Set(["createdAt", "updatedAt", "title", "sku"]);
     const rawOrderBy = searchParams.get("orderBy") || "createdAt";
     const orderBy = allowedCols.has(rawOrderBy) ? rawOrderBy : "createdAt";
     const orderDir = searchParams.get("orderDir") === "asc" ? "asc" : "desc";
+
     const categoryId = searchParams.get("categoryId") || "";
-    const rawStatus = searchParams.get("status");            // string | null
+    const rawStatus = searchParams.get("status");
     const status: "published" | "draft" | undefined =
-      rawStatus === "published" || rawStatus === "draft"
-        ? rawStatus
-        : undefined;
+      rawStatus === "published" || rawStatus === "draft" ? rawStatus : undefined;
+
     const attributeId = searchParams.get("attributeId") || "";
     const attributeTermId = searchParams.get("attributeTermId") || "";
+
+    // ⬇️ NEW: only list "owned" products (exclude SKUs with SHD prefix)
+    const ownedOnly = ["1", "true", "yes"].includes(
+      (searchParams.get("ownedOnly") ?? "").toLowerCase()
+    );
 
     /* -------- STEP 1 – product IDs with proper limit/offset ----- */
     let idQuery = db
@@ -136,15 +142,22 @@ export async function GET(req: NextRequest) {
         db
           .selectFrom("productCategory")
           .select("productId")
-          .where("categoryId", "=", categoryId),
+          .where("categoryId", "=", categoryId)
       );
-    if (status)
-      idQuery = idQuery.where("status", "=", status);  // status is now the right type
+
+    if (status) idQuery = idQuery.where("status", "=", status);
+
+    // ⬇️ apply ownedOnly in the simple branch
+    if (ownedOnly) {
+      idQuery = idQuery.where((eb) =>
+        eb.or([eb("sku", "is", null), eb("sku", "not ilike", "SHD%")])
+      );
+    }
 
     let idRows: Array<{ id: string }>;
 
     if (attributeTermId) {
-      // ⭐ JOIN path so filtering happens BEFORE LIMIT/OFFSET
+      // JOIN path so filtering happens BEFORE LIMIT/OFFSET
       const jq = db
         .selectFrom("productAttributeValues as pav")
         .innerJoin("products as p", "p.id", "pav.productId")
@@ -167,15 +180,23 @@ export async function GET(req: NextRequest) {
             ])
           )
         )
-
-        .$if(Boolean(categoryId), q =>
+        .$if(Boolean(categoryId), (q) =>
           q.where(
             "p.id",
             "in",
-            db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+            db
+              .selectFrom("productCategory")
+              .select("productId")
+              .where("categoryId", "=", categoryId)
           )
         )
-        .$if(!!status, q => q.where("p.status", "=", status!))
+        .$if(!!status, (q) => q.where("p.status", "=", status!))
+        // ⬇️ apply ownedOnly in the JOIN branch
+        .$if(ownedOnly, (q) =>
+          q.where((eb) =>
+            eb.or([eb("p.sku", "is", null), eb("p.sku", "not ilike", "SHD%")])
+          )
+        )
         // Avoid duplicates when a product has multiple rows pointing to the same term
         .groupBy("p.id")
         .orderBy(("p." + orderBy) as any, orderDir)
@@ -191,6 +212,7 @@ export async function GET(req: NextRequest) {
         .offset((page - 1) * pageSize)
         .execute();
     }
+
     const productIds = idRows.map((r) => r.id);
 
     /* return early if empty page */
@@ -238,7 +260,6 @@ export async function GET(req: NextRequest) {
       .where("productId", "in", productIds)
       .execute();
 
-    /* select category IDs, no join to names */
     const categoryRows = await db
       .selectFrom("productCategory")
       .select(["productCategory.productId", "productCategory.categoryId"])
@@ -247,9 +268,10 @@ export async function GET(req: NextRequest) {
 
     /* -------- STEP 4 – assemble final products ------------------ */
     const products = productRows.map((p) => {
-      // tiny helpers
-      const maxNum = (arr: number[]) => (arr.length ? Math.max(...arr.map(Number)) : 0);
-      const maxOrNull = (arr: number[]) => (arr.length ? Math.max(...arr.map(Number)) : null);
+      const maxNum = (arr: number[]) =>
+        arr.length ? Math.max(...arr.map(Number)) : 0;
+      const maxOrNull = (arr: number[]) =>
+        arr.length ? Math.max(...arr.map(Number)) : null;
 
       const stockData = stockRows
         .filter((s) => s.productId === p.id && !s.variationId)
@@ -277,10 +299,9 @@ export async function GET(req: NextRequest) {
                   : v.regularPrice,
                 typeof v.salePrice === "string"
                   ? JSON.parse(v.salePrice)
-                  : v.salePrice,
+                  : v.salePrice
               ),
-              cost:
-                typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
+              cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
               stock: stockRows
                 .filter((s) => s.variationId === v.id)
                 .reduce((acc, s) => {
@@ -296,7 +317,7 @@ export async function GET(req: NextRequest) {
       if (p.manageStock) {
         if (p.productType === "variable") {
           computedStatus = variations.some(
-            (v) => Object.keys(v.stock).length,
+            (v) => Object.keys(v.stock).length
           )
             ? "managed"
             : "unmanaged";
@@ -307,16 +328,15 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // ---- price maxima (highest across all countries) ----------
-      // product-level price maps (simple products)
+      // price maxima (highest across all countries)
       const prodRegular =
         typeof p.regularPrice === "string"
           ? JSON.parse(p.regularPrice || "{}")
-          : (p.regularPrice || {});
+          : p.regularPrice || {};
       const prodSale =
         typeof p.salePrice === "string"
           ? JSON.parse(p.salePrice || "null")
-          : (p.salePrice ?? null);
+          : p.salePrice ?? null;
 
       let maxRegularPrice = 0;
       let maxSalePrice: number | null = null;
@@ -325,11 +345,12 @@ export async function GET(req: NextRequest) {
         maxRegularPrice = maxNum(Object.values(prodRegular || {}));
         maxSalePrice = prodSale ? maxOrNull(Object.values(prodSale)) : null;
       } else {
-        // variable → compute per-variation maxima and then the product max
         const varMaxRegs: number[] = [];
         const varMaxSales: number[] = [];
         for (const v of variations) {
-          const regs = Object.values(v.prices || {}).map((pr) => pr.regular ?? 0);
+          const regs = Object.values(v.prices || {}).map(
+            (pr) => pr.regular ?? 0
+          );
           const sales = Object.values(v.prices || {})
             .map((pr) => pr.sale)
             .filter((x): x is number => x != null);
@@ -350,10 +371,9 @@ export async function GET(req: NextRequest) {
         productType: p.productType,
         regularPrice: prodRegular,
         salePrice: prodSale,
-        maxRegularPrice,          // ← NEW
-        maxSalePrice,             // ← NEW (null when no sale anywhere)
-        cost:
-          typeof p.cost === "string" ? JSON.parse(p.cost) : p.cost,
+        maxRegularPrice,
+        maxSalePrice,
+        cost: typeof p.cost === "string" ? JSON.parse(p.cost) : p.cost,
         allowBackorders: p.allowBackorders,
         manageStock: p.manageStock,
         stockStatus: computedStatus,
@@ -362,8 +382,8 @@ export async function GET(req: NextRequest) {
         stockData,
         categories: categoryRows
           .filter((c) => c.productId === p.id)
-          .map((c) => c.categoryId), // ← return IDs
-        attributes: [], // not needed for list view
+          .map((c) => c.categoryId),
+        attributes: [],
         variations,
       };
     });
@@ -395,15 +415,23 @@ export async function GET(req: NextRequest) {
             ])
           )
         )
-
-        .$if(Boolean(categoryId), q =>
+        .$if(Boolean(categoryId), (q) =>
           q.where(
             "p.id",
             "in",
-            db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+            db
+              .selectFrom("productCategory")
+              .select("productId")
+              .where("categoryId", "=", categoryId)
           )
         )
-        .$if(!!status, q => q.where("p.status", "=", status!))
+        .$if(!!status, (q) => q.where("p.status", "=", status!))
+        // ⬇️ ownedOnly in the count JOIN branch
+        .$if(ownedOnly, (q) =>
+          q.where((eb) =>
+            eb.or([eb("p.sku", "is", null), eb("p.sku", "not ilike", "SHD%")])
+          )
+        )
         .groupBy("p.id")
         .as("t");
 
@@ -435,22 +463,27 @@ export async function GET(req: NextRequest) {
             ])
           )
         )
-
-        .$if(Boolean(categoryId), q =>
+        .$if(Boolean(categoryId), (q) =>
           q.where(
             "id",
             "in",
-            db.selectFrom("productCategory").select("productId").where("categoryId", "=", categoryId),
+            db
+              .selectFrom("productCategory")
+              .select("productId")
+              .where("categoryId", "=", categoryId)
           )
         )
-        .$if(!!status, q => q.where("status", "=", status!))
+        .$if(!!status, (q) => q.where("status", "=", status!))
+        // ⬇️ ownedOnly in the simple count branch
+        .$if(ownedOnly, (q) =>
+          q.where((eb) =>
+            eb.or([eb("sku", "is", null), eb("sku", "not ilike", "SHD%")])
+          )
+        )
         .executeTakeFirst();
 
       total = Number(totalPlain?.total ?? 0);
     }
-
-
-
 
     return NextResponse.json({
       products,
@@ -465,10 +498,11 @@ export async function GET(req: NextRequest) {
     console.error("[PRODUCTS_GET]", err);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
+
 
 /* helper: merge regular/sale JSON objects ➜ { IT:{regular, sale}, …} */
 function mergePriceMaps(

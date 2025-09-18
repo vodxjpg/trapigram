@@ -255,8 +255,9 @@ export default function PurchaseOrderSupply({
         (async () => {
             setProductsLoading(true);
             try {
+                // Initial load:
                 const [normRes, affRes] = await Promise.all([
-                    fetch("/api/products?page=1&pageSize=1000"),
+                    fetch("/api/products?page=1&pageSize=1000&ownedOnly=1"),
                     fetch("/api/affiliate/products?limit=1000"),
                 ]);
                 if (!normRes.ok || !affRes.ok) throw new Error("Failed to fetch products");
@@ -307,8 +308,10 @@ export default function PurchaseOrderSupply({
             try {
                 setProdSearching(true);
                 const [shop, aff] = await Promise.all([
-                    fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`).then(r => r.json()).then(d => d.products as any[]),
-                    fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`).then(r => r.json()).then(d => d.products as any[]),
+                    fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20&ownedOnly=1`)
+                        .then(r => r.json()).then(d => d.products as any[]),
+                    fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`)
+                        .then(r => r.json()).then(d => d.products as any[]),
                 ]);
                 // ...mapping stays the same
                 setProdResults([...shop.map(mapShop), ...aff.map(mapAff)]);
@@ -875,6 +878,12 @@ export default function PurchaseOrderSupply({
                                                 />
                                             </div>
                                             <ScrollArea className="max-h-72">
+                                                {/* If there are no owned products at all, show an explanatory message */}
+                                                {!productsLoading && products.length === 0 && (
+                                                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                                                        You don’t have any products of your own
+                                                    </div>
+                                                )}
                                                 {/* Local (grouped) shop products */}
                                                 {groupByCategory(
                                                     filteredProducts.filter((p) => !p.isAffiliate)
