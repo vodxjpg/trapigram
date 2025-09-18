@@ -454,6 +454,7 @@ export default function RuleForm({
             onChange={(v) => form.setValue("conditions", v, { shouldDirty: true })}
             disabled={disabled}
             allowedKinds={allowedKinds}
+            ruleCountries={form.watch("countries")}
           />
         </section>
 
@@ -550,6 +551,7 @@ export default function RuleForm({
                     value={(a.payload?.productIds ?? []) as string[]}
                     onChange={(ids) => updateAction(idx, { payload: { ...a.payload, productIds: ids } })}
                     disabled={disabled}
+                    ruleCountries={form.watch("countries")}
                   />
                   <p className="text-xs text-muted-foreground">
                     Will populate <code>{`{selected_products}`}</code> (and <code>{`{recommended_products}`}</code>) in the message body.

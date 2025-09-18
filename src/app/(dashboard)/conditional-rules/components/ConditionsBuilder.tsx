@@ -5,15 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HelpCircle } from "lucide-react";
-
 import ProductMulti from "./ProductMulti";
 
 export type ConditionItem =
@@ -41,11 +34,14 @@ export default function ConditionsBuilder({
   onChange,
   disabled,
   allowedKinds = ["contains_product", "order_total_gte_eur", "no_order_days_gte"],
+  ruleCountries = [],
 }: {
   value: ConditionsGroup;
   onChange: (v: ConditionsGroup) => void;
   disabled?: boolean;
   allowedKinds?: Array<ConditionItem["kind"]>;
+  /** used to validate product availability like CouponSelect */
+  ruleCountries?: string[];
 }) {
   const setOp = (op: "AND" | "OR") => onChange({ ...value, op });
 
@@ -143,13 +139,14 @@ export default function ConditionsBuilder({
                 <>
                   <div className="flex items-center gap-2">
                     <Label>Products</Label>
-                    <Hint text="Matches if the order contains any of the selected products." />
+                    <Hint text="Matches if the order contains any of the selected products. Items unavailable for the rule’s countries will be disabled." />
                   </div>
                   <ProductMulti
                     label="Products"
                     value={it.productIds || []}
                     onChange={(ids) => updateItem(idx, { productIds: ids })}
                     disabled={disabled}
+                    ruleCountries={ruleCountries}  // <-- pass through
                   />
                 </>
               )}
