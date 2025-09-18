@@ -64,7 +64,6 @@ const data = {
         { title: "Add new product", url: "/products/new" },
         { title: "Product categories", url: "/product-categories" },
         { title: "Product attributes", url: "/product-attributes" },
-        { title: "Tier pricing", url: "/discount-rules" },
         { title: "Stock management", url: "/products/stock-management" },
         { title: "Inventory count", url: "/inventory" },
         { title: "Suppliers", url: "/suppliers" },
@@ -89,7 +88,7 @@ const data = {
         { title: "Announcements", url: "/announcements" },
         { title: "Affiliates", url: "/affiliates" },
         { title: "Coupons", url: "/coupons" },
-        { title: "Magic Rules", url: "/magic-rules" },
+        { title: "Tier pricing", url: "/discount-rules" },
       ],
     },
     {
