@@ -12,6 +12,8 @@ import {
   DollarSign,
   Truck,
   Trash2,
+  MessageSquarePlus,
+  Eye, EyeOff, Trash, Loader2,
   Minus,
   Plus,
   Search,
@@ -34,12 +36,13 @@ import {
   SelectLabel,
   SelectSeparator,
 } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/currency";
 
@@ -89,6 +92,20 @@ interface OrderItemLine {
   unitPrice: number;
   quantity: number;
   isAffiliate: boolean;
+}
+
+
+// ───────────────────────── NOTES ─────────────────────────
+interface OrderNote {
+  id: string;
+  orderId: string;
+  organizationId: string;
+  authorRole: "client" | "staff";
+  authorClientId: string | null;
+  authorUserId: string | null;
+  note: string;
+  visibleToCustomer: boolean;
+  createdAt: string; updatedAt: string;
 }
 
 const NIFTIPAY_BASE = (
@@ -209,6 +226,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
   const { data: activeOrg } = authClient.useActiveOrganization();
   const merchantId = activeOrg?.id ?? "";
+  const { data: session } = (authClient as any).useSession?.() || {};
+  const currentUserId: string | null = session?.user?.id ?? null;
+  const canEditNotes = true; // edit page implies update rights already
 
   /* ——————————————————— STATE ——————————————————— */
   const [orderData, setOrderData] = useState<any | null>(null);
@@ -316,6 +336,21 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const [niftipayNetworks, setNiftipayNetworks] = useState<NiftipayNet[]>([]);
   const [niftipayLoading, setNiftipayLoading] = useState(false);
   const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
+
+  // ───────────── Notes state ─────────────
+  const [notesScope, setNotesScope] = useState<"staff" | "customer">("staff");
+  const [notesLoading, setNotesLoading] = useState<boolean>(true);
+  const [notes, setNotes] = useState<OrderNote[]>([]);
+  const [newNote, setNewNote] = useState<string>("");
+  const [newNotePublic, setNewNotePublic] = useState<boolean>(false);
+  const [creatingNote, setCreatingNote] = useState<boolean>(false);
+  const fetchNotes = useCallback(async () => {
+    if (!orderId) return; setNotesLoading(true);
+    try {
+      const r = await fetch(`/api/order/${orderId}/notes?scope=${notesScope}`);
+      const d = await r.json(); setNotes(Array.isArray(d.notes) ? d.notes : []);
+    } catch { setNotes([]); } finally { setNotesLoading(false); }
+  }, [orderId, notesScope]);
 
   /* ——————————————————— HELPERS ——————————————————— */
   const findProduct = (id: string) => [...products, ...prodResults].find((p) => p.id === id);
@@ -430,6 +465,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     if (!cartId) return;
     loadCart();
   }, [cartId, clientCountry]);
+
+  useEffect(() => {
+    fetchNotes();
+  }, [fetchNotes]);
 
   /* ——————————————————— LOAD STATIC DATA ——————————————————— */
   useEffect(() => {
@@ -1032,6 +1071,39 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     }
   };
 
+    // ───────────── Notes mutations ─────────────
+  const createNote = async () => {
+    if (!orderId || !newNote.trim() || !currentUserId) return;
+    setCreatingNote(true);
+    try {
+      const res = await fetch(`/api/order/${orderId}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          note: newNote,
+          visibleToCustomer: newNotePublic,
+          authorRole: "staff",
+          authorUserId: currentUserId,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to create note");
+      setNewNote(""); setNewNotePublic(false);
+      await fetchNotes();
+    } finally { setCreatingNote(false); }
+  };
+  const toggleNoteVisibility = async (noteId: string, visible: boolean) => {
+    await fetch(`/api/order-notes/${noteId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ visibleToCustomer: visible }),
+    });
+    await fetchNotes();
+  };
+  const deleteNote = async (noteId: string) => {
+    await fetch(`/api/order-notes/${noteId}`, { method: "DELETE" });
+    await fetchNotes();
+  };
+
   /* ——————————————————— RENDER ——————————————————— */
   return (
     <div className="container mx-auto py-6">
@@ -1069,6 +1141,103 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
               </div>
             </CardContent>
           </Card>
+
+            {/* ───────────────────────── ORDER NOTES ───────────────────────── */}
+  <Card>
+    <CardHeader>
+      <CardTitle className="flex items-center gap-2">
+        <MessageSquarePlus className="h-5 w-5" /> Order Notes
+      </CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Button
+            variant={notesScope === "staff" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setNotesScope("staff")}
+          >
+            Staff view
+          </Button>
+          <Button
+            variant={notesScope === "customer" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setNotesScope("customer")}
+          >
+            Customer view
+          </Button>
+        </div>
+        <div className="text-sm text-muted-foreground">
+          Public notes are visible to the customer.
+        </div>
+      </div>
+
+      <div className="border rounded-lg">
+        <ScrollArea className="h-64">
+          <div className="p-3 space-y-3">
+            {notesLoading ? (
+              <div className="flex items-center justify-center py-8 text-muted-foreground">
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Loading notes…
+              </div>
+            ) : notes.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">
+                No notes yet.
+              </div>
+            ) : (
+              notes.map((n) => (
+                <div key={n.id} className="border rounded-md p-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary">
+                        {n.authorRole === "staff" ? "Staff" : "Client"}
+                      </Badge>
+                      <Badge className={n.visibleToCustomer ? "bg-green-600" : "bg-gray-500"}>
+                        {n.visibleToCustomer ? "Customer-visible" : "Staff-only"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="icon" variant="ghost"
+                        onClick={() => toggleNoteVisibility(n.id, !n.visibleToCustomer)}
+                        title={n.visibleToCustomer ? "Make staff-only" : "Make public"}
+                      >
+                        {n.visibleToCustomer ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                      <Button size="icon" variant="ghost" onClick={() => deleteNote(n.id)} title="Delete">
+                        <Trash className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm whitespace-pre-wrap">{n.note}</p>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {new Date(n.createdAt).toLocaleString()}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+
+      <div className="space-y-3">
+        <Textarea
+          value={newNote}
+          placeholder="Add a note for this order…"
+          onChange={(e) => setNewNote(e.target.value)}
+        />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Switch id="public-note-edit" checked={newNotePublic} onCheckedChange={setNewNotePublic} />
+            <Label htmlFor="public-note-edit" className="text-sm">Visible to customer</Label>
+          </div>
+          <Button onClick={createNote} disabled={!newNote.trim() || !currentUserId || creatingNote}>
+            {creatingNote && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            Add Note
+          </Button>
+        </div>
+      </div>
+    </CardContent>
+  </Card>
 
           {/* Product Selection (mirror Create page layout/UX) */}
           <Card>

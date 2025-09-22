@@ -3,13 +3,18 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Pusher from "pusher-js";                          // ★ NEW
-import { ArrowLeft, CreditCard, Package, Truck, Send } from "lucide-react";
+import {
+  ArrowLeft, CreditCard, Package, Truck, Send,
+  Eye, EyeOff, MessageSquarePlus, Trash, Loader2
+} from "lucide-react";
 import Image from "next/image";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -24,6 +29,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 import { formatCurrency } from "@/lib/currency";
+import { Label } from "@/components/ui/label";
 
 
 interface Product {
@@ -75,6 +81,20 @@ interface Message {
   message: string;
   isInternal: boolean;
   createdAt: Date;
+}
+
+// ───────────────────────── NOTES ─────────────────────────
+interface OrderNote {
+  id: string;
+  orderId: string;
+  organizationId: string;
+  authorRole: "client" | "staff";
+  authorClientId: string | null;
+  authorUserId: string | null;
+  note: string;
+  visibleToCustomer: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 function groupByProduct(lines: Product[]) {
@@ -228,6 +248,9 @@ export default function OrderView() {
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
 
+  const { data: session } = (authClient as any).useSession?.() || {};
+  const currentUserId: string | null = session?.user?.id ?? null;
+
   const { hasPermission: canViewOrder, isLoading: permLoading } =
     useHasPermission(organizationId, { order: ["view"] });
   const { hasPermission: canViewPricing } = useHasPermission(
@@ -239,12 +262,81 @@ export default function OrderView() {
     { orderChat: ["view"] },
   );
 
+  // keep notes tied to order:view (read) and order:update (write) if you have it in your system
+  const { hasPermission: canEditOrder } = useHasPermission(organizationId, { order: ["update"] });
+  const canUseNotes = canViewOrder; // read allowed with view; create/toggle gated below by canEditOrder
+
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const lastSeen = useRef<string | null>(null);
+
+  // Notes state
+  const [notes, setNotes] = useState<OrderNote[]>([]);
+  const [notesLoading, setNotesLoading] = useState<boolean>(true);
+  const [notesScope, setNotesScope] = useState<"staff" | "customer">("staff");
+  const [newNote, setNewNote] = useState<string>("");
+  const [newNotePublic, setNewNotePublic] = useState<boolean>(false);
+  const [creatingNote, setCreatingNote] = useState<boolean>(false);
+
+  const fetchNotes = useCallback(async () => {
+    if (!id || !canUseNotes) return;
+    setNotesLoading(true);
+    try {
+      const res = await fetch(`/api/order/${id}/notes?scope=${notesScope}`);
+      if (!res.ok) throw new Error("Failed loading notes");
+      const data = await res.json();
+      setNotes(Array.isArray(data.notes) ? data.notes : []);
+    } catch (e) {
+      setNotes([]);
+    } finally {
+      setNotesLoading(false);
+    }
+  }, [id, canUseNotes, notesScope]);
+
+  const createNote = async () => {
+    if (!order || !newNote.trim() || !canEditOrder) return;
+    if (!currentUserId) return; // cannot attribute author on server schema
+    setCreatingNote(true);
+    try {
+      const res = await fetch(`/api/order/${order.id}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          note: newNote,
+          visibleToCustomer: newNotePublic,
+          authorRole: "staff",
+          authorUserId: currentUserId,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed creating note");
+      setNewNote("");
+      setNewNotePublic(false);
+      await fetchNotes();
+    } catch (e) {
+      // ignore toast for now to keep diff focused
+    } finally {
+      setCreatingNote(false);
+    }
+  };
+
+  const toggleNoteVisibility = async (noteId: string, visible: boolean) => {
+    if (!canEditOrder) return;
+    await fetch(`/api/order-notes/${noteId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ visibleToCustomer: visible }),
+    });
+    await fetchNotes();
+  };
+
+  const deleteNote = async (noteId: string) => {
+    if (!canEditOrder) return;
+    await fetch(`/api/order-notes/${noteId}`, { method: "DELETE" });
+    await fetchNotes();
+  };
 
   const fetchOrderAndClient = async () => {
     if (!id) return;
@@ -348,6 +440,9 @@ export default function OrderView() {
     };
   }, [id, canViewChat, fetchMessages]);
 
+  useEffect(() => {
+    fetchNotes();
+  }, [fetchNotes]);
 
 
   if (permLoading) return null;
@@ -674,7 +769,7 @@ export default function OrderView() {
           )}
         </div>
 
-        <div className="xl:col-span-1">
+        <div className="xl:col-span-1 space-y-6">
           <Card className="h-[800px] flex flex-col">
             <CardHeader className="flex-shrink-0 pb-4">
               <CardTitle>Customer Communication</CardTitle>
@@ -767,6 +862,115 @@ export default function OrderView() {
                   <p className="text-muted-foreground text-center">
                     You don't have permission to view customer communication.
                   </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          {/* ───────────────────────── ORDER NOTES ───────────────────────── */}
+          <Card className="h-[560px] flex flex-col">
+            <CardHeader className="flex-shrink-0 pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <MessageSquarePlus className="h-5 w-5" />
+                  Order Notes
+                </CardTitle>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant={notesScope === "staff" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setNotesScope("staff")}
+                  >
+                    Staff view
+                  </Button>
+                  <Button
+                    variant={notesScope === "customer" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setNotesScope("customer")}
+                  >
+                    Customer view
+                  </Button>
+                </div>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                Notes are encrypted at rest. Public notes are visible to the customer.
+              </div>
+            </CardHeader>
+            <CardContent className="flex-1 flex flex-col min-h-0 p-0">
+              <div className="flex-1 min-h-0">
+                <ScrollArea className="h-full">
+                  <div className="px-4 py-3 space-y-3">
+                    {notesLoading ? (
+                      <div className="flex items-center justify-center py-10 text-muted-foreground">
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Loading notes…
+                      </div>
+                    ) : notes.length === 0 ? (
+                      <div className="text-center text-muted-foreground py-10">
+                        No notes yet.
+                      </div>
+                    ) : (
+                      notes.map((n) => (
+                        <div key={n.id} className="border rounded-lg p-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="secondary">
+                                {n.authorRole === "staff" ? "Staff" : "Client"}
+                              </Badge>
+                              <Badge className={n.visibleToCustomer ? "bg-green-600" : "bg-gray-500"}>
+                                {n.visibleToCustomer ? "Customer-visible" : "Staff-only"}
+                              </Badge>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {canEditOrder && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => toggleNoteVisibility(n.id, !n.visibleToCustomer)}
+                                  title={n.visibleToCustomer ? "Make staff-only" : "Make public"}
+                                >
+                                  {n.visibleToCustomer ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                </Button>
+                              )}
+                              {canEditOrder && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => deleteNote(n.id)}
+                                  title="Delete note"
+                                >
+                                  <Trash className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          <p className="mt-2 text-sm whitespace-pre-wrap">{n.note}</p>
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            {format(new Date(n.createdAt), "MMM d, h:mm a")}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
+              {canEditOrder && (
+                <div className="flex-shrink-0 p-4 border-t bg-background space-y-3">
+                  <Textarea
+                    value={newNote}
+                    placeholder="Add a note…"
+                    onChange={(e) => setNewNote(e.target.value)}
+                  />
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Switch id="public-note" checked={newNotePublic} onCheckedChange={setNewNotePublic} />
+                      <Label htmlFor="public-note" className="text-sm">
+                        Visible to customer
+                      </Label>
+                    </div>
+                    <Button onClick={createNote} disabled={!newNote.trim() || creatingNote || !currentUserId}>
+                      {creatingNote && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      Add Note
+                    </Button>
+                  </div>
                 </div>
               )}
             </CardContent>
