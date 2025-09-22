@@ -1,4 +1,4 @@
-// src/app/api/order-notes/[id]/route.ts
+// src/app/api/order-notes/[noteId]/route.ts
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
@@ -35,7 +35,7 @@ const patchSchema = z.object({
   visibleToCustomer: z.boolean().optional(),
 });
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { noteId: string } }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
        FROM "orderNotes"
       WHERE id = $1 AND "organizationId" = $2
       LIMIT 1`,
-    [params.id, organizationId],
+    [params.noteId, organizationId],
   );
   if (!rows.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   );
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: { noteId: string } }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
@@ -89,7 +89,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // fetch current row
   const { rows: curRows } = await pool.query(
     `SELECT note FROM "orderNotes" WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,
-    [params.id, organizationId],
+    [params.noteId, organizationId],
   );
   if (!curRows.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -103,7 +103,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     sets.push(`"visibleToCustomer" = $${sets.length + 1}`);
     vals.push(body.visibleToCustomer);
   }
-  vals.push(params.id, organizationId);
+  vals.push(params.noteId, organizationId);
 
   const sql = `
     UPDATE "orderNotes"
@@ -132,7 +132,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   );
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { noteId: string } }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
@@ -140,7 +140,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const { rowCount } = await pool.query(
     `DELETE FROM "orderNotes"
       WHERE id = $1 AND "organizationId" = $2`,
-    [params.id, organizationId],
+    [params.noteId, organizationId],
   );
   if (!rowCount) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
