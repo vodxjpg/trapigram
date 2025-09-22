@@ -868,36 +868,39 @@ export default function OrderView() {
           </Card>
           {/* ───────────────────────── ORDER NOTES ───────────────────────── */}
           <Card className="h-[560px] flex flex-col">
-            <CardHeader className="flex-shrink-0 pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="flex items-center gap-2">
-                  <MessageSquarePlus className="h-5 w-5" />
-                  Order Notes
-                </CardTitle>
-                <div className="flex items-center gap-3">
-                  <Button
-                    variant={notesScope === "staff" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setNotesScope("staff")}
-                  >
-                    Staff view
-                  </Button>
-                  <Button
-                    variant={notesScope === "customer" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setNotesScope("customer")}
-                  >
-                    Customer view
-                  </Button>
-                </div>
-              </div>
-              <div className="text-sm text-muted-foreground">
-                Notes are encrypted at rest. Public notes are visible to the customer.
-              </div>
-            </CardHeader>
-            <CardContent className="flex-1 flex flex-col min-h-0 p-0">
+    <CardHeader className="flex-shrink-0 pb-3">
+      <CardTitle className="flex items-center gap-2">
+        <MessageSquarePlus className="h-5 w-5" />
+        Order Notes
+      </CardTitle>
+    </CardHeader>
+    <CardContent className="flex-1 flex flex-col min-h-0">
+      {/* controls under the title so the title stands alone */}
+      <div className="px-4 pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Button
+              variant={notesScope === "staff" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setNotesScope("staff")}
+            >
+              Staff view
+            </Button>
+            <Button
+              variant={notesScope === "customer" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setNotesScope("customer")}
+            >
+              Customer view
+            </Button>
+          </div>
+        </div>
+        <div className="text-sm text-muted-foreground mt-2">
+          Notes are encrypted. Public notes are visible to the customer.
+        </div>
+      </div>
               <div className="flex-1 min-h-0">
-                <ScrollArea className="h-full">
+                 <ScrollArea className="h-full px-4">
                   <div className="px-4 py-3 space-y-3">
                     {notesLoading ? (
                       <div className="flex items-center justify-center py-10 text-muted-foreground">
