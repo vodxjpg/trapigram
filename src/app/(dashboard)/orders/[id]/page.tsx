@@ -874,7 +874,7 @@ export default function OrderView() {
         Order Notes
       </CardTitle>
     </CardHeader>
-    <CardContent className="flex-1 flex flex-col min-h-0">
+    <CardContent className="flex-1 flex flex-col min-h-0 px-0">
       {/* controls under the title so the title stands alone */}
       <div className="px-4 pb-3">
         <div className="flex items-center justify-between">
@@ -901,7 +901,7 @@ export default function OrderView() {
       </div>
               <div className="flex-1 min-h-0">
                  <ScrollArea className="h-full px-4">
-                  <div className="px-4 py-3 space-y-3">
+                  <div className="px-1 py-3 space-y-3">
                     {notesLoading ? (
                       <div className="flex items-center justify-center py-10 text-muted-foreground">
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Loading notes…
