@@ -1809,9 +1809,11 @@ export async function PATCH(
       }
 
       /* ─────────────────────────────────────────────────────────────
-      *  Affiliate / referral bonuses – ONLY once, when the order first becomes PAID
+      *  Affiliate / referral bonuses – ONLY once, when the order first becomes
+      *  PAID-LIKE (paid | pending_payment | completed). This covers flows that
+      *  jump straight to completed or pause at pending_payment.
       * ──────────────────────────────────────────────────────────── */
-      if (newStatus === "paid" && ord.status !== "paid") {
+      if (isPaidLikeStatus(newStatus) && !isPaidLikeStatus(ord.status)) {
         /*  1) fetch affiliate-settings (points & steps) */
         /* ── grab settings (use real column names, alias them to old variable names) ── */
         const { rows: [affSet] } = await pool.query(
@@ -1868,14 +1870,15 @@ export async function PATCH(
           /* --------------------------------------------------------------
            * Lifetime spend in **EUR** – we rely on orderRevenue which was
            * (re)-generated a few lines above for this order.
+           *  Count orders that are PAID-LIKE to match awarding trigger.
            * -------------------------------------------------------------- */
           const { rows: [spent] } = await pool.query(
             `SELECT COALESCE(SUM(r."EURtotal"),0) AS sum
          FROM "orderRevenue" r
          JOIN orders o ON o.id = r."orderId"
-        WHERE o."clientId"       = $1
+          WHERE o."clientId"       = $1
           AND o."organizationId" = $2
-          AND o.status           = 'paid'`,
+          AND o.status IN ('paid','pending_payment','completed')`,
             [ord.clientId, organizationId],
           );
 
