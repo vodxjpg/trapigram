@@ -44,6 +44,7 @@ async function getNextTicketKeyTx(client: PoolClient, organizationId: string): P
   return Number(rows[0]?.next ?? 1);
 }
 
+// src/app/api/tickets/route.ts (GET)
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -63,27 +64,35 @@ export async function GET(req: NextRequest) {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Lazy sweep: close tickets whose *last message* is > 24h ago
+    // Lazy sweep: close tickets whose last activity is > 24h ago
+    // last activity = max(last message, ticket.updatedAt, ticket.createdAt)
+    // consider tickets with NO messages too (LEFT JOIN + COALESCE)
     // ─────────────────────────────────────────────────────────────
-    await pool.query(
+    /* await pool.query(
       `
-      WITH last AS (
+      WITH last_msg AS (
         SELECT "ticketId", MAX("createdAt") AS last_at
-          FROM "ticketMessages"
-         GROUP BY "ticketId"
+        FROM "ticketMessages"
+        GROUP BY "ticketId"
+      )
+      , to_close AS (
+        SELECT t.id
+        FROM tickets t
+        LEFT JOIN last_msg lm ON lm."ticketId" = t.id
+        WHERE t."organizationId" = $1
+          AND t.status IN ('open','in-progress')
+          AND COALESCE(lm.last_at, t."updatedAt", t."createdAt") < NOW() - INTERVAL '24 hours'
       )
       UPDATE tickets t
-         SET status = 'closed', "updatedAt" = NOW()
-        FROM last
-       WHERE t.id = last."ticketId"
-         AND t."organizationId" = $1
-         AND t.status <> 'closed'
-         AND last.last_at < NOW() - INTERVAL '24 hours'
+         SET status = 'closed',
+             "updatedAt" = NOW()
+        FROM to_close c
+       WHERE t.id = c.id;
       `,
       [organizationId],
-    );
+    ); */
 
-    // build WHERE
+    // ---------- build WHERE ----------
     const where: string[] = [`"organizationId" = $1`];
     const values: any[] = [organizationId];
 
@@ -96,13 +105,13 @@ export async function GET(req: NextRequest) {
       where.push(`"clientId" = $${values.length}`);
     }
 
-    // count
+    // ---------- count ----------
     const countSQL = `SELECT COUNT(*) FROM tickets WHERE ${where.join(" AND ")}`;
     const countRows = await pool.query(countSQL, values);
     const totalRows = Number(countRows.rows[0].count) || 0;
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
-    // list
+    // ---------- list ----------
     const listValues = [...values, pageSize, (page - 1) * pageSize];
     const listSQL = `
       SELECT id,
@@ -116,16 +125,16 @@ export async function GET(req: NextRequest) {
     `;
     const tickets = (await pool.query(listSQL, listValues)).rows;
 
-    return NextResponse.json({
-      tickets,
-      totalPages,
-      currentPage: page,
-    }, { status: 200 });
+    return NextResponse.json(
+      { tickets, totalPages, currentPage: page },
+      { status: 200 }
+    );
   } catch (err) {
     console.error("[GET /api/tickets] error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
 
 /* ────────────────────────────────────────────────────────────────── *
  * POST /api/tickets
@@ -144,7 +153,7 @@ export async function POST(req: NextRequest) {
     // ── Atomic: get next key + insert, under the same transaction & client ──
     await client.query("BEGIN");
 
-    const ticketId  = uuidv4();
+    const ticketId = uuidv4();
     const ticketKey = await getNextTicketKeyTx(client, organizationId); // ← await!
 
     const insertSQL = `
@@ -197,7 +206,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(inserted, { status: 201 });
   } catch (err: any) {
-    try { await client.query("ROLLBACK"); } catch {}
+    try { await client.query("ROLLBACK"); } catch { }
     console.error("[POST /api/tickets] error:", err);
     if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });

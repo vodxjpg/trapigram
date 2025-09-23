@@ -19,7 +19,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // ─────────────────────────────────────────────────────────────
     // Lazy close this ticket if the *last message* is > 24h ago
     // ─────────────────────────────────────────────────────────────
-    await pool.query(
+    /* await pool.query(
       `
       UPDATE tickets t
          SET status = 'closed', "updatedAt" = NOW()
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
          ) < NOW() - INTERVAL '24 hours'
       `,
       [id, organizationId],
-    );
+    ); */
 
     /* 3 · fetch ticket header + user name */
     const ticketQuery = `

@@ -1,8 +1,8 @@
+// src/app/(dashboard)/tickets/tickets-table.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   Search,
   ChevronLeft,
@@ -10,6 +10,8 @@ import {
   ChevronsLeft,
   ChevronsRight,
   MoreVertical,
+  Eye,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,9 +31,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
-
-// 🛠️ We import ReactSelect for the multi‐select UI
 import ReactSelect from "react-select";
 
 type Ticket = {
@@ -40,14 +46,11 @@ type Ticket = {
   priority: "low" | "medium" | "high";
   status: "open" | "in-progress" | "closed";
   createdAt: string;
-  ticketKey: number
+  ticketKey: number;
 };
 
 export function TicketsTable() {
-  const router = useRouter();
-
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  // map ticketId → array of tag descriptions
   const [tagsMap, setTagsMap] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
 
@@ -56,11 +59,9 @@ export function TicketsTable() {
   const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState("");
 
-  // 🆕 all available tags for filter dropdown
   const [allTags, setAllTags] = useState<{ value: string; label: string }[]>(
     []
   );
-  // 🆕 which tags the user has selected to filter by
   const [selectedTags, setSelectedTags] = useState<
     { value: string; label: string }[]
   >([]);
@@ -71,7 +72,6 @@ export function TicketsTable() {
     "all" | "open" | "in-progress" | "closed"
   >("all");
 
-  // fetch the list of all tags once
   useEffect(() => {
     fetch("/api/tickets/tags")
       .then(async (res) => {
@@ -91,7 +91,6 @@ export function TicketsTable() {
       });
   }, []);
 
-  // fetch tickets + their tags, whenever page/search changes
   const fetchTickets = async () => {
     setLoading(true);
     try {
@@ -107,7 +106,6 @@ export function TicketsTable() {
       setTotalPages(totalPages);
       setCurrentPage(cur);
 
-      // then fetch each ticket's tags
       const pairs = await Promise.all(
         tickets.map(async (t: Ticket) => {
           const r = await fetch(`/api/tickets/${t.id}/tags`);
@@ -128,13 +126,9 @@ export function TicketsTable() {
     fetchTickets();
   }, [currentPage, pageSize, search]);
 
-  // filter tickets client‐side by selectedTags
   const filtered = tickets.filter((t) => {
-    // priority filter
     if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
-    // status filter
     if (statusFilter !== "all" && t.status !== statusFilter) return false;
-    // tag filter
     if (selectedTags.length) {
       const myTags = tagsMap[t.id] || [];
       if (!selectedTags.every((st) => myTags.includes(st.value))) return false;
@@ -142,10 +136,28 @@ export function TicketsTable() {
     return true;
   });
 
+  async function reopenTicket(ticketId: string) {
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "in-progress" }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success("Status set to in-progress");
+      setTickets((prev) =>
+        prev.map((t) =>
+          t.id === ticketId ? { ...t, status: "in-progress" } : t
+        )
+      );
+    } catch {
+      toast.error("Failed to update status");
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-        {/* search form stays on the left */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -167,9 +179,7 @@ export function TicketsTable() {
           <Button type="submit">Search</Button>
         </form>
 
-        {/* all your filters grouped on the right */}
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-          {/* tags multi-select */}
           <div className="w-full sm:w-60">
             <ReactSelect
               isMulti
@@ -180,7 +190,6 @@ export function TicketsTable() {
             />
           </div>
 
-          {/* priority filter */}
           <Select
             value={priorityFilter}
             onValueChange={setPriorityFilter}
@@ -197,7 +206,6 @@ export function TicketsTable() {
             </SelectContent>
           </Select>
 
-          {/* status filter */}
           <Select
             value={statusFilter}
             onValueChange={setStatusFilter}
@@ -226,19 +234,19 @@ export function TicketsTable() {
               <TableHead>Priority</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created</TableHead>
-              <TableHead className="text-right">Action</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
+                <TableCell colSpan={7} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
+                <TableCell colSpan={7} className="h-24 text-center">
                   No tickets match your filters.
                 </TableCell>
               </TableRow>
@@ -291,9 +299,33 @@ export function TicketsTable() {
                     })}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button asChild size="sm">
-                      <Link href={`/tickets/${t.id}`}>View</Link>
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreVertical className="h-4 w-4" />
+                          <span className="sr-only">Open actions</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuItem asChild>
+                          <Link
+                            href={`/tickets/${t.id}`}
+                            className="flex items-center gap-2"
+                          >
+                            <Eye className="h-4 w-4" />
+                            View
+                          </Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={t.status !== "closed"}
+                          onClick={() => t.status === "closed" && reopenTicket(t.id)}
+                          className="flex items-center gap-2"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                          Reopen
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))
@@ -302,7 +334,6 @@ export function TicketsTable() {
         </Table>
       </div>
 
-      {/* pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
           Page {currentPage} of {totalPages}

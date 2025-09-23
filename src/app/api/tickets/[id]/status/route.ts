@@ -1,9 +1,8 @@
 // src/app/api/tickets/[id]/status/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-import { requireOrgPermission } from "@/lib/perm-server";
 
 
 
@@ -31,7 +30,7 @@ export async function PATCH(
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
-  const { organizationId, userId } = ctx;
+  const { organizationId } = ctx;
 
 
   // parse & validate JSON
