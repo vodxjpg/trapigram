@@ -105,8 +105,8 @@ export async function POST(req: NextRequest) {
       try { return JSON.parse(row.countries || "[]"); } catch { return []; }
     })();
     const now = new Date();
-    const deliveryAt = row.deliverydate ? new Date(row.deliverydate) : null;
-    const shouldSendNow = row.sent === true || (deliveryAt && deliveryAt <= now);
+    const deliveryAt = row.deliveryDate ? new Date(row.deliveryDate) : null;
+    const shouldSendNow = row.sent === true || (!!deliveryAt && deliveryAt <= now);
 
     if (shouldSendNow) {
       await publish(`announcements:org:${organizationId}`, {
@@ -115,8 +115,8 @@ export async function POST(req: NextRequest) {
         title: row.title,
         content: row.content,
         countries: countriesArr,           // array of "ES","IT",...
-        deliveryDate: row.deliverydate,
-        updatedAt: row.updatedat,
+        deliveryDate: row.deliveryDate,
+        updatedAt: row.updatedAt,
       });
     }
     // ----------------------------------------------------
