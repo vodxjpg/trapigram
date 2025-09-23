@@ -150,8 +150,11 @@ export async function sendNotification(params: SendNotificationParams) {
   // Decide fan-out based on trigger & template presence
   const suppressAdminFanout = effectiveTrigger === "user_only_email";
   const suppressUserFanout = effectiveTrigger === "admin_only";
-  const shouldAdminFanout = !suppressAdminFanout && (hasAdminTpl || trigger === "admin_only");
-  const shouldUserFanout = !suppressUserFanout; // user can still receive fallback content when not admin_only
+    // admin-only order notes still bypass template checks (show exact message + note content)
+  const isAdminOnlyOrderNote =
+    effectiveTrigger === "admin_only" && type === "order_message";
+  const shouldAdminFanout = !suppressAdminFanout && (hasAdminTpl || isAdminOnlyOrderNote);
+  const shouldUserFanout  = !suppressUserFanout  && hasUserTpl;
   console.log("[notify] templates & fanout", {
     hasUserTpl,
     hasAdminTpl,
@@ -160,6 +163,14 @@ export async function sendNotification(params: SendNotificationParams) {
     shouldAdminFanout,
     shouldUserFanout,
   });
+
+  
+  // If neither audience has a template (and it's not an explicit admin-only order note),
+  // skip everything cleanly.
+  if (!shouldAdminFanout && !shouldUserFanout && !isAdminOnlyOrderNote) {
+    console.log("[notify] skip: no matching templates for admin or user; nothing to send.");
+    return;
+  }
 
 
   /* 2️⃣ subjects & bodies – generic (all channels) */
@@ -370,14 +381,13 @@ export async function sendNotification(params: SendNotificationParams) {
 
   /* — TELEGRAM — */
   if (channels.includes("telegram")) {
-    // 🔧 Only post to admin groups on admin-only triggers.
-    // Buyer-facing notifications will DM the client (if linked) but won't hit groups,
-    // which prevents the duplicate Telegram pings you observed.
-    const wantAdminGroups = effectiveTrigger === "admin_only";
-    const wantClientDM = !suppressUserFanout; // i.e., not admin_only
+     // 🔧 Only post to admin groups on admin-only triggers AND when we actually want admin fanout.
+ // DM the client only when we actually want user fanout.
+ const wantAdminGroups = effectiveTrigger === "admin_only" && shouldAdminFanout;
+ const wantClientDM    = shouldUserFanout; // requires user template
 
-    const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
-    const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
+ const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
+ const bodyUserOut  = wantClientDM ? bodyUserGeneric : "";
     console.log("[notify] TELEGRAM fanout", {
       wantAdminGroups,
       wantClientDM,
