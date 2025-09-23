@@ -41,7 +41,7 @@ export interface SendNotificationParams {
 /* ───────────────── helpers ───────────────── */
 const applyVars = (txt: string, vars: Record<string, string>) =>
   Object.entries(vars).reduce(
-    (acc, [k, v]) => acc.replace(new RegExp(`{${k}}`, "g"), v),
+    (acc, [k, v]) => acc.replace(new RegExp(`{${k}}`, "g"), v ?? ""),
     txt,
   );
 
@@ -99,18 +99,15 @@ export async function sendNotification(params: SendNotificationParams) {
     ticketId = null,
   } = params;
 
-    /* ───────────────── trigger normalization ─────────────────
+  /* ───────────────── trigger normalization ─────────────────
    * If a caller sends order notes with trigger "order_note" (or omits it),
    * treat them as admin-only alerts (to groups), not buyer DMs.
-   * This makes order-note routing robust regardless of caller.
    */
   const rawTrigger = trigger ?? null;
   const effectiveTrigger =
     type === "order_message" && (rawTrigger === null || rawTrigger === "order_note")
       ? "admin_only"
       : rawTrigger;
-
-  // From here on, use effectiveTrigger
 
   // ───────────────── DEBUG overview (no secrets) ─────────────────
   console.log("[notify] dispatch start", {
@@ -126,7 +123,6 @@ export async function sendNotification(params: SendNotificationParams) {
     urlPresent: Boolean(url),
     ticketId,
   });
-
 
   /* enrich variables (tracking link) */
   if (variables.tracking_number) {
@@ -150,11 +146,14 @@ export async function sendNotification(params: SendNotificationParams) {
   // Decide fan-out based on trigger & template presence
   const suppressAdminFanout = effectiveTrigger === "user_only_email";
   const suppressUserFanout = effectiveTrigger === "admin_only";
-    // admin-only order notes still bypass template checks (show exact message + note content)
+
+  // admin-only order notes bypass template checks (show exact message + note content)
   const isAdminOnlyOrderNote =
     effectiveTrigger === "admin_only" && type === "order_message";
+
   const shouldAdminFanout = !suppressAdminFanout && (hasAdminTpl || isAdminOnlyOrderNote);
-  const shouldUserFanout  = !suppressUserFanout  && hasUserTpl;
+  const shouldUserFanout = !suppressUserFanout && hasUserTpl;
+
   console.log("[notify] templates & fanout", {
     hasUserTpl,
     hasAdminTpl,
@@ -164,14 +163,12 @@ export async function sendNotification(params: SendNotificationParams) {
     shouldUserFanout,
   });
 
-  
   // If neither audience has a template (and it's not an explicit admin-only order note),
   // skip everything cleanly.
   if (!shouldAdminFanout && !shouldUserFanout && !isAdminOnlyOrderNote) {
     console.log("[notify] skip: no matching templates for admin or user; nothing to send.");
     return;
   }
-
 
   /* 2️⃣ subjects & bodies – generic (all channels) */
   const makeRawSub = (
@@ -188,16 +185,15 @@ export async function sendNotification(params: SendNotificationParams) {
   const subjectUserGeneric = applyVars(rawSubUser, variables);
   const subjectAdminGeneric = applyVars(rawSubAdm, variables);
   const bodyUserGeneric = applyVars(tplUser?.message || message, variables);
-    let bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
+  let bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
 
   /* ───────────────── special-case: admin-only order notes ─────────────────
-   * If an order note is targeted to admins (notification groups), prefer the
-   * caller-provided body over any stored admin template so we can show the
+   * Prefer the caller-provided body over any stored admin template so we can show the
    * actual order number and the note content verbatim.
    */
-  const isAdminOnlyOrderNote =
-    effectiveTrigger === "admin_only" && type === "order_message";
-  if (isAdminOnlyOrderNote) bodyAdminGeneric = applyVars(message, variables);
+  if (isAdminOnlyOrderNote) {
+    bodyAdminGeneric = applyVars(message, variables);
+  }
 
   /* 2️⃣-bis subjects & bodies – e-mail only (product list hidden) */
   const varsEmail = {
@@ -233,7 +229,6 @@ export async function sendNotification(params: SendNotificationParams) {
       .select(["email"])
       .where("id", "=", userId)
       .executeTakeFirst();
-    // Make sure “userId” ends up in the user bucket, not admin
     if (u?.email) userEmails.push(u.email);
   }
 
@@ -264,7 +259,6 @@ export async function sendNotification(params: SendNotificationParams) {
   }
 
   if (!adminEmails.length && supportEmail) adminEmails.push(supportEmail);
-
 
   console.log("[notify] resolved email targets", {
     adminCount: adminEmails.length,
@@ -302,6 +296,7 @@ export async function sendNotification(params: SendNotificationParams) {
       adminCount: adminEmails.length,
       userCount: userEmails.length,
     });
+
     const send = ({
       to,
       subject,
@@ -358,16 +353,23 @@ export async function sendNotification(params: SendNotificationParams) {
       if (userId) targets.add(userId);
       if (clientRow?.userId) targets.add(clientRow.userId);
     }
-    // admin-facing (owners) → only if there is an admin template
+    // admin-facing (owners) → only if there is an admin template or admin-only note
     if (shouldAdminFanout) {
       ownerIds.forEach((id) => targets.add(id));
     }
     for (const uid of targets) {
       await dispatchInApp({
-        organizationId, userId: uid, clientId, message: bodyUserGeneric, country, url,
+        organizationId,
+        userId: uid,
+        clientId,
+        message: bodyUserGeneric,
+        country,
+        url,
       });
     }
-    console.log("[notify] IN_APP done", { targetCount: Array.from(targets).filter(Boolean).length });
+    console.log("[notify] IN_APP done", {
+      targetCount: Array.from(targets).filter(Boolean).length,
+    });
   }
 
   /* — WEBHOOK — */
@@ -381,13 +383,14 @@ export async function sendNotification(params: SendNotificationParams) {
 
   /* — TELEGRAM — */
   if (channels.includes("telegram")) {
-     // 🔧 Only post to admin groups on admin-only triggers AND when we actually want admin fanout.
- // DM the client only when we actually want user fanout.
- const wantAdminGroups = effectiveTrigger === "admin_only" && shouldAdminFanout;
- const wantClientDM    = shouldUserFanout; // requires user template
+    // Only post to admin groups on admin-only triggers AND when we actually want admin fanout.
+    // DM the client only when we actually want user fanout.
+    const wantAdminGroups =
+      effectiveTrigger === "admin_only" && shouldAdminFanout;
+    const wantClientDM = shouldUserFanout; // requires user template
 
- const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
- const bodyUserOut  = wantClientDM ? bodyUserGeneric : "";
+    const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
+    const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
     console.log("[notify] TELEGRAM fanout", {
       wantAdminGroups,
       wantClientDM,
@@ -402,7 +405,7 @@ export async function sendNotification(params: SendNotificationParams) {
       country,
       bodyAdmin: bodyAdminOut,
       bodyUser: bodyUserOut,
-      adminUserIds: [], // keep as-is; groups handle admin broadcast
+      adminUserIds: [], // groups handle admin broadcast
       clientUserId: wantClientDM ? clientRow?.userId || null : null,
       ticketId,
     });
@@ -556,10 +559,10 @@ async function dispatchTelegram(opts: {
       const markup =
         ticketId && ticketSet.has(id)
           ? JSON.stringify({
-            inline_keyboard: [
-              [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
-            ],
-          })
+              inline_keyboard: [
+                [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
+              ],
+            })
           : undefined;
       targets.push({ chatId: id, text: safeAdmin, ...(markup ? { markup } : {}) });
     }
@@ -579,7 +582,7 @@ async function dispatchTelegram(opts: {
     count: targets.length,
     chatIds: targets.map((t) => mask(t.chatId)),
     kinds: targets.map((t) =>
-      ticketId && t.markup ? "group+ticket" : orderGroupIds.includes(t.chatId) ? "group" : "dm"
+      ticketId && t.markup ? "group+ticket" : orderGroupIds.includes(t.chatId) ? "group" : "dm",
     ),
   });
 
