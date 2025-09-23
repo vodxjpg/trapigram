@@ -177,7 +177,16 @@ export async function sendNotification(params: SendNotificationParams) {
   const subjectUserGeneric = applyVars(rawSubUser, variables);
   const subjectAdminGeneric = applyVars(rawSubAdm, variables);
   const bodyUserGeneric = applyVars(tplUser?.message || message, variables);
-  const bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
+    let bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
+
+  /* ───────────────── special-case: admin-only order notes ─────────────────
+   * If an order note is targeted to admins (notification groups), prefer the
+   * caller-provided body over any stored admin template so we can show the
+   * actual order number and the note content verbatim.
+   */
+  const isAdminOnlyOrderNote =
+    effectiveTrigger === "admin_only" && type === "order_message";
+  if (isAdminOnlyOrderNote) bodyAdminGeneric = applyVars(message, variables);
 
   /* 2️⃣-bis subjects & bodies – e-mail only (product list hidden) */
   const varsEmail = {
