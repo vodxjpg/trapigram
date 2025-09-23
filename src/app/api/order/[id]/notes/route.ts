@@ -6,7 +6,9 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
+import { sendNotification } from "@/lib/notifications";
 import crypto from "crypto";
+
 
 /* ────────────────────────── encryption helpers (AES-256-CBC) ────────────────────────── */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
@@ -164,6 +166,42 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     payload.visibleToCustomer,
   ]);
   const r = rows[0];
+
+  // ────────────────────────── fire admin notification on client note ──────────────────────────
+  try {
+    if (payload.authorRole === "client") {
+      // Get orderKey and country for routing
+      const { rows: orderRows } = await pool.query(
+        `SELECT "orderKey", country
+           FROM orders
+          WHERE id = $1 AND "organizationId" = $2
+          LIMIT 1`,
+        [orderId, organizationId]
+      );
+      const order = orderRows[0] || {};
+      const key =
+        order.orderKey ??
+        // fallback: last 6 chars of id (purely cosmetic, in case orderKey is missing)
+        String(orderId).slice(-6);
+
+      const message =
+        `Order #${key} got a new note:\n\n${payload.note}`;
+
+      await sendNotification({
+        type: "order_message",         // re-use existing type (no template needed)
+        message,
+        country: order.country ?? null,
+        channels: ["telegram", "in_app", "webhook"], // same spirit as paid-order alerts
+        organizationId,               // injected in notifications route; include here for clarity
+        clientId: payload.authorClientId ?? null,
+        userId: null,
+        trigger: "order_note",
+      });
+    }
+  } catch (e) {
+    // Don’t block note creation if notification fails
+    console.error("[order note notification] failed:", e);
+  }
 
   return NextResponse.json(
     {
