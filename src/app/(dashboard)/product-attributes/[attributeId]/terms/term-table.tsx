@@ -52,19 +52,19 @@ import { TermDrawer } from "./term-drawer";
 type Term = { id: string; name: string; slug: string };
 
 export function TermTable({ attributeId }: { attributeId: string }) {
-  /* ─── Core State ───────────────────────────────────────── */
+  /* ── Core ─────────────────────────────────────────────── */
   const [terms, setTerms] = useState<Term[]>([]);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingTerm, setEditingTerm] = useState<Term | null>(null);
 
-  /* ─── Search & Selection ───────────────────────────────── */
+  /* ── Search & selection ───────────────────────────────── */
   const [searchQuery, setSearchQuery] = useState("");
   const debounced = useDebounce(searchQuery, 300);
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
-  /* ─── Import/Export State ──────────────────────────────── */
+  /* ── Import / export ──────────────────────────────────── */
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -72,7 +72,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [isExporting, setIsExporting] = useState(false);
 
-  /* ─── Fetch Terms ──────────────────────────────────────── */
+  /* ── Data ─────────────────────────────────────────────── */
   const fetchTerms = async () => {
     setLoading(true);
     try {
@@ -95,27 +95,14 @@ export function TermTable({ attributeId }: { attributeId: string }) {
     fetchTerms();
   }, [attributeId]);
 
-  /* ─── CRUD Helpers ─────────────────────────────────────── */
-  const handleDelete = async (id: string) => {
-    if (!confirm("Delete this term?")) return;
-    try {
-      const res = await fetch(
-        `/api/product-attributes/${attributeId}/terms/${id}`,
-        { method: "DELETE", credentials: "include" }
-      );
-      if (!res.ok) throw new Error();
-      toast.success("Term deleted");
-      fetchTerms();
-    } catch {
-      toast.error("Failed to delete term");
-    }
-  };
-
+  /* ── Delete (bulk + single) ───────────────────────────── */
   const handleBulkDelete = async () => {
     const ids = Object.entries(rowSelection)
-      .filter(([_, v]) => v)
+      .filter(([, v]) => v)
       .map(([k]) => k);
+
     if (!ids.length) return;
+
     try {
       const res = await fetch(`/api/product-attributes/${attributeId}/terms`, {
         method: "DELETE",
@@ -123,9 +110,29 @@ export function TermTable({ attributeId }: { attributeId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids }),
       });
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      toast.success(`Deleted ${data.deletedCount} term(s)`);
+
+      if (!res.ok) {
+        // Read server error text to detect FK violations (in use)
+        const msg = await res.text().catch(() => "");
+        const lower = msg.toLowerCase();
+        const inUse =
+          msg.includes("23503") ||
+          lower.includes("foreign key") ||
+          lower.includes("productattributevalues");
+
+        if (inUse) {
+          toast.error(
+            "One or more terms are in use by products. Remove them from products before deleting."
+          );
+        } else {
+          toast.error("Failed to delete selected terms");
+        }
+        return;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      const count = Number(data?.deletedCount ?? ids.length);
+      toast.success(`Deleted ${count} term${count === 1 ? "" : "s"}`);
       setRowSelection({});
       fetchTerms();
     } catch {
@@ -135,7 +142,13 @@ export function TermTable({ attributeId }: { attributeId: string }) {
     }
   };
 
-  /* ─── Drawer Helpers ───────────────────────────────────── */
+  /** Use the same bulk confirmation for a single row */
+  const confirmDeleteOne = (id: string) => {
+    setRowSelection({ [id]: true });
+    setBulkDeleteOpen(true);
+  };
+
+  /* ── Drawer ───────────────────────────────────────────── */
   const handleEdit = (t: Term) => {
     setEditingTerm(t);
     setDrawerOpen(true);
@@ -150,7 +163,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
     if (refresh) fetchTerms();
   };
 
-  /* ─── Filtering & Selection ────────────────────────────── */
+  /* ── Filtering & selection helpers ────────────────────── */
   const filtered = terms.filter(
     (t) =>
       t.name.toLowerCase().includes(debounced.toLowerCase()) ||
@@ -160,7 +173,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
   const allSelected = filtered.length > 0 && selectedCount === filtered.length;
   const someSelected = selectedCount > 0 && selectedCount < filtered.length;
 
-  /* ─── Export Handler ───────────────────────────────────── */
+  /* ── Export ───────────────────────────────────────────── */
   const handleExport = async () => {
     setIsExporting(true);
     try {
@@ -188,7 +201,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
     }
   };
 
-  /* ─── Import Handlers ───────────────────────────────────── */
+  /* ── Import ───────────────────────────────────────────── */
   const openImportModal = () => {
     setImportMessage(null);
     setImportErrors([]);
@@ -248,7 +261,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
   };
   const handleDragOver = (e: DragEvent) => e.preventDefault();
 
-  /* ─── Render ───────────────────────────────────────────── */
+  /* ── UI ───────────────────────────────────────────────── */
   return (
     <div className="space-y-4">
       {/* Hidden file input */}
@@ -303,11 +316,10 @@ export function TermTable({ attributeId }: { attributeId: string }) {
             </div>
             {importMessage && (
               <p
-                className={`mt-4 text-center whitespace-pre-line font-medium ${
-                  importMessage.startsWith("✅")
+                className={`mt-4 text-center whitespace-pre-line font-medium ${importMessage.startsWith("✅")
                     ? "text-green-600"
                     : "text-red-600"
-                }`}
+                  }`}
               >
                 {importMessage}
               </p>
@@ -345,7 +357,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
-            onClick={openImportModal}
+            onClick={() => setShowImportModal(true)}
             disabled={isImporting}
           >
             <Upload className="mr-2 h-4 w-4" />
@@ -427,12 +439,31 @@ export function TermTable({ attributeId }: { attributeId: string }) {
                       />
                     </TableCell>
                     <TableCell className="font-medium">{term.name}</TableCell>
-                    <TableCell>{term.slug}</TableCell>
+                    <TableCell className="font-mono text-muted-foreground">
+                      {term.slug}
+                    </TableCell>
                     <TableCell className="text-right">
-                      <MoreVertical
-                        className="h-4 w-4 cursor-pointer"
-                        onClick={() => handleEdit(term)}
-                      />
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreVertical className="h-4 w-4" />
+                            <span className="sr-only">Open menu</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuItem onClick={() => handleEdit(term)}>
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-red-600 focus:text-red-600"
+                            onClick={() => confirmDeleteOne(term.id)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 );
@@ -442,7 +473,7 @@ export function TermTable({ attributeId }: { attributeId: string }) {
         </Table>
       </div>
 
-      {/* Bulk-delete dialog */}
+      {/* Bulk-delete dialog (also used for single delete) */}
       <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
