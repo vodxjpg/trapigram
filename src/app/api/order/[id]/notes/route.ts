@@ -186,7 +186,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
       const message =
         `Order #${key} got a new note:\n\n${payload.note}`;
-
+       // Force admin_only so it goes to notification groups (not buyer DM)
       await sendNotification({
         type: "order_message",         // re-use existing type (no template needed)
         message,
@@ -195,8 +195,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         organizationId,               // injected in notifications route; include here for clarity
         clientId: payload.authorClientId ?? null,
         userId: null,
-        trigger: "order_note",
+        trigger: "admin_only",
       });
+       console.log("[order-note] fired admin_only notification", { orderKey: key, org: organizationId });
     }
   } catch (e) {
     // Don’t block note creation if notification fails

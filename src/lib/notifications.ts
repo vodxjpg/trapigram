@@ -99,11 +99,24 @@ export async function sendNotification(params: SendNotificationParams) {
     ticketId = null,
   } = params;
 
+    /* ───────────────── trigger normalization ─────────────────
+   * If a caller sends order notes with trigger "order_note" (or omits it),
+   * treat them as admin-only alerts (to groups), not buyer DMs.
+   * This makes order-note routing robust regardless of caller.
+   */
+  const rawTrigger = trigger ?? null;
+  const effectiveTrigger =
+    type === "order_message" && (rawTrigger === null || rawTrigger === "order_note")
+      ? "admin_only"
+      : rawTrigger;
+
+  // From here on, use effectiveTrigger
+
   // ───────────────── DEBUG overview (no secrets) ─────────────────
   console.log("[notify] dispatch start", {
     organizationId,
     type,
-    trigger,
+    trigger: effectiveTrigger,
     channels,
     country,
     hasSubject: Boolean(subject),
@@ -134,9 +147,9 @@ export async function sendNotification(params: SendNotificationParams) {
   const hasUserTpl = !!tplUser;
   const hasAdminTpl = !!tplAdmin;
 
-  // Decide fan-out based on trigger  template presence
-  const suppressAdminFanout = trigger === "user_only_email";
-  const suppressUserFanout = trigger === "admin_only";
+  // Decide fan-out based on trigger & template presence
+  const suppressAdminFanout = effectiveTrigger === "user_only_email";
+  const suppressUserFanout = effectiveTrigger === "admin_only";
   const shouldAdminFanout = !suppressAdminFanout && (hasAdminTpl || trigger === "admin_only");
   const shouldUserFanout = !suppressUserFanout; // user can still receive fallback content when not admin_only
   console.log("[notify] templates & fanout", {
@@ -247,7 +260,7 @@ export async function sendNotification(params: SendNotificationParams) {
       id: uuidv4(),
       organizationId,
       type,
-      trigger,
+      trigger: effectiveTrigger,
       message: bodyUserGeneric,
       channels: JSON.stringify(channels),
       country,
@@ -351,7 +364,7 @@ export async function sendNotification(params: SendNotificationParams) {
     // 🔧 Only post to admin groups on admin-only triggers.
     // Buyer-facing notifications will DM the client (if linked) but won't hit groups,
     // which prevents the duplicate Telegram pings you observed.
-    const wantAdminGroups = trigger === "admin_only";
+    const wantAdminGroups = effectiveTrigger === "admin_only";
     const wantClientDM = !suppressUserFanout; // i.e., not admin_only
 
     const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
