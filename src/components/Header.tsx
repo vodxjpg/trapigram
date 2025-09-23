@@ -85,7 +85,7 @@ const Header: React.FC = () => {
         leaveTo="opacity-0 scale-95"
       >
         <div className="md:hidden bg-white mx-6 rounded-2xl shadow-lg mb-4">
-          <div className="flex flex-col space-y-4 p-6">
+          <div className="flex flex-col space-y-6 p-6">
             <a href="#features" className="text-gray-700 hover:text-black py-2" onClick={toggleMenu}>
               Features
             </a>
@@ -99,15 +99,15 @@ const Header: React.FC = () => {
               className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full mt-4"
               onClick={toggleMenu}
             >
-               <a href="/sign-up" className="text-gray-700 hover:text-white py-2" onClick={toggleMenu}>
+               <a href="/sign-up" className="text-white hover:text-white py-2" onClick={toggleMenu}>
               Start now →
               </a>
             </Button>
             <Button
-              className="bg-black hover:bg-gray-800 text-white px-6 py-2 rounded-full mt-4"
+              className="bg-black hover:bg-gray-800 text-white px-6 rounded-full mt-4"
               onClick={toggleMenu}
             >
-                <a href="/login" className="text-gray-700 hover:text-white py-2" onClick={toggleMenu}>
+                <a href="/login" className="text-white hover:text-white py-2" onClick={toggleMenu}>
               Login
               </a>
             </Button>
