@@ -96,7 +96,7 @@ const Header: React.FC = () => {
               Contact Us
             </a>
             <Button
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full mt-4"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full mt-4 mb-0"
               onClick={toggleMenu}
             >
                <a href="/sign-up" className="text-white hover:text-white py-2" onClick={toggleMenu}>
@@ -104,7 +104,7 @@ const Header: React.FC = () => {
               </a>
             </Button>
             <Button
-              className="bg-black hover:bg-gray-800 text-white px-6 rounded-full mt-4"
+              className="bg-black hover:bg-gray-800 text-white px-6 rounded-full mt-4 mb-2"
               onClick={toggleMenu}
             >
                 <a href="/login" className="text-white hover:text-white py-2" onClick={toggleMenu}>
