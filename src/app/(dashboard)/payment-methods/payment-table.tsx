@@ -2,7 +2,6 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import Image from "next/image";
 import {
   ChevronLeft,
   ChevronRight,
@@ -42,13 +41,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 
 import { PaymentMethodDrawer } from "./payment-drawer";
@@ -65,14 +57,6 @@ export interface PaymentMethod {
   instructions?: string | null;
   default?: boolean; // internal; used to disable deletion + show badge
 }
-
-const TRUSTED = [
-  {
-    id: "01",
-    name: "Niftipay",
-    logo: "/niftipay-logo.svg",
-  },
-] as const;
 
 export function PaymentMethodsTable() {
   const router = useRouter();
@@ -100,14 +84,7 @@ export function PaymentMethodsTable() {
   const [searchQuery, setSearchQuery] = useState("");
 
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerMode, setDrawerMode] = useState<"niftipay" | "custom">("custom");
   const [editing, setEditing] = useState<PaymentMethod | null>(null);
-  const [providerDialog, setProviderDialog] = useState(false);
-
-  // Success dialog after Easy Connect: locked for 5 seconds
-  const [niftipayAlertOpen, setNiftipayAlertOpen] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(5);
-  const canDismiss = secondsLeft <= 0;
 
   // fetch
   const fetchMethods = async () => {
@@ -142,31 +119,7 @@ export function PaymentMethodsTable() {
     }
   }, [permLoading, canView, router]);
 
-  // Listen for successful Easy Connect events from the drawer
-  useEffect(() => {
-    const onConnected = () => {
-      setNiftipayAlertOpen(true);
-      setSecondsLeft(5);
-    };
-    window.addEventListener("niftipay-connected", onConnected);
-    return () => window.removeEventListener("niftipay-connected", onConnected);
-  }, []);
-
-  // Countdown to allow dismiss after 5 seconds
-  useEffect(() => {
-    if (!niftipayAlertOpen) return;
-    if (secondsLeft <= 0) return;
-    const id = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
-    return () => clearTimeout(id);
-  }, [niftipayAlertOpen, secondsLeft]);
-
-  const handleAlertOpenChange = (open: boolean) => {
-    if (!open && canDismiss) setNiftipayAlertOpen(false);
-  };
-
   if (permLoading || !canView) return null;
-
-  const niftipayRow = methods.find((m) => m.name.toLowerCase() === "niftipay") || null;
 
   // actions
   const toggleActive = async (pm: PaymentMethod) => {
@@ -205,12 +158,8 @@ export function PaymentMethodsTable() {
     }
   };
 
-  const openDrawer = (
-    mode: "niftipay" | "custom",
-    row: PaymentMethod | null = null
-  ) => {
+  const openDrawer = (row: PaymentMethod | null = null) => {
     if (!(canCreate || canUpdate)) return;
-    setDrawerMode(mode);
     setEditing(row);
     setDrawerOpen(true);
   };
@@ -224,52 +173,11 @@ export function PaymentMethodsTable() {
   const truncate = (s?: string | null, n = 80) => {
     if (!s) return "";
     return s.length > n ? s.slice(0, n - 1) + "…" : s;
-    };
+  };
 
   return (
     <>
       <div className="space-y-6">
-        {/* provider-picker dialog */}
-        {canCreate && (
-          <Dialog open={providerDialog} onOpenChange={setProviderDialog}>
-            <DialogContent className="sm:max-w-[460px]">
-              <DialogHeader>
-                <DialogTitle>Add a payment method</DialogTitle>
-              </DialogHeader>
-              <div className="grid grid-cols-2 gap-6 mt-4">
-                <button
-                  onClick={() => {
-                    setProviderDialog(false);
-                    openDrawer("niftipay", niftipayRow);
-                  }}
-                  className="border rounded-lg p-4 flex flex-col items-center gap-3 hover:bg-muted/50 transition"
-                >
-                  <Image
-                    src={TRUSTED[0].logo}
-                    alt="Niftipay"
-                    width={48}
-                    height={48}
-                  />
-                  <span className="font-medium">
-                    Niftipay - Accept crypto payments
-                  </span>
-                  <span className="text-xs text-green-600">Trusted provider</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setProviderDialog(false);
-                    openDrawer("custom");
-                  }}
-                  className="border rounded-lg p-4 flex flex-col items-center gap-3 hover:bg-muted/50 transition"
-                >
-                  <Plus className="w-8 h-8" />
-                  <span className="font-medium">Custom method</span>
-                </button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        )}
-
         {/* header row */}
         <div className="flex flex-col sm:flex-row justify-between gap-4">
           <form
@@ -292,7 +200,7 @@ export function PaymentMethodsTable() {
             <Button type="submit">Search</Button>
           </form>
           {canCreate && (
-            <Button onClick={() => setProviderDialog(true)}>
+            <Button onClick={() => openDrawer(null)}>
               <Plus className="mr-2 h-4 w-4" />
               Add Payment
             </Button>
@@ -328,11 +236,6 @@ export function PaymentMethodsTable() {
                   <TableRow key={pm.id}>
                     <TableCell className="flex items-center gap-2">
                       {pm.name}
-                      {pm.name.toLowerCase() === "niftipay" && (
-                        <span className="text-xs text-green-600 ml-2">
-                          trusted
-                        </span>
-                      )}
                       {pm.default && (
                         <Badge variant="secondary" className="ml-2">
                           Default
@@ -360,16 +263,7 @@ export function PaymentMethodsTable() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           {canUpdate && (
-                            <DropdownMenuItem
-                              onClick={() =>
-                                openDrawer(
-                                  pm.name.toLowerCase() === "niftipay"
-                                    ? "niftipay"
-                                    : "custom",
-                                  pm
-                                )
-                              }
-                            >
+                            <DropdownMenuItem onClick={() => openDrawer(pm)}>
                               <Edit className="mr-2 h-4 w-4" />
                               Edit
                             </DropdownMenuItem>
@@ -462,30 +356,9 @@ export function PaymentMethodsTable() {
         <PaymentMethodDrawer
           open={drawerOpen}
           onClose={onDrawerClose}
-          mode={drawerMode}
           method={editing}
         />
       </div>
-
-      {/* success verification dialog */}
-      <AlertDialog open={niftipayAlertOpen} onOpenChange={handleAlertOpenChange}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Verify your Niftipay account</AlertDialogTitle>
-            <AlertDialogDescription>
-              We just created your Niftipay account. Please check your email to verify it and finish the setup.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={!canDismiss}>
-              {canDismiss ? "Dismiss" : `Dismiss in ${secondsLeft}s`}
-            </AlertDialogCancel>
-            <AlertDialogAction disabled={!canDismiss} onClick={() => setNiftipayAlertOpen(false)}>
-              {canDismiss ? "Got it" : `Got it (${secondsLeft}s)`}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   );
 }

@@ -2,6 +2,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import "react-quill-new/dist/quill.snow.css";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -33,21 +35,48 @@ export interface PaymentMethod {
 interface Props {
   open: boolean;
   onClose: (refresh?: boolean) => void;
-  mode: "niftipay" | "custom";
   method: PaymentMethod | null;
 }
+
+/* ---------- ReactQuill (SSR-safe) ---------- */
+const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
+
+const quillModules = {
+  toolbar: [
+    [{ header: [1, 2, false] }],
+    ["bold", "italic", "underline", "strike", "blockquote"],
+    [
+      { list: "ordered" },
+      { list: "bullet" },
+      { indent: "-1" },
+      { indent: "+1" },
+    ],
+    ["link", "image"],
+    ["clean"],
+  ],
+};
+
+const quillFormats = [
+  "header",
+  "bold",
+  "italic",
+  "underline",
+  "strike",
+  "blockquote",
+  "list",
+  "indent",
+  "link",
+  "image",
+];
 
 /* ---------- component ---------- */
 export function PaymentMethodDrawer({
   open,
   onClose,
-  mode,
   method,
 }: Props) {
-  const isNiftipay = mode === "niftipay";
-
   /* form state */
-  const [name, setName] = useState(isNiftipay ? "Niftipay" : "");
+  const [name, setName] = useState("");
   const [active, setActive] = useState(true);
   const [apiKey, setApiKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
@@ -66,63 +95,31 @@ export function PaymentMethodDrawer({
       setDescription(method.description ?? "");
       setInstructions(method.instructions ?? "");
     } else {
-      setName(isNiftipay ? "Niftipay" : "");
+      setName("");
       setActive(true);
       setApiKey("");
       setSecretKey("");
       setDescription("");
       setInstructions("");
     }
-  }, [method, mode, isNiftipay]);
+  }, [method]);
 
-  /* ---------- Easy Connect (Niftipay) ---------- */
-  const handleConnectNiftipay = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch("/api/niftipay/connect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-
-      if (!res.ok) {
-        let message = "Failed to connect Niftipay";
-        try {
-          const data = await res.json();
-          if (typeof data?.error === "string") message = data.error;
-        } catch {}
-        throw new Error(message);
-      }
-
-      toast.success("Niftipay connected successfully");
-
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("niftipay-connected"));
-      }
-      onClose(true); // refresh table
-    } catch (err: any) {
-      toast.error(err?.message || "Niftipay connect failed");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  /* ---------- manual save (custom / advanced) ---------- */
+  /* ---------- save ---------- */
   const handleSave = async () => {
-    if (!name.trim() && !isNiftipay) {
+    if (!name.trim()) {
       toast.error("Name is required");
       return;
     }
     setSaving(true);
     try {
       const payload: Record<string, any> = {
-        name: isNiftipay ? "Niftipay" : name.trim(),
+        name: name.trim(),
         active,
         apiKey: apiKey.trim() || null,
-        // Secret key stays editable only for custom methods
-        ...(isNiftipay ? {} : { secretKey: secretKey.trim() || null }),
+        secretKey: secretKey.trim() || null,
         description: description.trim() || null,
-        instructions: instructions.trim() || null,
+        // Instructions may be HTML produced by Quill – do not trim to avoid breaking tags
+        instructions: instructions && instructions.length ? instructions : null,
       };
 
       const res = await fetch(
@@ -157,48 +154,24 @@ export function PaymentMethodDrawer({
       <DrawerContent side="right">
         <DrawerHeader>
           <DrawerTitle>
-            {method
-              ? isNiftipay
-                ? "Configure Niftipay"
-                : "Edit payment method"
-              : isNiftipay
-              ? "Configure Niftipay"
-              : "New payment method"}
+            {method ? "Edit payment method" : "New payment method"}
           </DrawerTitle>
           <DrawerDescription>
-            {isNiftipay
-              ? "Use Easy Connect to automatically create/link your Niftipay account and generate an API key, or paste an existing key below."
-              : "Fill in the details of the payment method."}
+            Fill in the details of the payment method.
           </DrawerDescription>
         </DrawerHeader>
 
         <div className="px-4 space-y-4">
-          {/* Easy Connect CTA (Niftipay only) */}
-          {isNiftipay && (
-            <div className="rounded-lg border p-4">
-              <div className="mb-2 font-medium">Niftipay Easy Connect</div>
-              <p className="text-sm text-muted-foreground mb-3">
-                We’ll securely create/link your Niftipay account and store the API key for this
-                tenant. No copy-paste required.
-              </p>
-              <Button onClick={handleConnectNiftipay} disabled={saving}>
-                {saving ? "Connecting…" : "Connect Niftipay"}
-              </Button>
-            </div>
-          )}
-
-          {/* name (hidden/locked for Niftipay) */}
-          {!isNiftipay && (
-            <div>
-              <label className="block text-sm font-medium mb-1">Name</label>
-              <Input
-                placeholder="Payment name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={saving}
-              />
-            </div>
-          )}
+          {/* name */}
+          <div>
+            <label className="block text-sm font-medium mb-1">Name</label>
+            <Input
+              placeholder="Payment name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={saving}
+            />
+          </div>
 
           {/* active */}
           <div>
@@ -213,31 +186,29 @@ export function PaymentMethodDrawer({
             </div>
           </div>
 
-          {/* API key (optional manual entry / view) */}
+          {/* API key */}
           <div>
             <label className="block text-sm font-medium mb-1">API key</label>
             <Input
-              placeholder={isNiftipay ? "Filled automatically by Easy Connect (optional override)" : "Optional"}
+              placeholder="Optional"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               disabled={saving}
             />
           </div>
 
-          {/* secret key (custom methods only) */}
-          {!isNiftipay && (
-            <div>
-              <label className="block text-sm font-medium mb-1">
-                Secret key
-              </label>
-              <Input
-                placeholder="Optional"
-                value={secretKey}
-                onChange={(e) => setSecretKey(e.target.value)}
-                disabled={saving}
-              />
-            </div>
-          )}
+          {/* secret key */}
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Secret key
+            </label>
+            <Input
+              placeholder="Optional"
+              value={secretKey}
+              onChange={(e) => setSecretKey(e.target.value)}
+              disabled={saving}
+            />
+          </div>
 
           {/* description */}
           <div>
@@ -253,18 +224,20 @@ export function PaymentMethodDrawer({
             />
           </div>
 
-          {/* instructions */}
+          {/* instructions – ReactQuill */}
           <div>
             <label className="block text-sm font-medium mb-1">
-              Instructions for customers
+              Instructions for customers (supports HTML)
             </label>
-            <Textarea
-              placeholder="What customers should do after choosing this method (e.g., bank transfer reference, etc.)"
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              className="min-h-[120px]"
-              disabled={saving}
-            />
+            <div className="border rounded-md">
+              <ReactQuill
+                theme="snow"
+                modules={quillModules}
+                formats={quillFormats}
+                value={instructions || ""}
+                onChange={setInstructions}
+              />
+            </div>
           </div>
         </div>
 
