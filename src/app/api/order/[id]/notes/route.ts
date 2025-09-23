@@ -184,8 +184,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         // fallback: last 6 chars of id (purely cosmetic, in case orderKey is missing)
         String(orderId).slice(-6);
 
-      const message =
-        `Order #${key} got a new note:\n\n${payload.note}`;
+              // Build an admin-facing message: show order number + note content
+        const esc = (s: string) =>
+          s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const message =
+          `The user has left a note for order <b>#${esc(String(key))}</b>:\n\n${esc(payload.note)}`;
        // Force admin_only so it goes to notification groups (not buyer DM)
       await sendNotification({
         type: "order_message",         // re-use existing type (no template needed)
@@ -196,6 +199,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         clientId: payload.authorClientId ?? null,
         userId: null,
         trigger: "admin_only",
+                  // Include structured vars in case templates are used elsewhere
+          variables: {
+            order_number: String(key),
+            note_content: payload.note,
+          },
       });
        console.log("[order-note] fired admin_only notification", { orderKey: key, org: organizationId });
     }
