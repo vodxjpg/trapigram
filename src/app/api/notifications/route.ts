@@ -27,10 +27,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  await sendNotification({
-    ...body,
-    organizationId: ctx.organizationId,
-  });
+// Normalize order-note trigger to admin_only at the edge as well
+const normalized =
+  body.type === "order_message" &&
+  (!body.trigger || body.trigger === "order_note")
+    ? { ...body, trigger: "admin_only" as const }
+    : body;
+
+ await sendNotification({ ...normalized, organizationId: ctx.organizationId });
 
   return NextResponse.json({ ok: true }, { status: 201 });
 }
