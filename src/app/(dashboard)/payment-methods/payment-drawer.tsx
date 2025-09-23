@@ -154,7 +154,7 @@ export function PaymentMethodDrawer({
     {/* give the content a tall, flex column layout */}
     <DrawerContent
       side="right"
-      className={isMobile ? "h-[85vh]" : "h-[90vh]"}
+      className={isMobile ? "h-[100vh]" : "h-[100vh]"}
     >
       {/* fixed header */}
       <DrawerHeader className="shrink-0">
