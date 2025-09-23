@@ -146,110 +146,115 @@ export function PaymentMethodDrawer({
 
   /* ---------- render ---------- */
   return (
-    <Drawer
-      open={open}
-      onOpenChange={(o) => !o && onClose()}
-      direction={isMobile ? "bottom" : "right"}
+  <Drawer
+    open={open}
+    onOpenChange={(o) => !o && onClose()}
+    direction={isMobile ? "bottom" : "right"}
+  >
+    {/* give the content a tall, flex column layout */}
+    <DrawerContent
+      side="right"
+      className={isMobile ? "h-[85vh]" : "h-[90vh]"}
     >
-      <DrawerContent side="right">
-        <DrawerHeader>
-          <DrawerTitle>
-            {method ? "Edit payment method" : "New payment method"}
-          </DrawerTitle>
-          <DrawerDescription>
-            Fill in the details of the payment method.
-          </DrawerDescription>
-        </DrawerHeader>
+      {/* fixed header */}
+      <DrawerHeader className="shrink-0">
+        <DrawerTitle>
+          {method ? "Edit payment method" : "New payment method"}
+        </DrawerTitle>
+        <DrawerDescription>
+          Fill in the details of the payment method.
+        </DrawerDescription>
+      </DrawerHeader>
 
-        <div className="px-4 space-y-4">
-          {/* name */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Name</label>
-            <Input
-              placeholder="Payment name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+      {/* SCROLLABLE BODY */}
+      <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-4">
+        {/* name */}
+        <div>
+          <label className="block text-sm font-medium mb-1">Name</label>
+          <Input
+            placeholder="Payment name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={saving}
+          />
+        </div>
+
+        {/* active */}
+        <div>
+          <label className="block text-sm font-medium mb-1">Active</label>
+          <div className="flex items-center space-x-2">
+            <Switch
+              checked={active}
+              onCheckedChange={setActive}
               disabled={saving}
             />
-          </div>
-
-          {/* active */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Active</label>
-            <div className="flex items-center space-x-2">
-              <Switch
-                checked={active}
-                onCheckedChange={setActive}
-                disabled={saving}
-              />
-              <span>{active ? "Active" : "Inactive"}</span>
-            </div>
-          </div>
-
-          {/* API key */}
-          <div>
-            <label className="block text-sm font-medium mb-1">API key</label>
-            <Input
-              placeholder="Optional"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              disabled={saving}
-            />
-          </div>
-
-          {/* secret key */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Secret key
-            </label>
-            <Input
-              placeholder="Optional"
-              value={secretKey}
-              onChange={(e) => setSecretKey(e.target.value)}
-              disabled={saving}
-            />
-          </div>
-
-          {/* description */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Description
-            </label>
-            <Textarea
-              placeholder="Short text shown to admins to explain this method (optional)"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="min-h-[80px]"
-              disabled={saving}
-            />
-          </div>
-
-          {/* instructions – ReactQuill */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Instructions for customers (supports HTML)
-            </label>
-            <div className="border rounded-md">
-              <ReactQuill
-                theme="snow"
-                modules={quillModules}
-                formats={quillFormats}
-                value={instructions || ""}
-                onChange={setInstructions}
-              />
-            </div>
+            <span>{active ? "Active" : "Inactive"}</span>
           </div>
         </div>
 
-        <DrawerFooter className="space-x-2">
-          <Button variant="outline" onClick={() => onClose()} disabled={saving}>
-            Cancel
-          </Button>
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
-          </Button>
-        </DrawerFooter>
-      </DrawerContent>
-    </Drawer>
-  );
+        {/* API key */}
+        <div>
+          <label className="block text-sm font-medium mb-1">API key</label>
+          <Input
+            placeholder="Optional"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            disabled={saving}
+          />
+        </div>
+
+        {/* secret key */}
+        <div>
+          <label className="block text-sm font-medium mb-1">Secret key</label>
+          <Input
+            placeholder="Optional"
+            value={secretKey}
+            onChange={(e) => setSecretKey(e.target.value)}
+            disabled={saving}
+          />
+        </div>
+
+        {/* description */}
+        <div>
+          <label className="block text-sm font-medium mb-1">Description</label>
+          <Textarea
+            placeholder="Short text shown to admins to explain this method (optional)"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="min-h-[80px]"
+            disabled={saving}
+          />
+        </div>
+
+        {/* instructions – ReactQuill */}
+        <div>
+          <label className="block text-sm font-medium mb-1">
+            Instructions for customers (supports HTML)
+          </label>
+          <div className="border rounded-md">
+            <ReactQuill
+              theme="snow"
+              modules={quillModules}
+              formats={quillFormats}
+              value={instructions || ""}
+              onChange={setInstructions}
+              // keep editor height reasonable so the body still scrolls
+              className="min-h-[240px]"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* fixed footer */}
+      <DrawerFooter className="shrink-0 space-x-2">
+        <Button variant="outline" onClick={() => onClose()} disabled={saving}>
+          Cancel
+        </Button>
+        <Button onClick={handleSave} disabled={saving}>
+          {saving ? "Saving…" : "Save"}
+        </Button>
+      </DrawerFooter>
+    </DrawerContent>
+  </Drawer>
+);
 }
