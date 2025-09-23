@@ -137,8 +137,8 @@ export async function sendNotification(params: SendNotificationParams) {
   // Decide fan-out based on trigger  template presence
   const suppressAdminFanout = trigger === "user_only_email";
   const suppressUserFanout = trigger === "admin_only";
-  const shouldAdminFanout = !suppressAdminFanout && hasAdminTpl;
-  const shouldUserFanout = !suppressUserFanout; // user can still receive fallback content
+  const shouldAdminFanout = !suppressAdminFanout && (hasAdminTpl || trigger === "admin_only");
+  const shouldUserFanout = !suppressUserFanout; // user can still receive fallback content when not admin_only
   console.log("[notify] templates & fanout", {
     hasUserTpl,
     hasAdminTpl,
@@ -200,7 +200,7 @@ export async function sendNotification(params: SendNotificationParams) {
       .select(["email"])
       .where("id", "=", userId)
       .executeTakeFirst();
-    // BUGFIX: the user's email must go to userEmails, not adminEmails
+    // Make sure “userId” ends up in the user bucket, not admin
     if (u?.email) userEmails.push(u.email);
   }
 
@@ -354,7 +354,7 @@ export async function sendNotification(params: SendNotificationParams) {
     const wantAdminGroups = trigger === "admin_only";
     const wantClientDM = !suppressUserFanout; // i.e., not admin_only
 
-    const bodyAdminOut = wantAdminGroups && hasAdminTpl ? bodyAdminGeneric : "";
+    const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
     const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
     console.log("[notify] TELEGRAM fanout", {
       wantAdminGroups,
