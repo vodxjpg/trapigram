@@ -1,3 +1,5 @@
+// /home/zodx/Desktop/trapigram/src/app/api/clients/secret-phrase/[id]/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
@@ -100,6 +102,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     const checkSql = `SELECT id FROM "clientSecretPhrase" WHERE "clientId" = $1 LIMIT 1`;
     const checkRes = await pool.query(checkSql, [client.id]);
 
+    let row;
     if (checkRes.rowCount) {
       const updSql = `
         UPDATE "clientSecretPhrase"
@@ -107,8 +110,8 @@ export async function POST(req: NextRequest, { params }: Params) {
          WHERE "clientId" = $2
        RETURNING id, "clientId", "createdAt", "updatedAt"
       `;
-      const { rows } = await pool.query(updSql, [encrypted, client.id]);
-      return NextResponse.json(rows[0], { status: 200 });
+      const res = await pool.query(updSql, [encrypted, client.id]);
+      row = res.rows[0];
     } else {
       const insSql = `
         INSERT INTO "clientSecretPhrase" (id, "clientId", phrase, "createdAt", "updatedAt")
@@ -116,9 +119,20 @@ export async function POST(req: NextRequest, { params }: Params) {
         RETURNING id, "clientId", "createdAt", "updatedAt"
       `;
       const id = uuidv4();
-      const { rows } = await pool.query(insSql, [id, client.id, encrypted]);
-      return NextResponse.json(rows[0], { status: 201 });
+      const res = await pool.query(insSql, [id, client.id, encrypted]);
+      row = res.rows[0];
     }
+
+    // ✅ Consume any outstanding force flag (so the bot stops re-prompting)
+    await pool.query(
+      `UPDATE public.clients
+          SET "secretPhraseForceAt" = NULL,
+              "updatedAt" = NOW()
+        WHERE id = $1`,
+      [client.id],
+    );
+
+    return NextResponse.json(row, { status: checkRes.rowCount ? 200 : 201 });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });
@@ -153,6 +167,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const checkSql = `SELECT id FROM "clientSecretPhrase" WHERE "clientId" = $1 LIMIT 1`;
     const checkRes = await pool.query(checkSql, [client.id]);
 
+    let row;
     if (!checkRes.rowCount) {
       const insSql = `
         INSERT INTO "clientSecretPhrase" (id, "clientId", phrase, "createdAt", "updatedAt")
@@ -160,18 +175,29 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         RETURNING id, "clientId", "createdAt", "updatedAt"
       `;
       const id = uuidv4();
-      const { rows } = await pool.query(insSql, [id, client.id, encrypted]);
-      return NextResponse.json(rows[0], { status: 201 });
+      const res = await pool.query(insSql, [id, client.id, encrypted]);
+      row = res.rows[0];
+    } else {
+      const updSql = `
+        UPDATE "clientSecretPhrase"
+           SET phrase = $1, "updatedAt" = NOW()
+         WHERE "clientId" = $2
+       RETURNING id, "clientId", "createdAt", "updatedAt"
+      `;
+      const res = await pool.query(updSql, [encrypted, client.id]);
+      row = res.rows[0];
     }
 
-    const updSql = `
-      UPDATE "clientSecretPhrase"
-         SET phrase = $1, "updatedAt" = NOW()
-       WHERE "clientId" = $2
-     RETURNING id, "clientId", "createdAt", "updatedAt"
-    `;
-    const { rows } = await pool.query(updSql, [encrypted, client.id]);
-    return NextResponse.json(rows[0], { status: 200 });
+    // ✅ Consume any outstanding force flag (same as POST)
+    await pool.query(
+      `UPDATE public.clients
+          SET "secretPhraseForceAt" = NULL,
+              "updatedAt" = NOW()
+        WHERE id = $1`,
+      [client.id],
+    );
+
+    return NextResponse.json(row, { status: 200 });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });
@@ -180,7 +206,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
-
 
 /* ───────── DELETE: clear phrase for client (reset) ───────── */
 export async function DELETE(req: NextRequest, { params }: Params) {
@@ -200,7 +225,15 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     const delSql = `DELETE FROM "clientSecretPhrase" WHERE "clientId" = $1`;
     const result = await pool.query(delSql, [client.id]);
 
-    // 200 with a simple payload; you could also return 204 with empty body
+    // 🔔 Optional but recommended: force a prompt immediately after reset
+    await pool.query(
+      `UPDATE public.clients
+          SET "secretPhraseForceAt" = NOW(),
+              "updatedAt" = NOW()
+        WHERE id = $1`,
+      [client.id],
+    );
+
     return NextResponse.json(
       { ok: true, deleted: (result.rowCount ?? 0) > 0 },
       { status: 200 },
