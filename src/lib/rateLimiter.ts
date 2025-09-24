@@ -9,7 +9,8 @@ const HEAVY_POINTS    = Number(process.env.RATE_LIMIT_HEAVY_POINTS    ?? 60);   
 const HEAVY_DURATION  = Number(process.env.RATE_LIMIT_HEAVY_DURATION  ?? 60);
 const BOT_POINTS      = Number(process.env.RATE_LIMIT_BOT_POINTS      ?? 9000); // internal bot
 const BOT_DURATION    = Number(process.env.RATE_LIMIT_BOT_DURATION    ?? 60);
-
+const BOT_BACKOFF_MS  = Number(process.env.RATE_LIMIT_BOT_BACKOFF_MS  ?? 1500); // max single wait
+const SERVICE_API_KEY = process.env.SERVICE_API_KEY || ""
 /* ─────────── Buckets ─────────── */
 export const globalLimiter = new RateLimiterMemory({
   points: GLOBAL_POINTS,
@@ -54,15 +55,32 @@ function isHeavyPath(req: NextRequest) {
 }
 
 function isPlatformBot(req: NextRequest) {
+    // Accept either x-platform-key or x-api-key (same SERVICE_API_KEY),
+  // plus a small identifying hint to avoid accidental matches.
   const platform = req.headers.get("x-platform-key");
   const ua = req.headers.get("user-agent") || "";
   const botHdr = req.headers.get("x-bot-service");
-  return (
-    !!platform &&
-    platform === process.env.SERVICE_API_KEY &&
-    (botHdr === "1" || /bot_service/i.test(ua))
-  );
+  const xApiKey = req.headers.get("x-api-key");
+  const hasServiceKey =
+    (!!platform && SERVICE_API_KEY && platform === SERVICE_API_KEY) ||
+    (!!xApiKey  && SERVICE_API_KEY && xApiKey  === SERVICE_API_KEY);
+  return hasServiceKey && (botHdr === "1" || /bot_service/i.test(ua));
 }
+
+function routeGroup(req: NextRequest): string {
+  // Key bot limits by broad API area to avoid one shared bucket
+  // e.g. /api/order/messages/receipt  → "order"
+  //      /api/clients?page=...        → "clients"
+  const p = req.nextUrl.pathname.replace(/^\/+/, "");
+  const parts = p.split("/");
+  return parts.length >= 2 && parts[0] === "api" ? parts[1] || "root" : "root";
+}
+
+function orgFromReq(req: NextRequest): string {
+  return req.nextUrl.searchParams.get("organizationId") || "unknown";
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Consume one point from the appropriate limiter.
@@ -74,15 +92,28 @@ export async function enforceRateLimit(req: NextRequest, ipOverride?: string) {
   const bot = isPlatformBot(req);
 
   try {
-    if (bot) {
-      await botLimiter.consume(key);
-      return;
+      if (bot) {
+      // Bot: split by org + route-group; if bucket is empty, wait briefly and retry
+      const key = `bot:${orgFromReq(req)}:${routeGroup(req)}`;
+      try {
+        await botLimiter.consume(key);
+        return;
+      } catch (err: any) {
+        const wait = Math.min(
+          BOT_BACKOFF_MS,
+          Math.max(0, Number(err?.msBeforeNext ?? 0)),
+        );
+        if (wait > 0) {
+          await sleep(wait);
+          await botLimiter.consume(key); // second attempt after short backoff
+          return;
+        }
+        throw err;
+      }
     }
-    if (heavy) {
-      await heavyLimiter.consume(key);
-    } else {
-      await globalLimiter.consume(key);
-    }
+    // Non-bot: keep existing keys (org/api/ip) and buckets
+    const key = getRateLimitKey(req, ipOverride);
+    await (heavy ? heavyLimiter : globalLimiter).consume(key);
   } catch (err: any) {
     const ms = Math.max(1000, Number(err?.msBeforeNext ?? 0));
     const retry = Math.ceil(ms / 1000);
