@@ -339,6 +339,7 @@ interface DB {
     title: string;
     status: string;
     priority: string;
+    lastMessageAt: Date;
     createdAt: Date;
     updatedAt: Date;
   };

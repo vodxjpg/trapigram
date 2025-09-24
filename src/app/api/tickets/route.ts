@@ -160,8 +160,8 @@ export async function POST(req: NextRequest) {
       INSERT INTO tickets
         (id, "organizationId", "clientId",
          title, priority, status, "ticketKey",
-         "createdAt", "updatedAt")
-      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
+         "lastMessageAt", "createdAt", "updatedAt")
+      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW(),NOW())
       RETURNING *;
     `;
 
