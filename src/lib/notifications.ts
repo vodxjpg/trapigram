@@ -151,8 +151,15 @@ export async function sendNotification(params: SendNotificationParams) {
   const isAdminOnlyOrderNote =
     effectiveTrigger === "admin_only" && type === "order_message";
 
-  const shouldAdminFanout = !suppressAdminFanout && (hasAdminTpl || isAdminOnlyOrderNote);
-  const shouldUserFanout = !suppressUserFanout && hasUserTpl;
+    // ✅ NEW: user-only order notes also bypass template checks so customers get the raw message
+  const isUserOnlyOrderNote =
+    type === "order_message" &&
+    (effectiveTrigger === "user_only" || effectiveTrigger === "user_only_email");
+
+  const shouldAdminFanout =
+    !suppressAdminFanout && (hasAdminTpl || isAdminOnlyOrderNote);
+  const shouldUserFanout =
+    !suppressUserFanout && (hasUserTpl || isUserOnlyOrderNote);
 
   console.log("[notify] templates & fanout", {
     hasUserTpl,
