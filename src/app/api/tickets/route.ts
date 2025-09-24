@@ -64,33 +64,21 @@ export async function GET(req: NextRequest) {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Lazy sweep: close tickets whose last activity is > 24h ago
-    // last activity = max(last message, ticket.updatedAt, ticket.createdAt)
-    // consider tickets with NO messages too (LEFT JOIN + COALESCE)
+    // Lazy sweep: close tickets whose lastMessageAt is > 24h ago
+    // (uses ONLY tickets.lastMessageAt; leaves NULLs untouched)
     // ─────────────────────────────────────────────────────────────
-    /* await pool.query(
+    await pool.query(
       `
-      WITH last_msg AS (
-        SELECT "ticketId", MAX("createdAt") AS last_at
-        FROM "ticketMessages"
-        GROUP BY "ticketId"
-      )
-      , to_close AS (
-        SELECT t.id
-        FROM tickets t
-        LEFT JOIN last_msg lm ON lm."ticketId" = t.id
-        WHERE t."organizationId" = $1
-          AND t.status IN ('open','in-progress')
-          AND COALESCE(lm.last_at, t."updatedAt", t."createdAt") < NOW() - INTERVAL '24 hours'
-      )
-      UPDATE tickets t
+      UPDATE tickets
          SET status = 'closed',
              "updatedAt" = NOW()
-        FROM to_close c
-       WHERE t.id = c.id;
+       WHERE "organizationId" = $1
+         AND status <> 'closed'
+         AND "lastMessageAt" IS NOT NULL
+         AND "lastMessageAt" < NOW() - INTERVAL '24 hours'
       `,
       [organizationId],
-    ); */
+    );
 
     // ---------- build WHERE ----------
     const where: string[] = [`"organizationId" = $1`];
@@ -116,7 +104,7 @@ export async function GET(req: NextRequest) {
     const listSQL = `
       SELECT id,
              "organizationId", "clientId",
-             title, priority, status, "ticketKey",
+             title, priority, status, "ticketKey", "lastMessageAt",
              "createdAt", "updatedAt"
         FROM tickets
        WHERE ${where.join(" AND ")}
@@ -134,6 +122,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
 
 
 /* ────────────────────────────────────────────────────────────────── *

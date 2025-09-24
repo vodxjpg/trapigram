@@ -76,6 +76,24 @@ export async function POST(
     /* ------------------------------------------------------------------ */
     /* 1️⃣  Persist the message                                            */
     /* ------------------------------------------------------------------ */
+
+    // ⬇️ place this right after the INSERT that returns `saved`
+    await pool.query(
+      `
+      UPDATE tickets
+        SET "lastMessageAt" = NOW(),
+            "updatedAt"     = NOW(),
+            -- if the reply is internal, auto-move to in-progress (unless already closed)
+            status = CASE
+                        WHEN $3::boolean AND status <> 'closed' THEN 'in-progress'
+                        ELSE status
+                      END
+      WHERE id = $1
+        AND "organizationId" = $2
+      `,
+      [ticketId, organizationId, parsed.isInternal]
+    );
+
     const msgId = uuidv4();
     const {
       rows: [saved],

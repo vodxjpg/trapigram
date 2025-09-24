@@ -141,7 +141,7 @@ export function TicketsTable() {
       const res = await fetch(`/api/tickets/${ticketId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "in-progress" }),
+        body: JSON.stringify({ status: "in-progress", reopen: true }),
       });
       if (!res.ok) throw new Error();
       toast.success("Status set to in-progress");
