@@ -6,6 +6,7 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import crypto from "crypto";
+import { sendNotification } from "@/lib/notifications";
 
 /* ────────────────────────── encryption helpers ────────────────────────── */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
@@ -86,13 +87,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { noteId: st
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
 
-  // fetch current row
+    // fetch current row (need visibility/order/author to decide notifications)
   const { rows: curRows } = await pool.query(
-    `SELECT note FROM "orderNotes" WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,
-    [params.noteId, organizationId],
+    `SELECT note,"visibleToCustomer","orderId","authorRole"
+       FROM "orderNotes"
+      WHERE id = $1 AND "organizationId" = $2
+      LIMIT 1`,
+    [params.noteId, organizationId]
   );
   if (!curRows.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
+  const cur = curRows[0];
   const sets: string[] = [];
   const vals: any[] = [];
   if (typeof body.note === "string") {
@@ -114,6 +118,49 @@ export async function PATCH(req: NextRequest, { params }: { params: { noteId: st
   `;
   const { rows } = await pool.query(sql, vals);
   const r = rows[0];
+
+  // ────────────────────────── notify customer if a staff note became visible ──────────────────────────
+  try {
+    const wasVisible = cur.visibleToCustomer === true;
+    const nowVisible = r.visibleToCustomer === true;
+    if (!wasVisible && nowVisible && (r.authorRole === "staff" || cur.authorRole === "staff")) {
+      // Use the updated body if provided, otherwise decrypt the previous one
+      const noteContent =
+        typeof body.note === "string"
+          ? body.note
+          : (() => { try { return decryptSecretNode(r.note); } catch { return ""; } })();
+
+      // Resolve order meta and target client
+      const { rows: orderRows } = await pool.query(
+        `SELECT "orderKey", country, "clientId"
+           FROM orders
+          WHERE id = $1 AND "organizationId" = $2
+          LIMIT 1`,
+        [r.orderId, organizationId],
+      );
+      const order = orderRows[0] || {};
+      const key = order.orderKey ?? String(r.orderId).slice(-6);
+      const esc = (s: string) =>
+        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const message =
+        `You have a new note on your order <b>#${esc(String(key))}</b>:\n\n${esc(noteContent)}`;
+
+      await sendNotification({
+        organizationId,
+        type: "order_message",
+        message,
+        variables: { order_number: String(key), note_content: noteContent },
+        country: order.country ?? null,
+        trigger: "user_only_email",                 // suppress admin fan-out
+        channels: ["telegram", "in_app", "email"],
+        clientId: order.clientId ?? null,
+        userId: null,
+      });
+      console.log("[order-note] visibility->user notify", { orderKey: key, org: organizationId });
+    }
+  } catch (e) {
+    console.error("[order note notification] visibility toggle failed:", e);
+  }
 
   return NextResponse.json(
     {

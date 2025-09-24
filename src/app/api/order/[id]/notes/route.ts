@@ -212,6 +212,53 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     console.error("[order note notification] failed:", e);
   }
 
+  // ────────────────────────── fire *customer* notification on staff note made visible ──────────────────────────
+  try {
+    if (payload.authorRole === "staff" && payload.visibleToCustomer === true) {
+      // Resolve order meta needed to route to the right customer
+      const { rows: orderRows2 } = await pool.query(
+        `SELECT "orderKey", country, "clientId"
+           FROM orders
+          WHERE id = $1 AND "organizationId" = $2
+          LIMIT 1`,
+        [orderId, organizationId],
+      );
+      const order2 = orderRows2[0] || {};
+      const key =
+        order2.orderKey ??
+        // fallback: last 6 chars of id (cosmetic only)
+        String(orderId).slice(-6);
+
+      const esc = (s: string) =>
+        s.replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;");
+
+      // User-facing text
+      const message =
+        `You have a new note on your order <b>#${esc(String(key))}</b>:\n\n${esc(payload.note)}`;
+
+      await sendNotification({
+        organizationId,
+        type: "order_message",
+        message,
+        subject: undefined,
+        variables: {
+          order_number: String(key),
+          note_content: payload.note,
+        },
+        country: order2.country ?? null,
+        trigger: "user_only_email",               // suppress admin fan-out
+        channels: ["telegram", "in_app", "email"],
+        userId: null,
+        clientId: order2.clientId ?? null,
+      });
+      console.log("[order-note] fired user notification", { orderKey: key, org: organizationId });
+    }
+  } catch (e) {
+    console.error("[order note notification] user notify failed:", e);
+  }
+
   return NextResponse.json(
     {
       id: r.id,
