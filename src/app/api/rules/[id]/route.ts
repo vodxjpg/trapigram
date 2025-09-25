@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-
+export const runtime = "nodejs";
 const channelsEnum = z.enum(["email", "telegram"]);
 const eventEnum = z.enum([
   "order_placed", "order_pending_payment", "order_paid", "order_completed",
@@ -90,7 +90,36 @@ function couponCoversCountries(couponCountries: string[], ruleCountries: string[
   return ruleCountries.every((c) => couponCountries.includes(c));
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) { /* unchanged */ }
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+  const { id } = params;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, event, enabled, priority, countries, action, channels, payload, "updatedAt"
+         FROM "automationRules"
+        WHERE id = $1 AND "organizationId" = $2
+        LIMIT 1`,
+      [id, organizationId],
+    );
+    if (!rows.length) {
+      return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+    }
+    const r = rows[0];
+    const rule = {
+      ...r,
+      countries: Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]"),
+      channels: Array.isArray(r.channels) ? r.channels : JSON.parse(r.channels || "[]"),
+      payload: typeof r.payload === "string" ? JSON.parse(r.payload || "{}") : (r.payload ?? {}),
+    };
+    return NextResponse.json(rule);
+  } catch (e) {
+    console.error("[GET /api/rules/:id] error", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const ctx = await getContext(req);
