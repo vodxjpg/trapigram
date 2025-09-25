@@ -259,7 +259,6 @@ export function TicketsTable() {
               filtered.map((t) => (
                 <TableRow key={t.id}>
                   <TableCell>{t.ticketKey}</TableCell>
-                  <TableCell>{t.title}</TableCell>
                   <TableCell>
                   <div className="flex flex-col">
                     <span className="font-medium">{t.title}</span>
