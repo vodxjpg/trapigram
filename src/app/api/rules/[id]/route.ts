@@ -5,15 +5,15 @@ import { getContext } from "@/lib/context";
 
 const channelsEnum = z.enum(["email", "telegram"]);
 const eventEnum = z.enum([
-  "order_placed","order_pending_payment","order_paid","order_completed",
-  "order_cancelled","order_refunded","order_partially_paid","order_shipped",
-  "order_message","ticket_created","ticket_replied","manual","customer_inactive",
+  "order_placed", "order_pending_payment", "order_paid", "order_completed",
+  "order_cancelled", "order_refunded", "order_partially_paid", "order_shipped",
+  "order_message", "ticket_created", "ticket_replied", "manual", "customer_inactive",
 ]);
 
-const scopeEnum = z.enum(["per_order","per_customer"]);
+const scopeEnum = z.enum(["per_order", "per_customer"]);
 
 const conditionsSchema = z.object({
-  op: z.enum(["AND","OR"]),
+  op: z.enum(["AND", "OR"]),
   items: z.array(
     z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
@@ -23,11 +23,12 @@ const conditionsSchema = z.object({
   ).min(1),
 }).partial();
 
-const oneDecimal = z
-  .number()
+const positiveOneDecimal = z
+  .coerce.number()
   .refine((n) => Number.isFinite(n) && Math.round(n * 10) === n * 10, {
     message: "Must have at most one decimal place",
-  });
+  })
+  .refine((n) => n > 0, { message: "Points must be > 0" });
 
 const multiPayload = z.object({
   templateSubject: z.string().optional(),
@@ -46,14 +47,16 @@ const multiPayload = z.object({
       z.object({
         type: z.literal("multiply_points"),
         payload: z.object({
-          factor: z.coerce.number().gt(0),
+          factor: z.coerce.number().refine((n) => n > 0, {
+            message: "Multiplier must be > 0",
+          }),
           description: z.string().optional(),
         }),
       }),
       z.object({
         type: z.literal("award_points"),
         payload: z.object({
-          points: oneDecimal.gt(0),
+          points: positiveOneDecimal,
           description: z.string().optional(),
         }),
       }),
@@ -69,7 +72,7 @@ const updateSchema = z.object({
   priority: z.coerce.number().int().min(0).optional(),
   event: eventEnum.optional(),
   countries: z.array(z.string()).optional(),
-  action: z.enum(["send_coupon","product_recommendation","multi"]).optional(),
+  action: z.enum(["send_coupon", "product_recommendation", "multi"]).optional(),
   channels: z.array(channelsEnum).optional(),
   payload: z
     .union([multiPayload, z.record(z.any())])
@@ -131,7 +134,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       );
     }
 
-        // Enforce action/event compatibility
+    // Enforce action/event compatibility
     if (finalAction === "multi" && Array.isArray(finalPayload?.actions)) {
       if (
         finalEvent === "customer_inactive" &&

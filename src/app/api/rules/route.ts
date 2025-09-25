@@ -43,11 +43,13 @@ const productRecoPayload = z.object({
 });
 
 /** helpers */
-const oneDecimal = z
-  .number()
+// Coerce to number, ensure <= 1 decimal, and > 0 without using .gt (for broader Zod compat)
+const positiveOneDecimal = z
+  .coerce.number()
   .refine((n) => Number.isFinite(n) && Math.round(n * 10) === n * 10, {
     message: "Must have at most one decimal place",
-  });
+  })
+  .refine((n) => n > 0, { message: "Points must be > 0" });
 
 /** new multi-action payload (supports 4 action types) */
 const multiPayload = z.object({
@@ -64,20 +66,23 @@ const multiPayload = z.object({
         type: z.literal("product_recommendation"),
         payload: z.object({ productIds: z.array(z.string()).min(1) }).optional(),
       }),
-      z.object({
-        type: z.literal("multiply_points"),
-        payload: z.object({
-          factor: z.coerce.number().gt(0, "Multiplier must be > 0"),
-          description: z.string().optional(),
-        }),
-      }),
-      z.object({
-        type: z.literal("award_points"),
-        payload: z.object({
-          points: oneDecimal.gt(0, "Points must be > 0"),
-          description: z.string().optional(),
-        }),
-      }),
+         z.object({
+     type: z.literal("multiply_points"),
+     payload: z.object({
+       // avoid .gt for older Zod; use refine instead
+       factor: z.coerce.number().refine((n) => n > 0, {
+         message: "Multiplier must be > 0",
+       }),
+       description: z.string().optional(),
+     }),
+   }),
+         z.object({
+     type: z.literal("award_points"),
+     payload: z.object({
+       points: positiveOneDecimal,
+       description: z.string().optional(),
+     }),
+   }),
     ])
   ).min(1, "Add at least one action"),
   scope: scopeEnum.optional(), // NEW
