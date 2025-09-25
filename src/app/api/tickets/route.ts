@@ -81,20 +81,20 @@ export async function GET(req: NextRequest) {
     );
 
     // ---------- build WHERE ----------
-    const where: string[] = [`"organizationId" = $1`];
+   const where: string[] = [`t."organizationId" = $1`];
     const values: any[] = [organizationId];
 
     if (search) {
       values.push(`%${search}%`);
-      where.push(`title ILIKE $${values.length}`);
+      where.push(`t.title ILIKE $${values.length}`);
     }
     if (clientId) {
       values.push(clientId);
-      where.push(`"clientId" = $${values.length}`);
+     where.push(`t."clientId" = $${values.length}`);
     }
 
     // ---------- count ----------
-    const countSQL = `SELECT COUNT(*) FROM tickets WHERE ${where.join(" AND ")}`;
+     const countSQL = `SELECT COUNT(*) FROM tickets t WHERE ${where.join(" AND ")}`;
     const countRows = await pool.query(countSQL, values);
     const totalRows = Number(countRows.rows[0].count) || 0;
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -113,7 +113,6 @@ export async function GET(req: NextRequest) {
         t."lastMessageAt",
         t."createdAt",
         t."updatedAt",
-        /* 👇 add customer identity for table subtitle */
         c."firstName" AS "firstName",
         c."lastName"  AS "lastName",
         c.username    AS "username"
