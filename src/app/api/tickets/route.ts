@@ -102,14 +102,26 @@ export async function GET(req: NextRequest) {
     // ---------- list ----------
     const listValues = [...values, pageSize, (page - 1) * pageSize];
     const listSQL = `
-      SELECT id,
-             "organizationId", "clientId",
-             title, priority, status, "ticketKey", "lastMessageAt",
-             "createdAt", "updatedAt"
-        FROM tickets
-       WHERE ${where.join(" AND ")}
-       ORDER BY "createdAt" DESC
-       LIMIT $${listValues.length - 1} OFFSET $${listValues.length};
+      SELECT
+        t.id,
+        t."organizationId",
+        t."clientId",
+        t.title,
+        t.priority,
+        t.status,
+        t."ticketKey",
+        t."lastMessageAt",
+        t."createdAt",
+        t."updatedAt",
+        /* 👇 add customer identity for table subtitle */
+        c."firstName" AS "firstName",
+        c."lastName"  AS "lastName",
+        c.username    AS "username"
+      FROM tickets t
+      LEFT JOIN clients c ON c.id = t."clientId"
+      WHERE ${where.join(" AND ")}
+      ORDER BY t."createdAt" DESC
+      LIMIT $${listValues.length - 1} OFFSET $${listValues.length};
     `;
     const tickets = (await pool.query(listSQL, listValues)).rows;
 
