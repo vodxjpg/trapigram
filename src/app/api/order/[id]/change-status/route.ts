@@ -17,6 +17,12 @@ export const runtime = "nodejs";
 export const preferredRegion = ["iad1"];
 
 // Small helper: fetch with timeout and JSON parsing
+
+function round1(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 10) / 10; // nearest 0.1
+}
+
 async function fetchJSON(
   url: string,
   init?: RequestInit & { timeoutMs?: number }
@@ -1024,30 +1030,7 @@ export async function PATCH(
     // release the transactional connection ASAP; do side-effects with pool
     client.release(); released = true;
 
-    // ─────────────────────────────────────────────────────────────
-    // Rules engine hook (BASE order only): run after commit
-    // ─────────────────────────────────────────────────────────────
-    try {
-      const eventMap: Record<string,
-        | "order_placed" | "order_partially_paid" | "order_pending_payment"
-        | "order_paid" | "order_completed" | "order_cancelled" | "order_refunded"
-      > = {
-        open: "order_placed", underpaid: "order_partially_paid", pending_payment: "order_pending_payment",
-        paid: "order_paid", completed: "order_completed", cancelled: "order_cancelled", refunded: "order_refunded"
-      };
-      const orderCurrency = currencyFromCountry(ord.country);
-      await processAutomationRules({
-        organizationId,
-        event: eventMap[newStatus],
-        country: ord.country ?? null,
-        orderCurrency,
-        variables: { order_id: id, order_number: ord.orderKey, order_status: newStatus, order_currency: orderCurrency },
-        clientId: ord.clientId ?? null,
-        userId: null,
-        url: `/orders/${id}`,
-        orderId: id, // ← needed for "per order" rule scope de-dupe
-      });
-    } catch (e) { console.warn("[rules] base order hook failed", e); }
+
 
     // 🔔 Notify the BASE order (merchant) too (only for base orders)
     if (!isSupplierOrder) {
@@ -1172,9 +1155,91 @@ export async function PATCH(
         const { rowCount } = await pool.query(sql, [newStatus, baseKey, id]);
         console.log(`[cascade] ${newStatus} → ${rowCount} sibling orders for baseKey=${baseKey}`);
 
-        // --- Notify supplier siblings that changed due to the cascade ---
-        (async () => {
-          // map status→notification type (repeat here or hoist globally)
+        // We'll collect siblings for notifications after revenue/fees and rules.
+        let sibsForNotif: Array<any> = [];
+
+
+        // Generate revenue/fees for siblings when they become PAID-LIKE as part of the cascade
+        if (newStatus === "paid" || newStatus === "pending_payment" || newStatus === "completed") {
+
+          const { rows: sibs } = await pool.query(
+            `SELECT id, "organizationId"
+         FROM orders
+        WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
+          AND id <> $2
+         AND status IN ('paid','pending_payment','completed')`,
+
+            [baseKey, id],
+          );
+          // 1) Revenue for each sibling in paid-like state
+          await Promise.allSettled(sibs.map((s) => getRevenue(s.id, s.organizationId)));
+
+          // 2) Platform fee capture for each sibling in paid-like state
+          try {
+            const sibFeesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
+            const sibFeeHeaders: Record<string, string> = { "Content-Type": "application/json" };
+            if (process.env.INTERNAL_API_SECRET) {
+              sibFeeHeaders["x-internal-secret"] = process.env.INTERNAL_API_SECRET;
+            }
+            await Promise.allSettled(
+              sibs.map(async (s) => {
+                const r = await fetch(sibFeesUrl, {
+                  method: "POST",
+                  headers: sibFeeHeaders,
+                  body: JSON.stringify({ orderId: s.id }),
+                });
+                if (!r.ok) {
+                  const t = await r.text().catch(() => "");
+                  console.error(
+                    `[fees][cascade] sibling ${s.id} ← ${r.status} ${r.statusText}; body=${t || "<empty>"}`
+                  );
+                } else {
+                  console.log(`[fees][cascade] ok – captured fee for sibling order ${s.id}`);
+                }
+              })
+            );
+          } catch (e) {
+            console.warn("[fees][cascade] failed to capture sibling fees:", e);
+          }
+          // AFTER sibling revenue/fees → run rules for each sibling now
+          try {
+            const eventMap: Record<string,
+              | "order_placed" | "order_partially_paid" | "order_pending_payment"
+              | "order_paid" | "order_completed" | "order_cancelled" | "order_refunded"
+            > = {
+              open: "order_placed", underpaid: "order_partially_paid", pending_payment: "order_pending_payment",
+              paid: "order_paid", completed: "order_completed", cancelled: "order_cancelled", refunded: "order_refunded"
+            };
+            const { rows: sibsToRule } = await pool.query(
+              `SELECT id, "organizationId", "clientId", country, "orderKey",
+                    COALESCE("notifiedPaidOrCompleted", FALSE) AS "notified", "cartId", "dateCreated"
+               FROM orders
+              WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
+                AND id <> $2
+                AND status = $3
+                AND "orderKey" LIKE 'S-%'`,
+              [baseKey, id, newStatus],
+            );
+            sibsForNotif = sibsToRule; // reuse for notifications below
+            for (const sb of sibsToRule) {
+              const sbCurrency = currencyFromCountry(sb.country);
+              await processAutomationRules({
+                organizationId: sb.organizationId,
+                event: eventMap[newStatus],
+                country: sb.country,
+                orderCurrency: sbCurrency,
+                variables: { order_id: sb.id, order_number: sb.orderKey, order_status: newStatus, order_currency: sbCurrency },
+                clientId: sb.clientId ?? null,
+                userId: null,
+                url: `/orders/${sb.id}`,
+                orderId: sb.id,
+              });
+            }
+          } catch (e) {
+            console.warn("[rules] supplier siblings (post-revenue) failed", e);
+          }
+
+          // Notify supplier siblings (after rules)
           const notifTypeMap: Record<string, NotificationType> = {
             open: "order_placed",
             underpaid: "order_partially_paid",
@@ -1184,59 +1249,14 @@ export async function PATCH(
             cancelled: "order_cancelled",
             refunded: "order_refunded",
           };
-
-          // Only supplier siblings (S-xxxx) that now sit at the cascaded status
-          const { rows: sibsForNotif } = await pool.query(
-            `SELECT id, "organizationId", "clientId", "cartId", country, "orderKey",
-            "shippingMethod","shippingService","trackingNumber","dateCreated",
-            COALESCE("notifiedPaidOrCompleted", FALSE) AS "notified"
-       FROM orders
-      WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
-        AND id <> $2
-        AND status = $3
-        AND "orderKey" LIKE 'S-%'`,
-            [baseKey, id, newStatus],
-          );
-
           for (const sb of sibsForNotif) {
-            // Respect "only once" for paid/completed
             const should =
-              newStatus === "paid" ||
-                newStatus === "pending_payment" ||
-                newStatus === "completed"
+              newStatus === "paid" || newStatus === "pending_payment" || newStatus === "completed"
                 ? !sb.notified
                 : newStatus === "cancelled" || newStatus === "refunded";
-
             if (!should) continue;
-
-            // ─────────────────────────────────────────────────────
-            // Rules engine hook (SUPPLIER sibling): after cascade
-            // ─────────────────────────────────────────────────────
-            try {
-              const eventMap: Record<string,
-                | "order_placed" | "order_partially_paid" | "order_pending_payment"
-                | "order_paid" | "order_completed" | "order_cancelled" | "order_refunded"
-              > = {
-                open: "order_placed", underpaid: "order_partially_paid", pending_payment: "order_pending_payment",
-                paid: "order_paid", completed: "order_completed", cancelled: "order_cancelled", refunded: "order_refunded"
-              };
-              const sbCurrency = currencyFromCountry(sb.country);
-              await processAutomationRules({
-                              organizationId: sb.organizationId,
-                event: eventMap[newStatus],
-                country: sb.country,
-                orderCurrency: sbCurrency,
-                variables: { order_id: sb.id, order_number: sb.orderKey, order_status: newStatus, order_currency: sbCurrency },
-                clientId: sb.clientId ?? null,
-                userId: null,
-                url: `/orders/${sb.id}`,
-                orderId: sb.id, // ← needed for "per order" rule scope de-dupe (supplier sibling)
-              });
-            } catch (e) { console.warn("[rules] supplier sibling hook failed", sb.id, e); }
-
             const productList = await buildProductListForCart(sb.cartId);
             const orderDate = new Date(sb.dateCreated).toLocaleDateString("en-GB");
-
             try {
               await enqueueNotificationFanout({
                 organizationId: sb.organizationId,
@@ -1293,52 +1313,6 @@ export async function PATCH(
               continue;
             }
           }
-        })();
-
-
-        // Generate revenue/fees for siblings when they become PAID-LIKE as part of the cascade
-        if (newStatus === "paid" || newStatus === "pending_payment" || newStatus === "completed") {
-
-          const { rows: sibs } = await pool.query(
-            `SELECT id, "organizationId"
-         FROM orders
-        WHERE ( "orderKey" = $1 OR "orderKey" = ('S-' || $1) )
-          AND id <> $2
-         AND status IN ('paid','pending_payment','completed')`,
-
-            [baseKey, id],
-          );
-          // 1) Revenue for each sibling in paid-like state
-          await Promise.allSettled(sibs.map((s) => getRevenue(s.id, s.organizationId)));
-
-          // 2) Platform fee capture for each sibling in paid-like state
-          try {
-            const sibFeesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
-            const sibFeeHeaders: Record<string, string> = { "Content-Type": "application/json" };
-            if (process.env.INTERNAL_API_SECRET) {
-              sibFeeHeaders["x-internal-secret"] = process.env.INTERNAL_API_SECRET;
-            }
-            await Promise.allSettled(
-              sibs.map(async (s) => {
-                const r = await fetch(sibFeesUrl, {
-                  method: "POST",
-                  headers: sibFeeHeaders,
-                  body: JSON.stringify({ orderId: s.id }),
-                });
-                if (!r.ok) {
-                  const t = await r.text().catch(() => "");
-                  console.error(
-                    `[fees][cascade] sibling ${s.id} ← ${r.status} ${r.statusText}; body=${t || "<empty>"}`
-                  );
-                } else {
-                  console.log(`[fees][cascade] ok – captured fee for sibling order ${s.id}`);
-                }
-              })
-            );
-          } catch (e) {
-            console.warn("[fees][cascade] failed to capture sibling fees:", e);
-          }
-
 
         }
 
@@ -1629,6 +1603,37 @@ export async function PATCH(
     }
 
 
+    /* ─────────────────────────────────────────────────────────────
+ * Run BASE order rules AFTER revenue/fees (so multipliers are present)
+ * ───────────────────────────────────────────────────────────── */
+    try {
+      const eventMap: Record<string,
+        | "order_placed" | "order_partially_paid" | "order_pending_payment"
+        | "order_paid" | "order_completed" | "order_cancelled" | "order_refunded"
+      > = {
+        open: "order_placed", underpaid: "order_partially_paid", pending_payment: "order_pending_payment",
+        paid: "order_paid", completed: "order_completed", cancelled: "order_cancelled", refunded: "order_refunded"
+      };
+      const orderCurrency = currencyFromCountry(ord.country);
+      await processAutomationRules({
+        organizationId,
+        event: eventMap[newStatus],
+        country: ord.country ?? null,
+        orderCurrency,
+        variables: { order_id: id, order_number: ord.orderKey, order_status: newStatus, order_currency: orderCurrency },
+        clientId: ord.clientId ?? null,
+        userId: null,
+        url: `/orders/${id}`,
+        orderId: id,
+      });
+    } catch (e) {
+      console.warn("[rules] base order (post-revenue) failed", e);
+    }
+
+    // NOTE: from here on, orderMeta may now include "points_multiplier" entries
+    // appended by rules. We'll read them below for spending-milestone awards.
+
+
 
     /* ─────────────────────────────────────────────
      *  Notification logic
@@ -1866,7 +1871,7 @@ export async function PATCH(
           );
         }
         /*  3) spending milestones for *buyer*  (step-based)*/
-          if (stepEur > 0 && ptsPerStep > 0) {
+        if (stepEur > 0 && ptsPerStep > 0) {
           /* --------------------------------------------------------------
            * Lifetime spend in **EUR** – we rely on orderRevenue which was
            * (re)-generated a few lines above for this order.
@@ -1882,7 +1887,7 @@ export async function PATCH(
             [ord.clientId, organizationId],
           );
 
-          const totalEur = Number(spent.sum);   // already a decimal string → number
+          const totalEur = Number(spent.sum);   // decimal → numbe
           /* how many spending-bonuses already written? */
           const { rows: [prev] } = await pool.query(
             `SELECT COALESCE(SUM(points),0) AS pts
@@ -1893,17 +1898,65 @@ export async function PATCH(
             [organizationId, ord.clientId],
           );
 
-          const shouldHave = Math.floor(totalEur / stepEur) * ptsPerStep;
-          const delta = shouldHave - Number(prev.pts);
+          // Pull THIS order's EUR and previous lifetime EUR (before this order)
+          const { rows: [revRow] } = await pool.query(
+            `SELECT "EURtotal" FROM "orderRevenue" WHERE "orderId" = $1 LIMIT 1`,
+            [id],
+          );
+          const thisOrderEur = Number(revRow?.EURtotal ?? 0);
+          const prevTotalEur = Math.max(0, totalEur - thisOrderEur);
+
+          // Steps before and after this order; how many steps did THIS order add?
+          const stepsBefore = Math.floor(prevTotalEur / stepEur);
+          const stepsAfter = Math.floor(totalEur / stepEur);
+          const stepsFromThisOrder = Math.max(0, stepsAfter - stepsBefore);
+
+          // Baseline points due overall (no multiplier), and catch-up delta
+          const shouldHave = stepsAfter * ptsPerStep;
+          const baselineDelta = shouldHave - Number(prev.pts);
+          const baselineDeltaClamped = baselineDelta > 0 ? baselineDelta : 0;
+
+          // Get per-order multiplier from orderMeta (max across entries). Default 1.0
+          let maxMultiplier = 1.0;
+          try {
+            const { rows: [metaRow] } = await pool.query(
+              `SELECT "orderMeta" FROM orders WHERE id = $1`,
+              [id],
+            );
+            const rawMeta = metaRow?.orderMeta;
+            const arr: any[] = Array.isArray(rawMeta) ? rawMeta
+              : Array.isArray(JSON.parse(rawMeta ?? "[]")) ? JSON.parse(rawMeta ?? "[]")
+                : [];
+            // Also support object-style { automation: { events: [...] } }
+            let cand: any[] = arr;
+            if (!Array.isArray(arr) && rawMeta && typeof rawMeta === "object" && rawMeta.automation?.events) {
+              cand = Array.isArray(rawMeta.automation.events) ? rawMeta.automation.events : [];
+            }
+            for (const e of cand) {
+              if (String(e?.event ?? "") === "points_multiplier") {
+                const f = Number(e?.factor ?? 0);
+                if (Number.isFinite(f) && f > maxMultiplier) maxMultiplier = f;
+              }
+            }
+          } catch {
+            /* ignore parse issues; treat as multiplier 1.0 */
+          }
+
+          // Extra points that are *only* for the steps caused by this order
+          const extraFromMultiplier = round1(
+            (maxMultiplier - 1) * stepsFromThisOrder * ptsPerStep
+          );
+
+          const delta = round1(baselineDeltaClamped + Math.max(0, extraFromMultiplier));
+
 
           console.log(
-            `[affiliate] spending check – client %s: total %s EUR, step %d, ` +
-            `prev %d pts, delta %d`,
+            `[affiliate] spending check – client %s: total %s EUR, step %d, prev %d pts, `
+            + `stepsFromThisOrder %d, maxMult %.1f, delta %.1f`,
             ord.clientId,
             totalEur.toFixed(2),
             stepEur,
-            Number(prev.pts),
-            delta,
+             Number(prev.pts), stepsFromThisOrder, maxMultiplier, delta,
           );
 
           if (delta > 0) {

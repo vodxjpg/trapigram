@@ -5,16 +5,16 @@ import { getContext } from "@/lib/context";
 
 const channelsEnum = z.enum(["email", "telegram"]);
 const eventEnum = z.enum([
-  "order_placed","order_pending_payment","order_paid","order_completed",
-  "order_cancelled","order_refunded","order_partially_paid","order_shipped",
-  "order_message","ticket_created","ticket_replied","manual","customer_inactive",
+  "order_placed", "order_pending_payment", "order_paid", "order_completed",
+  "order_cancelled", "order_refunded", "order_partially_paid", "order_shipped",
+  "order_message", "ticket_created", "ticket_replied", "manual", "customer_inactive",
 ]);
 
-const scopeEnum = z.enum(["per_order","per_customer"]);
+const scopeEnum = z.enum(["per_order", "per_customer"]);
 
 const conditionsSchema = z
   .object({
-    op: z.enum(["AND","OR"]),
+    op: z.enum(["AND", "OR"]),
     items: z.array(
       z.discriminatedUnion("kind", [
         z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
@@ -42,20 +42,44 @@ const productRecoPayload = z.object({
   scope: scopeEnum.optional(), // NEW
 });
 
-/** new multi-action payload */
+/** helpers */
+const oneDecimal = z
+  .number()
+  .refine((n) => Number.isFinite(n) && Math.round(n * 10) === n * 10, {
+    message: "Must have at most one decimal place",
+  });
+
+/** new multi-action payload (supports 4 action types) */
 const multiPayload = z.object({
   templateSubject: z.string().optional(),
   templateMessage: z.string().optional(),
   conditions: conditionsSchema.optional(),
   actions: z.array(
-    z.object({
-      type: z.enum(["send_coupon","product_recommendation"]),
-      payload: z.object({
-        couponId: z.string().optional(),
-        productIds: z.array(z.string()).optional(),
-      }).optional(),
-    })
-  ).min(1),
+    z.discriminatedUnion("type", [
+      z.object({
+        type: z.literal("send_coupon"),
+        payload: z.object({ couponId: z.string().min(1) }).optional(),
+      }),
+      z.object({
+        type: z.literal("product_recommendation"),
+        payload: z.object({ productIds: z.array(z.string()).min(1) }).optional(),
+      }),
+      z.object({
+        type: z.literal("multiply_points"),
+        payload: z.object({
+          factor: z.coerce.number().gt(0, "Multiplier must be > 0"),
+          description: z.string().optional(),
+        }),
+      }),
+      z.object({
+        type: z.literal("award_points"),
+        payload: z.object({
+          points: oneDecimal.gt(0, "Points must be > 0"),
+          description: z.string().optional(),
+        }),
+      }),
+    ])
+  ).min(1, "Add at least one action"),
   scope: scopeEnum.optional(), // NEW
 });
 
@@ -95,6 +119,22 @@ export async function POST(req: NextRequest) {
     // validate condition kinds allowed by event
     const items = parsed.payload?.conditions?.items ?? [];
     const ev = parsed.event as string;
+
+    // business constraints for the two new actions
+    if (parsed.action === "multi" && Array.isArray(parsed.payload?.actions)) {
+      // multiply_points only valid on order_* events
+      if (
+        ev === "customer_inactive" &&
+        parsed.payload.actions.some((a: any) => a.type === "multiply_points")
+      ) {
+        return NextResponse.json(
+          { error: "Action 'multiply_points' is only valid for order events." },
+          { status: 400 }
+        );
+      }
+      // award_points is allowed on order_* and customer_inactive (buyer only)
+      // nothing else to validate here
+    }
 
     if (/^order_/.test(ev) && items.some((i: any) => i.kind === "no_order_days_gte")) {
       return NextResponse.json(

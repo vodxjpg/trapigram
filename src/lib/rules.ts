@@ -1,7 +1,7 @@
 // src/lib/rules.ts
 import { pgPool as pool } from "@/lib/db";
 import { sendNotification, type NotificationChannel } from "@/lib/notifications";
-
+import { v4 as uuidv4 } from "uuid";
 type EventType =
   | "order_placed"
   | "order_pending_payment"
@@ -105,6 +105,71 @@ async function getDaysSinceLastPaidOrCompletedOrder(
   const now = new Date();
   const ms = now.getTime() - last.getTime();
   return Math.floor(ms / (1000 * 60 * 60 * 24));
+}
+
+/** Round to nearest 0.1 (one decimal place) */
+function round1(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 10) / 10;
+}
+
+/** Persist (append) an automation event into orders.orderMeta and update a convenience max */
+async function appendOrderAutomationEvent(opts: {
+  organizationId: string;
+  orderId: string;
+  entry: any;
+}) {
+  const { organizationId, orderId, entry } = opts;
+  const { rows } = await pool.query(
+    `SELECT "orderMeta" FROM orders WHERE id = $1 AND "organizationId" = $2`,
+    [orderId, organizationId],
+  );
+  const raw = rows[0]?.orderMeta;
+  let meta: any;
+  try {
+    meta = typeof raw === "string" ? JSON.parse(raw) : raw || {};
+  } catch {
+    meta = {};
+  }
+  const automation = meta.automation && typeof meta.automation === "object" ? meta.automation : {};
+  const events = Array.isArray(automation.events) ? automation.events : [];
+  events.push(entry);
+  automation.events = events;
+
+  // maintain a convenience "maxPointsMultiplier" for fast lookups by the later spending-award flow
+  if (entry?.event === "points_multiplier" && typeof entry.factor === "number") {
+    const prevMax = Math.max(
+      1,
+      ...events
+        .filter((e: any) => e?.event === "points_multiplier" && Number.isFinite(Number(e.factor)))
+        .map((e: any) => Number(e.factor)),
+    );
+    automation.maxPointsMultiplier = prevMax; // "be max" semantics across rules
+  }
+
+  meta.automation = automation;
+  await pool.query(
+    `UPDATE orders SET "orderMeta" = $3, "updatedAt" = NOW() WHERE id = $1 AND "organizationId" = $2`,
+    [orderId, organizationId, JSON.stringify(meta)],
+  );
+}
+
+/* Affiliate points helpers (same semantics as /api/affiliate/points) */
+async function applyBalanceDelta(
+  clientId: string,
+  organizationId: string,
+  deltaCurrent: number,
+) {
+  await pool.query(
+    `
+    INSERT INTO "affiliatePointBalances"("clientId","organizationId","pointsCurrent","pointsSpent","createdAt","updatedAt")
+    VALUES ($1,$2,$3,0,NOW(),NOW())
+    ON CONFLICT("clientId","organizationId") DO UPDATE SET
+      "pointsCurrent" = "affiliatePointBalances"."pointsCurrent" + EXCLUDED."pointsCurrent",
+      "updatedAt" = NOW()
+    `,
+    [clientId, organizationId, deltaCurrent],
+  );
 }
 
 function evalConditions(
@@ -299,6 +364,8 @@ export async function processAutomationRules(opts: {
     // shared (may exist in single-action too)
     const subject: string | undefined = payload.templateSubject || undefined;
     let message: string = payload.templateMessage || "";
+    const nowIso = new Date().toISOString();
+    const ruleLabel = raw.name || "Automation rule";
 
     // Build placeholder map depending on rule mode
     const replacements: Record<string, string> = {};
@@ -326,6 +393,61 @@ export async function processAutomationRules(opts: {
         if (!vars.product_ids) vars.product_ids = ids.join(",");
       }
 
+          // multiply_points → set per-order multiplier for spending milestone (only on order_* events)
+    for (const a of acts.filter((x) => x.type === "multiply_points")) {
+      if (!orderId) continue; // needs an order
+      // only buyer's points are affected; we merely persist meta for later spending-bonus awarder
+      const factorRaw = Number((a as any)?.payload?.factor ?? 0);
+      if (Number.isFinite(factorRaw) && factorRaw > 0) {
+        // append entry; also maintain automation.maxPointsMultiplier with "be max" semantics
+        await appendOrderAutomationEvent({
+          organizationId,
+          orderId,
+          entry: {
+            event: "points_multiplier",
+            factor: factorRaw,
+            ruleId: raw.id,
+            label: ruleLabel,
+            description: (a as any)?.payload?.description ?? null,
+            createdAt: nowIso,
+          },
+        });
+      }
+    }
+
+    // award_points → immediate buyer credit (order_* and customer_inactive)
+    for (const a of acts.filter((x) => x.type === "award_points")) {
+      if (!clientId) continue; // needs a customer to receive the points
+      const ptsRaw = Number((a as any)?.payload?.points ?? 0);
+      if (!Number.isFinite(ptsRaw) || ptsRaw <= 0) continue;
+      const points = round1(ptsRaw); // 1 decimal; “round to nearest”
+
+      const logId = uuidv4();
+      const description =
+        (a as any)?.payload?.description ??
+        `Rule bonus: ${ruleLabel}`;
+      await pool.query(
+        `
+        INSERT INTO "affiliatePointLogs"(
+          id,"organizationId","clientId",points,action,description,"sourceClientId",
+          "createdAt","updatedAt"
+        )
+        VALUES($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
+        `,
+        [
+          logId,
+          organizationId,
+          clientId,
+          points,
+          "rule_award_points",
+          description,
+          null, // always buyer-only as requested
+        ],
+      );
+      await applyBalanceDelta(clientId, organizationId, points);
+      vars.points_awarded = String(points);
+    }
+
       if (!message) {
         message = `<p>Here’s an update for you.</p>{selected_products}{coupon}`;
       }
@@ -347,6 +469,9 @@ export async function processAutomationRules(opts: {
     // apply placeholders
     message = replacePlaceholders(message, replacements);
     if (!message.trim()) message = "<p>Notification</p>";
+
+    // NOTE: For order_paid/completed, call sites should invoke after revenue is recorded,
+    // so conditions like order_total_gte_eur evaluate against a real EUR total.
 
     await sendNotification({
       organizationId,

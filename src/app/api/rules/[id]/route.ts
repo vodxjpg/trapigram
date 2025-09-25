@@ -23,18 +23,41 @@ const conditionsSchema = z.object({
   ).min(1),
 }).partial();
 
+const oneDecimal = z
+  .number()
+  .refine((n) => Number.isFinite(n) && Math.round(n * 10) === n * 10, {
+    message: "Must have at most one decimal place",
+  });
+
 const multiPayload = z.object({
   templateSubject: z.string().optional(),
   templateMessage: z.string().optional(),
   conditions: conditionsSchema.optional(),
   actions: z.array(
-    z.object({
-      type: z.enum(["send_coupon","product_recommendation"]),
-      payload: z.object({
-        couponId: z.string().optional(),
-        productIds: z.array(z.string()).optional(),
-      }).optional(),
-    })
+    z.discriminatedUnion("type", [
+      z.object({
+        type: z.literal("send_coupon"),
+        payload: z.object({ couponId: z.string().min(1) }).optional(),
+      }),
+      z.object({
+        type: z.literal("product_recommendation"),
+        payload: z.object({ productIds: z.array(z.string()).min(1) }).optional(),
+      }),
+      z.object({
+        type: z.literal("multiply_points"),
+        payload: z.object({
+          factor: z.coerce.number().gt(0),
+          description: z.string().optional(),
+        }),
+      }),
+      z.object({
+        type: z.literal("award_points"),
+        payload: z.object({
+          points: oneDecimal.gt(0),
+          description: z.string().optional(),
+        }),
+      }),
+    ])
   ).min(1),
   scope: scopeEnum.optional(), // NEW
 }).partial();
@@ -106,6 +129,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         { error: "Only 'no_order_days_gte' is allowed for 'customer_inactive'." },
         { status: 400 }
       );
+    }
+
+        // Enforce action/event compatibility
+    if (finalAction === "multi" && Array.isArray(finalPayload?.actions)) {
+      if (
+        finalEvent === "customer_inactive" &&
+        finalPayload.actions.some((a: any) => a?.type === "multiply_points")
+      ) {
+        return NextResponse.json(
+          { error: "Action 'multiply_points' is only valid for order events." },
+          { status: 400 }
+        );
+      }
     }
 
     // Scope validation

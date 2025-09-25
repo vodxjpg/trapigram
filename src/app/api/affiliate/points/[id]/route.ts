@@ -1,13 +1,13 @@
 // src/app/api/affiliate/points/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-
+import type { Pool, PoolClient } from "pg";
 
 
 const logUpdateSchema = z.object({
-  points: z.number().int().optional(),
+  points: z.number().refine((n) => Math.round(n * 10) === n * 10, "Max one decimal place").optional(),
   action: z.string().optional(),
   description: z.string().optional().nullable(),
 });
