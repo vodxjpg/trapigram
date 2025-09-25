@@ -78,6 +78,7 @@ export async function POST(
       );
 
     const { country, levelId, clientId } = clientRows[0];
+    console.log(body.productId, country, levelId)
 
     /* price resolution */
     const { price: basePrice, isAffiliate } = await resolveUnitPrice(

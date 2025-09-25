@@ -563,7 +563,7 @@ export default function OrderForm() {
         throw new Error("Failed to fetch product lists");
       }
 
-      const { products: norm } = await normRes.json(); // regular shop products
+      const { productsFlat: norm } = await normRes.json(); // regular shop products
       const { products: aff } = await affRes.json(); // affiliate catalogue
 
       /* ---------- map everything into one uniform <Product> shape ---------- */

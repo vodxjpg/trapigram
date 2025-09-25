@@ -44,7 +44,7 @@ const productSchema = z.object({
   status: z.enum(["published", "draft"]),
   productType: z.enum(["simple", "variable"]),
   categories: z.array(z.string()).optional(),
-  prices: z.record(z.string(), priceObj),
+  prices: z.record(z.string(), priceObj).optional(),
   cost: costMap.optional(),
   allowBackorders: z.boolean().default(false),
   manageStock: z.boolean().default(false),
@@ -266,6 +266,44 @@ export async function GET(req: NextRequest) {
       .where("productCategory.productId", "in", productIds)
       .execute();
 
+    // 🧭 3.b — Build name maps for attributes and terms used by variations
+    const attrIds = new Set<string>();
+    const termIds = new Set<string>();
+
+    for (const v of variationRows) {
+      const attrs = typeof v.attributes === "string" ? JSON.parse(v.attributes || "{}") : (v.attributes || {});
+      for (const [attributeId, termId] of Object.entries(attrs)) {
+        if (attributeId) attrIds.add(attributeId);
+        if (termId) termIds.add(String(termId));
+      }
+    }
+
+    const attrNameRows = attrIds.size
+      ? await db
+        .selectFrom("productAttributes")
+        .select(["id", "name"])
+        .where("id", "in", Array.from(attrIds))
+        // .where("organizationId","=",organizationId).where("tenantId","=",tenantId) // ← add if scoped
+        .execute()
+      : [];
+
+    const termNameRows = termIds.size
+      ? await db
+        .selectFrom("productAttributeTerms")
+        .select(["id", "name"])
+        .where("id", "in", Array.from(termIds))
+        // .where("organizationId","=",organizationId).where("tenantId","=",tenantId) // ← add if scoped
+        .execute()
+      : [];
+
+    const ATTR_NAME: Record<string, string> = Object.fromEntries(
+      attrNameRows.map(r => [r.id, r.name])
+    );
+    const TERM_NAME: Record<string, string> = Object.fromEntries(
+      termNameRows.map(r => [r.id, r.name])
+    );
+
+
     /* -------- STEP 4 – assemble final products ------------------ */
     const products = productRows.map((p) => {
       const maxNum = (arr: number[]) =>
@@ -388,6 +426,84 @@ export async function GET(req: NextRequest) {
       };
     });
 
+    // ✅ Put this right after: const products = productRows.map(…);
+
+    /** Convert a {country:{regular,sale}} map into separate maps like your simple products */
+    function splitVarPrices(
+      prices: Record<string, { regular: number; sale: number | null }>
+    ) {
+      const regular: Record<string, number> = {};
+      const sale: Record<string, number> | null = Object.create(null);
+      let hasSale = false;
+
+      for (const [ct, pr] of Object.entries(prices || {})) {
+        regular[ct] = Number(pr?.regular ?? 0);
+        if (pr?.sale != null) {
+          if (sale) sale[ct] = Number(pr.sale);
+          hasSale = true;
+        }
+      }
+      return { regular, sale: hasSale ? (sale as Record<string, number>) : null };
+    }
+
+    function maxNum(vals: number[]) {
+      return vals.length ? Math.max(...vals.map(Number)) : 0;
+    }
+    function maxOrNull(vals: number[]) {
+      return vals.length ? Math.max(...vals.map(Number)) : null;
+    }
+
+    const productsFlat = products.flatMap((p) => {
+      if (p.productType !== "variable") return [p];
+
+      return (p.variations || []).map((v) => {
+        const { regular, sale } = splitVarPrices(v.prices || {});
+        const maxRegularPrice = maxNum(Object.values(regular));
+        const maxSalePrice = sale ? maxOrNull(Object.values(sale)) : null;
+
+        // 🔑 Human label from all attributeId → termId pairs
+        const pairs = Object.entries(v.attributes || {});
+        const variantLabel = pairs
+          .map(([attrId, termId]) => `${ATTR_NAME[attrId] ?? attrId} ${TERM_NAME[String(termId)] ?? termId}`)
+          .join(", "); // if multiple, join them
+
+        const titleWithVariant = variantLabel ? `${p.title} - ${variantLabel}` : p.title;
+
+        const stockData = v.stock || {};
+        const manageStock = Boolean(p.manageStock);
+        const stockStatus = manageStock && Object.keys(stockData).length ? "managed" : "unmanaged";
+
+        return {
+          id: v.id,
+          title: titleWithVariant,      // 👈 augmented title
+          description: p.description,
+          image: v.image ?? p.image,
+          sku: v.sku,
+          status: p.status,
+
+          productType: "simple" as const,
+          regularPrice: regular,
+          salePrice: sale,
+          maxRegularPrice,
+          maxSalePrice,
+          cost: v.cost ?? {},
+
+          allowBackorders: p.allowBackorders,
+          manageStock,
+          stockStatus,
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+
+          stockData,
+          categories: p.categories,
+          attributes: [],
+          variations: [],
+        };
+      });
+    });
+
+
+
     /* -------- STEP 5 – total count ------------------------------ */
     let total = 0;
 
@@ -487,6 +603,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       products,
+      productsFlat,
       pagination: {
         page,
         pageSize,
@@ -533,8 +650,6 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     let parsedProduct = productSchema.parse(body)
 
-
-
     /* SKU handling */
     let finalSku = parsedProduct.sku
     if (!finalSku) {
@@ -562,6 +677,10 @@ export async function POST(req: NextRequest) {
       const bad = parsedProduct.categories.filter(id => !validIds.includes(id))
       if (bad.length)
         return NextResponse.json({ error: `Invalid category IDs: ${bad.join(", ")}` }, { status: 400 })
+    }
+
+    if (parsedProduct.productType === "variable" && parsedProduct.variations?.length) {
+      parsedProduct.prices = []
     }
 
     /* split prices into two JSON objects */
