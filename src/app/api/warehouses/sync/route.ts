@@ -141,6 +141,22 @@ export async function POST(req: NextRequest) {
       else p.variationIds.add(sp.variationId);
     }
 
+    // build per-product / per-variation allowed country sets from cost keys
+    const allowedCountriesByProduct = new Map<string, Set<string>>();
+    const allowedCountriesByVariation = new Map<string, Set<string>>();
+    for (const sp of sharedProducts) {
+      const keys = Object.keys((sp.cost || {}) as Record<string, number>);
+      if (sp.variationId) {
+        const s = allowedCountriesByVariation.get(sp.variationId) ?? new Set<string>();
+        keys.forEach((k) => s.add(k));
+        allowedCountriesByVariation.set(sp.variationId, s);
+      } else {
+        const s = allowedCountriesByProduct.get(sp.productId) ?? new Set<string>();
+        keys.forEach((k) => s.add(k));
+        allowedCountriesByProduct.set(sp.productId, s);
+      }
+    }
+
     const srcCountries = JSON.parse(shareLink.countries) as string[];
     const targetCountries = JSON.parse(targetWarehouse.countries) as string[];
 
@@ -159,6 +175,10 @@ export async function POST(req: NextRequest) {
     /* ------------------------------ SYNC LOOP --------------------------- */
     for (const sp of sharedProducts) {
       let targetProductId: string;
+      // helpers to safely filter JSONB maps by allowed countries
+      const pick = (m: Record<string, any> | null, keys: string[]) =>
+        !m ? null : Object.fromEntries(keys.filter((k) => k in m).map((k) => [k, m[k]]));
+      const parse = (m: any) => (typeof m === "string" ? JSON.parse(m) : (m || {}));
 
       if (productIdMap.has(sp.productId)) {
         targetProductId = productIdMap.get(sp.productId)!;
@@ -209,6 +229,10 @@ export async function POST(req: NextRequest) {
                 { status: 404 },
               );
 
+            // compute allowed countries for this product (cost keys or fallback to src link countries ∩ target)
+            const explicit = Array.from(allowedCountriesByProduct.get(sp.productId) ?? new Set<string>());
+            const fallback = srcCountries.filter((c) => targetCountries.includes(c));
+
             const suffix = srcProd.sku?.startsWith("ORG-")
               ? srcProd.sku.slice("ORG-".length)
               : srcProd.sku || generateId("SKU");
@@ -223,6 +247,10 @@ export async function POST(req: NextRequest) {
               newSku = `SHD-${suffix}-${Math.random().toString(36).substring(2, 4)}`;
             }
 
+            const allowed = (explicit.length ? explicit : fallback);
+            const srcReg = parse(srcProd.regularPrice);
+            const srcSal = parse(srcProd.salePrice);
+
             await db
               .insertInto("products")
               .values({
@@ -233,8 +261,8 @@ export async function POST(req: NextRequest) {
                 sku: newSku,
                 status: srcProd.status,
                 productType: srcProd.productType,
-                regularPrice: srcProd.regularPrice,
-                salePrice: srcProd.salePrice,
+                regularPrice: pick(srcReg, allowed) || {},
+                salePrice: Object.keys(srcSal).length ? pick(srcSal, allowed) : null,
                 cost: {},
                 allowBackorders: srcProd.allowBackorders,
                 manageStock: srcProd.manageStock,
@@ -378,6 +406,11 @@ export async function POST(req: NextRequest) {
             const srcVars = await varQuery.execute();
 
             for (const v of srcVars) {
+              // variation-level allowed countries (variation keys → product allowed → fallback)
+              const varExplicit = Array.from(allowedCountriesByVariation.get(v.id) ?? new Set<string>());
+              const varAllowed = (varExplicit.length ? varExplicit : (explicit.length ? explicit : fallback));
+              const vReg = parse(v.regularPrice);
+              const vSal = parse(v.salePrice);
               const srcAttrs = typeof v.attributes === "string" ? JSON.parse(v.attributes) : v.attributes;
               const tgtAttrs: Record<string, string> = {};
               for (const [srcAttr, srcTerm] of Object.entries(srcAttrs)) {
@@ -390,7 +423,7 @@ export async function POST(req: NextRequest) {
                 .selectFrom("productVariations")
                 .select("id")
                 .where("productId", "=", targetProductId)
-                .where("attributes", "=", JSON.stringify(tgtAttrs))
+                .where("attributes", "=", tgtAttrs)
                 .executeTakeFirst();
 
               const targetVariationId = sameVar ? sameVar.id : generateId("VAR");
@@ -416,11 +449,11 @@ export async function POST(req: NextRequest) {
                   .values({
                     id: targetVariationId,
                     productId: targetProductId,
-                    attributes: JSON.stringify(tgtAttrs),
+                    attributes: tgtAttrs,
                     sku: newVarSku,
                     image: v.image,
-                    regularPrice: v.regularPrice,
-                    salePrice: v.salePrice,
+                    regularPrice: pick(vReg, varAllowed) || {},
+                    salePrice: Object.keys(vSal).length ? pick(vSal, varAllowed) : null,
                     cost: v.cost,
                     createdAt: new Date(),
                     updatedAt: new Date(),

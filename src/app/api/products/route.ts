@@ -79,6 +79,22 @@ function splitPrices(
   };
 }
 
+/* small helpers used to filter JSONB maps for shared copies */
+function parseMap<T extends Record<string, any> | null>(m: any): T {
+  if (!m) return {} as any;
+  if (typeof m === "string") {
+    try { return JSON.parse(m) as T; } catch { }
+  }
+  return (m || {}) as T;
+}
+function pickKeys<T>(m: Record<string, T> | null, keys: string[] | null): Record<string, T> | null {
+  if (!m) return null;
+  if (!keys || !keys.length) return {};
+  const out: Record<string, T> = {};
+  for (const k of keys) if (Object.prototype.hasOwnProperty.call(m, k)) out[k] = m[k];
+  return Object.keys(out).length ? out : null;
+}
+
 /* ------------------------------------------------------------------ */
 /*  GET – fixed pagination                                            */
 /* ------------------------------------------------------------------ */
@@ -223,6 +239,40 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    /* OPTIONAL: detect shared copies in this page and precompute allowed countries */
+    const mappings = await db
+      .selectFrom("sharedProductMapping")
+      .select(["targetProductId", "sourceProductId", "shareLinkId"])
+      .where("targetProductId", "in", productIds)
+      .execute();
+    const mapByTarget = new Map(mappings.map(m => [m.targetProductId, m]));
+    const shareLinkIds = Array.from(new Set(mappings.map(m => m.shareLinkId)));
+    const sourceIds = Array.from(new Set(mappings.map(m => m.sourceProductId)));
+
+    let linkCountriesById = new Map<string, string[]>();
+    if (shareLinkIds.length) {
+      const linkRows = await db
+        .selectFrom("warehouseShareLink")
+        .innerJoin("warehouse", "warehouse.id", "warehouseShareLink.warehouseId")
+        .select(["warehouseShareLink.id as shareLinkId", "warehouse.countries"])
+        .where("warehouseShareLink.id", "in", shareLinkIds)
+        .execute();
+      linkCountriesById = new Map(linkRows.map(r => [r.shareLinkId, JSON.parse(r.countries as any)]));
+    }
+    let sharedRowsByKey = new Map<string, Array<{ variationId: string | null; cost: any }>>();
+    if (shareLinkIds.length && sourceIds.length) {
+      const rows = await db
+        .selectFrom("sharedProduct")
+        .select(["shareLinkId", "productId", "variationId", "cost"])
+        .where("shareLinkId", "in", shareLinkIds)
+        .where("productId", "in", sourceIds)
+        .execute();
+      for (const r of rows) {
+        const k = `${r.shareLinkId}:${r.productId}`;
+        (sharedRowsByKey.get(k) ?? sharedRowsByKey.set(k, []).get(k)!).push({ variationId: r.variationId, cost: r.cost });
+      }
+    }
+
     /* -------- STEP 2 – core product rows ------------------------ */
     const productRows = await db
       .selectFrom("products")
@@ -266,8 +316,28 @@ export async function GET(req: NextRequest) {
       .where("productCategory.productId", "in", productIds)
       .execute();
 
+
+    // little helper
+    const getAllowed = (targetId: string): { product: string[] | null; byVar: Map<string, string[]> } => {
+      const m = mapByTarget.get(targetId); if (!m) return { product: null, byVar: new Map() };
+      const linkList = linkCountriesById.get(m.shareLinkId) || [];
+      const k = `${m.shareLinkId}:${m.sourceProductId}`;
+      const rows = sharedRowsByKey.get(k) || [];
+      const prodRow = rows.find(r => r.variationId === null);
+      const prodKeys = Object.keys(parseMap<Record<string, number>>(prodRow?.cost) || {});
+      const productAllowed = prodKeys.length ? prodKeys : (linkList.length ? linkList : null);
+      const byVar = new Map<string, string[]>();
+      for (const r of rows) {
+        if (!r.variationId) continue;
+        const keys = Object.keys(parseMap<Record<string, number>>(r.cost) || {});
+        byVar.set(r.variationId, keys.length ? keys : linkList);
+      }
+      return { product: productAllowed, byVar };
+    };
+
     /* -------- STEP 4 – assemble final products ------------------ */
     const products = productRows.map((p) => {
+      const allowedInfo = getAllowed(p.id);
       const maxNum = (arr: number[]) =>
         arr.length ? Math.max(...arr.map(Number)) : 0;
       const maxOrNull = (arr: number[]) =>
@@ -293,15 +363,20 @@ export async function GET(req: NextRequest) {
                   : v.attributes,
               sku: v.sku,
               image: v.image,
-              prices: mergePriceMaps(
-                typeof v.regularPrice === "string"
-                  ? JSON.parse(v.regularPrice)
-                  : v.regularPrice,
-                typeof v.salePrice === "string"
-                  ? JSON.parse(v.salePrice)
-                  : v.salePrice
-              ),
-              cost: typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost,
+                            prices: (() => {
+                const vRegRaw = typeof v.regularPrice === "string" ? JSON.parse(v.regularPrice) : v.regularPrice;
+                const vSalRaw = typeof v.salePrice === "string" ? JSON.parse(v.salePrice) : v.salePrice;
+                const allowedForVar =
+                  allowedInfo.byVar.get(v.id) || allowedInfo.product || null;
+                const vReg = allowedForVar ? (pickKeys(vRegRaw, allowedForVar) || {}) : vRegRaw;
+                const vSal = allowedForVar ? pickKeys(vSalRaw, allowedForVar) : vSalRaw;
+                return mergePriceMaps(vReg, vSal);
+              })(),
+              cost: (() => {
+                const raw = typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost;
+                const allowedForVar = allowedInfo.byVar.get(v.id) || allowedInfo.product || null;
+                return allowedForVar ? (pickKeys(raw, allowedForVar) || {}) : raw;
+              })(),
               stock: stockRows
                 .filter((s) => s.variationId === v.id)
                 .reduce((acc, s) => {
@@ -328,15 +403,15 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // price maxima (highest across all countries)
-      const prodRegular =
-        typeof p.regularPrice === "string"
-          ? JSON.parse(p.regularPrice || "{}")
-          : p.regularPrice || {};
-      const prodSale =
-        typeof p.salePrice === "string"
-          ? JSON.parse(p.salePrice || "null")
-          : p.salePrice ?? null;
+      // price maps (filtered for shared copies)
+      const prodRegularRaw =
+        typeof p.regularPrice === "string" ? JSON.parse(p.regularPrice || "{}") : p.regularPrice || {};
+      const prodSaleRaw =
+        typeof p.salePrice === "string" ? JSON.parse(p.salePrice || "null") : p.salePrice ?? null;
+
+      const prodRegular = allowedInfo.product ? (pickKeys(prodRegularRaw, allowedInfo.product) || {}) : prodRegularRaw;
+      const prodSale = allowedInfo.product ? pickKeys(prodSaleRaw, allowedInfo.product) : prodSaleRaw;
+
 
       let maxRegularPrice = 0;
       let maxSalePrice: number | null = null;
@@ -602,7 +677,7 @@ export async function POST(req: NextRequest) {
         await db.insertInto("productVariations").values({
           id: v.id,
           productId,
-          attributes: JSON.stringify(v.attributes),
+          attributes: v.attributes,
           sku: v.sku,
           image: v.image ?? null,
           regularPrice,
