@@ -84,9 +84,19 @@ type ShareLink = {
 /* -------------------------------------------------------------------------- */
 /*  Validation schema                                                         */
 /* -------------------------------------------------------------------------- */
+// Keep raw strings in the form so typing/deleting works naturally.
+// We validate the string shape here (optional; allows "", "-", "1.", etc.),
+// then convert to numbers in the submit handler.
 const costSchema = z
-  .record(z.string(), z.number().positive("Cost must be a positive number"))
+  .record(
+    z.string(),
+    z
+      .string()
+      .trim()
+      .refine((v) => v === "" || /^-?\d*(\.\d*)?$/.test(v), "Enter a valid number")
+  )
   .optional();
+
 
 const productSchema = z.object({
   productId: z.string().min(1, "Product is required"),
@@ -222,7 +232,10 @@ export default function EditShareLinkPage() {
               ? shareData.products.map((p) => ({
                   productId: p.productId,
                   variationId: p.variationId,
-                  cost: p.cost,
+                  // store as strings so the inputs act like normal text inputs
+                  cost: Object.fromEntries(
+                    Object.entries(p.cost ?? {}).map(([k, v]) => [k, String(v)])
+                  ),
                 }))
               : [{ productId: "", variationId: null, cost: {} }],
         });
@@ -416,7 +429,7 @@ export default function EditShareLinkPage() {
     const additions: {
       productId: string;
       variationId: string | null;
-      cost: Record<string, number>;
+      cost: Record<string, string>;
     }[] = [];
 
     for (const it of parentsOrSingle) {
@@ -431,9 +444,9 @@ export default function EditShareLinkPage() {
       );
       if (!allowedCountries.length) continue;
 
-      // simple base+10 helper (matches your existing pattern)
-      const cost: Record<string, number> = {};
-      for (const c of allowedCountries) cost[c] = (it.cost[c] ?? 0) + 10;
+      // simple base+5 helper (matches your existing pattern)
+      const cost: Record<string, string> = {};
+      for (const c of allowedCountries) cost[c] = String((it.cost[c] ?? 0) + 5);
 
       additions.push({
         productId: it.productId,
@@ -601,6 +614,19 @@ export default function EditShareLinkPage() {
                 try {
                   const validationErrors: string[] = [];
 
+                  // Helper: parse raw string costs to numbers (drop invalids/empties)
+                  const toNumericCost = (raw?: Record<string, string>) => {
+                    const entries = Object.entries(raw ?? {}).map(([k, v]) => {
+                      const trimmed = (v ?? "").trim();
+                      if (trimmed === "" || trimmed === "-" || trimmed === "." || trimmed === "-.") {
+                        return [k, undefined] as const;
+                      }
+                      const num = Number(trimmed);
+                      return [k, Number.isFinite(num) ? num : undefined] as const;
+                    });
+                    return Object.fromEntries(entries.filter(([, v]) => v !== undefined)) as Record<string, number>;
+                  };
+
                   values.products.forEach((product, idx) => {
                     const prodCountries = selectedCountries[idx] || [];
                     if (prodCountries.length === 0) {
@@ -614,13 +640,7 @@ export default function EditShareLinkPage() {
                       return;
                     }
 
-                    const cleanedCost = product.cost
-                      ? Object.fromEntries(
-                          Object.entries(product.cost).filter(
-                            ([, v]) => v !== undefined
-                          )
-                        )
-                      : {};
+                    const cleanedCost = toNumericCost(product.cost);
                     const costCountries = Object.keys(cleanedCost);
 
                     if (costCountries.length === 0) {
@@ -668,16 +688,7 @@ export default function EditShareLinkPage() {
                             s.status !== "draft"
                         )
                       )
-                      .map((p) => ({
-                        ...p,
-                        cost: p.cost
-                          ? Object.fromEntries(
-                              Object.entries(p.cost).filter(
-                                ([, v]) => v !== undefined
-                              )
-                            )
-                          : {},
-                      })),
+                      .map((p) => ({ ...p, cost: toNumericCost(p.cost) })),
                   };
 
                   const res = await fetch(
@@ -1073,26 +1084,16 @@ export default function EditShareLinkPage() {
                                                       {qty})
                                                     </FormLabel>
                                                     <FormControl>
-                                                      <Input
-                                                        type="number"
-                                                        min="0"
-                                                        step="0.01"
+                                                     <Input
+                                                      // text input so the user can type/delete freely
+                                                      type="text"
+                                                      inputMode="decimal"
                                                         placeholder={`Cost for ${c}`}
-                                                        value={
-                                                          field.value !==
-                                                          undefined
-                                                            ? field.value
-                                                            : ""
-                                                        }
+                                                        value={field.value ?? ""}
                                                         onChange={(e) => {
-                                                          field.onChange(
-                                                            e.target.value
-                                                              ? Number(
-                                                                  e.target.value
-                                                                )
-                                                              : undefined
-                                                          );
-                                                          if (e.target.value)
+                                                       // keep raw string in form state
+                                                          field.onChange(e.target.value);
+                                                          if (e.target.value !== "")
                                                             form.clearErrors(
                                                               `products.${idx}.cost`
                                                             );

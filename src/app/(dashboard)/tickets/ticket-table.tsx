@@ -47,6 +47,11 @@ type Ticket = {
   status: "open" | "in-progress" | "closed";
   createdAt: string;
   ticketKey: number;
+  // 👇 needed for the customer line under the title
+  clientId: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  username?: string | null;
 };
 
 export function TicketsTable() {
@@ -254,7 +259,41 @@ export function TicketsTable() {
               filtered.map((t) => (
                 <TableRow key={t.id}>
                   <TableCell>{t.ticketKey}</TableCell>
-                  <TableCell>{t.title}</TableCell>
+                  <TableCell>
+                  <div className="flex flex-col">
+                    <span className="font-medium">{t.title}</span>
+                    {/* customer line (like the details page) */}
+                    <Link
+                      href={`/clients/${t.clientId}/info/`}
+                      className="text-xs text-muted-foreground hover:underline truncate"
+                      title={
+                        [
+                          [t?.firstName, t?.lastName].filter(Boolean).join(" ").trim(),
+                          t?.username ? `@${t.username}` : ""
+                        ]
+                          .filter(Boolean)
+                          .join(" ")
+                          || "Unknown user"
+                      }
+                    >
+                      {(() => {
+                        const displayName = [t?.firstName, t?.lastName].filter(Boolean).join(" ").trim();
+                        const hasUsername = Boolean(t?.username && t.username.trim());
+                        if (displayName && hasUsername) {
+                          return (
+                            <>
+                              <span className="font-normal">{displayName}</span>{" "}
+                              <span className="text-muted-foreground">@{t.username}</span>
+                            </>
+                          );
+                        }
+                        if (displayName) return <span className="font-normal">{displayName}</span>;
+                        if (hasUsername) return <span className="font-normal">@{t.username}</span>;
+                        return <span className="font-normal">Unknown user</span>;
+                      })()}
+                    </Link>
+                  </div>
+                </TableCell>
                   <TableCell>
                     {(tagsMap[t.id] || []).map((desc) => (
                       <Badge key={desc} variant="outline" className="mr-1">

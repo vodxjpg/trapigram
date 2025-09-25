@@ -81,20 +81,20 @@ export async function GET(req: NextRequest) {
     );
 
     // ---------- build WHERE ----------
-    const where: string[] = [`"organizationId" = $1`];
+   const where: string[] = [`t."organizationId" = $1`];
     const values: any[] = [organizationId];
 
     if (search) {
       values.push(`%${search}%`);
-      where.push(`title ILIKE $${values.length}`);
+      where.push(`t.title ILIKE $${values.length}`);
     }
     if (clientId) {
       values.push(clientId);
-      where.push(`"clientId" = $${values.length}`);
+     where.push(`t."clientId" = $${values.length}`);
     }
 
     // ---------- count ----------
-    const countSQL = `SELECT COUNT(*) FROM tickets WHERE ${where.join(" AND ")}`;
+     const countSQL = `SELECT COUNT(*) FROM tickets t WHERE ${where.join(" AND ")}`;
     const countRows = await pool.query(countSQL, values);
     const totalRows = Number(countRows.rows[0].count) || 0;
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -102,14 +102,25 @@ export async function GET(req: NextRequest) {
     // ---------- list ----------
     const listValues = [...values, pageSize, (page - 1) * pageSize];
     const listSQL = `
-      SELECT id,
-             "organizationId", "clientId",
-             title, priority, status, "ticketKey", "lastMessageAt",
-             "createdAt", "updatedAt"
-        FROM tickets
-       WHERE ${where.join(" AND ")}
-       ORDER BY "createdAt" DESC
-       LIMIT $${listValues.length - 1} OFFSET $${listValues.length};
+      SELECT
+        t.id,
+        t."organizationId",
+        t."clientId",
+        t.title,
+        t.priority,
+        t.status,
+        t."ticketKey",
+        t."lastMessageAt",
+        t."createdAt",
+        t."updatedAt",
+        c."firstName" AS "firstName",
+        c."lastName"  AS "lastName",
+        c.username    AS "username"
+      FROM tickets t
+      LEFT JOIN clients c ON c.id = t."clientId"
+      WHERE ${where.join(" AND ")}
+      ORDER BY t."createdAt" DESC
+      LIMIT $${listValues.length - 1} OFFSET $${listValues.length};
     `;
     const tickets = (await pool.query(listSQL, listValues)).rows;
 

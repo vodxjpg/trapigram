@@ -26,6 +26,24 @@ function mergePriceMaps(
 }
 
 /* ------------------------------------------------------------------ */
+/* helpers – small JSON/Map utils                                      */
+/* ------------------------------------------------------------------ */
+function parseMap<T extends Record<string, any> | null>(m: any): T {
+  if (!m) return {} as any;
+  if (typeof m === "string") {
+    try { return JSON.parse(m) as T; } catch {}
+  }
+  return (m || {}) as T;
+}
+function pickKeys<T>(m: Record<string, T> | null, keys: string[] | null): Record<string, T> | null {
+  if (!m) return null;
+  if (!keys || !keys.length) return {};
+  const out: Record<string, T> = {};
+  for (const k of keys) if (Object.prototype.hasOwnProperty.call(m, k)) out[k] = m[k];
+  return Object.keys(out).length ? out : null;
+}
+
+/* ------------------------------------------------------------------ */
 /* helper – split map ➜ {regularPrice, salePrice} (JSONB ready)       */
 const priceObj = z.object({ regular: z.number().min(0), sale: z.number().nullable() });
 const costMap = z.record(z.string(), z.number().min(0));
@@ -236,7 +254,7 @@ export async function GET(
   /* ---------- detect “shared copy” purely via mapping -------- */
   const mapping = await db
     .selectFrom("sharedProductMapping")
-    .select("sourceProductId")
+    .select(["sourceProductId", "shareLinkId"])
     .where("targetProductId", "=", id)
     .executeTakeFirst();
   const sourceProductId = mapping?.sourceProductId ?? null;
@@ -335,27 +353,66 @@ export async function GET(
       .execute();
   }
 
-  const cost =
-    raw.cost && typeof raw.cost === "string" ? JSON.parse(raw.cost) : raw.cost ?? {};
+  /* ---------- determine allowed countries for shared copies ----- */
+  let allowedCountriesForProduct: string[] | null = null;
+  const allowedCountriesByVariation = new Map<string, string[]>();
+  let linkCountries: string[] = [];
+
+  if (isShared && mapping?.shareLinkId && sourceProductId) {
+    // share-link warehouse countries (fallback)
+    const link = await db
+      .selectFrom("warehouseShareLink")
+      .innerJoin("warehouse", "warehouse.id", "warehouseShareLink.warehouseId")
+      .select(["warehouseShareLink.id", "warehouse.countries"])
+      .where("warehouseShareLink.id", "=", mapping.shareLinkId)
+      .executeTakeFirst();
+    linkCountries = link?.countries ? JSON.parse(link.countries as any) : [];
+
+    // product/variation-level overrides (primary)
+    const sharedRows = await db
+      .selectFrom("sharedProduct")
+      .select(["variationId", "cost"])
+      .where("shareLinkId", "=", mapping.shareLinkId)
+      .where("productId", "=", sourceProductId)
+      .execute();
+
+    const prodRow = sharedRows.find(r => r.variationId === null);
+    const prodKeys = Object.keys(parseMap<Record<string, number>>(prodRow?.cost) || {});
+    allowedCountriesForProduct = prodKeys.length ? prodKeys : (linkCountries.length ? linkCountries : null);
+
+    for (const r of sharedRows) {
+      if (!r.variationId) continue;
+      const keys = Object.keys(parseMap<Record<string, number>>(r.cost) || {});
+      allowedCountriesByVariation.set(
+        r.variationId,
+        keys.length ? keys : (linkCountries.length ? linkCountries : [])
+      );
+    }
+  }
 
   const variations = variationsRaw.map((v) => {
-    const reg =
-      v.regularPrice && typeof v.regularPrice === "string"
-        ? JSON.parse(v.regularPrice)
-        : v.regularPrice;
-    const sal =
-      v.salePrice && typeof v.salePrice === "string"
-        ? JSON.parse(v.salePrice)
-        : v.salePrice;
-    const cost =
-      typeof v.cost === "string" ? JSON.parse(v.cost) : v.cost ?? {};
+    const vReg  = parseMap<Record<string, number> | null>(v.regularPrice);
+    const vSal  = parseMap<Record<string, number> | null>(v.salePrice);
+    const vCost = parseMap<Record<string, number> | null>(v.cost);
+
+    const allowedForVar =
+      isShared
+        ? (allowedCountriesByVariation.get(v.id) ||
+           allowedCountriesForProduct ||
+           linkCountries ||
+           [])
+        : null;
+
+    const fReg  = isShared ? pickKeys(vReg,  allowedForVar as string[]) : vReg;
+    const fSale = isShared ? pickKeys(vSal,  allowedForVar as string[]) : vSal;
+    const fCost = isShared ? pickKeys(vCost, allowedForVar as string[]) : vCost;
     return {
       id: v.id,
       attributes: v.attributes,
       sku: v.sku,
       image: v.image,
-      prices: mergePriceMaps(reg, sal),
-      cost,
+      prices: mergePriceMaps(fReg, fSale),
+      cost: fCost || {},
       stock: stockRows
         .filter((row) => row.variationId === v.id)
         .reduce((acc, row) => {
@@ -366,21 +423,25 @@ export async function GET(
     };
   });
 
-  /* ---------- price parsing ------------------------------ */
-  const reg =
-    raw.regularPrice && typeof raw.regularPrice === "string"
-      ? JSON.parse(raw.regularPrice)
-      : raw.regularPrice;
-  const sal =
-    raw.salePrice && typeof raw.salePrice === "string"
-      ? JSON.parse(raw.salePrice)
-      : raw.salePrice;
+ 
+    /* ---------- top-level price/cost parsing + filtering ---- */
+  const prodRegular = parseMap<Record<string, number> | null>(raw.regularPrice);
+  const prodSale    = parseMap<Record<string, number> | null>(raw.salePrice);
+  const prodCost    = parseMap<Record<string, number> | null>(raw.cost);
+
+  const fProdReg = isShared ? pickKeys(prodRegular, allowedCountriesForProduct) : prodRegular;
+  const fProdSal = isShared ? pickKeys(prodSale,    allowedCountriesForProduct) : prodSale;
+  const fProdCost= isShared ? pickKeys(prodCost,    allowedCountriesForProduct) : prodCost;
 
   /* ---------- final product payload ------------------------------ */
   const product = {
     ...raw,
-    prices: mergePriceMaps(reg, sal),
-    cost,
+    // keep DB-shaped fields filtered too
+    regularPrice: fProdReg,
+    salePrice:    fProdSal,
+    cost:         fProdCost || {},
+    // editor-friendly merged map
+    prices: mergePriceMaps(fProdReg, fProdSal),
     stockData,
     stockStatus: raw.manageStock ? "managed" : "unmanaged",
     categories,
@@ -415,6 +476,46 @@ export async function PATCH(
   const { organizationId, userId, tenantId } = ctx;
 
   try {
+    // For shared products we will whitelist countries before persisting
+    const sharedMap = await db
+      .selectFrom("sharedProductMapping")
+      .select(["shareLinkId", "sourceProductId"])
+      .where("targetProductId", "=", (await params).id)
+      .executeTakeFirst();
+
+    // precompute allowed countries if needed
+    let patchAllowedForProduct: string[] | null = null;
+    const patchAllowedByVariation = new Map<string, string[]>();
+    let patchLinkCountries: string[] = [];
+    if (sharedMap?.shareLinkId && sharedMap.sourceProductId) {
+      const link = await db
+        .selectFrom("warehouseShareLink")
+        .innerJoin("warehouse", "warehouse.id", "warehouseShareLink.warehouseId")
+        .select(["warehouseShareLink.id", "warehouse.countries"])
+        .where("warehouseShareLink.id", "=", sharedMap.shareLinkId)
+        .executeTakeFirst();
+      patchLinkCountries = link?.countries ? JSON.parse(link.countries as any) : [];
+
+      const sharedRows = await db
+        .selectFrom("sharedProduct")
+        .select(["variationId", "cost"])
+        .where("shareLinkId", "=", sharedMap.shareLinkId)
+        .where("productId", "=", sharedMap.sourceProductId)
+        .execute();
+
+      const prodRow = sharedRows.find(r => r.variationId === null);
+      const prodKeys = Object.keys(parseMap<Record<string, number>>(prodRow?.cost) || {});
+      patchAllowedForProduct = prodKeys.length ? prodKeys : (patchLinkCountries.length ? patchLinkCountries : null);
+
+      for (const r of sharedRows) {
+        if (!r.variationId) continue;
+        const keys = Object.keys(parseMap<Record<string, number>>(r.cost) || {});
+        patchAllowedByVariation.set(
+          r.variationId,
+          keys.length ? keys : (patchLinkCountries.length ? patchLinkCountries : [])
+        );
+      }
+    }
     const userTenantId = tenantId;
     if (!userTenantId)
       return NextResponse.json({ error: "No tenant found for user" }, { status: 404 });
@@ -448,7 +549,7 @@ export async function PATCH(
       const attempted = Object.keys(parsedUpdate);
       const allowed = ["title", "description", "status", "prices", "variations", "categories"];
       const skipped = attempted.filter((k) => !allowed.includes(k));
-
+      // compute filtered inputs by allowed countries (if any)
       // apply each allowed change
       const { title, description, prices, variations } = parsedUpdate;
       const { categories } = parsedUpdate;
@@ -470,7 +571,17 @@ export async function PATCH(
       }
 
       if (prices) {
-        const { regularPrice, salePrice } = splitPrices(prices);
+        let nextPrices = prices;
+        if (patchAllowedForProduct) {
+          nextPrices = Object.fromEntries(
+            Object.entries(prices).filter(([c]) =>
+              patchAllowedForProduct!.includes(c)
+            )
+          );
+        }
+        // if nothing allowed, strip all
+        if (!Object.keys(nextPrices).length) nextPrices = {};
+        const { regularPrice, salePrice } = splitPrices(nextPrices);
         await db
           .updateTable("products")
           .set({ regularPrice, salePrice, updatedAt: new Date() })
@@ -489,7 +600,20 @@ export async function PATCH(
 
         for (const v of variations) {
           if (!existingIds.has(v.id)) continue;
-          const { regularPrice, salePrice } = splitPrices(v.prices);
+                    let vPrices = v.prices;
+          const allowedForVar =
+            patchAllowedByVariation.get(v.id) ||
+            patchAllowedForProduct ||
+            patchLinkCountries ||
+            null;
+          if (allowedForVar) {
+            vPrices = Object.fromEntries(
+              Object.entries(v.prices).filter(([c]) =>
+                (allowedForVar as string[]).includes(c)
+              )
+            );
+          }
+          const { regularPrice, salePrice } = splitPrices(vPrices);
           await db
             .updateTable("productVariations")
             .set({ regularPrice, salePrice, updatedAt: new Date() })
@@ -672,7 +796,7 @@ export async function PATCH(
         const { regularPrice, salePrice } = splitPrices(v.prices);
         const payload = {
           productId: id,
-          attributes: JSON.stringify(v.attributes),
+          attributes: v.attributes,
           sku: v.sku,
           image: v.image ?? null,
           regularPrice,
