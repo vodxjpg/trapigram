@@ -9,7 +9,7 @@ type RuleRow = {
   enabled: boolean;
   countries: string[];
   orderCurrencyIn: string[];
-  action: "send_coupon" | "product_recommendation";
+  action: "send_coupon" | "product_recommendation" | "multi";
   channels: ("email" | "telegram" | "in_app" | "webhook")[];
   payload: any;
   priority: number;
@@ -17,7 +17,7 @@ type RuleRow = {
 };
 
 async function getRules(): Promise<RuleRow[]> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/rules`, {
+  const res = await fetch(`/api/rules`, {
     cache: "no-store",
     headers: { accept: "application/json" },
   });
@@ -29,7 +29,7 @@ async function getRules(): Promise<RuleRow[]> {
 /** Server Action: toggle enabled */
 async function toggleEnabled(id: string, enabled: boolean) {
   "use server";
-  await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/rules/${id}`, {
+ await fetch(`/api/rules/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled }),
@@ -39,7 +39,7 @@ async function toggleEnabled(id: string, enabled: boolean) {
 /** Server Action: delete rule */
 async function removeRule(id: string) {
   "use server";
-  await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/rules/${id}`, {
+   await fetch(`/api/rules/${id}`, {
     method: "DELETE",
   });
 }
