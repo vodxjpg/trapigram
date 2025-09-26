@@ -84,18 +84,20 @@ export async function adjustStock(
        (id, "warehouseId", "productId", "affiliateProductId", "variationId",
         country, quantity, "organizationId", "tenantId",
         "createdAt", "updatedAt")
-       VALUES (gen_random_uuid(), NULL,
-               $1,  -- productId
-               $2,  -- affiliateProductId
-               $3,  -- country
-               $4,  -- quantity
-               '', '', NOW(), NOW())`,
-      [
-        isAffiliate ? null : productId,
-        isAffiliate ? productId : null,
-        country,
-        Math.max(0, newQty),
-      ],
+      VALUES (gen_random_uuid(), NULL,
+         $1,  -- productId
+         $2,  -- affiliateProductId
+         $3,  -- variationId
+         $4,  -- country
+         $5,  -- quantity
+         NULL, NULL, NOW(), NOW())`,
+ [
+   isAffiliate ? null : productId,
+   isAffiliate ? productId : null,
+   variationId,
+   country,
+   Math.max(0, newQty),
+ ],
     );
   }
 }

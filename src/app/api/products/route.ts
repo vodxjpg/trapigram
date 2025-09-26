@@ -779,12 +779,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `Invalid category IDs: ${bad.join(", ")}` }, { status: 400 })
     }
 
-    if (parsedProduct.productType === "variable" && parsedProduct.variations?.length) {
-      parsedProduct.prices = []
-    }
 
-    /* split prices into two JSON objects */
-    const { regularPrice, salePrice } = splitPrices(parsedProduct.prices)
+    let regularPrice: Record<string, number> = {};
+    let salePrice: Record<string, number> | null = null;
+    if (parsedProduct.productType === "simple") {
+      const maps = splitPrices(parsedProduct.prices ?? {});
+      regularPrice = maps.regularPrice;
+      salePrice = maps.salePrice;
+    }
 
     const productId = uuidv4()
 

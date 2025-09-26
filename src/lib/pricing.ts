@@ -53,14 +53,24 @@ export async function resolveUnitPrice(
 ): Promise<{ price: number; isAffiliate: boolean }> {
   const prod = await pool.query(`SELECT * FROM products WHERE id=$1`, [productId]);
   if (prod.rows[0].productType === "variable") {
+     if (!variationId) {
+   throw new Error("variationId is required for variable products");
+ }
     const variable = await pool.query(`SELECT * FROM "productVariations" WHERE id=$1`, [variationId]);
     console.log(variable.rows[0])
-    prod.rows[0].salePrice = variable.rows[0].salePrice
-    prod.rows[0].regularPrice = variable.rows[0].regularPrice
-  }
-  if (prod.rowCount) {
-    return {
-      price: await computeMoneyPrice(prod.rows[0], country),
+      const priced = {
+    ...row,
+    salePrice: variable.rows[0].salePrice,
+    regularPrice: variable.rows[0].regularPrice,
+  };
+  return {
+    price: await computeMoneyPrice(priced, country),
+    isAffiliate: false,
+  };
+ }
+ // simple product
+ return {
+   price: await computeMoneyPrice(row, country),
       isAffiliate: false
     };
   }

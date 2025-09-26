@@ -75,9 +75,11 @@ export async function PATCH(
            FROM clients            cl
            JOIN carts              ca ON ca."clientId" = cl.id
            JOIN "cartProducts"     cp ON cp."cartId"   = ca.id
-          WHERE ca.id = $1
-            AND (cp."productId" = $2 OR cp."affiliateProductId" = $2)`,
-        [cartId, data.productId],
+         WHERE ca.id = $1
+  AND (cp."productId" = $2 OR cp."affiliateProductId" = $2)
+  ${data.variationId ? 'AND cp."variationId" = $3' : ''}`,
+[cartId, data.productId, ...(data.variationId ? [data.variationId] : [])],
+
       );
       if (!cRows.length) {
         await client.query("ROLLBACK");
@@ -247,19 +249,16 @@ export async function PATCH(
                       "unitPrice" = $2,
                       "updatedAt" = NOW()
                 WHERE "cartId"   = $3
-                  AND ("productId" = $4 OR "affiliateProductId" = $4)`,
-          [newQty, pricePerUnit, cartId, data.productId],
+   AND ("productId" = $4 OR "affiliateProductId" = $4)
+   ${data.variationId ? 'AND "variationId" = $5' : ''}`,
+ [newQty, pricePerUnit, cartId, data.productId, ...(data.variationId ? [data.variationId] : [])],
+
         );
       }
 
       /* 7️⃣ stock adjust (negative on add, positive on subtract) */
-      await adjustStock(
-        client,
-        data.productId,
-        data.variationId,
-        country,
-        data.action === "add" ? -1 : 1,
-      );
+     await adjustStock(client, data.productId, data.variationId ?? null, country, data.action === "add" ? -1 : 1);
+
 
       /* 8️⃣ update cart hash after all changes */
       const { rows: linesForHash } = await client.query(
