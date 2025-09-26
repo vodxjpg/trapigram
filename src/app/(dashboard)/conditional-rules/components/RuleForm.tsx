@@ -51,7 +51,12 @@ const quillModules = {
 };
 
 const channelsEnum = z.enum(["email", "telegram"]);
-const actionEnum = z.enum(["send_coupon", "product_recommendation", "multiply_points", "award_points"]);
+const actionEnum = z.enum([
+  "send_coupon",
+  "product_recommendation",
+  "multiply_points",
+  "award_points",
+]);
 const scopeEnum = z.enum(["per_order", "per_customer"]); // NEW
 
 // UI action item (no subject/body here—shared at rule level)
@@ -89,9 +94,18 @@ const ConditionsSchema = z
     items: z
       .array(
         z.discriminatedUnion("kind", [
-          z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
-          z.object({ kind: z.literal("order_total_gte_eur"), amount: z.coerce.number().min(0) }),
-          z.object({ kind: z.literal("no_order_days_gte"), days: z.coerce.number().int().min(1) }),
+          z.object({
+            kind: z.literal("contains_product"),
+            productIds: z.array(z.string()).min(1),
+          }),
+          z.object({
+            kind: z.literal("order_total_gte_eur"),
+            amount: z.coerce.number().min(0),
+          }),
+          z.object({
+            kind: z.literal("no_order_days_gte"),
+            days: z.coerce.number().int().min(1),
+          }),
         ])
       )
       .min(1),
@@ -136,7 +150,11 @@ export const RuleSchema = z.object({
 export type RuleFormValues = z.infer<typeof RuleSchema>;
 type ActionItem = z.infer<typeof UiActionSchema>;
 
-type ConditionKind = "contains_product" | "order_total_gte_eur" | "no_order_days_gte";
+type ConditionKind =
+  | "contains_product"
+  | "order_total_gte_eur"
+  | "no_order_days_gte";
+
 const ORDER_EVENTS = new Set([
   "order_placed",
   "order_partially_paid",
@@ -146,6 +164,7 @@ const ORDER_EVENTS = new Set([
   "order_cancelled",
   "order_refunded",
 ]);
+
 const allowedKindsForEvent = (ev: string): ConditionKind[] => {
   if (ev === "customer_inactive") return ["no_order_days_gte"];
   if (ORDER_EVENTS.has(ev as any)) return ["contains_product", "order_total_gte_eur"];
@@ -157,7 +176,6 @@ function isOrderEvent(ev: string) {
 }
 
 const numberInputStep01 = { step: 0.1, inputMode: "decimal" as const };
-
 
 // Helper: tooltip icon
 function Hint({ text, className }: { text: string; className?: string }) {
@@ -181,10 +199,17 @@ export default function RuleForm({
   defaultValues,
   mode,
   id,
+  existingSingle,
 }: {
   defaultValues?: Partial<RuleFormValues> | any;
   mode: "create" | "edit";
   id?: string;
+  existingSingle?: {
+    event: string;
+    action: "send_coupon" | "product_recommendation" | "multi";
+    channels: Channel[] | string[];
+    payload: any;
+  };
 }) {
   const router = useRouter();
 
@@ -206,56 +231,87 @@ export default function RuleForm({
     },
   });
 
-  // Normalize legacy defaults AND pick up payload.scope if present
+  // Normalize legacy defaults AND pick up payload.scope if present.
   React.useEffect(() => {
     if (!defaultValues) return;
     const dv: any = defaultValues;
 
-    const payload = dv.payload || {};
+    // Prefer single-rule info coming from `existingSingle` when editing.
+    const es = existingSingle ?? {};
+    const payload = dv.payload || es.payload || {};
+
+    const inferredEvent: string =
+      (dv.event as string) || (es as any).event || "order_paid";
+
     const inferredScope: "per_order" | "per_customer" =
-      dv.event === "customer_inactive"
+      inferredEvent === "customer_inactive"
         ? "per_customer"
-        : (payload.scope === "per_customer" ? "per_customer" : "per_order");
+        : payload.scope === "per_customer"
+        ? "per_customer"
+        : "per_order";
 
-    if (dv.action && !dv.actions) {
-      const action: ActionItem["type"] = dv.action;
-      const actions: ActionItem[] =
-        action === "send_coupon"
-          ? [{ type: "send_coupon", payload: { couponId: payload.couponId ?? null } }]
-          : [{ type: "product_recommendation", payload: { productIds: payload.productIds ?? [] } }];
+    // Channels accepted by this UI
+    const allowedChannels = new Set<Channel>(["email", "telegram"]);
+    const rawChannels =
+      (dv.channels as any[]) ?? ((es as any).channels as any[]) ?? ["email"];
+    const channels: Channel[] = Array.isArray(rawChannels)
+      ? (rawChannels.filter((c) => allowedChannels.has(c)) as Channel[])
+      : ["email"];
+    if (!channels.length) channels.push("email");
 
-      form.reset({
-        name: dv.name ?? "",
-        description: dv.description ?? "",
-        enabled: dv.enabled ?? true,
-        priority: dv.priority ?? 100,
-        event: dv.event ?? "order_paid",
-        countries: Array.isArray(dv.countries) ? dv.countries : [],
-        channels: Array.isArray(dv.channels) ? (dv.channels as Channel[]) : ["email"],
-        templateSubject: payload.templateSubject ?? "",
-        templateMessage: payload.templateMessage ?? "",
-        runScope: inferredScope,
-        conditions: payload.conditions ?? { op: "AND", items: [] },
-        actions,
-      } as RuleFormValues);
-      return;
+    // Build actions for legacy rules:
+    let actions: ActionItem[] | undefined = dv.actions as any;
+    if (!actions || !Array.isArray(actions) || !actions.length) {
+      if (es && es.action === "multi" && Array.isArray(es.payload?.actions)) {
+        actions = es.payload.actions as ActionItem[];
+      } else if (es && es.action === "send_coupon") {
+        actions = [
+          {
+            type: "send_coupon",
+            payload: { couponId: es.payload?.couponId ?? null },
+          },
+        ] as ActionItem[];
+      } else if (es && es.action === "product_recommendation") {
+        actions = [
+          {
+            type: "product_recommendation",
+            payload: { productIds: es.payload?.productIds ?? [] },
+          },
+        ] as ActionItem[];
+      } else {
+        actions = [{ type: "send_coupon", payload: {} }] as ActionItem[];
+      }
     }
 
     form.reset({
-      ...(dv as RuleFormValues),
+      name: dv.name ?? "",
+      description: dv.description ?? "",
+      enabled: dv.enabled ?? true,
+      priority: dv.priority ?? 100,
+      event: inferredEvent,
+      countries: Array.isArray(dv.countries) ? dv.countries : [],
+      channels,
+      templateSubject: payload.templateSubject ?? "",
+      templateMessage: payload.templateMessage ?? "",
       runScope: inferredScope,
-    });
-  }, [defaultValues]); // eslint-disable-line react-hooks/exhaustive-deps
+      conditions: payload.conditions ?? { op: "AND", items: [] },
+      actions,
+    } as RuleFormValues);
+  }, [defaultValues, existingSingle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const disabled = form.formState.isSubmitting;
   const watch = form.watch();
-  const actions = watch.actions;
+  // Always coerce to an array to avoid `.map` on undefined.
+  const actions = (watch.actions ?? []) as ActionItem[];
   const currentEvent = watch.event;
   const allowedKinds = allowedKindsForEvent(currentEvent);
 
   // If user selects "customer_inactive", force per_customer in the UI.
   React.useEffect(() => {
-    if (currentEvent === "customer_inactive" && watch.runScope !== "per_customer") {
+    if (
+      currentEvent === "customer_inactive" &&
+      watch.runScope !== "per_customer"
+    ) {
       form.setValue("runScope", "per_customer", { shouldDirty: true });
     }
   }, [currentEvent]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -306,7 +362,9 @@ export default function RuleForm({
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      alert(typeof body?.error === "string" ? body.error : "Failed to save rule");
+      alert(
+        typeof body?.error === "string" ? body.error : "Failed to save rule"
+      );
       return;
     }
     router.push("/conditional-rules");
@@ -369,7 +427,12 @@ export default function RuleForm({
               <Label htmlFor="description">Description</Label>
               <Hint text="Optional note for teammates. Customers never see this." />
             </div>
-            <Textarea id="description" rows={3} {...form.register("description")} disabled={disabled} />
+            <Textarea
+              id="description"
+              rows={3}
+              {...form.register("description")}
+              disabled={disabled}
+            />
           </div>
 
           <div className="grid md:grid-cols-2 gap-4">
@@ -382,19 +445,35 @@ export default function RuleForm({
                 control={form.control}
                 name="event"
                 render={({ field }) => (
-                  <Select disabled={disabled} onValueChange={field.onChange} value={field.value}>
+                  <Select
+                    disabled={disabled}
+                    onValueChange={field.onChange}
+                    value={field.value}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Select trigger" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="order_placed">Order placed</SelectItem>
-                      <SelectItem value="order_partially_paid">Order partially paid</SelectItem>
-                      <SelectItem value="order_pending_payment">Order pending payment</SelectItem>
+                      <SelectItem value="order_partially_paid">
+                        Order partially paid
+                      </SelectItem>
+                      <SelectItem value="order_pending_payment">
+                        Order pending payment
+                      </SelectItem>
                       <SelectItem value="order_paid">Order paid</SelectItem>
-                      <SelectItem value="order_completed">Order completed</SelectItem>
-                      <SelectItem value="order_cancelled">Order cancelled</SelectItem>
-                      <SelectItem value="order_refunded">Order refunded</SelectItem>
-                      <SelectItem value="customer_inactive">Customer inactive</SelectItem>
+                      <SelectItem value="order_completed">
+                        Order completed
+                      </SelectItem>
+                      <SelectItem value="order_cancelled">
+                        Order cancelled
+                      </SelectItem>
+                      <SelectItem value="order_refunded">
+                        Order refunded
+                      </SelectItem>
+                      <SelectItem value="customer_inactive">
+                        Customer inactive
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 )}
@@ -425,7 +504,11 @@ export default function RuleForm({
           <div className="space-y-2">
             <RadioGroup
               value={watch.runScope}
-              onValueChange={(v) => form.setValue("runScope", v as "per_order" | "per_customer", { shouldDirty: true })}
+              onValueChange={(v) =>
+                form.setValue("runScope", v as "per_order" | "per_customer", {
+                  shouldDirty: true,
+                })
+              }
               className="grid md:grid-cols-2 gap-3"
             >
               <label className="flex items-start gap-3 rounded-xl border p-3">
@@ -441,21 +524,27 @@ export default function RuleForm({
                   </div>
                   {watch.event === "customer_inactive" && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      Not available for “customer inactive” (there’s no order for that trigger).
+                      Not available for “customer inactive” (there’s no order
+                      for that trigger).
                     </p>
                   )}
                 </div>
               </label>
 
               <label className="flex items-start gap-3 rounded-xl border p-3">
-                <RadioGroupItem value="per_customer" id="scope-customer" disabled={disabled} />
+                <RadioGroupItem
+                  value="per_customer"
+                  id="scope-customer"
+                  disabled={disabled}
+                />
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium">Per customer</span>
                     <Hint text="We’ll run this rule only once for each customer, across all time. Even if they make future orders, it won’t re-run." />
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Tip: For re-engagement cycles, consider separate rules (e.g., a different coupon at 60/120 days).
+                    Tip: For re-engagement cycles, consider separate rules (e.g.,
+                    a different coupon at 60/120 days).
                   </p>
                 </div>
               </label>
@@ -477,8 +566,13 @@ export default function RuleForm({
           />
 
           <ConditionsBuilder
-            value={watch.conditions ?? ({ op: "AND", items: [] } as ConditionsGroup)}
-            onChange={(v) => form.setValue("conditions", v, { shouldDirty: true })}
+            value={
+              (watch.conditions ??
+                ({ op: "AND", items: [] } as ConditionsGroup)) as ConditionsGroup
+            }
+            onChange={(v) =>
+              form.setValue("conditions", v, { shouldDirty: true })
+            }
             disabled={disabled}
             allowedKinds={allowedKinds}
             ruleCountries={form.watch("countries")}
@@ -516,7 +610,10 @@ export default function RuleForm({
             </Button>
           </div>
 
-          {actions.map((a, idx) => (
+          {(actions.length
+            ? actions
+            : ([{ type: "send_coupon", payload: {} }] as ActionItem[])
+          ).map((a, idx) => (
             <div key={idx} className="rounded-xl border p-4 md:p-6 grid gap-4">
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
@@ -525,7 +622,12 @@ export default function RuleForm({
                 </div>
                 <Select
                   value={a.type}
-                  onValueChange={(v) => updateAction(idx, { type: v as ActionItem["type"], payload: {} })}
+                  onValueChange={(v) =>
+                    updateAction(idx, {
+                      type: v as ActionItem["type"],
+                      payload: {},
+                    })
+                  }
                   disabled={disabled}
                 >
                   <SelectTrigger className="w-64">
@@ -533,11 +635,17 @@ export default function RuleForm({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="send_coupon">Send coupon</SelectItem>
-                    <SelectItem value="product_recommendation">Recommend product</SelectItem>
+                    <SelectItem value="product_recommendation">
+                      Recommend product
+                    </SelectItem>
                     {isOrderEvent(currentEvent) && (
-                      <SelectItem value="multiply_points">Set points multiplier</SelectItem>
+                      <SelectItem value="multiply_points">
+                        Set points multiplier
+                      </SelectItem>
                     )}
-                    <SelectItem value="award_points">Award fixed points</SelectItem>
+                    <SelectItem value="award_points">
+                      Award fixed points
+                    </SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -560,8 +668,12 @@ export default function RuleForm({
                     <Hint text="Pick a coupon valid for the selected countries. In the message body, use {coupon} to show its code." />
                   </div>
                   <CouponSelect
-                    value={a.payload?.couponId ?? null}
-                    onChange={(id) => updateAction(idx, { payload: { ...a.payload, couponId: id } })}
+                    value={(a as any).payload?.couponId ?? null}
+                    onChange={(id) =>
+                      updateAction(idx, {
+                        payload: { ...(a as any).payload, couponId: id },
+                      })
+                    }
                     ruleCountries={form.watch("countries")}
                     disabled={disabled}
                   />
@@ -599,14 +711,18 @@ export default function RuleForm({
                       value={(a as any).payload?.description ?? ""}
                       onChange={(e) =>
                         updateAction(idx, {
-                          payload: { ...(a as any).payload, description: e.target.value },
+                          payload: {
+                            ...(a as any).payload,
+                            description: e.target.value,
+                          },
                         })
                       }
                       disabled={disabled}
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Applies only to spending milestone points awarded at payment time. Buyer only; referrers are not affected.
+                    Applies only to spending milestone points awarded at payment
+                    time. Buyer only; referrers are not affected.
                   </p>
                 </div>
               )}
@@ -639,7 +755,10 @@ export default function RuleForm({
                       value={(a as any).payload?.description ?? ""}
                       onChange={(e) =>
                         updateAction(idx, {
-                          payload: { ...(a as any).payload, description: e.target.value },
+                          payload: {
+                            ...(a as any).payload,
+                            description: e.target.value,
+                          },
                         })
                       }
                       disabled={disabled}
@@ -656,13 +775,19 @@ export default function RuleForm({
                   </div>
                   <ProductMulti
                     label="Products to recommend"
-                    value={(a.payload?.productIds ?? []) as string[]}
-                    onChange={(ids) => updateAction(idx, { payload: { ...a.payload, productIds: ids } })}
+                    value={((a as any).payload?.productIds ?? []) as string[]}
+                    onChange={(ids) =>
+                      updateAction(idx, {
+                        payload: { ...(a as any).payload, productIds: ids },
+                      })
+                    }
                     disabled={disabled}
                     ruleCountries={form.watch("countries")}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Will populate <code>{`{selected_products}`}</code> (and <code>{`{recommended_products}`}</code>) in the message body.
+                    Will populate <code>{`{selected_products}`}</code> (and{" "}
+                    <code>{`{recommended_products}`}</code>) in the message
+                    body.
                   </p>
                 </div>
               )}
@@ -684,7 +809,11 @@ export default function RuleForm({
             </div>
             <Input
               value={watch.templateSubject ?? ""}
-              onChange={(e) => form.setValue("templateSubject", e.target.value, { shouldDirty: true })}
+              onChange={(e) =>
+                form.setValue("templateSubject", e.target.value, {
+                  shouldDirty: true,
+                })
+              }
               disabled={disabled}
             />
           </div>
@@ -697,11 +826,15 @@ export default function RuleForm({
             <ReactQuill
               theme="snow"
               value={watch.templateMessage ?? ""}
-              onChange={(html) => form.setValue("templateMessage", html, { shouldDirty: true })}
+              onChange={(html) =>
+                form.setValue("templateMessage", html, { shouldDirty: true })
+              }
               modules={quillModules}
             />
             <p className="text-xs text-muted-foreground">
-              Placeholders: <code>{`{coupon}`}</code>, <code>{`{selected_products}`}</code> (or <code>{`{recommended_products}`}</code>).
+              Placeholders: <code>{`{coupon}`}</code>,{" "}
+              <code>{`{selected_products}`}</code> (or{" "}
+              <code>{`{recommended_products}`}</code>).
             </p>
           </div>
         </section>
@@ -714,7 +847,9 @@ export default function RuleForm({
             type="button"
             variant="outline"
             onClick={() => {
-              history.length > 1 ? router.back() : router.push("/conditional-rules");
+              history.length > 1
+                ? router.back()
+                : router.push("/conditional-rules");
             }}
             disabled={disabled}
           >
