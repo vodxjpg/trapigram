@@ -51,17 +51,37 @@ const quillModules = {
 };
 
 const channelsEnum = z.enum(["email", "telegram"]);
-const actionEnum = z.enum(["send_coupon", "product_recommendation"]);
-const scopeEnum = z.enum(["per_order","per_customer"]); // NEW
+const actionEnum = z.enum(["send_coupon", "product_recommendation", "multiply_points", "award_points"]);
+const scopeEnum = z.enum(["per_order", "per_customer"]); // NEW
 
 // UI action item (no subject/body here—shared at rule level)
-const UiActionSchema = z.object({
-  type: actionEnum,
-  payload: z.object({
-    couponId: z.string().optional().nullable(),
-    productIds: z.array(z.string()).optional(),
+const UiActionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("send_coupon"),
+    payload: z.object({ couponId: z.string().optional().nullable() }),
   }),
-});
+  z.object({
+    type: z.literal("product_recommendation"),
+    payload: z.object({ productIds: z.array(z.string()).optional() }),
+  }),
+  z.object({
+    type: z.literal("multiply_points"),
+    payload: z.object({
+      factor: z.coerce.number().positive("Multiplier must be > 0"),
+      description: z.string().optional(),
+    }),
+  }),
+  z.object({
+    type: z.literal("award_points"),
+    payload: z.object({
+      points: z.coerce
+        .number()
+        .positive("Points must be > 0")
+        .refine((n) => Math.round(n * 10) === n * 10, "Max one decimal place"),
+      description: z.string().optional(),
+    }),
+  }),
+]);
 
 const ConditionsSchema = z
   .object({
@@ -131,6 +151,13 @@ const allowedKindsForEvent = (ev: string): ConditionKind[] => {
   if (ORDER_EVENTS.has(ev as any)) return ["contains_product", "order_total_gte_eur"];
   return ["contains_product", "order_total_gte_eur", "no_order_days_gte"];
 };
+
+function isOrderEvent(ev: string) {
+  return ORDER_EVENTS.has(ev as any);
+}
+
+const numberInputStep01 = { step: 0.1, inputMode: "decimal" as const };
+
 
 // Helper: tooltip icon
 function Hint({ text, className }: { text: string; className?: string }) {
@@ -507,6 +534,10 @@ export default function RuleForm({
                   <SelectContent>
                     <SelectItem value="send_coupon">Send coupon</SelectItem>
                     <SelectItem value="product_recommendation">Recommend product</SelectItem>
+                    {isOrderEvent(currentEvent) && (
+                      <SelectItem value="multiply_points">Set points multiplier</SelectItem>
+                    )}
+                    <SelectItem value="award_points">Award fixed points</SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -537,6 +568,83 @@ export default function RuleForm({
                   <p className="text-xs text-muted-foreground">
                     Will populate <code>{`{coupon}`}</code> in the message body.
                   </p>
+                </div>
+              )}
+
+              {a.type === "multiply_points" && (
+                <div className="grid gap-4">
+                  <div className="flex items-center gap-2">
+                    <Label>Multiplier</Label>
+                    <Hint text="Sets a multiplier for the buyer’s spending-based points on this order only. If multiple rules set it, we’ll keep the highest multiplier." />
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <Input
+                      type="number"
+                      min={0.1}
+                      {...numberInputStep01}
+                      value={(a as any).payload?.factor ?? ""}
+                      onChange={(e) =>
+                        updateAction(idx, {
+                          payload: {
+                            ...(a as any).payload,
+                            factor: Number(e.target.value || 0),
+                          },
+                        })
+                      }
+                      disabled={disabled}
+                      placeholder="e.g. 1.5"
+                    />
+                    <Input
+                      placeholder="Optional description (internal)"
+                      value={(a as any).payload?.description ?? ""}
+                      onChange={(e) =>
+                        updateAction(idx, {
+                          payload: { ...(a as any).payload, description: e.target.value },
+                        })
+                      }
+                      disabled={disabled}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Applies only to spending milestone points awarded at payment time. Buyer only; referrers are not affected.
+                  </p>
+                </div>
+              )}
+
+              {a.type === "award_points" && (
+                <div className="grid gap-4">
+                  <div className="flex items-center gap-2">
+                    <Label>Points</Label>
+                    <Hint text="Immediately credits the buyer with a fixed number of affiliate points. Supports one decimal (e.g., 1.5). We round to the nearest 0.1." />
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <Input
+                      type="number"
+                      min={0.1}
+                      {...numberInputStep01}
+                      value={(a as any).payload?.points ?? ""}
+                      onChange={(e) =>
+                        updateAction(idx, {
+                          payload: {
+                            ...(a as any).payload,
+                            points: Number(e.target.value || 0),
+                          },
+                        })
+                      }
+                      disabled={disabled}
+                      placeholder="e.g. 10 or 1.5"
+                    />
+                    <Input
+                      placeholder="Optional description (internal)"
+                      value={(a as any).payload?.description ?? ""}
+                      onChange={(e) =>
+                        updateAction(idx, {
+                          payload: { ...(a as any).payload, description: e.target.value },
+                        })
+                      }
+                      disabled={disabled}
+                    />
+                  </div>
                 </div>
               )}
 

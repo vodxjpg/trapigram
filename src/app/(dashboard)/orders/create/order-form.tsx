@@ -62,9 +62,16 @@ async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
   }));
 }
 
+// Give every row (product or variation) a unique token for the <Select>
+const tokenOf = (p: Product) => `${p.id}:${p.variationId ?? "base"}`;
+const parseToken = (t: string) => {
+  const [productId, v] = String(t).split(":");
+  return { productId, variationId: v === "base" ? null : v };
+};
 // Interfaces
 interface Product {
-  id: string;
+  id: string;                 // productId
+  variationId?: string | null; // ← add this
   title: string;
   sku: string;
   description: string;
@@ -74,9 +81,10 @@ interface Product {
   stockData: Record<string, { [countryCode: string]: number }>;
   subtotal: number;
   allowBackorders?: boolean;
-  isAffiliate?: boolean; // ← new
-  categories?: string[]; // ← NEW
+  isAffiliate?: boolean;
+  categories?: string[];
 }
+
 interface OrderItem {
   product: Product;
   quantity: number;
@@ -208,8 +216,21 @@ const stockForCountry = (p: Product, country: string): number =>
   );
 
 // Quantity currently in cart for a given product
-const inCartQty = (pid: string, items: OrderItem[]) =>
-  items.reduce((sum, it) => sum + (it.product.id === pid ? it.quantity : 0), 0);
+const inCartQty = (
+  pid: string,
+  vid: string | null,
+  items: OrderItem[] = []
+) =>
+  items.reduce(
+    (sum, it) =>
+      sum +
+      (it.product.id === pid &&
+        (it.product.variationId ?? null) === (vid ?? null)
+        ? it.quantity
+        : 0),
+    0
+  );
+
 
 const DEBOUNCE_MS = 400;
 export default function OrderForm() {
@@ -473,22 +494,32 @@ export default function OrderForm() {
       if (Array.isArray(resultCartProducts)) {
         setOrderItems(
           resultCartProducts.map((r: any) => {
-            const pMatch = products.find((p) => p.id === r.id);
+            const pMatch =
+              products.find((p) => p.id === r.id && (p.variationId ?? null) === (r.variationId ?? null)) ??
+              products.find((p) => p.id === r.id);
+
             return {
               product: {
                 id: r.id,
-                title: r.title,
-                sku: r.sku,
+                variationId: r.variationId ?? null,
+
+                // ✅ keep label with attribute/term
+                title: pMatch?.title ?? r.title,
+
+                // ✅ keep the VARIANT sku if you have it from the list API
+                sku: pMatch?.sku ?? r.sku,
+
                 description: r.description,
-                image: r.image,
+                image: pMatch?.image ?? r.image,
                 price: r.unitPrice,
                 regularPrice: pMatch?.regularPrice ?? {},
-                stockData: pMatch?.stockData ?? {},        // ← keep stock here
+                stockData: pMatch?.stockData ?? {},
                 allowBackorders: pMatch?.allowBackorders,
                 subtotal: r.subtotal,
               },
               quantity: r.quantity,
             };
+
           })
         );
       }
@@ -572,6 +603,7 @@ export default function OrderForm() {
         // 1) normal products
         ...norm.map((p: any) => ({
           id: p.id,
+          variationId: p.variationId ?? null,     // ← keep it
           title: p.title,
           allowBackorders: !!p.allowBackorders,
           sku: p.sku,
@@ -647,9 +679,9 @@ export default function OrderForm() {
   }, [countryProducts, prodTerm]);
 
   /* pick a product (works for both local + remote) */
-  const pickProduct = (id: string, obj: Product) => {
-    setSelectedProduct(id);
-    if (!products.some((p) => p.id === id))
+  const pickProduct = (token: string, obj: Product) => {
+    setSelectedProduct(token);
+    if (!products.some((p) => tokenOf(p) === token))
       setProducts((prev) => [...prev, obj]);
     setProdTerm("");
     setProdResults([]);
@@ -682,14 +714,17 @@ export default function OrderForm() {
         ]);
 
         /* map ➜ our <Product> shape, tagging affiliates */
+        // inside the prodTerm search effect
         const mapShop = (p: any): Product => ({
           ...p,
-          allowBackorders: !!p.allowBackorders,   // ← ensure flag present
+          variationId: p.variationId ?? null,   // ← add
+          allowBackorders: !!p.allowBackorders,
           price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
           stockData: p.stockData,
           isAffiliate: false,
           categories: p.categories ?? [],
         });
+
         const mapAff = (a: any): Product => ({
           ...a,
           price: Object.values(a.pointsPrice)[0] ?? 0,
@@ -876,12 +911,16 @@ export default function OrderForm() {
   const addProduct = async () => {
     if (!selectedProduct || !cartId) return toast.error("Cart hasn’t been created yet!");
 
-    const product = [...products, ...prodResults].find((p) => p.id === selectedProduct);
+    const product = [...products, ...prodResults].find((p) => tokenOf(p) === selectedProduct);
     if (!product) return;
 
     const hasFiniteStock = Object.keys(product.stockData || {}).length > 0;
     const remaining = hasFiniteStock
-      ? Math.max(0, stockForCountry(product, clientCountry) - inCartQty(product.id, orderItems))
+      ? Math.max(
+        0,
+        stockForCountry(product, clientCountry) -
+        inCartQty(product.id, product.variationId ?? null, orderItems)
+      )
       : Infinity;
 
     const qty = parseQty(quantityText);
@@ -891,14 +930,21 @@ export default function OrderForm() {
     }
 
     const unitPrice = product.regularPrice[clientCountry] ?? product.price;
+    const { productId, variationId } = parseToken(selectedProduct);
 
     try {
       const qty = parseQty(quantityText);
+      console.log(productId,
+        variationId,
+        qty,
+        unitPrice,
+        clientCountry,)
       const res = await fetch(`/api/cart/${cartId}/add-product`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          productId: selectedProduct,
+          productId,
+          variationId,
           quantity: qty,
           unitPrice,
           country: clientCountry,
@@ -918,26 +964,50 @@ export default function OrderForm() {
       /* ▲▲ ——— patch ends here ——— ▲▲ */
 
       const { product: added, quantity: qtyResp } = await res.json();
-      const chosen = products.find((p) => p.id === added.id);
+      const chosen =
+        products.find(
+          (p) =>
+            p.id === added.id &&
+            (p.variationId ?? null) === (added.variationId ?? variationId ?? null)
+        ) ?? products.find((p) => p.id === added.id);
+
       const withStock: Product = {
         ...added,
+        variationId: added.variationId ?? variationId ?? product.variationId ?? null,
+
+        // ✅ keep the variant label you show in the list (often “Name – Attr: Term”)
+        title: chosen?.title ?? product.title ?? added.title,
+
+        // ✅ keep the VARIANT SKU (fallback to what API returned)
+        sku: chosen?.sku ?? product.sku ?? added.sku,
+
+        // (optional but nice) also prefer the image from the list row if set
+        image: chosen?.image ?? added.image,
+
         regularPrice: added.regularPrice ?? chosen?.regularPrice ?? {},
-        stockData: chosen?.stockData ?? added.stockData ?? {},  // ← keep stock
+        stockData: chosen?.stockData ?? added.stockData ?? {},
         allowBackorders: chosen?.allowBackorders ?? added.allowBackorders,
       };
       const subtotalRow = calcRowSubtotal(withStock, qtyResp);
 
-      setOrderItems((prev) => {
-        const exists = prev.some((it) => it.product.id === withStock.id);
+      setOrderItems(prev => {
+        const exists = prev.some(
+          it =>
+            it.product.id === withStock.id &&
+            (it.product.variationId ?? null) === (withStock.variationId ?? null)
+        );
+
+        const row = { product: { ...withStock, subtotal: subtotalRow }, quantity: qtyResp };
+
         return exists
-          ? prev.map((it) =>
-            it.product.id === withStock.id
-              ? { product: { ...withStock, subtotal: subtotalRow }, quantity: qtyResp }
+          ? prev.map(it =>
+            it.product.id === withStock.id &&
+              (it.product.variationId ?? null) === (withStock.variationId ?? null)
+              ? row
               : it
           )
-          : [...prev, { product: { ...withStock, subtotal: subtotalRow }, quantity: qtyResp }];
+          : [...prev, row];
       });
-
 
 
       setSelectedProduct("");
@@ -951,7 +1021,11 @@ export default function OrderForm() {
   };
 
   // — Remove Product
-  const removeProduct = async (productId: string, idx: number) => {
+  const removeProduct = async (
+    productId: string,
+    variationId: string | null,
+    idx: number
+  ) => {
     if (!cartId) {
       toast.error("No cart created yet!");
       return;
@@ -963,7 +1037,7 @@ export default function OrderForm() {
           "Content-Type": "application/json",
           "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
         },
-        body: JSON.stringify({ productId }),
+        body: JSON.stringify({ productId, variationId }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => null);
@@ -977,9 +1051,10 @@ export default function OrderForm() {
     }
   };
 
-  // — Update product quantity
+  /// — Update product quantity
   const updateQuantity = async (
     productId: string,
+    variationId: string | null,
     action: "add" | "subtract"
   ) => {
     if (!cartId) return toast.error("Cart hasn’t been created yet!");
@@ -987,41 +1062,81 @@ export default function OrderForm() {
       const res = await fetch(`/api/cart/${cartId}/update-product`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, action }),
+        body: JSON.stringify({
+          productId,
+          // send varId only when we have one (base products can omit it)
+          ...(variationId ? { variationId } : {}),
+          action,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => null);
         throw new Error(err?.message || "Failed to update quantity");
       }
-      // 🔸 NEW: API now returns { lines: […] }
+
       const { lines } = await res.json();
 
-      const mapped: OrderItem[] = lines.map((l: any) => {
-        const prev = orderItems.find((it) => it.product.id === l.id);
-        const pMatch = products.find((p) => p.id === l.id);
-        return {
-          product: {
-            id: l.id,
-            title: l.title,
-            sku: l.sku,
-            description: l.description,
-            image: l.image,
-            price: l.unitPrice,
-            regularPrice: { [clientCountry]: l.unitPrice },
-            stockData: prev?.product.stockData ?? pMatch?.stockData ?? {}, // ← keep stock
-            allowBackorders: prev?.product.allowBackorders ?? pMatch?.allowBackorders,
-            subtotal: l.subtotal,
-          },
-          quantity: l.quantity,
-        };
+      // ✅ Functional update to avoid stale reads
+      setOrderItems((prev) => {
+        const mapped: OrderItem[] = lines.map((l: any) => {
+          // 1) prev cart row (try id+varId, else id only)
+          const prevRow =
+            prev.find(
+              it =>
+                it.product.id === l.id &&
+                (it.product.variationId ?? null) === (l.variationId ?? null)
+            ) ?? prev.find(it => it.product.id === l.id);
+
+          // 2) stable varId: server → the one we just acted on (for this line) → previous row
+          const requestedVarId = variationId ?? null;
+          const varId =
+            l.variationId ??
+            (l.id === productId ? requestedVarId : null) ??
+            (prevRow?.product.variationId ?? null);
+
+          // 3) catalog match (nice-to-have for image/stock/etc.)
+          const pMatch =
+            products.find((p) => p.id === l.id && (p.variationId ?? null) === varId) ??
+            products.find((p) => p.id === l.id);
+
+          // 4) persist label + variant SKU
+          const title =
+            prevRow?.product.title ??
+            pMatch?.title ??
+            l.title ??
+            "";
+
+          const sku =
+            prevRow?.product.sku ??
+            pMatch?.sku ??
+            l.sku ??
+            "";
+
+          return {
+            product: {
+              id: l.id,
+              variationId: varId,
+              title,
+              sku,
+              description: prevRow?.product.description ?? pMatch?.description ?? l.description,
+              image: prevRow?.product.image ?? pMatch?.image ?? l.image,
+              price: l.unitPrice,
+              regularPrice: { [clientCountry]: l.unitPrice },
+              stockData: prevRow?.product.stockData ?? pMatch?.stockData ?? {},
+              allowBackorders: prevRow?.product.allowBackorders ?? pMatch?.allowBackorders,
+              subtotal: l.subtotal,
+            },
+            quantity: l.quantity,
+          };
+        });
+
+        return mapped;
       });
-
-      setOrderItems(mapped);
-
     } catch (err: any) {
       toast.error(err.message || "Could not update quantity");
     }
   };
+
 
   // — Apply coupon
   const applyCoupon = async () => {
@@ -1434,7 +1549,7 @@ export default function OrderForm() {
                     // NEW
                     const finite = Object.keys(product.stockData || {}).length > 0;
                     const base = stockForCountry(product, clientCountry);
-                    const used = inCartQty(product.id, orderItems);
+                    const used = inCartQty(product.id, product.variationId ?? null, orderItems);
                     const remaining = Math.max(0, base - used);
                     const disablePlus = finite && !product.allowBackorders && remaining === 0;
 
@@ -1459,7 +1574,9 @@ export default function OrderForm() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => removeProduct(product.id, idx)}
+                              onClick={() =>
+                                removeProduct(product.id, product.variationId ?? null, idx)
+                              }
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
@@ -1478,7 +1595,7 @@ export default function OrderForm() {
                               variant="ghost"
                               size="icon"
                               onClick={() =>
-                                updateQuantity(product.id, "subtract")
+                                updateQuantity(product.id, product.variationId ?? null, "subtract")
                               }
                             >
                               <Minus className="h-4 w-4" />
@@ -1487,7 +1604,7 @@ export default function OrderForm() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => updateQuantity(product.id, "add")}
+                              onClick={() => updateQuantity(product.id, product.variationId ?? null, "add")}
                               disabled={disablePlus}
                               aria-disabled={disablePlus}
                               title={disablePlus ? "Out of stock" : undefined}
@@ -1514,7 +1631,7 @@ export default function OrderForm() {
                             <div className="mt-1 text-xs text-muted-foreground">
                               {(() => {
                                 const base = stockForCountry(product, clientCountry);
-                                const used = inCartQty(product.id, orderItems);
+                                const used = inCartQty(product.id, product.variationId ?? null, orderItems);
                                 const remaining = Math.max(0, base - used);
                                 return (
                                   <>
@@ -1537,12 +1654,25 @@ export default function OrderForm() {
                   <Select
                     value={selectedProduct}
                     onValueChange={(val) => {
-                      const obj = [...products, ...prodResults].find((p) => p.id === val);
+                      // val is "productId:variationId" (or "productId:base")
+                      const { productId, variationId } = parseToken(val);
+
+                      const obj =
+                        [...products, ...prodResults].find(
+                          (row) =>
+                            row.id === productId &&
+                            (row.variationId ?? null) === (variationId ?? null)
+                        ) || null;
+
                       if (!obj) return;
 
                       const hasFiniteStock = Object.keys(obj.stockData || {}).length > 0;
                       const remaining = hasFiniteStock
-                        ? Math.max(0, stockForCountry(obj, clientCountry) - inCartQty(obj.id, orderItems))
+                        ? Math.max(
+                          0,
+                          stockForCountry(obj, clientCountry) -
+                          inCartQty(productId, variationId ?? null, orderItems) // ← variation-aware
+                        )
                         : Infinity;
 
                       if (hasFiniteStock && remaining === 0 && !obj.allowBackorders) {
@@ -1553,6 +1683,7 @@ export default function OrderForm() {
                     }}
                     disabled={productsLoading}
                   >
+
 
                     <SelectTrigger>
                       <SelectValue
@@ -1582,14 +1713,18 @@ export default function OrderForm() {
                                 const price = p.regularPrice[clientCountry] ?? p.price;
                                 const hasFiniteStock = Object.keys(p.stockData || {}).length > 0;
                                 const remaining = hasFiniteStock
-                                  ? Math.max(0, stockForCountry(p, clientCountry) - inCartQty(p.id, orderItems))
+                                  ? Math.max(
+                                    0,
+                                    stockForCountry(p, clientCountry) -
+                                    inCartQty(p.id, p.variationId ?? null, orderItems)  // 👈 add varId
+                                  )
                                   : Infinity;
                                 const shouldDisable = hasFiniteStock
                                   ? remaining === 0 && !p.allowBackorders
                                   : false;
 
                                 return (
-                                  <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
+                                  <SelectItem key={tokenOf(p)} value={tokenOf(p)} disabled={shouldDisable}>
                                     <span className="block max-w-[420px] truncate">
                                       {p.title} — ${price}
                                       {hasFiniteStock && (
@@ -1615,7 +1750,7 @@ export default function OrderForm() {
                             {filteredProducts
                               .filter((p) => p.isAffiliate)
                               .map((p) => (
-                                <SelectItem key={p.id} value={p.id}>
+                                <SelectItem key={tokenOf(p)} value={tokenOf(p)}>
                                   {p.title} — {p.price} pts
                                 </SelectItem>
                               ))}
@@ -1628,7 +1763,7 @@ export default function OrderForm() {
                           <>
                             {/* Group remote shop results by category too */}
                             {groupByCategory(
-                              prodResults.filter((p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id))
+                              prodResults.filter((p) => !p.isAffiliate && !products.some((lp) => tokenOf(lp) === tokenOf(p)))
                             ).map(([label, items]) => (
                               <SelectGroup key={`remote-${label}`}>
                                 <SelectLabel>{label} — search</SelectLabel>
@@ -1636,14 +1771,18 @@ export default function OrderForm() {
                                   const price = p.regularPrice?.[clientCountry] ?? p.price;
                                   const hasFiniteStock = Object.keys(p.stockData || {}).length > 0;
                                   const remaining = hasFiniteStock
-                                    ? Math.max(0, stockForCountry(p, clientCountry) - inCartQty(p.id, orderItems))
+                                    ? Math.max(
+                                      0,
+                                      stockForCountry(p, clientCountry) -
+                                      inCartQty(p.id, p.variationId ?? null, orderItems)  // 👈 add varId
+                                    )
                                     : Infinity;
                                   const shouldDisable = hasFiniteStock
                                     ? remaining === 0 && !p.allowBackorders
                                     : false;
 
                                   return (
-                                    <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
+                                    <SelectItem key={tokenOf(p)} value={tokenOf(p)} disabled={shouldDisable}>
                                       <span className="block max-w-[420px] truncate">
                                         {p.title} — ${price}
                                         <span className="ml-2 text-xs text-muted-foreground">
@@ -1670,9 +1809,9 @@ export default function OrderForm() {
                               <SelectGroup>
                                 <SelectLabel>Affiliate — search</SelectLabel>
                                 {prodResults
-                                  .filter((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id))
+                                  .filter((p) => p.isAffiliate && !products.some((lp) => tokenOf(lp) === tokenOf(p)))
                                   .map((p) => (
-                                    <SelectItem key={p.id} value={p.id}>
+                                    <SelectItem key={tokenOf(p)} value={tokenOf(p)}>
                                       {p.title} — {p.price} pts
                                       <span className="ml-1 text-xs text-muted-foreground">
                                         (remote)

@@ -17,7 +17,9 @@ import {
 
 const cartProductSchema = z.object({
   productId: z.string(),
+  variationId: z.string().nullable(),
   quantity: z.number().int().positive(),
+  unitPrice: z.number()
 });
 
 function findTier(
@@ -62,6 +64,7 @@ export async function POST(
   try {
     const { id: cartId } = await params;
     const body = cartProductSchema.parse(await req.json());
+    const isVariable = body.variationId !== null ? true : false
 
     /* client context */
     const { rows: clientRows } = await pool.query(
@@ -78,14 +81,15 @@ export async function POST(
       );
 
     const { country, levelId, clientId } = clientRows[0];
-    console.log(body.productId, country, levelId)
 
     /* price resolution */
     const { price: basePrice, isAffiliate } = await resolveUnitPrice(
       body.productId,
+      body.variationId,
       country,
       levelId,
     );
+
     if (isAffiliate && basePrice === 0)
       return NextResponse.json(
         { error: "No points price configured for this product" },
@@ -138,13 +142,19 @@ export async function POST(
       }
 
       /* 2) ▼ upsert cartProducts row */
-      const { rows: existing } = await client.query(
-        `SELECT id, quantity
-           FROM "cartProducts"
-          WHERE "cartId" = $1
-            AND ${isAffiliate ? `"affiliateProductId"` : `"productId"`} = $2`,
-        [cartId, body.productId],
-      );
+      let sql = `SELECT id, quantity
+            FROM "cartProducts"
+            WHERE "cartId" = $1
+              AND ${isAffiliate ? `"affiliateProductId"` : `"productId"`} = $2`
+      const values = [cartId, body.productId]
+
+
+      if (isVariable) {
+        sql += ` AND "variationId" = $3`
+        values.push(body.variationId)
+      }
+
+      const { rows: existing } = await client.query(sql, values);
 
       let quantity = body.quantity;
       if (existing.length) quantity += existing[0].quantity;
@@ -195,24 +205,42 @@ export async function POST(
           [quantity, unitPrice, existing[0].id],
         );
       } else {
-        await client.query(
-          `INSERT INTO "cartProducts"
+        if (isVariable) {
+          await client.query(
+            `INSERT INTO "cartProducts"
+            (id,"cartId","productId","affiliateProductId","variationId",
+             quantity,"unitPrice","createdAt","updatedAt")
+           VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
+            [
+              uuidv4(),
+              cartId,
+              isAffiliate ? null : body.productId,
+              isAffiliate ? body.productId : null,
+              body.variationId,
+              quantity,
+              unitPrice,
+            ],
+          );
+        } else {
+          await client.query(
+            `INSERT INTO "cartProducts"
             (id,"cartId","productId","affiliateProductId",
              quantity,"unitPrice","createdAt","updatedAt")
            VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
-          [
-            uuidv4(),
-            cartId,
-            isAffiliate ? null : body.productId,
-            isAffiliate ? body.productId : null,
-            quantity,
-            unitPrice,
-          ],
-        );
+            [
+              uuidv4(),
+              cartId,
+              isAffiliate ? null : body.productId,
+              isAffiliate ? body.productId : null,
+              quantity,
+              unitPrice,
+            ],
+          );
+        }
       }
 
       /* 5) ▼ reserve stock */
-      await adjustStock(client, body.productId, country, -body.quantity);
+      await adjustStock(client, body.productId, body.variationId, country, - body.quantity);
 
       /* 6) ▼ cart hash */
       const { rows: rowsHash } = await client.query(

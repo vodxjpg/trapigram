@@ -15,6 +15,7 @@ import { resolveUnitPrice } from "@/lib/pricing";
 /* ─────────────────────────────── */
 const cartProductSchema = z.object({
   productId: z.string(),
+  variationId: z.string().nullable().optional(),
   quantity: z.number().optional(),
   action: z.enum(["add", "subtract"]),
 });
@@ -127,7 +128,7 @@ export async function PATCH(
           );
         }
       } else {
-        const p = await resolveUnitPrice(data.productId, country, levelId);
+        const p = await resolveUnitPrice(data.productId, data.variationId, country, levelId);
         basePrice = p.price;
       }
 
@@ -255,6 +256,7 @@ export async function PATCH(
       await adjustStock(
         client,
         data.productId,
+        data.variationId,
         country,
         data.action === "add" ? -1 : 1,
       );

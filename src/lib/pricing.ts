@@ -47,10 +47,17 @@ export async function assertAffiliateLevelAllowed(
 
 export async function resolveUnitPrice(
   productId: string,
+  variationId: string | null,
   country: string,
   clientLevelId: string | null
 ): Promise<{ price: number; isAffiliate: boolean }> {
   const prod = await pool.query(`SELECT * FROM products WHERE id=$1`, [productId]);
+  if (prod.rows[0].productType === "variable") {
+    const variable = await pool.query(`SELECT * FROM "productVariations" WHERE id=$1`, [variationId]);
+    console.log(variable.rows[0])
+    prod.rows[0].salePrice = variable.rows[0].salePrice
+    prod.rows[0].regularPrice = variable.rows[0].regularPrice
+  }
   if (prod.rowCount) {
     return {
       price: await computeMoneyPrice(prod.rows[0], country),

@@ -16,7 +16,11 @@ import type { PoolClient } from "pg";               /* type only */
 /*───────── validation ─────────*/
 const createSchema = z.object({
   id: z.string().min(1),          // clientId
-  points: z.number().int(),
+  points: z
+  .number()
+  .refine((n) => Number.isFinite(n) && Math.round(n * 10) === n * 10, {
+    message: "points must have at most one decimal place",
+  }),
   action: z.string().min(1),
   description: z.string().nullable().optional(),
   sourceId: z.string().nullable().optional(),

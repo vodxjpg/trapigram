@@ -2,18 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-
+export const runtime = "nodejs";
 const channelsEnum = z.enum(["email", "telegram"]);
 const eventEnum = z.enum([
-  "order_placed","order_pending_payment","order_paid","order_completed",
-  "order_cancelled","order_refunded","order_partially_paid","order_shipped",
-  "order_message","ticket_created","ticket_replied","manual","customer_inactive",
+  "order_placed", "order_pending_payment", "order_paid", "order_completed",
+  "order_cancelled", "order_refunded", "order_partially_paid", "order_shipped",
+  "order_message", "ticket_created", "ticket_replied", "manual", "customer_inactive",
 ]);
 
-const scopeEnum = z.enum(["per_order","per_customer"]);
+const scopeEnum = z.enum(["per_order", "per_customer"]);
 
 const conditionsSchema = z.object({
-  op: z.enum(["AND","OR"]),
+  op: z.enum(["AND", "OR"]),
   items: z.array(
     z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
@@ -23,18 +23,44 @@ const conditionsSchema = z.object({
   ).min(1),
 }).partial();
 
+const positiveOneDecimal = z
+  .coerce.number()
+  .refine((n) => Number.isFinite(n) && Math.round(n * 10) === n * 10, {
+    message: "Must have at most one decimal place",
+  })
+  .refine((n) => n > 0, { message: "Points must be > 0" });
+
 const multiPayload = z.object({
   templateSubject: z.string().optional(),
   templateMessage: z.string().optional(),
   conditions: conditionsSchema.optional(),
   actions: z.array(
-    z.object({
-      type: z.enum(["send_coupon","product_recommendation"]),
-      payload: z.object({
-        couponId: z.string().optional(),
-        productIds: z.array(z.string()).optional(),
-      }).optional(),
-    })
+    z.discriminatedUnion("type", [
+      z.object({
+        type: z.literal("send_coupon"),
+        payload: z.object({ couponId: z.string().min(1) }).optional(),
+      }),
+      z.object({
+        type: z.literal("product_recommendation"),
+        payload: z.object({ productIds: z.array(z.string()).min(1) }).optional(),
+      }),
+      z.object({
+        type: z.literal("multiply_points"),
+        payload: z.object({
+          factor: z.coerce.number().refine((n) => n > 0, {
+            message: "Multiplier must be > 0",
+          }),
+          description: z.string().optional(),
+        }),
+      }),
+      z.object({
+        type: z.literal("award_points"),
+        payload: z.object({
+          points: positiveOneDecimal,
+          description: z.string().optional(),
+        }),
+      }),
+    ])
   ).min(1),
   scope: scopeEnum.optional(), // NEW
 }).partial();
@@ -46,7 +72,7 @@ const updateSchema = z.object({
   priority: z.coerce.number().int().min(0).optional(),
   event: eventEnum.optional(),
   countries: z.array(z.string()).optional(),
-  action: z.enum(["send_coupon","product_recommendation","multi"]).optional(),
+  action: z.enum(["send_coupon", "product_recommendation", "multi"]).optional(),
   channels: z.array(channelsEnum).optional(),
   payload: z
     .union([multiPayload, z.record(z.any())])
@@ -64,7 +90,36 @@ function couponCoversCountries(couponCountries: string[], ruleCountries: string[
   return ruleCountries.every((c) => couponCountries.includes(c));
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) { /* unchanged */ }
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+  const { id } = params;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, event, enabled, priority, countries, action, channels, payload, "updatedAt"
+         FROM "automationRules"
+        WHERE id = $1 AND "organizationId" = $2
+        LIMIT 1`,
+      [id, organizationId],
+    );
+    if (!rows.length) {
+      return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+    }
+    const r = rows[0];
+    const rule = {
+      ...r,
+      countries: Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]"),
+      channels: Array.isArray(r.channels) ? r.channels : JSON.parse(r.channels || "[]"),
+      payload: typeof r.payload === "string" ? JSON.parse(r.payload || "{}") : (r.payload ?? {}),
+    };
+    return NextResponse.json(rule);
+  } catch (e) {
+    console.error("[GET /api/rules/:id] error", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const ctx = await getContext(req);
@@ -106,6 +161,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         { error: "Only 'no_order_days_gte' is allowed for 'customer_inactive'." },
         { status: 400 }
       );
+    }
+
+    // Enforce action/event compatibility
+    if (finalAction === "multi" && Array.isArray(finalPayload?.actions)) {
+      if (
+        finalEvent === "customer_inactive" &&
+        finalPayload.actions.some((a: any) => a?.type === "multiply_points")
+      ) {
+        return NextResponse.json(
+          { error: "Action 'multiply_points' is only valid for order events." },
+          { status: 400 }
+        );
+      }
     }
 
     // Scope validation

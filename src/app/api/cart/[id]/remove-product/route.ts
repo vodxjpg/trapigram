@@ -76,6 +76,7 @@ function encryptSecretNode(plain: string): string {
 
 const cartProductSchema = z.object({
   productId: z.string(),
+  variationId: z.string().nullable(),
 });
 
 export async function DELETE(
@@ -90,12 +91,19 @@ export async function DELETE(
     const body = await req.json();
     const data = cartProductSchema.parse(body);
 
+    const withVariation = data.variationId != null;
+
     const delSql = `
-      DELETE FROM "cartProducts" 
-      WHERE "cartId" = $1 AND ( "productId" = $2 OR "affiliateProductId" = $2 )
+      DELETE FROM "cartProducts"
+      WHERE "cartId" = $1
+        AND ("productId" = $2 OR "affiliateProductId" = $2)
+        ${withVariation ? `AND "variationId" = $3` : ""}
       RETURNING *
     `;
-    const vals = [id, data.productId];
+
+    const vals = withVariation
+      ? [id, data.productId, data.variationId]
+      : [id, data.productId];
 
     const result = await pool.query(delSql, vals);
     const deleted = result.rows[0];
@@ -149,7 +157,7 @@ export async function DELETE(
 
     /* Stock release */
     const released = result.rows[0]?.quantity ?? 0;
-    if (released) await adjustStock(pool, data.productId, country, +released);
+    if (released) await adjustStock(pool, data.productId, data.variationId, country, +released);
 
     /* Hash AFTER price updates so it represents the true cart */
     const { rows: lines } = await pool.query(

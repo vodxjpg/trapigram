@@ -120,12 +120,11 @@ export async function GET(req: NextRequest) {
     const status: "published" | "draft" | undefined =
       rawStatus === "published" || rawStatus === "draft" ? rawStatus : undefined;
 
-    const attributeId = searchParams.get("attributeId") || "";
     const attributeTermId = searchParams.get("attributeTermId") || "";
 
-    // ⬇️ NEW: only list "owned" products (exclude SKUs with SHD prefix)
+    // Only list "owned" products (exclude SKUs with SHD prefix)
     const ownedOnly = ["1", "true", "yes"].includes(
-      (searchParams.get("ownedOnly") ?? "").toLowerCase()
+      (searchParams.get("ownedOnly") ?? "").toLowerCase(),
     );
 
     /* -------- STEP 1 – product IDs with proper limit/offset ----- */
@@ -145,9 +144,9 @@ export async function GET(req: NextRequest) {
               .selectFrom("productVariations as v")
               .select("v.id")
               .whereRef("v.productId", "=", "products.id")
-              .where("v.sku", "ilike", `%${search}%` as any)
+              .where("v.sku", "ilike", `%${search}%` as any),
           ),
-        ])
+        ]),
       );
     }
 
@@ -158,15 +157,14 @@ export async function GET(req: NextRequest) {
         db
           .selectFrom("productCategory")
           .select("productId")
-          .where("categoryId", "=", categoryId)
+          .where("categoryId", "=", categoryId),
       );
 
     if (status) idQuery = idQuery.where("status", "=", status);
 
-    // ⬇️ apply ownedOnly in the simple branch
     if (ownedOnly) {
       idQuery = idQuery.where((eb) =>
-        eb.or([eb("sku", "is", null), eb("sku", "not ilike", "SHD%")])
+        eb.or([eb("sku", "is", null), eb("sku", "not ilike", "SHD%")]),
       );
     }
 
@@ -191,10 +189,10 @@ export async function GET(req: NextRequest) {
                   .selectFrom("productVariations as v")
                   .select("v.id")
                   .whereRef("v.productId", "=", "p.id")
-                  .where("v.sku", "ilike", `%${search}%` as any)
+                  .where("v.sku", "ilike", `%${search}%` as any),
               ),
-            ])
-          )
+            ]),
+          ),
         )
         .$if(Boolean(categoryId), (q) =>
           q.where(
@@ -203,17 +201,15 @@ export async function GET(req: NextRequest) {
             db
               .selectFrom("productCategory")
               .select("productId")
-              .where("categoryId", "=", categoryId)
-          )
+              .where("categoryId", "=", categoryId),
+          ),
         )
         .$if(!!status, (q) => q.where("p.status", "=", status!))
-        // ⬇️ apply ownedOnly in the JOIN branch
         .$if(ownedOnly, (q) =>
           q.where((eb) =>
-            eb.or([eb("p.sku", "is", null), eb("p.sku", "not ilike", "SHD%")])
-          )
+            eb.or([eb("p.sku", "is", null), eb("p.sku", "not ilike", "SHD%")]),
+          ),
         )
-        // Avoid duplicates when a product has multiple rows pointing to the same term
         .groupBy("p.id")
         .orderBy(("p." + orderBy) as any, orderDir)
         .limit(pageSize)
@@ -245,21 +241,32 @@ export async function GET(req: NextRequest) {
       .select(["targetProductId", "sourceProductId", "shareLinkId"])
       .where("targetProductId", "in", productIds)
       .execute();
-    const mapByTarget = new Map(mappings.map(m => [m.targetProductId, m]));
-    const shareLinkIds = Array.from(new Set(mappings.map(m => m.shareLinkId)));
-    const sourceIds = Array.from(new Set(mappings.map(m => m.sourceProductId)));
+    const mapByTarget = new Map(mappings.map((m) => [m.targetProductId, m]));
+    const shareLinkIds = Array.from(new Set(mappings.map((m) => m.shareLinkId)));
+    const sourceIds = Array.from(new Set(mappings.map((m) => m.sourceProductId)));
 
     let linkCountriesById = new Map<string, string[]>();
     if (shareLinkIds.length) {
       const linkRows = await db
         .selectFrom("warehouseShareLink")
         .innerJoin("warehouse", "warehouse.id", "warehouseShareLink.warehouseId")
-        .select(["warehouseShareLink.id as shareLinkId", "warehouse.countries"])
+        .select([
+          "warehouseShareLink.id as shareLinkId",
+          "warehouse.countries",
+        ])
         .where("warehouseShareLink.id", "in", shareLinkIds)
         .execute();
-      linkCountriesById = new Map(linkRows.map(r => [r.shareLinkId, JSON.parse(r.countries as any)]));
+      linkCountriesById = new Map(
+        linkRows.map((r) => [
+          r.shareLinkId,
+          JSON.parse(r.countries as any) as string[],
+        ]),
+      );
     }
-    let sharedRowsByKey = new Map<string, Array<{ variationId: string | null; cost: any }>>();
+    let sharedRowsByKey = new Map<
+      string,
+      Array<{ variationId: string | null; cost: any }>
+    >();
     if (shareLinkIds.length && sourceIds.length) {
       const rows = await db
         .selectFrom("sharedProduct")
@@ -269,7 +276,10 @@ export async function GET(req: NextRequest) {
         .execute();
       for (const r of rows) {
         const k = `${r.shareLinkId}:${r.productId}`;
-        (sharedRowsByKey.get(k) ?? sharedRowsByKey.set(k, []).get(k)!).push({ variationId: r.variationId, cost: r.cost });
+        (sharedRowsByKey.get(k) ?? sharedRowsByKey.set(k, []).get(k)!).push({
+          variationId: r.variationId,
+          cost: r.cost,
+        });
       }
     }
 
@@ -333,7 +343,6 @@ export async function GET(req: NextRequest) {
         .selectFrom("productAttributes")
         .select(["id", "name"])
         .where("id", "in", Array.from(attrIds))
-        // .where("organizationId","=",organizationId).where("tenantId","=",tenantId) // ← add if scoped
         .execute()
       : [];
 
@@ -342,7 +351,6 @@ export async function GET(req: NextRequest) {
         .selectFrom("productAttributeTerms")
         .select(["id", "name"])
         .where("id", "in", Array.from(termIds))
-        // .where("organizationId","=",organizationId).where("tenantId","=",tenantId) // ← add if scoped
         .execute()
       : [];
 
@@ -499,9 +507,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // ✅ Put this right after: const products = productRows.map(…);
-
-    /** Convert a {country:{regular,sale}} map into separate maps like your simple products */
+    // ✅ productsFlat: include variationId; keep id = original productId
     function splitVarPrices(
       prices: Record<string, { regular: number; sale: number | null }>
     ) {
@@ -512,34 +518,58 @@ export async function GET(req: NextRequest) {
       for (const [ct, pr] of Object.entries(prices || {})) {
         regular[ct] = Number(pr?.regular ?? 0);
         if (pr?.sale != null) {
-          if (sale) sale[ct] = Number(pr.sale);
+          if (sale) (sale as any)[ct] = Number(pr.sale);
           hasSale = true;
         }
       }
       return { regular, sale: hasSale ? (sale as Record<string, number>) : null };
     }
 
-    function maxNum(vals: number[]) {
-      return vals.length ? Math.max(...vals.map(Number)) : 0;
-    }
-    function maxOrNull(vals: number[]) {
-      return vals.length ? Math.max(...vals.map(Number)) : null;
-    }
+    const maxNum = (vals: number[]) =>
+      vals.length ? Math.max(...vals.map(Number)) : 0;
+    const maxOrNull = (vals: number[]) =>
+      vals.length ? Math.max(...vals.map(Number)) : null;
 
     const productsFlat = products.flatMap((p) => {
-      if (p.productType !== "variable") return [p];
+      if (p.productType !== "variable") {
+        // Simple product: keep id as productId and add variationId=null
+        return [{
+          id: p.id,
+          productId: p.id,
+          variationId: null,
+          title: p.title,
+          description: p.description,
+          image: p.image,
+          sku: p.sku,
+          status: p.status,
+          productType: "simple" as const,
+          regularPrice: p.regularPrice,
+          salePrice: p.salePrice,
+          maxRegularPrice: p.maxRegularPrice,
+          maxSalePrice: p.maxSalePrice,
+          cost: p.cost ?? {},
+          allowBackorders: p.allowBackorders,
+          manageStock: p.manageStock,
+          stockStatus: p.stockStatus,
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          stockData: p.stockData,
+          categories: p.categories,
+          attributes: [],
+          variations: [],
+        }];
+      }
 
+      // Variable: one row per variation with id=productId, variationId=<var id>
       return (p.variations || []).map((v) => {
         const { regular, sale } = splitVarPrices(v.prices || {});
         const maxRegularPrice = maxNum(Object.values(regular));
         const maxSalePrice = sale ? maxOrNull(Object.values(sale)) : null;
 
-        // 🔑 Human label from all attributeId → termId pairs
         const pairs = Object.entries(v.attributes || {});
         const variantLabel = pairs
           .map(([attrId, termId]) => `${ATTR_NAME[attrId] ?? attrId} ${TERM_NAME[String(termId)] ?? termId}`)
-          .join(", "); // if multiple, join them
-
+          .join(", ");
         const titleWithVariant = variantLabel ? `${p.title} - ${variantLabel}` : p.title;
 
         const stockData = v.stock || {};
@@ -547,26 +577,25 @@ export async function GET(req: NextRequest) {
         const stockStatus = manageStock && Object.keys(stockData).length ? "managed" : "unmanaged";
 
         return {
-          id: v.id,
-          title: titleWithVariant,      // 👈 augmented title
+          id: p.id,                 // keep original productId here
+          productId: p.id,          // explicit parent id
+          variationId: v.id,        // explicit variation id
+          title: titleWithVariant,
           description: p.description,
           image: v.image ?? p.image,
           sku: v.sku,
           status: p.status,
-
           productType: "simple" as const,
           regularPrice: regular,
           salePrice: sale,
           maxRegularPrice,
           maxSalePrice,
           cost: v.cost ?? {},
-
           allowBackorders: p.allowBackorders,
           manageStock,
           stockStatus,
           createdAt: p.createdAt,
           updatedAt: p.updatedAt,
-
           stockData,
           categories: p.categories,
           attributes: [],
@@ -574,8 +603,6 @@ export async function GET(req: NextRequest) {
         };
       });
     });
-
-
 
     /* -------- STEP 5 – total count ------------------------------ */
     let total = 0;
@@ -676,7 +703,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       products,
-      productsFlat,
+      productsFlat, // <-- now has id = productId and a variationId field
       pagination: {
         page,
         pageSize,

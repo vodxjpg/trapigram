@@ -7,6 +7,7 @@ import { pgPool as pool } from "@/lib/db";
 export async function adjustStock(
   db: { query: (sql: string, params?: any[]) => Promise<{ rows: any[] }> },
   productId: string,
+  variationId: string | null,
   country: string,
   delta: number,
 ): Promise<void> {
@@ -28,19 +29,38 @@ export async function adjustStock(
   const isAffiliate = meta.kind === "affiliate";
   const col = isAffiliate ? `"affiliateProductId"` : `"productId"`;
 
-  /* 2) locate the warehouseStock row for THIS kind+country */
-  const { rows: wsRows } = await db.query(
-    `SELECT id, quantity
+  let newQty = 0
+  let current
+
+  if (variationId) {
+    const { rows: wsRows } = await db.query(
+      `SELECT id, quantity
+       FROM "warehouseStock"
+      WHERE "productId" = $1
+        AND country = $2
+        AND "variationId" = $3
+      ORDER BY "createdAt" ASC
+      LIMIT 1`,
+      [productId, country, variationId],
+    );
+
+    current = wsRows[0];
+    newQty = (current?.quantity ?? 0) + delta;
+
+  } else {
+    const { rows: wsRows } = await db.query(
+      `SELECT id, quantity
        FROM "warehouseStock"
       WHERE ${col} = $1
         AND country = $2
       ORDER BY "createdAt" ASC
       LIMIT 1`,
-    [productId, country],
-  );
+      [productId, country],
+    );
 
-  const current = wsRows[0];
-  let newQty = (current?.quantity ?? 0) + delta;
+    current = wsRows[0];
+    newQty = (current?.quantity ?? 0) + delta;
+  }
 
   /* 3) oversell guard */
   if (delta < 0 && !meta.allowBackorders && newQty < 0) {
@@ -61,7 +81,7 @@ export async function adjustStock(
     // If you have NOT NULL org/tenant columns, pass real values here.
     await db.query(
       `INSERT INTO "warehouseStock"
-       (id, "warehouseId", "productId", "affiliateProductId",
+       (id, "warehouseId", "productId", "affiliateProductId", "variationId",
         country, quantity, "organizationId", "tenantId",
         "createdAt", "updatedAt")
        VALUES (gen_random_uuid(), NULL,

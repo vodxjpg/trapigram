@@ -2,19 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-
+export const runtime = "nodejs";
 const channelsEnum = z.enum(["email", "telegram"]);
 const eventEnum = z.enum([
-  "order_placed","order_pending_payment","order_paid","order_completed",
-  "order_cancelled","order_refunded","order_partially_paid","order_shipped",
-  "order_message","ticket_created","ticket_replied","manual","customer_inactive",
+  "order_placed", "order_pending_payment", "order_paid", "order_completed",
+  "order_cancelled", "order_refunded", "order_partially_paid", "order_shipped",
+  "order_message", "ticket_created", "ticket_replied", "manual", "customer_inactive",
 ]);
 
-const scopeEnum = z.enum(["per_order","per_customer"]);
+const scopeEnum = z.enum(["per_order", "per_customer"]);
 
 const conditionsSchema = z
   .object({
-    op: z.enum(["AND","OR"]),
+    op: z.enum(["AND", "OR"]),
     items: z.array(
       z.discriminatedUnion("kind", [
         z.object({ kind: z.literal("contains_product"), productIds: z.array(z.string()).min(1) }),
@@ -42,20 +42,49 @@ const productRecoPayload = z.object({
   scope: scopeEnum.optional(), // NEW
 });
 
-/** new multi-action payload */
+/** helpers */
+// Coerce to number, ensure <= 1 decimal, and > 0 without using .gt (for broader Zod compat)
+const positiveOneDecimal = z
+  .coerce.number()
+  .refine((n) => Number.isFinite(n) && Math.round(n * 10) === n * 10, {
+    message: "Must have at most one decimal place",
+  })
+  .refine((n) => n > 0, { message: "Points must be > 0" });
+
+/** new multi-action payload (supports 4 action types) */
 const multiPayload = z.object({
   templateSubject: z.string().optional(),
   templateMessage: z.string().optional(),
   conditions: conditionsSchema.optional(),
   actions: z.array(
-    z.object({
-      type: z.enum(["send_coupon","product_recommendation"]),
-      payload: z.object({
-        couponId: z.string().optional(),
-        productIds: z.array(z.string()).optional(),
-      }).optional(),
-    })
-  ).min(1),
+    z.discriminatedUnion("type", [
+      z.object({
+        type: z.literal("send_coupon"),
+        payload: z.object({ couponId: z.string().min(1) }).optional(),
+      }),
+      z.object({
+        type: z.literal("product_recommendation"),
+        payload: z.object({ productIds: z.array(z.string()).min(1) }).optional(),
+      }),
+         z.object({
+     type: z.literal("multiply_points"),
+     payload: z.object({
+       // avoid .gt for older Zod; use refine instead
+       factor: z.coerce.number().refine((n) => n > 0, {
+         message: "Multiplier must be > 0",
+       }),
+       description: z.string().optional(),
+     }),
+   }),
+         z.object({
+     type: z.literal("award_points"),
+     payload: z.object({
+       points: positiveOneDecimal,
+       description: z.string().optional(),
+     }),
+   }),
+    ])
+  ).min(1, "Add at least one action"),
   scope: scopeEnum.optional(), // NEW
 });
 
@@ -81,7 +110,33 @@ function couponCoversCountries(couponCountries: string[], ruleCountries: string[
   return ruleCountries.every((c) => couponCountries.includes(c));
 }
 
-export async function GET(req: NextRequest) { /* unchanged */ }
+export async function GET(req: NextRequest) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, event, enabled, priority, countries, action, channels, payload, "updatedAt"
+         FROM "automationRules"
+        WHERE "organizationId" = $1
+        ORDER BY priority ASC, "updatedAt" DESC, "createdAt" DESC`,
+      [organizationId],
+    );
+
+    const rules = rows.map((r) => ({
+      ...r,
+      countries: Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]"),
+      channels: Array.isArray(r.channels) ? r.channels : JSON.parse(r.channels || "[]"),
+      payload: typeof r.payload === "string" ? JSON.parse(r.payload || "{}") : (r.payload ?? {}),
+    }));
+
+    return NextResponse.json({ rules });
+  } catch (e) {
+    console.error("[GET /api/rules] error", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
 
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
@@ -95,6 +150,22 @@ export async function POST(req: NextRequest) {
     // validate condition kinds allowed by event
     const items = parsed.payload?.conditions?.items ?? [];
     const ev = parsed.event as string;
+
+    // business constraints for the two new actions
+    if (parsed.action === "multi" && Array.isArray(parsed.payload?.actions)) {
+      // multiply_points only valid on order_* events
+      if (
+        ev === "customer_inactive" &&
+        parsed.payload.actions.some((a: any) => a.type === "multiply_points")
+      ) {
+        return NextResponse.json(
+          { error: "Action 'multiply_points' is only valid for order events." },
+          { status: 400 }
+        );
+      }
+      // award_points is allowed on order_* and customer_inactive (buyer only)
+      // nothing else to validate here
+    }
 
     if (/^order_/.test(ev) && items.some((i: any) => i.kind === "no_order_days_gte")) {
       return NextResponse.json(
