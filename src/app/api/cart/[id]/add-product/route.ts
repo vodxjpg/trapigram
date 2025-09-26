@@ -17,9 +17,10 @@ import {
 
 const cartProductSchema = z.object({
   productId: z.string(),
-  variationId: z.string().nullable(),
+  // optional for simple products; for variable you must pass the chosen one
+  variationId: z.string().nullable().optional(),
   quantity: z.number().int().positive(),
-  unitPrice: z.number()
+  // unitPrice comes from server-side logic -> remove from schema
 });
 
 function findTier(
@@ -64,7 +65,8 @@ export async function POST(
   try {
     const { id: cartId } = await params;
     const body = cartProductSchema.parse(await req.json());
-    const isVariable = body.variationId !== null ? true : false
+    const withVariation = typeof body.variationId === "string" && body.variationId.length > 0;
+
 
     /* client context */
     const { rows: clientRows } = await pool.query(
@@ -85,7 +87,7 @@ export async function POST(
     /* price resolution */
     const { price: basePrice, isAffiliate } = await resolveUnitPrice(
       body.productId,
-      body.variationId,
+      body.variationId ?? null,
       country,
       levelId,
     );
@@ -146,10 +148,10 @@ export async function POST(
             FROM "cartProducts"
             WHERE "cartId" = $1
               AND ${isAffiliate ? `"affiliateProductId"` : `"productId"`} = $2`
-      const values = [cartId, body.productId]
+      const values: any[] = [cartId, body.productId];
 
 
-      if (isVariable) {
+      if (withVariation) {
         sql += ` AND "variationId" = $3`
         values.push(body.variationId)
       }
@@ -205,7 +207,7 @@ export async function POST(
           [quantity, unitPrice, existing[0].id],
         );
       } else {
-        if (isVariable) {
+       if (withVariation) {
           await client.query(
             `INSERT INTO "cartProducts"
             (id,"cartId","productId","affiliateProductId","variationId",
@@ -240,8 +242,8 @@ export async function POST(
       }
 
       /* 5) ▼ reserve stock */
-      await adjustStock(client, body.productId, body.variationId, country, - body.quantity);
-
+     await adjustStock(client, body.productId, body.variationId ?? null, country, -body.quantity);
+     
       /* 6) ▼ cart hash */
       const { rows: rowsHash } = await client.query(
         `SELECT COALESCE("productId","affiliateProductId") AS pid,
