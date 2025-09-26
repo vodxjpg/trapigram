@@ -5,12 +5,15 @@ import { pgPool as pool } from "@/lib/db";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
-import {
-  tierPricing,
-  getPriceForQuantity,
-  type Tier,
-} from "@/lib/tier-pricing";
+import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
 import { resolveUnitPrice } from "@/lib/pricing";
+
+/* ───────────────────────────────────────────────────────────── */
+
+const cartProductSchema = z.object({
+  productId: z.string(),
+  variationId: z.string().nullable().optional(),
+});
 
 function pickTierForClient(
   tiers: Tier[],
@@ -22,9 +25,7 @@ function pickTierForClient(
     (t) =>
       t.active === true &&
       t.countries.includes(country) &&
-      t.products.some(
-        (p) => p.productId === productId || p.variationId === productId,
-      ),
+      t.products.some((p) => p.productId === productId || p.variationId === productId),
   );
   if (!candidates.length) return null;
 
@@ -33,65 +34,50 @@ function pickTierForClient(
       ((t as any).customers as string[] | undefined) ??
       []) as string[]).filter(Boolean);
 
-  // Prefer tier targeted to this client
   if (clientId) {
     const targeted = candidates.find((t) => targets(t).includes(clientId));
     if (targeted) return targeted;
   }
-  // Otherwise only allow a global tier
   const global = candidates.find((t) => targets(t).length === 0);
   return global ?? null;
 }
 
-const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
-const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
-
-function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
-  const key = Buffer.from(ENC_KEY_B64, "base64");
-  const iv = Buffer.from(ENC_IV_B64, "base64");
-  if (!ENC_KEY_B64 || !ENC_IV_B64) {
-    throw new Error("ENCRYPTION_KEY or ENCRYPTION_IV not set in environment");
-  }
-  if (key.length !== 32) {
-    throw new Error(
-      `Invalid ENCRYPTION_KEY: must decode to 32 bytes, got ${key.length}`,
-    );
-  }
-  if (iv.length !== 16) {
-    throw new Error(
-      `Invalid ENCRYPTION_IV: must decode to 16 bytes, got ${iv.length}`,
-    );
-  }
-  return { key, iv };
+/** Compute a deterministic, non-null cart hash (hex) */
+async function computeCartHash(cartId: string): Promise<string> {
+  const { rows } = await pool.query(
+    `SELECT COALESCE("productId","affiliateProductId") AS pid,
+            "variationId",
+            quantity,"unitPrice"
+       FROM "cartProducts"
+      WHERE "cartId" = $1
+      ORDER BY "createdAt"`,
+    [cartId],
+  );
+  const json = JSON.stringify(rows ?? []);
+  return crypto.createHash("sha256").update(json).digest("hex");
 }
 
-// Simple AES encryption using Node’s crypto library in CBC:
-function encryptSecretNode(plain: string): string {
-  const { key, iv } = getEncryptionKeyAndIv();
-  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-  let encrypted = cipher.update(plain, "utf8", "base64");
-  encrypted += cipher.final("base64");
-  return encrypted;
-}
-
-const cartProductSchema = z.object({
-  productId: z.string(),
-  variationId: z.string().nullable(),
-});
-
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+async function handleRemove(req: NextRequest, params: { id: string }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
+  const { id: cartId } = params;
+
+  // Parse JSON body if present; else fallback to query params
+  let parsed: z.infer<typeof cartProductSchema>;
+  try {
+    const body = await req.json().catch(() => ({}));
+    parsed = cartProductSchema.parse(body);
+  } catch {
+    const url = new URL(req.url);
+    const productId = url.searchParams.get("productId");
+    const variationIdParam = url.searchParams.get("variationId");
+    const variationId =
+      variationIdParam === null || variationIdParam === "" ? null : variationIdParam;
+    parsed = cartProductSchema.parse({ productId, variationId }); // will throw if productId missing
+  }
 
   try {
-    const { id } = await params;
-    const body = await req.json();
-    const data = cartProductSchema.parse(body);
-
-    const withVariation = data.variationId != null;
+    const withVariation = typeof parsed.variationId === "string" && parsed.variationId.length > 0;
 
     const delSql = `
       DELETE FROM "cartProducts"
@@ -100,147 +86,115 @@ export async function DELETE(
         ${withVariation ? `AND "variationId" = $3` : ""}
       RETURNING *
     `;
-
-    const vals = withVariation
-      ? [id, data.productId, data.variationId]
-      : [id, data.productId];
+    const vals = withVariation ? [cartId, parsed.productId, parsed.variationId] : [cartId, parsed.productId];
 
     const result = await pool.query(delSql, vals);
     const deleted = result.rows[0];
-
-    /* ---------- Affiliate refund (if needed) ---------- */
-    if (deleted?.affiliateProductId) {
-      const pointsToRollback = deleted.quantity * deleted.unitPrice;
-
-      const { rows: clRows } = await pool.query(
-        `SELECT "clientId" FROM carts WHERE id = $1`,
-        [id],
-      );
-      const clientId = clRows[0]?.clientId;
-
-      if (clientId) {
-        await pool.query(
-          `UPDATE "affiliatePointBalances"
-             SET "pointsCurrent" = "pointsCurrent" + $1,
-                 "pointsSpent"   = GREATEST("pointsSpent" - $1, 0),
-                 "updatedAt"     = NOW()
-           WHERE "organizationId" = $2 AND "clientId" = $3`,
-          [pointsToRollback, ctx.organizationId, clientId],
-        );
-
-        await pool.query(
-          `INSERT INTO "affiliatePointLogs"
-             (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
-           VALUES (gen_random_uuid(),$1,$2,$3,'refund','cart line removed',NOW(),NOW())`,
-          [ctx.organizationId, clientId, pointsToRollback],
-        );
-      }
+    if (!deleted) {
+      return NextResponse.json({ error: "Cart line not found" }, { status: 404 });
     }
 
-    /* country + level lookup – we need both for tier recalculation */
+    /* country + level lookup – used for stock + tier recompute */
     const { rows: cRows } = await pool.query(
-      `SELECT clients.country, clients."levelId"
-         FROM clients
-         JOIN carts ON carts."clientId" = clients.id
-        WHERE carts.id = $1`,
-      [id],
+      `SELECT cl.country, cl."levelId", ca."clientId"
+         FROM carts ca
+         JOIN clients cl ON cl.id = ca."clientId"
+        WHERE ca.id = $1`,
+      [cartId],
     );
-    const country = cRows[0]?.country as string;
-    const levelId = cRows[0]?.levelId as string;
-
-    const { rows: clIdRows } = await pool.query(
-      `SELECT "clientId" FROM carts WHERE id = $1`,
-      [id],
-    );
-    const clientId =
-      (clIdRows[0]?.clientId as string | undefined) ?? undefined;
+    const country = cRows[0]?.country as string | undefined;
+    const levelId = cRows[0]?.levelId as string | undefined;
+    const clientId = cRows[0]?.clientId as string | undefined;
 
     /* Stock release */
-    const released = result.rows[0]?.quantity ?? 0;
-    if (released) await adjustStock(pool, data.productId, data.variationId, country, +released);
+    const releasedQty = Number(deleted.quantity ?? 0);
+    if (releasedQty && country) {
+      await adjustStock(pool as any, parsed.productId, parsed.variationId ?? null, country, +releasedQty);
+    }
 
-    /* Hash AFTER price updates so it represents the true cart */
-    const { rows: lines } = await pool.query(
-      `SELECT COALESCE("productId","affiliateProductId")   AS pid,
-              quantity,"unitPrice"
-         FROM "cartProducts"
-        WHERE "cartId" = $1`,
-      [id],
-    );
-    const newHash = encryptSecretNode(JSON.stringify(lines));
-    await pool.query(
-      `UPDATE carts
-          SET "cartUpdatedHash" = $1,
-              "updatedAt"       = NOW()
-        WHERE id = $2`,
-      [newHash, id],
-    );
-
-    /* ────────────────────────────────────────────────────────────
-       ▶  Tier-pricing re-evaluation after a line is removed
-    ──────────────────────────────────────────────────────────── */
-    if (deleted && !deleted.affiliateProductId) {
+    /* Tier-pricing re-evaluation (normal products only) */
+    if (!deleted.affiliateProductId && country && levelId) {
       const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
-      const tier = pickTierForClient(
-        tiers,
-        country,
-        deleted.productId,
-        clientId,
-      );
+      const tier = pickTierForClient(tiers, country, deleted.productId, clientId);
 
       if (tier) {
-        const tierIds = tier.products
-          .map((p) => p.productId)
-          .filter(Boolean) as string[];
+        const tierIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
 
-        /* new combined quantity of *all* tier products */
+        // Combined qty of all tier products left in the cart
         const { rows: qRows } = await pool.query(
           `SELECT COALESCE(SUM(quantity),0)::int AS qty
              FROM "cartProducts"
             WHERE "cartId" = $1
               AND "productId" = ANY($2::text[])`,
-          [id, tierIds],
+          [cartId, tierIds],
         );
-        const qtyAfter = Number(qRows[0].qty);
+        const qtyAfter = Number(qRows[0]?.qty ?? 0);
 
-        /* decide the correct unit-price for the tier */
         const newUnit = getPriceForQuantity(tier.steps, qtyAfter);
 
         if (newUnit === null) {
-          // below first tier → fall back to each product's base price
-          for (const pid of tierIds) {
-            const { price } = await resolveUnitPrice(pid, country, levelId);
+          // Below first tier → fall back to each product's *base* price (per line, honoring variation)
+          const { rows: lines } = await pool.query(
+            `SELECT id,"productId","variationId"
+               FROM "cartProducts"
+              WHERE "cartId" = $1
+                AND "productId" = ANY($2::text[])`,
+            [cartId, tierIds],
+          );
+
+          for (const line of lines) {
+            const { price } = await resolveUnitPrice(
+              line.productId,
+              line.variationId ?? null,
+              country,
+              levelId,
+            );
             await pool.query(
               `UPDATE "cartProducts"
-                  SET "unitPrice" = $1,
-                      "updatedAt" = NOW()
-                WHERE "cartId"   = $2
-                  AND "productId" = $3`,
-              [price, id, pid],
+                  SET "unitPrice" = $1, "updatedAt" = NOW()
+                WHERE id = $2`,
+              [price, line.id],
             );
           }
         } else {
-          // still within a tier bracket → same price for all eligible lines
+          // Still inside a tier → apply same price for all tier products in the cart
           await pool.query(
             `UPDATE "cartProducts"
-                SET "unitPrice" = $1,
-                    "updatedAt" = NOW()
-              WHERE "cartId"   = $2
+                SET "unitPrice" = $1, "updatedAt" = NOW()
+              WHERE "cartId" = $2
                 AND "productId" = ANY($3::text[])`,
-            [newUnit, id, tierIds],
+            [newUnit, cartId, tierIds],
           );
         }
       }
     }
 
-    return NextResponse.json(result.rows[0], { status: 201 });
+    /* Recompute & persist cart hash (always non-null) */
+    const newHash = await computeCartHash(cartId);
+    await pool.query(
+      `UPDATE carts
+          SET "cartUpdatedHash" = $1,
+              "updatedAt"       = NOW()
+        WHERE id = $2`,
+      [newHash, cartId],
+    );
+
+    return NextResponse.json(deleted, { status: 200 });
   } catch (err: any) {
     console.error("[DELETE /api/cart/:id/remove-product]", err);
-    if (err instanceof z.ZodError)
+    if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    }
+    return NextResponse.json({ error: err.message ?? "Internal server error" }, { status: 500 });
   }
+}
+
+/* Accept both DELETE and POST for back-compat */
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const p = await params;
+  return handleRemove(req, p);
+}
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const p = await params;
+  return handleRemove(req, p);
 }
