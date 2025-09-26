@@ -878,6 +878,7 @@ export async function PATCH(
               "orderKey",
               "dateCreated",
               "shippingMethod",
+              "totalAmount",
               "notifiedPaidOrCompleted",
               "orderMeta",
               COALESCE("referralAwarded",FALSE)          AS "referralAwarded",
@@ -1870,24 +1871,50 @@ export async function PATCH(
             [id],
           );
         }
-        /*  3) spending milestones for *buyer*  (step-based)*/
+        /*  3) spending milestones for *buyer*  (step-based)
+        ⬇️ Change: award based on the order's TOTAL even if revenue row is missing.
+        We always compute *this order's* EUR from ord.totalAmount + FX,
+        and add it on top of the *previous* lifetime EUR (excluding this order). */
         if (stepEur > 0 && ptsPerStep > 0) {
           /* --------------------------------------------------------------
-           * Lifetime spend in **EUR** – we rely on orderRevenue which was
-           * (re)-generated a few lines above for this order.
-           *  Count orders that are PAID-LIKE to match awarding trigger.
-           * -------------------------------------------------------------- */
-          const { rows: [spent] } = await pool.query(
-            `SELECT COALESCE(SUM(r."EURtotal"),0) AS sum
-         FROM "orderRevenue" r
-         JOIN orders o ON o.id = r."orderId"
-          WHERE o."clientId"       = $1
-          AND o."organizationId" = $2
-          AND o.status IN ('paid','pending_payment','completed')`,
-            [ord.clientId, organizationId],
+   * Previous lifetime EUR (EXCLUDES this order) – keep using revenue
+   * for historical orders so we don't double award.
+   * -------------------------------------------------------------- */
+          const { rows: [prevSpent] } = await pool.query(
+            `SELECT COALESCE(SUM(r."EURtotal"),0) AS eur
+               FROM "orderRevenue" r
+               JOIN orders o ON o.id = r."orderId"
+              WHERE o."clientId"       = $1
+                AND o."organizationId" = $2
+                AND o.status IN ('paid','pending_payment','completed')
+                AND o.id <> $3`,
+            [ord.clientId, organizationId, id],
           );
+          const prevTotalEur = Number(prevSpent?.eur ?? 0);
 
-          const totalEur = Number(spent.sum);   // decimal → numbe
+          /* --------------------------------------------------------------
+           * This order's EUR – compute from order total  FX (ignore revenue).
+           * -------------------------------------------------------------- */
+          const { rows: [fx] } = await pool.query(
+            `SELECT "EUR","GBP" FROM "exchangeRate" ORDER BY date DESC LIMIT 1`
+          );
+          let USDEUR = Number(fx?.EUR ?? 0);
+          let USDGBP = Number(fx?.GBP ?? 0);
+          if (!(USDEUR > 0)) USDEUR = 1; // safe fallback to avoid zeroing awards
+          if (!(USDGBP > 0)) USDGBP = 1;
+
+          const orderTotal = Number(ord.totalAmount ?? 0);
+          let thisOrderEur = 0;
+          if (euroCountries.includes(ord.country)) {
+            thisOrderEur = orderTotal;
+          } else if (ord.country === "GB") {
+            // GBP → EUR via USD cross: GBP→USD (= /USDGBP) then USD→EUR (= *USDEUR)
+            thisOrderEur = orderTotal * (USDEUR / USDGBP);
+          } else {
+            // USD (or other treated as USD) → EUR
+            thisOrderEur = orderTotal * USDEUR;
+          }
+
           /* how many spending-bonuses already written? */
           const { rows: [prev] } = await pool.query(
             `SELECT COALESCE(SUM(points),0) AS pts
@@ -1898,17 +1925,9 @@ export async function PATCH(
             [organizationId, ord.clientId],
           );
 
-          // Pull THIS order's EUR and previous lifetime EUR (before this order)
-          const { rows: [revRow] } = await pool.query(
-            `SELECT "EURtotal" FROM "orderRevenue" WHERE "orderId" = $1 LIMIT 1`,
-            [id],
-          );
-          const thisOrderEur = Number(revRow?.EURtotal ?? 0);
-          const prevTotalEur = Math.max(0, totalEur - thisOrderEur);
-
           // Steps before and after this order; how many steps did THIS order add?
           const stepsBefore = Math.floor(prevTotalEur / stepEur);
-          const stepsAfter = Math.floor(totalEur / stepEur);
+          const stepsAfter = Math.floor((prevTotalEur + thisOrderEur) / stepEur);
           const stepsFromThisOrder = Math.max(0, stepsAfter - stepsBefore);
 
           // Baseline points due overall (no multiplier), and catch-up delta
@@ -1949,14 +1968,14 @@ export async function PATCH(
 
           const delta = round1(baselineDeltaClamped + Math.max(0, extraFromMultiplier));
 
-
           console.log(
-            `[affiliate] spending check – client %s: total %s EUR, step %d, prev %d pts, `
+            `[affiliate] spending check – client %s: prev %s EUR, this %s EUR, step %d, prevPts %d, `
             + `stepsFromThisOrder %d, maxMult %.1f, delta %.1f`,
             ord.clientId,
-            totalEur.toFixed(2),
+            prevTotalEur.toFixed(2),
+            thisOrderEur.toFixed(2),
             stepEur,
-             Number(prev.pts), stepsFromThisOrder, maxMultiplier, delta,
+            Number(prev.pts), stepsFromThisOrder, maxMultiplier, delta,
           );
 
           if (delta > 0) {

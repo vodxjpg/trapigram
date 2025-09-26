@@ -65,8 +65,12 @@ export async function POST(
   try {
     const { id: cartId } = await params;
     const body = cartProductSchema.parse(await req.json());
-    const withVariation = typeof body.variationId === "string" && body.variationId.length > 0;
-
+    // normalize variationId for consistency
+    const variationId: string | null =
+      typeof body.variationId === "string" && body.variationId.trim().length > 0
+        ? body.variationId
+        : null;
+    const withVariation = variationId !== null;
 
     /* client context */
     const { rows: clientRows } = await pool.query(
@@ -87,7 +91,7 @@ export async function POST(
     /* price resolution */
     const { price: basePrice, isAffiliate } = await resolveUnitPrice(
       body.productId,
-      body.variationId ?? null,
+      variationId,
       country,
       levelId,
     );
@@ -218,7 +222,7 @@ export async function POST(
               cartId,
               isAffiliate ? null : body.productId,
               isAffiliate ? body.productId : null,
-              body.variationId,
+              variationId,
               quantity,
               unitPrice,
             ],
@@ -242,8 +246,8 @@ export async function POST(
       }
 
       /* 5) ▼ reserve stock */
-     await adjustStock(client, body.productId, body.variationId ?? null, country, -body.quantity);
-     
+     await adjustStock(client, body.productId, variationId, country, -body.quantity);
+
       /* 6) ▼ cart hash */
       const { rows: rowsHash } = await client.query(
         `SELECT COALESCE("productId","affiliateProductId") AS pid,

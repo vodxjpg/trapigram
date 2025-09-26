@@ -61,6 +61,13 @@ export async function PATCH(
   try {
     const data = cartProductSchema.parse(await req.json());
 
+    // normalize variationId: ensure `string | null` (never undefined/empty)
+    const variationId: string | null =
+      typeof data.variationId === "string" && data.variationId.trim().length > 0
+        ? data.variationId
+        : null;
+    const withVariation = variationId !== null;
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -77,8 +84,8 @@ export async function PATCH(
            JOIN "cartProducts"     cp ON cp."cartId"   = ca.id
          WHERE ca.id = $1
   AND (cp."productId" = $2 OR cp."affiliateProductId" = $2)
-  ${data.variationId ? 'AND cp."variationId" = $3' : ''}`,
-[cartId, data.productId, ...(data.variationId ? [data.variationId] : [])],
+  ${withVariation ? 'AND cp."variationId" = $3' : ''}`,
+[cartId, data.productId, ...(withVariation ? [variationId] : [])],
 
       );
       if (!cRows.length) {
@@ -130,7 +137,7 @@ export async function PATCH(
           );
         }
       } else {
-        const p = await resolveUnitPrice(data.productId, data.variationId, country, levelId);
+        const p = await resolveUnitPrice(data.productId, variationId, country, levelId);
         basePrice = p.price;
       }
 
@@ -250,14 +257,14 @@ export async function PATCH(
                       "updatedAt" = NOW()
                 WHERE "cartId"   = $3
    AND ("productId" = $4 OR "affiliateProductId" = $4)
-   ${data.variationId ? 'AND "variationId" = $5' : ''}`,
- [newQty, pricePerUnit, cartId, data.productId, ...(data.variationId ? [data.variationId] : [])],
+  ${withVariation ? 'AND "variationId" = $5' : ''}`,
+[newQty, pricePerUnit, cartId, data.productId, ...(withVariation ? [variationId] : [])],
 
         );
       }
 
       /* 7️⃣ stock adjust (negative on add, positive on subtract) */
-     await adjustStock(client, data.productId, data.variationId ?? null, country, data.action === "add" ? -1 : 1);
+     await adjustStock(client, data.productId, variationId, country, data.action === "add" ? -1 : 1);
 
 
       /* 8️⃣ update cart hash after all changes */

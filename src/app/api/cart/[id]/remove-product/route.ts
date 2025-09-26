@@ -76,8 +76,15 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
     parsed = cartProductSchema.parse({ productId, variationId }); // will throw if productId missing
   }
 
+    // normalize variationId: ensure string|null and treat empty as null
+  const normVariationId: string | null =
+    typeof parsed.variationId === "string" && parsed.variationId.trim().length > 0
+      ? parsed.variationId
+      : null;
+  const withVariation = normVariationId !== null;
+
   try {
-    const withVariation = typeof parsed.variationId === "string" && parsed.variationId.length > 0;
+    
 
     const delSql = `
       DELETE FROM "cartProducts"
@@ -86,7 +93,7 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
         ${withVariation ? `AND "variationId" = $3` : ""}
       RETURNING *
     `;
-    const vals = withVariation ? [cartId, parsed.productId, parsed.variationId] : [cartId, parsed.productId];
+    const vals = withVariation ? [cartId, parsed.productId, normVariationId] : [cartId, parsed.productId];
 
     const result = await pool.query(delSql, vals);
     const deleted = result.rows[0];
@@ -109,7 +116,7 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
     /* Stock release */
     const releasedQty = Number(deleted.quantity ?? 0);
     if (releasedQty && country) {
-      await adjustStock(pool as any, parsed.productId, parsed.variationId ?? null, country, +releasedQty);
+      await adjustStock(pool as any, parsed.productId, normVariationId, country, +releasedQty);
     }
 
     /* Tier-pricing re-evaluation (normal products only) */
@@ -145,7 +152,7 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
           for (const line of lines) {
             const { price } = await resolveUnitPrice(
               line.productId,
-              line.variationId ?? null,
+              (typeof line.variationId === "string" && line.variationId.trim().length > 0) ? line.variationId : null,
               country,
               levelId,
             );
