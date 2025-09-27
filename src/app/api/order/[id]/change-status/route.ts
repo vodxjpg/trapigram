@@ -1046,14 +1046,10 @@ export async function PATCH(
           refunded: "order_refunded",
         };
 
-        // keep once-only semantics for PAID/COMPLETED via notifiedPaidOrCompleted;
-        // allow PENDING_PAYMENT separately (we'll not set the flag for pending).
+        // Notify on these status changes; outbox dedupe will prevent duplicates.
         const shouldNotify =
-          newStatus === "paid" || newStatus === "completed"
-            ? !ord.notifiedPaidOrCompleted
-            : newStatus === "pending_payment" ||
-            newStatus === "cancelled" ||
-            newStatus === "refunded";
+          newStatus === "pending_payment" || newStatus === "paid" || newStatus === "completed" || newStatus === "cancelled" || newStatus === "refunded";
+ 
 
         if (shouldNotify) {
           const productList = await buildProductListForCart(ord.cartId);

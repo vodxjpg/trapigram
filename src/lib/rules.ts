@@ -41,6 +41,14 @@ type ConditionsGroup = {
 
 type RunScope = "per_order" | "per_customer";
 
+const EURO_COUNTRIES = new Set([
+  "AT", "BE", "HR", "CY", "EE", "FI", "FR", "DE", "GR", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PT", "SK", "SI", "ES"
+]);
+
+function currencyFromCountry(c: string) {
+  return c === "GB" ? "GBP" : EURO_COUNTRIES.has(c) ? "EUR" : "USD";
+}
+
 /* -------------------------------- helpers -------------------------------- */
 
 async function getOrderProductIds(orderId: string): Promise<string[]> {
@@ -74,6 +82,40 @@ async function getOrderEURTotal(orderId: string): Promise<number | null> {
   if (!rows.length) return null;
   const v = Number(rows[0].EURtotal ?? 0);
   return Number.isFinite(v) ? v : 0;
+}
+
+// add this robust fallback (NEW)
+async function getOrderEURTotalRobust(orderId: string): Promise<number | null> {
+  // 1) try revenue first
+  const fromRevenue = await getOrderEURTotal(orderId);
+  if (fromRevenue != null) return fromRevenue;
+
+  // 2) fallback: compute from orders.totalAmount  FX
+  const { rows: orows } = await pool.query(
+    `SELECT totalAmount::numeric AS total, country
+       FROM orders
+      WHERE id = $1
+      LIMIT 1`,
+    [orderId],
+  );
+  if (!orows.length) return null;
+
+  const total = Number(orows[0].total ?? 0);
+  const country = String(orows[0].country ?? "");
+  if (!Number.isFinite(total)) return null;
+
+  // latest FX
+  const { rows: fxRows } = await pool.query(
+    `SELECT "EUR","GBP" FROM "exchangeRate" ORDER BY date DESC LIMIT 1`
+  );
+  const USDEUR = Number(fxRows?.[0]?.EUR ?? 1) || 1; // safe fallbacks
+  const USDGBP = Number(fxRows?.[0]?.GBP ?? 1) || 1;
+
+  const cur = currencyFromCountry(country);
+  if (cur === "EUR") return total;
+  if (cur === "GBP") return total * (USDEUR / USDGBP); // GBP→USD→EUR
+  // USD default
+  return total * USDEUR;
 }
 
 /**
@@ -289,6 +331,7 @@ export async function processAutomationRules(opts: {
   event: EventType;
   country?: string | null;
   variables?: Record<string, string>;
+  orderCurrency?: string | null; // (NEW) keeps TS happy with extra caller props
   clientId?: string | null;
   userId?: string | null;
   orderId?: string | null;
@@ -321,21 +364,30 @@ export async function processAutomationRules(opts: {
 
   // Context values available for conditions.
   const productIdsInOrder = orderId ? await getOrderProductIds(orderId) : [];
-  const eurTotal = orderId ? await getOrderEURTotal(orderId) : null;
+  const eurTotal = orderId ? await getOrderEURTotalRobust(orderId) : null; // (CHANGED) robust fallback
   const daysSinceLastOrder = await getDaysSinceLastPaidOrCompletedOrder(
     organizationId,
     clientId ?? null,
   );
 
   for (const raw of res.rows as RuleRow[]) {
-    const countries: string[] = JSON.parse(raw.countries || "[]");
+    const countries: string[] =
+      Array.isArray((raw as any).countries)
+        ? (raw as any).countries
+        : JSON.parse(raw.countries || "[]");
+
     if (countries.length && (!country || !countries.includes(country))) continue;
 
-    const channels: NotificationChannel[] = JSON.parse(raw.channels || "[]");
+    const channels: NotificationChannel[] =
+      Array.isArray((raw as any).channels)
+        ? (raw as any).channels as any
+        : JSON.parse(raw.channels || "[]");
+
     const payload =
       typeof raw.payload === "string"
         ? JSON.parse(raw.payload || "{}")
         : raw.payload ?? {};
+
     const conditions: ConditionsGroup | undefined = payload?.conditions;
 
     const match = evalConditions(conditions, {
@@ -393,60 +445,60 @@ export async function processAutomationRules(opts: {
         if (!vars.product_ids) vars.product_ids = ids.join(",");
       }
 
-          // multiply_points → set per-order multiplier for spending milestone (only on order_* events)
-    for (const a of acts.filter((x) => x.type === "multiply_points")) {
-      if (!orderId) continue; // needs an order
-      // only buyer's points are affected; we merely persist meta for later spending-bonus awarder
-      const factorRaw = Number((a as any)?.payload?.factor ?? 0);
-      if (Number.isFinite(factorRaw) && factorRaw > 0) {
-        // append entry; also maintain automation.maxPointsMultiplier with "be max" semantics
-        await appendOrderAutomationEvent({
-          organizationId,
-          orderId,
-          entry: {
-            event: "points_multiplier",
-            factor: factorRaw,
-            ruleId: raw.id,
-            label: ruleLabel,
-            description: (a as any)?.payload?.description ?? null,
-            createdAt: nowIso,
-          },
-        });
+      // multiply_points → set per-order multiplier for spending milestone (only on order_* events)
+      for (const a of acts.filter((x) => x.type === "multiply_points")) {
+        if (!orderId) continue; // needs an order
+        // only buyer's points are affected; we merely persist meta for later spending-bonus awarder
+        const factorRaw = Number((a as any)?.payload?.factor ?? 0);
+        if (Number.isFinite(factorRaw) && factorRaw > 0) {
+          // append entry; also maintain automation.maxPointsMultiplier with "be max" semantics
+          await appendOrderAutomationEvent({
+            organizationId,
+            orderId,
+            entry: {
+              event: "points_multiplier",
+              factor: factorRaw,
+              ruleId: raw.id,
+              label: ruleLabel,
+              description: (a as any)?.payload?.description ?? null,
+              createdAt: nowIso,
+            },
+          });
+        }
       }
-    }
 
-    // award_points → immediate buyer credit (order_* and customer_inactive)
-    for (const a of acts.filter((x) => x.type === "award_points")) {
-      if (!clientId) continue; // needs a customer to receive the points
-      const ptsRaw = Number((a as any)?.payload?.points ?? 0);
-      if (!Number.isFinite(ptsRaw) || ptsRaw <= 0) continue;
-      const points = round1(ptsRaw); // 1 decimal; “round to nearest”
+      // award_points → immediate buyer credit (order_* and customer_inactive)
+      for (const a of acts.filter((x) => x.type === "award_points")) {
+        if (!clientId) continue; // needs a customer to receive the points
+        const ptsRaw = Number((a as any)?.payload?.points ?? 0);
+        if (!Number.isFinite(ptsRaw) || ptsRaw <= 0) continue;
+        const points = round1(ptsRaw); // 1 decimal; “round to nearest”
 
-      const logId = uuidv4();
-      const description =
-        (a as any)?.payload?.description ??
-        `Rule bonus: ${ruleLabel}`;
-      await pool.query(
-        `
+        const logId = uuidv4();
+        const description =
+          (a as any)?.payload?.description ??
+          `Rule bonus: ${ruleLabel}`;
+        await pool.query(
+          `
         INSERT INTO "affiliatePointLogs"(
           id,"organizationId","clientId",points,action,description,"sourceClientId",
           "createdAt","updatedAt"
         )
         VALUES($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
         `,
-        [
-          logId,
-          organizationId,
-          clientId,
-          points,
-          "rule_award_points",
-          description,
-          null, // always buyer-only as requested
-        ],
-      );
-      await applyBalanceDelta(clientId, organizationId, points);
-      vars.points_awarded = String(points);
-    }
+          [
+            logId,
+            organizationId,
+            clientId,
+            points,
+            "rule_award_points",
+            description,
+            null, // always buyer-only as requested
+          ],
+        );
+        await applyBalanceDelta(clientId, organizationId, points);
+        vars.points_awarded = String(points);
+      }
 
       if (!message) {
         message = `<p>Here’s an update for you.</p>{selected_products}{coupon}`;
