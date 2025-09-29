@@ -48,6 +48,10 @@ export default function RuleFormLoader({ id }: { id: string }) {
   if (loading) return <div className="p-4">Loading…</div>;
   if (error)   return <div className="p-4 text-red-600">Error: {error}</div>;
   if (!rule)   return <div className="p-4">Not found.</div>;
+// In RuleFormLoader (temporarily)
+console.log("rule from API", rule);
+console.log("payload typeof", typeof rule.payload, rule.payload);
+console.log("payload.actions typeof", typeof rule.payload?.actions, rule.payload?.actions);
 
   return (
     <RuleForm
