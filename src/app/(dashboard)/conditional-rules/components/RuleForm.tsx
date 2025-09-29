@@ -195,6 +195,101 @@ function Hint({ text, className }: { text: string; className?: string }) {
   );
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Normalization helpers for legacy/varied stored rule action shapes
+// Ensures previously-saved actions rehydrate into the UI as expected.
+// ──────────────────────────────────────────────────────────────────────────────
+type AnyAction = {
+  type?: string;
+  kind?: string;
+  action?: string;
+  payload?: any;
+  [k: string]: any;
+};
+
+function normalizeActionType(t?: string): ActionItem["type"] {
+  const s = String(t || "").toLowerCase();
+  if (s === "send_coupon") return "send_coupon";
+  if (s === "product_recommendation" || s === "recommend_product" || s === "recommend_products")
+    return "product_recommendation";
+  if (s === "multiply_points" || s === "set_points_multiplier" || s === "points_multiplier")
+    return "multiply_points";
+  if (s === "award_points" || s === "grant_points")
+    return "award_points";
+  // default safely to coupon (UI already guards with validation)
+  return "send_coupon";
+}
+
+function toArray<T = any>(v: any): T[] {
+  if (Array.isArray(v)) return v;
+  if (v == null) return [];
+  return [v as T];
+}
+
+function extractIds(arr: any[]): string[] {
+  return arr
+    .map((x) => {
+      if (typeof x === "string") return x;
+      if (x && typeof x === "object" && typeof x.id === "string") return x.id;
+      return null;
+    })
+    .filter(Boolean) as string[];
+}
+
+function normalizeOneAction(raw: AnyAction): ActionItem {
+  const type = normalizeActionType(raw.type ?? raw.kind ?? raw.action);
+  const p = raw.payload ?? raw;
+
+  if (type === "send_coupon") {
+    const couponId =
+      p?.couponId ?? p?.coupon_id ?? (typeof p?.coupon === "string" ? p.coupon : p?.coupon?.id) ?? null;
+    return { type, payload: { couponId: couponId ?? null } } as ActionItem;
+  }
+
+  if (type === "product_recommendation") {
+    const productIds =
+      p?.productIds ??
+      p?.product_ids ??
+      extractIds(toArray(p?.products ?? p?.items ?? []));
+    return { type, payload: { productIds: toArray(productIds) } } as ActionItem;
+  }
+
+  if (type === "multiply_points") {
+    // accept factor/multiplier in various shapes
+    const factorRaw = p?.factor ?? p?.multiplier ?? raw?.factor ?? raw?.multiplier;
+    const factor = Number(factorRaw);
+    return {
+      type,
+      payload: {
+        factor: Number.isFinite(factor) && factor > 0 ? factor : 1,
+        description: p?.description ?? "",
+      },
+    } as ActionItem;
+  }
+
+  if (type === "award_points") {
+    const pointsRaw = p?.points ?? raw?.points;
+    const points = Number(pointsRaw);
+    return {
+      type,
+      payload: {
+        points: Number.isFinite(points) && points > 0 ? points : 0.1,
+        description: p?.description ?? "",
+      },
+    } as ActionItem;
+  }
+
+  // fallback (keeps form usable)
+  return { type: "send_coupon", payload: {} } as ActionItem;
+}
+
+function normalizeActions(input: any): ActionItem[] {
+  const arr = toArray<AnyAction>(input).filter(Boolean);
+  if (!arr.length) return [];
+  return arr.map(normalizeOneAction);
+}
+
+
 export default function RuleForm({
   defaultValues,
   mode,
@@ -259,29 +354,37 @@ export default function RuleForm({
       : ["email"];
     if (!channels.length) channels.push("email");
 
-    // Build actions for legacy rules:
-    let actions: ActionItem[] | undefined = dv.actions as any;
-    if (!actions || !Array.isArray(actions) || !actions.length) {
-      if (es && es.action === "multi" && Array.isArray(es.payload?.actions)) {
-        actions = es.payload.actions as ActionItem[];
-      } else if (es && es.action === "send_coupon") {
-        actions = [
-          {
-            type: "send_coupon",
-            payload: { couponId: es.payload?.couponId ?? null },
-          },
-        ] as ActionItem[];
-      } else if (es && es.action === "product_recommendation") {
-        actions = [
-          {
-            type: "product_recommendation",
-            payload: { productIds: es.payload?.productIds ?? [] },
-          },
-        ] as ActionItem[];
-      } else {
-        actions = [{ type: "send_coupon", payload: {} }] as ActionItem[];
+      // ✅ Build actions from any of:
+    //    - dv.actions (coming via defaultValues)
+    //    - es.payload.actions (multi-action rules)
+    //    - single action stored as { action, payload }
+    // and normalize legacy shapes/keys so they render in the UI immediately.
+    let actions: ActionItem[] = [];
+    if (Array.isArray(dv.actions) && dv.actions.length) {
+      actions = normalizeActions(dv.actions);
+    } else if (Array.isArray(payload?.actions) && payload.actions.length) {
+      actions = normalizeActions(payload.actions);
+    } else if (es && typeof (es as any).action === "string") {
+      const singleType = (es as any).action;
+      if (singleType === "send_coupon") {
+        actions = normalizeActions([
+          { type: "send_coupon", payload: { couponId: payload?.couponId ?? null } },
+        ]);
+      } else if (singleType === "product_recommendation") {
+        actions = normalizeActions([
+          { type: "product_recommendation", payload: { productIds: payload?.productIds ?? [] } },
+        ]);
+      } else if (singleType === "multiply_points" || singleType === "set_points_multiplier" || singleType === "points_multiplier") {
+        actions = normalizeActions([
+          { type: "multiply_points", payload: { factor: payload?.factor ?? payload?.multiplier ?? 1 } },
+        ]);
+      } else if (singleType === "award_points" || singleType === "grant_points") {
+        actions = normalizeActions([
+          { type: "award_points", payload: { points: payload?.points ?? 0.1 } },
+        ]);
       }
     }
+    if (!actions.length) actions = [{ type: "send_coupon", payload: {} }];
 
     form.reset({
       name: dv.name ?? "",

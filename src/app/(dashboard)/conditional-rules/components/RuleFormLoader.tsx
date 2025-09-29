@@ -60,7 +60,10 @@ export default function RuleFormLoader({ id }: { id: string }) {
         priority: rule.priority ?? 100,
         countries: rule.countries ?? [],
         orderCurrencyIn: rule.orderCurrencyIn ?? [],
-        events: [rule.event], // single for edit
+        // ✅ pass the single event directly (the form expects `event`, not `events`)
+        event: rule.event,
+        // optionally pass payload through for richer defaults (conditions/template)
+        payload: rule.payload ?? {},
         onlyIfProductIdsAny: rule.payload?.onlyIfProductIdsAny ?? [],
       }}
       existingSingle={{
