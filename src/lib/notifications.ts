@@ -71,8 +71,8 @@ const toTelegramHtml = (html: string) => {
     .replace(/<\s*\/\s*em\s*>/gi, "</i>");
   // links → "text (url)"
   out = out.replace(/<\s*a[^>]*href="([^"]+)"[^>]*>(.*?)<\/\s*a\s*>/gi, "$2 ($1)");
-  // drop any remaining tags
-  out = out.replace(/<[^>]+>/g, "");
+  // drop any remaining tags EXCEPT b/i/code
+  out = out.replace(/<(?!\/?(?:b|i|code)\b)[^>]+>/g, "");
   // tidy up multiple blank lines
   out = out.replace(/\n{3,}/g, "\n\n").trim();
   return out;
@@ -612,7 +612,7 @@ async function dispatchTelegram(opts: {
 
   if (bodyAdmin.trim()) {
     const safeAdmin = toTelegramHtml(bodyAdmin);
-    // admins (user IDs)
+    // admins (user IDs in here)
     for (const id of adminUserIds) {
       if (id && !seenChatIds.has(id)) {
         seenChatIds.add(id);

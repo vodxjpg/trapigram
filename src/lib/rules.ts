@@ -440,7 +440,7 @@ export async function processAutomationRules(opts: {
       const couponAct = acts.find((a) => a.type === "send_coupon");
       if (couponAct?.payload?.couponId) {
         const code = await getCouponCode(organizationId, couponAct.payload.couponId);
-        if (code) replacements.coupon = escapeHtml(code);
+        if (code) replacements.coupon = `<code>${escapeHtml(code)}</code>`;
         if (!vars.coupon_id) vars.coupon_id = String(couponAct.payload.couponId);
       }
 
@@ -515,7 +515,7 @@ export async function processAutomationRules(opts: {
       }
     } else if (raw.action === "send_coupon") {
       const code = await getCouponCode(organizationId, payload.couponId);
-      replacements.coupon = code ? escapeHtml(code) : "";
+      replacements.coupon = code ? `<code>${escapeHtml(code)}</code>` : "";
       if (payload.couponId && !vars.coupon_id) vars.coupon_id = String(payload.couponId);
       if (!message) message = `<p>You’ve received a coupon: {coupon}</p>`;
     } else if (raw.action === "product_recommendation") {
