@@ -462,7 +462,7 @@ export default function RuleForm({
     if (currentEvent === "customer_inactive" && w.runScope !== "per_customer") {
       form.setValue("runScope", "per_customer", { shouldDirty: true });
     }
-    // Auto-seed a days condition for a nicer UX
+  // Auto-seed a days condition for a nicer UX
     if (currentEvent === "customer_inactive") {
       const hasDays =
         Array.isArray(w.conditions?.items) &&
@@ -674,44 +674,6 @@ export default function RuleForm({
             </RadioGroup>
           </div>
         </section>
-
-        {/* Inactive threshold (only for customer_inactive) */}
-        {currentEvent === "customer_inactive" && (
-          <section className="grid gap-4 rounded-2xl border p-4 md:p-6">
-            <div className="flex items-center gap-2">
-              <Label htmlFor="inactiveDays">Inactive after (days)</Label>
-              <Hint text="Matches customers with no paid/completed orders for at least this many days. Customers who have never ordered also match." />
-            </div>
-            <Input
-              id="inactiveDays"
-              type="number"
-              min={1}
-              step={1}
-              value={(() => {
-                const it = (w.conditions?.items || []).find(
-                  (i: any) => i?.kind === "no_order_days_gte"
-                ) as any;
-                return Number.isFinite(it?.days) ? String(it.days) : "5";
-              })()}
-              onChange={(e) => {
-                const days = Math.max(1, Number(e.target.value || 1));
-                const op = w.conditions?.op ?? "AND";
-                const others = (w.conditions?.items || []).filter(
-                  (i: any) => i?.kind !== "no_order_days_gte"
-                );
-                form.setValue(
-                  "conditions",
-                  { op, items: [{ kind: "no_order_days_gte", days } as any, ...others] },
-                  { shouldDirty: true }
-                );
-              }}
-              disabled={disabled}
-            />
-            <p className="text-xs text-muted-foreground">
-              This is stored as a <code>{`no_order_days_gte`}</code> condition.
-            </p>
-          </section>
-        )}
 
         {/* Countries & Conditions */}
         <section className="grid gap-6 rounded-2xl border p-4 md:p-6">
