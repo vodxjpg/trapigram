@@ -195,6 +195,16 @@ function Hint({ text, className }: { text: string; className?: string }) {
   );
 }
 
+// Safe JSON parse (returns input if already object or parse fails)
+function parseMaybeJson<T = any>(v: any): T {
+  if (!v) return v as T;
+  if (typeof v === "object") return v as T;
+  if (typeof v !== "string") return v as T;
+  try { return JSON.parse(v) as T; } catch {
+    return v as T;
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Normalization helpers for legacy/varied stored rule action shapes
 // Ensures previously-saved actions rehydrate into the UI as expected.
@@ -287,6 +297,23 @@ function normalizeActions(input: any): ActionItem[] {
   const arr = toArray<AnyAction>(input).filter(Boolean);
   if (!arr.length) return [];
   return arr.map(normalizeOneAction);
+  }
+
+// Accept an "object map" actions payload, e.g.
+// { send_coupon: {...}, product_recommendation: {...} }
+// and normalize to an array of { type, payload }.
+function normalizeActionsObjectMap(maybeObj: any): ActionItem[] {
+  if (!maybeObj || typeof maybeObj !== "object" || Array.isArray(maybeObj)) return [];
+  const out: AnyAction[] = [];
+  for (const [k, v] of Object.entries(maybeObj)) {
+    out.push({ type: k, payload: v });
+  }
+  return normalizeActions(out);
+}
+
+function ensureArrayActions(actions: any): ActionItem[] {
+  if (Array.isArray(actions)) return normalizeActions(actions);
+  return normalizeActionsObjectMap(actions);
 }
 
 
@@ -333,7 +360,7 @@ export default function RuleForm({
 
     // Prefer single-rule info coming from `existingSingle` when editing.
     const es = existingSingle ?? {};
-    const payload = dv.payload || es.payload || {};
+    const payload = parseMaybeJson(dv.payload) || parseMaybeJson(es.payload) || {};
 
     const inferredEvent: string =
       (dv.event as string) || (es as any).event || "order_paid";
@@ -360,31 +387,38 @@ export default function RuleForm({
     //    - single action stored as { action, payload }
     // and normalize legacy shapes/keys so they render in the UI immediately.
     let actions: ActionItem[] = [];
-    if (Array.isArray(dv.actions) && dv.actions.length) {
-      actions = normalizeActions(dv.actions);
-    } else if (Array.isArray(payload?.actions) && payload.actions.length) {
-      actions = normalizeActions(payload.actions);
+         const dvActionsParsed = parseMaybeJson(dv.actions);
+     const payloadActionsParsed = parseMaybeJson(payload?.actions);
+
+     if (dvActionsParsed) {
+       actions = ensureArrayActions(dvActionsParsed);
+     } else if (payloadActionsParsed) {
+       actions = ensureArrayActions(payloadActionsParsed);
     } else if (es && typeof (es as any).action === "string") {
       const singleType = (es as any).action;
       if (singleType === "send_coupon") {
-        actions = normalizeActions([
+        actions = ensureArrayActions([
           { type: "send_coupon", payload: { couponId: payload?.couponId ?? null } },
         ]);
       } else if (singleType === "product_recommendation") {
-        actions = normalizeActions([
+        actions = ensureArrayActions([
           { type: "product_recommendation", payload: { productIds: payload?.productIds ?? [] } },
         ]);
       } else if (singleType === "multiply_points" || singleType === "set_points_multiplier" || singleType === "points_multiplier") {
-        actions = normalizeActions([
+        actions = ensureArrayActions([
           { type: "multiply_points", payload: { factor: payload?.factor ?? payload?.multiplier ?? 1 } },
         ]);
       } else if (singleType === "award_points" || singleType === "grant_points") {
-        actions = normalizeActions([
+        actions = ensureArrayActions([
           { type: "award_points", payload: { points: payload?.points ?? 0.1 } },
         ]);
       }
     }
-    if (!actions.length) actions = [{ type: "send_coupon", payload: {} }];
+      // Only auto-insert a default action for CREATE mode. For EDIT,
+  // showing an empty state is safer than hiding the user's real data.
+  if (!actions.length && mode === "create") {
+    actions = [{ type: "send_coupon", payload: {} }];
+  }
 
     form.reset({
       name: dv.name ?? "",
@@ -403,10 +437,17 @@ export default function RuleForm({
   }, [defaultValues, existingSingle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const disabled = form.formState.isSubmitting;
-  const watch = form.watch();
-  // Always coerce to an array to avoid `.map` on undefined.
-  const actions = (watch.actions ?? []) as ActionItem[];
-  const currentEvent = watch.event;
+  // Watch specific fields; fall back to current form values to avoid a timing gap after reset
+const actions = (form.watch("actions") ?? form.getValues("actions") ?? []) as ActionItem[];
+const currentEvent = form.watch("event") ?? form.getValues("event");
+const watch = {
+  templateSubject: form.watch("templateSubject"),
+  templateMessage: form.watch("templateMessage"),
+  countries: form.watch("countries"),
+  runScope: form.watch("runScope"),
+  enabled: form.watch("enabled"),
+};
+
   const allowedKinds = allowedKindsForEvent(currentEvent);
 
   // If user selects "customer_inactive", force per_customer in the UI.
@@ -713,10 +754,15 @@ export default function RuleForm({
             </Button>
           </div>
 
-          {(actions.length
-            ? actions
-            : ([{ type: "send_coupon", payload: {} }] as ActionItem[])
-          ).map((a, idx) => (
+              {/* In EDIT mode, do not inject a phantom default row.
+         In CREATE mode, the form.defaultValues already include one. */}
+     {actions.length === 0 && mode === "edit" && (
+       <div className="text-sm text-muted-foreground">
+         No actions in this rule yet. Add one above.
+       </div>
+     )}
+
+     {actions.map((a, idx) => (
             <div key={idx} className="rounded-xl border p-4 md:p-6 grid gap-4">
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
