@@ -19,7 +19,8 @@ export type NotificationType =
   | "order_shipped"
   | "ticket_created"
   | "ticket_replied"
-  | "order_message";
+  | "order_message"
+  | "automation_rule";
 
 export type NotificationChannel = "email" | "in_app" | "webhook" | "telegram";
 
@@ -99,13 +100,17 @@ export async function sendNotification(params: SendNotificationParams) {
     ticketId = null,
   } = params;
 
+  const isAutomation = type === "automation_rule";
+
   /* ───────────────── trigger normalization ─────────────────
    * If a caller sends order notes with trigger "order_note" (or omits it),
    * treat them as admin-only alerts (to groups), not buyer DMs.
+   *  For automation rules we force a user-only semantics regardless of trigger.
    */
   const rawTrigger = trigger ?? null;
-  const effectiveTrigger =
-    type === "order_message" && (rawTrigger === null || rawTrigger === "order_note")
+  const effectiveTrigger = isAutomation
+    ? "user_only"
+    : type === "order_message" && (rawTrigger === null || rawTrigger === "order_note")
       ? "admin_only"
       : rawTrigger;
 
@@ -131,27 +136,37 @@ export async function sendNotification(params: SendNotificationParams) {
   }
 
   /* 1️⃣ templates */
-  const templates = await db
-    .selectFrom("notificationTemplates")
-    .select(["role", "subject", "message", "countries"])
-    .where("organizationId", "=", organizationId)
-    .where("type", "=", type)
-    .execute();
+  // For automation rules we skip DB templates and use the rule's own subject/body
+  let tplUser:
+    | { role: "admin" | "user"; subject: string | null; message: string; countries: string }
+    | undefined;
+  let tplAdmin:
+    | { role: "admin" | "user"; subject: string | null; message: string; countries: string }
+    | undefined;
+  let hasUserTpl = false;
+  let hasAdminTpl = false;
 
-  const tplUser = pickTemplate("user", country, templates);
-  const tplAdmin = pickTemplate("admin", country, templates);
-  const hasUserTpl = !!tplUser;
-  const hasAdminTpl = !!tplAdmin;
-
+  if (!isAutomation) {
+    const templates = await db
+      .selectFrom("notificationTemplates")
+      .select(["role", "subject", "message", "countries"])
+      .where("organizationId", "=", organizationId)
+      .where("type", "=", type)
+      .execute();
+    tplUser = pickTemplate("user", country, templates);
+    tplAdmin = pickTemplate("admin", country, templates);
+    hasUserTpl = !!tplUser;
+    hasAdminTpl = !!tplAdmin;
+  }
   // Decide fan-out based on trigger & template presence
-  const suppressAdminFanout = effectiveTrigger === "user_only_email";
+  const suppressAdminFanout = effectiveTrigger === "user_only_email" || isAutomation;
   const suppressUserFanout = effectiveTrigger === "admin_only";
 
   // admin-only order notes bypass template checks (show exact message + note content)
   const isAdminOnlyOrderNote =
     effectiveTrigger === "admin_only" && type === "order_message";
 
-    // ✅ NEW: user-only order notes also bypass template checks so customers get the raw message
+  // ✅ NEW: user-only order notes also bypass template checks so customers get the raw message
   const isUserOnlyOrderNote =
     type === "order_message" &&
     (effectiveTrigger === "user_only" || effectiveTrigger === "user_only_email");
@@ -161,18 +176,26 @@ export async function sendNotification(params: SendNotificationParams) {
   const shouldUserFanout =
     !suppressUserFanout && (hasUserTpl || isUserOnlyOrderNote);
 
+  // ✅ Force user-only fanout for automation rules
+  let finalAdminFanout = shouldAdminFanout;
+  let finalUserFanout = shouldUserFanout;
+  if (isAutomation) {
+    finalAdminFanout = false;
+    finalUserFanout = true;
+  }
+
   console.log("[notify] templates & fanout", {
     hasUserTpl,
     hasAdminTpl,
     suppressAdminFanout,
     suppressUserFanout,
-    shouldAdminFanout,
-    shouldUserFanout,
+    shouldAdminFanout: finalAdminFanout,
+    shouldUserFanout: finalUserFanout,
   });
 
   // If neither audience has a template (and it's not an explicit admin-only order note),
   // skip everything cleanly.
-  if (!shouldAdminFanout && !shouldUserFanout && !isAdminOnlyOrderNote) {
+  if (!finalAdminFanout && !finalUserFanout && !isAdminOnlyOrderNote) {
     console.log("[notify] skip: no matching templates for admin or user; nothing to send.");
     return;
   }
@@ -186,19 +209,29 @@ export async function sendNotification(params: SendNotificationParams) {
       ? type.replace(/_/g, " ")
       : (tplSubject || fallback || "").trim();
 
-  const rawSubUser = makeRawSub(tplUser?.subject, subject);
-  const rawSubAdm = makeRawSub(tplAdmin?.subject, subject);
+  
+  let subjectUserGeneric = "";
+let subjectAdminGeneric = "";
+let bodyUserGeneric = "";
+let bodyAdminGeneric = "";
 
-  const subjectUserGeneric = applyVars(rawSubUser, variables);
-  const subjectAdminGeneric = applyVars(rawSubAdm, variables);
-  const bodyUserGeneric = applyVars(tplUser?.message || message, variables);
-  let bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
-
+  if (isAutomation) {
+    // Use the rule's own subject + HTML body, apply variables, send ONLY to user
+    subjectUserGeneric = applyVars(makeRawSub(null, subject), variables);
+    bodyUserGeneric = applyVars(message, variables);
+  } else {
+     const rawSubUser = makeRawSub(tplUser?.subject, subject);
+  const rawSubAdm  = makeRawSub(tplAdmin?.subject, subject);
+  subjectUserGeneric  = applyVars(rawSubUser, variables);
+  subjectAdminGeneric = applyVars(rawSubAdm,  variables);
+    bodyUserGeneric = applyVars(tplUser?.message || message, variables);
+    bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
+  }
   /* ───────────────── special-case: admin-only order notes ─────────────────
    * Prefer the caller-provided body over any stored admin template so we can show the
    * actual order number and the note content verbatim.
    */
-  if (isAdminOnlyOrderNote) {
+  if (!isAutomation && isAdminOnlyOrderNote) {
     bodyAdminGeneric = applyVars(message, variables);
   }
 
@@ -209,11 +242,19 @@ export async function sendNotification(params: SendNotificationParams) {
       "Due to privacy reasons you can only see the product list in your order details page or message notification by the API",
   };
 
-  const subjectUserEmail = applyVars(rawSubUser, varsEmail);
-  const subjectAdminEmail = applyVars(rawSubAdm, varsEmail);
-  const bodyUserEmail = applyVars(tplUser?.message || message, varsEmail);
-  const bodyAdminEmail = applyVars(tplAdmin?.message || message, varsEmail);
-
+    // For automation rules, DO NOT substitute special email vars; use the rule content as-is.
+  const subjectUserEmail = isAutomation
+    ? subjectUserGeneric
+    : applyVars(makeRawSub(tplUser?.subject, subject), varsEmail);
+  const subjectAdminEmail = isAutomation
+    ? subjectAdminGeneric
+    : applyVars(makeRawSub(tplAdmin?.subject, subject), varsEmail);
+  const bodyUserEmail = isAutomation
+    ? bodyUserGeneric
+    : applyVars(tplUser?.message || message, varsEmail);
+  const bodyAdminEmail = isAutomation
+    ? bodyAdminGeneric
+    : applyVars(tplAdmin?.message || message, varsEmail);
   /* 3️⃣ support e-mail (for CC and admin fallback) */
   const supportRow = await db
     .selectFrom("organizationSupportEmail")
@@ -298,8 +339,8 @@ export async function sendNotification(params: SendNotificationParams) {
   /* — EMAIL — */
   if (channels.includes("email")) {
     console.log("[notify] EMAIL fanout", {
-      shouldAdminFanout,
-      shouldUserFanout,
+      shouldAdminFanout: finalAdminFanout,
+      shouldUserFanout: finalUserFanout,
       adminCount: adminEmails.length,
       userCount: userEmails.length,
     });
@@ -320,7 +361,7 @@ export async function sendNotification(params: SendNotificationParams) {
 
     const promises: Promise<unknown>[] = [];
 
-    if (adminEmails.length && shouldAdminFanout) {
+    if (!isAutomation && adminEmails.length && finalAdminFanout) {
       promises.push(
         ...adminEmails.map((addr) =>
           send({
@@ -333,7 +374,7 @@ export async function sendNotification(params: SendNotificationParams) {
       );
     }
 
-    if (userEmails.length && shouldUserFanout) {
+    if (userEmails.length && finalUserFanout) {
       promises.push(
         ...userEmails.map((addr) =>
           send({
@@ -341,7 +382,7 @@ export async function sendNotification(params: SendNotificationParams) {
             subject: subjectUserEmail,
             html: bodyUserEmail,
             text: bodyUserEmail.replace(/<[^>]+>/g, ""),
-            cc: supportEmail,
+            cc: isAutomation ? null : supportEmail,
           }),
         ),
       );
@@ -361,7 +402,7 @@ export async function sendNotification(params: SendNotificationParams) {
       if (clientRow?.userId) targets.add(clientRow.userId);
     }
     // admin-facing (owners) → only if there is an admin template or admin-only note
-    if (shouldAdminFanout) {
+    if (finalAdminFanout) {
       ownerIds.forEach((id) => targets.add(id));
     }
     for (const uid of targets) {
@@ -381,7 +422,7 @@ export async function sendNotification(params: SendNotificationParams) {
 
   /* — WEBHOOK — */
   if (channels.includes("webhook")) {
-    if (shouldAdminFanout) {
+    if (!isAutomation && finalAdminFanout) {
       console.log("[notify] WEBHOOK dispatch");
       await dispatchWebhook({ organizationId, type, message: bodyUserGeneric });
       console.log("[notify] WEBHOOK done");
@@ -393,8 +434,9 @@ export async function sendNotification(params: SendNotificationParams) {
     // Only post to admin groups on admin-only triggers AND when we actually want admin fanout.
     // DM the client only when we actually want user fanout.
     const wantAdminGroups =
-      effectiveTrigger === "admin_only" && shouldAdminFanout;
-    const wantClientDM = shouldUserFanout; // requires user template
+      !isAutomation && effectiveTrigger === "admin_only" && finalAdminFanout;
+    const wantClientDM = finalUserFanout;
+
 
     const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
     const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
@@ -566,10 +608,10 @@ async function dispatchTelegram(opts: {
       const markup =
         ticketId && ticketSet.has(id)
           ? JSON.stringify({
-              inline_keyboard: [
-                [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
-              ],
-            })
+            inline_keyboard: [
+              [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
+            ],
+          })
           : undefined;
       targets.push({ chatId: id, text: safeAdmin, ...(markup ? { markup } : {}) });
     }

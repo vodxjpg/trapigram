@@ -546,7 +546,7 @@ export async function processAutomationRules(opts: {
       clientId,
       userId,
       url,
-      trigger: null,
+      trigger: "user_only",
     });
   }
 }
