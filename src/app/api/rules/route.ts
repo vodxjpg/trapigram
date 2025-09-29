@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
       if (unique.length) {
         const { rows } = await pool.query(
           `SELECT id, countries FROM coupons
-            WHERE "organizationId" = $1 AND id = ANY($2::uuid[])`,
+   WHERE "organizationId" = $1 AND id = ANY($2::text[])`,
           [organizationId, unique],
         );
         const map = new Map(rows.map(r => [String(r.id), Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]")]));

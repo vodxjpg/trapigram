@@ -278,7 +278,7 @@ async function getCouponCode(organizationId: string, couponId: string | null | u
 async function getProductTitles(organizationId: string, ids: string[]) {
   if (!ids?.length) return [] as string[];
   const { rows } = await pool.query(
-    `SELECT id, title FROM products WHERE "organizationId" = $1 AND id = ANY($2::uuid[])`,
+    `SELECT id, title FROM products WHERE "organizationId" = $1 AND id = ANY($2::text[])`,
     [organizationId, ids],
   );
   return rows.map((r) => String(r.title || ""));
