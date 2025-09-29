@@ -247,7 +247,6 @@ export async function POST(req: NextRequest) {
   let payload: OrderPayload;
   try {
     const body = await req.json();
-    console.log(body)
     body.organization = organizationId;
     body.totalAmount =
       body.subtotal -
@@ -275,7 +274,6 @@ export async function POST(req: NextRequest) {
     body.totalAmount = monetarySubtotal - discountAmt - pointsAmt + shippingAmt;
 
     payload = orderSchema.parse(body);
-    console.log(payload)
   } catch (err) {
     if (err instanceof z.ZodError)
       return NextResponse.json({ error: err.errors }, { status: 400 });

@@ -262,7 +262,7 @@ export default function PurchaseOrderSupply({
                 ]);
                 if (!normRes.ok || !affRes.ok) throw new Error("Failed to fetch products");
 
-                const { products: norm } = await normRes.json();
+                const { productsFlat: norm } = await normRes.json();
 
                 const all: Product[] = [
                     ...norm.map((p: any) => {

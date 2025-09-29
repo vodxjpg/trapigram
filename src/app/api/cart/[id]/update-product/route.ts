@@ -24,6 +24,7 @@ function findTier(
   tiers: Tier[],
   country: string,
   productId: string,
+  variationId: string | null,
   clientId?: string | null,
 ): Tier | null {
   const candidates = tiers.filter(
@@ -31,7 +32,7 @@ function findTier(
       t.active === true &&
       t.countries.includes(country) &&
       t.products.some(
-        (p) => p.productId === productId || p.variationId === productId,
+        (p) => p.productId === productId || p.variationId === variationId,
       ),
   );
   if (!candidates.length) return null;
@@ -85,7 +86,7 @@ export async function PATCH(
          WHERE ca.id = $1
   AND (cp."productId" = $2 OR cp."affiliateProductId" = $2)
   ${withVariation ? 'AND cp."variationId" = $3' : ''}`,
-[cartId, data.productId, ...(withVariation ? [variationId] : [])],
+        [cartId, data.productId, ...(withVariation ? [variationId] : [])],
 
       );
       if (!cRows.length) {
@@ -213,18 +214,17 @@ export async function PATCH(
       let pricePerUnit = basePrice;
       if (!isAffiliate) {
         const tiers = (await tierPricing(organizationId)) as Tier[];
-        const tier = findTier(tiers, country, data.productId, clientId);
+        const tier = findTier(tiers, country, data.productId, data.variationId, clientId);
+
         if (tier) {
-          const tierIds = tier.products
-            .map((p) => p.productId)
-            .filter(Boolean) as string[];
 
           const { rows: sumRow } = await client.query(
             `SELECT COALESCE(SUM(quantity),0)::int AS qty
                FROM "cartProducts"
               WHERE "cartId" = $1
-                AND "productId" = ANY($2::text[])`,
-            [cartId, tierIds],
+                AND "productId" = $2
+                ${withVariation ? 'AND "variationId" = $3' : ''}`,
+            [cartId, data.productId, ...(withVariation ? [data.variationId] : [])],
           );
           const qtyBefore = Number(sumRow[0].qty);
           const qtyAfter = qtyBefore - oldQty + newQty;
@@ -235,8 +235,8 @@ export async function PATCH(
                 SET "unitPrice" = $1,
                     "updatedAt" = NOW()
               WHERE "cartId"   = $2
-                AND "productId" = ANY($3::text[])`,
-            [pricePerUnit, cartId, tierIds],
+                AND "productId" = $3`,
+            [pricePerUnit, cartId, data.productId],
           );
         }
       }
@@ -246,8 +246,9 @@ export async function PATCH(
         await client.query(
           `DELETE FROM "cartProducts"
                 WHERE "cartId"   = $1
-                  AND ("productId" = $2 OR "affiliateProductId" = $2)`,
-          [cartId, data.productId],
+                  AND ("productId" = $2 OR "affiliateProductId" = $2)
+                  ${withVariation ? 'AND "variationId" = $3' : ''}`,
+          [cartId, data.productId, ...(withVariation ? [variationId] : [])],
         );
       } else {
         await client.query(
@@ -256,15 +257,15 @@ export async function PATCH(
                       "unitPrice" = $2,
                       "updatedAt" = NOW()
                 WHERE "cartId"   = $3
-   AND ("productId" = $4 OR "affiliateProductId" = $4)
-  ${withVariation ? 'AND "variationId" = $5' : ''}`,
-[newQty, pricePerUnit, cartId, data.productId, ...(withVariation ? [variationId] : [])],
+                AND ("productId" = $4 OR "affiliateProductId" = $4)
+                ${withVariation ? 'AND "variationId" = $5' : ''}`,
+          [newQty, pricePerUnit, cartId, data.productId, ...(withVariation ? [variationId] : [])],
 
         );
       }
 
       /* 7️⃣ stock adjust (negative on add, positive on subtract) */
-     await adjustStock(client, data.productId, variationId, country, data.action === "add" ? -1 : 1);
+      await adjustStock(client, data.productId, variationId, country, data.action === "add" ? -1 : 1);
 
 
       /* 8️⃣ update cart hash after all changes */

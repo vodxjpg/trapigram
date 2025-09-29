@@ -132,8 +132,8 @@ export async function POST(req: NextRequest) {
       clients: Array.isArray(raw?.clients)
         ? raw.clients
         : Array.isArray(raw?.customers)
-        ? raw.customers
-        : [],
+          ? raw.customers
+          : [],
     };
 
     let body: z.infer<typeof bodySchema>;

@@ -167,12 +167,14 @@ export async function GET(
     `
     SELECT
       p.id,
+      p."productType",
       p.title,
       p.description,
       p.image,
       p.sku,
       cp.quantity,
-      cp."unitPrice"
+      cp."unitPrice",
+      cp."variationId"
     FROM products p
     JOIN "cartProducts" cp
       ON p.id = cp."productId"
@@ -182,7 +184,100 @@ export async function GET(
     [order.cartId]
   );
 
-  // 4. Pull in affiliate products
+  /* ──────────────────────────────────────────────────────────────
+     3.b Enrich *variable* products with variant SKU + label
+     – Batch-load variations
+     – Batch-load attribute names and term names
+     – Build "Base — Attr: Term · Attr2: Term2"
+  ────────────────────────────────────────────────────────────── */
+
+  // Collect all variationIds present on these cart lines
+  const variationIds: string[] = normalRes.rows
+    .filter((r: any) => r.productType === "variable" && r.variationId)
+    .map((r: any) => r.variationId);
+
+  // Helper mappers
+  const variantById = new Map<string, any>();
+  const attrNameById = new Map<string, string>();
+  const termNameById = new Map<string, string>();
+
+  if (variationIds.length > 0) {
+    // 1) productVariations
+    const varRes = await pool.query(
+      `SELECT id, "productId", attributes, sku, image, "regularPrice", "salePrice"
+     FROM "productVariations"
+    WHERE id::text = ANY($1::text[])`,
+      [variationIds]                         // <-- array, not an object
+    );
+    for (const v of varRes.rows) variantById.set(v.id, v);
+
+    // 2) collect attributeIds and termIds from the attributes JSON
+    const attrIds = new Set<string>();
+    const termIds = new Set<string>();
+    for (const v of varRes.rows) {
+      const attrs = (v.attributes ?? {}) as Record<string, string>;
+      for (const [attributeId, termId] of Object.entries(attrs)) {
+        if (attributeId) attrIds.add(attributeId);
+        if (termId) termIds.add(termId);
+      }
+    }
+
+    // 3) productAttributes (names)
+    if (attrIds.size) {
+      const aRes = await pool.query(
+        `SELECT id, name FROM "productAttributes" WHERE id = ANY($1::text[])`,
+        [Array.from(attrIds)]
+      );
+      for (const a of aRes.rows) attrNameById.set(a.id, a.name);
+    }
+
+    // 4) productAttributeTerms (names)
+    if (termIds.size) {
+      const tRes = await pool.query(
+        `SELECT id, name FROM "productAttributeTerms" WHERE id = ANY($1::text[])`,
+        [Array.from(termIds)]
+      );
+      for (const t of tRes.rows) termNameById.set(t.id, t.name);
+    }
+  }
+
+  // Helper to build "Base — Attr: Term · Attr2: Term2"
+  function buildVariantTitle(baseTitle: string, v: any): string {
+    const attrs: Record<string, string> = v?.attributes ?? {};
+    const parts: string[] = [];
+
+    // Stable ordering helps (by attribute name)
+    const pairs = Object.entries(attrs).map(([attrId, termId]) => {
+      const aName = attrNameById.get(attrId) ?? attrId;
+      const tName = termNameById.get(termId) ?? termId;
+      return { aName, tName };
+    });
+    pairs.sort((x, y) => x.aName.localeCompare(y.aName));
+
+    for (const { aName, tName } of pairs) {
+      parts.push(`${aName}: ${tName}`);
+    }
+    return parts.length ? `${baseTitle} — ${parts.join(" · ")}` : baseTitle;
+  }
+
+  // Apply the enrichment to the in-memory rows before merging with affiliate
+  const normalRowsEnriched = normalRes.rows.map((r: any) => {
+    if (r.productType === "variable" && r.variationId && variantById.has(r.variationId)) {
+      const v = variantById.get(r.variationId);
+      return {
+        ...r,
+        // ✅ variant SKU first, fall back to base
+        sku: v?.sku ?? r.sku,
+        // ✅ new title with attribute + term
+        title: buildVariantTitle(r.title, v),
+        // optional: prefer variant image if present
+        image: v?.image ?? r.image,
+      };
+    }
+    return r;
+  });
+
+  // 4. Pull in affiliate products (unchanged)
   const affRes = await pool.query(
     `
     SELECT
@@ -202,23 +297,26 @@ export async function GET(
     [order.cartId]
   );
 
-  // 5. Merge both lists
+  // 5. Merge both lists (use the enriched rows here)
   const all = [
-    ...normalRes.rows.map((r: any) => ({ ...r, isAffiliate: false })),
+    ...normalRowsEnriched.map((r: any) => ({ ...r, isAffiliate: false })),
     ...affRes.rows.map((r: any) => ({ ...r, isAffiliate: true })),
   ];
 
   let products = all.map((r: any) => ({
     id: r.id,
-    title: r.title,
+    type: r.productType,
+    title: r.title,            // ← now includes “Attr: Term”
     description: r.description,
     image: r.image,
-    sku: r.sku,
+    sku: r.sku,                // ← now the VARIANT sku if variable
+    variationId: r.variationId,
     quantity: r.quantity,
     unitPrice: Number(r.unitPrice),
     isAffiliate: r.isAffiliate,
     subtotal: Number(r.unitPrice) * r.quantity,
   }));
+
 
   // Enrich with *immediate supplier* (only for non-affiliate lines)
   const supplierCache = new Map<string, { orgId: string | null; name: string | null }>();
@@ -298,6 +396,8 @@ export async function GET(
       email: client.email ?? "",
     },
   };
+
+  console.log(full)
 
   return NextResponse.json(full, { status: 200 });
 }

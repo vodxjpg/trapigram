@@ -137,6 +137,7 @@ export function DiscountRulesTable() {
         search: debounced,
       });
       const res = await fetch(`/api/tier-pricing?${qs.toString()}`);
+      console.log(res)
       if (!res.ok) throw new Error();
       const {
         tierPricings,

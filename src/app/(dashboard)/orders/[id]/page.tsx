@@ -39,12 +39,14 @@ interface Product {
   description: string;
   quantity: number;
   unitPrice: number;
-  total: number;
+  subtotal?: number;             // backend sends 'subtotal'
   isAffiliate: boolean;
   supplierOrgId?: string | null;
   supplierName?: string | null;
   image: string | null;
+  variationId?: string | null;   // <-- keep rows distinct by variation
 }
+
 interface ShippingInfo {
   address: string;
   company: string;
@@ -74,7 +76,7 @@ interface Order {
   shippingInfo: ShippingInfo;
   country?: string;
   dropshipperOrgId?: string | null;
-dropshipperName?: string | null;
+  dropshipperName?: string | null;
 }
 interface Message {
   id: string;
@@ -97,59 +99,16 @@ interface OrderNote {
   updatedAt: string;
 }
 
-function groupByProduct(lines: Product[]) {
-  return lines
-    .reduce((acc, l) => {
-      let bucket = acc.find((b) => b.id === l.id);
-      if (!bucket) {
-        bucket = {
-          id: l.id,
-          title: l.title,
-          supplierOrgId: l.supplierOrgId ?? null,
-          supplierName: l.supplierName ?? null,
-          sku: l.sku,
-          description: l.description,
-          image: l.image,
-          isAffiliate: l.isAffiliate,
-          priceBuckets: [] as { unitPrice: number; quantity: number }[],
-        };
-        acc.push(bucket);
-      }
-      const pb = bucket.priceBuckets.find((p) => p.unitPrice === l.unitPrice);
-      if (pb) pb.quantity += l.quantity;
-        // Preserve supplier info if present (first non-null wins)
-      if (bucket.supplierOrgId == null && l.supplierOrgId != null) {
-        bucket.supplierOrgId = l.supplierOrgId;
-      }
-      else bucket.priceBuckets.push({ unitPrice: l.unitPrice, quantity: l.quantity });
-      return acc;
-    }, [] as Array<{
-      id: string;
-      title: string;
-      sku: string;
-      description: string;
-      supplierOrgId?: string | null;
-      supplierName?: string | null;
-      image: string | null;
-      isAffiliate: boolean;
-      priceBuckets: { unitPrice: number; quantity: number }[];
-    }>)
-    .map((b) => ({
-      ...b,
-      priceBuckets: [...b.priceBuckets].sort((a, z) => a.unitPrice - z.unitPrice),
-    }));
+function parsePaymentUri(u?: string): { scheme?: string; address?: string } {
+  if (!u || typeof u !== "string") return {};
+  const idx = u.indexOf(":");
+  if (idx <= 0) return {};
+  const scheme = u.slice(0, idx);
+  const rest = u.slice(idx + 1);
+  const q = rest.indexOf("?");
+  const address = q >= 0 ? rest.slice(0, q) : rest;
+  return { scheme, address };
 }
-
- function parsePaymentUri(u?: string): { scheme?: string; address?: string } {
-   if (!u || typeof u !== "string") return {};
-   const idx = u.indexOf(":");
-   if (idx <= 0) return {};
-   const scheme = u.slice(0, idx);
-   const rest = u.slice(idx + 1);
-   const q = rest.indexOf("?");
-   const address = q >= 0 ? rest.slice(0, q) : rest;
-   return { scheme, address };
- }
 
 function parseCrypto(metaArr: any[]) {
   if (!Array.isArray(metaArr) || metaArr.length === 0) return null;
@@ -345,6 +304,7 @@ export default function OrderView() {
       const orderRes = await fetch(`/api/order/${id}`);
       if (!orderRes.ok) throw new Error("Failed loading order");
       const o: Order = await orderRes.json();
+      console.log(o)
 
       const clientRes = await fetch(`/api/clients/${o.clientId}`);
       if (!clientRes.ok) throw new Error("Failed loading client");
@@ -359,8 +319,8 @@ export default function OrderView() {
         clientEmail: c.email ?? "",
         clientUsername: c.username,
         discountValue: o.discountValue,
-             dropshipperOrgId: (o as any).dropshipperOrgId ?? null,
-       dropshipperName: (o as any).dropshipperName ?? null,
+        dropshipperOrgId: (o as any).dropshipperOrgId ?? null,
+        dropshipperName: (o as any).dropshipperName ?? null,
       });
       setError(null);
     } catch (err: any) {
@@ -458,26 +418,23 @@ export default function OrderView() {
       </div>
     );
 
-  const grouped = groupByProduct(order.products);
+  // No grouping — use the server lines directly
+  const lines = order.products;
 
-  const monetarySubtotal = grouped
-    .filter((g) => !g.isAffiliate)
-    .reduce(
-      (sum, g) =>
-        sum + g.priceBuckets.reduce((s, pb) => s + pb.unitPrice * pb.quantity, 0),
-      0,
-    );
+  // Monetary subtotal only for non-affiliate items
+  const monetarySubtotal = lines
+    .filter(l => !l.isAffiliate)
+    .reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 
-  const affiliatePointsTotal = grouped
-    .filter((g) => g.isAffiliate)
-    .reduce(
-      (sum, g) =>
-        sum + g.priceBuckets.reduce((s, pb) => s + pb.unitPrice * pb.quantity, 0),
-      0,
-    );
+  // Points total for affiliate items (if you show it)
+  const affiliatePointsTotal = lines
+    .filter(l => l.isAffiliate)
+    .reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 
   const calculatedTotal =
     monetarySubtotal + order.shipping - order.discount - (order.pointsRedeemedAmount ?? 0);
+
+  const keyOf = (l: Product) => `${l.id}:${l.variationId ?? "base"}`;
 
   const fmtMoney = (n: number) => formatCurrency(n, order.country);
   const fmtPts = (n: number) => `${n} pts`;
@@ -528,12 +485,12 @@ export default function OrderView() {
                     {order.clientUsername} ({order.clientEmail})
                   </p>
                 </div>
-                          <div>
-            <p className="text-sm text-muted-foreground">Dropshipper</p>
-            <p className="font-medium">
-              {order.dropshipperName ?? "—"}
-            </p>
-          </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Dropshipper</p>
+                  <p className="font-medium">
+                    {order.dropshipperName ?? "—"}
+                  </p>
+                </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Order ID</p>
                   <p className="font-medium">{order.id}</p>
@@ -577,79 +534,56 @@ export default function OrderView() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {grouped.map((g) => {
-                      const qty = g.priceBuckets.reduce(
-                        (s, pb) => s + pb.quantity,
-                        0,
-                      );
-                      const cheapest = g.priceBuckets[0];
-                      const sub = g.priceBuckets.reduce(
-                        (s, pb) => s + pb.unitPrice * pb.quantity,
-                        0,
-                      );
-                      return (
-                        <TableRow key={g.id}>
-                          <TableCell>
-                            <div className="h-20 w-20 relative rounded-md overflow-hidden">
-                              <Image
-                                src={g.image || "/placeholder.svg"}
-                                alt={g.title}
-                                fill
-                                sizes="80px"
-                                className="object-cover"
-                              />
-                            </div>
-                          </TableCell>
-                          <TableCell className="font-medium">
-                            {g.title}
-                                                        {/* Supplier (only when present and not affiliate) */}
-                            {!g.isAffiliate && g.supplierName && (
-                              <div className="text-xs text-muted-foreground mt-0.5">
-                                Supplier: {g.supplierName}
-                              </div>
-                            )}
-                            {g.priceBuckets.length > 1 && (
-                              <ul className="text-xs text-muted-foreground mt-1 space-y-1">
-                                {g.priceBuckets.map((pb) => (
-                                  <li key={pb.unitPrice}>
-                                    {pb.quantity} ×{" "}
-                                    {g.isAffiliate
-                                      ? fmtPts(pb.unitPrice)
-                                      : fmtMoney(pb.unitPrice)}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </TableCell>
-                          <TableCell>{g.sku}</TableCell>
-                          <TableCell className="hidden md:table-cell max-w-xs">
-                            {(() => {
-                              const clean = stripHtml(g.description);
-                              const short = truncate(clean, 8);
-                              return (
-                                <span title={clean}>
-                                  {short}
-                                </span>
-                              );
-                            })()}
-                          </TableCell>
+                    {lines.map((l, idx) => (
+                      <TableRow key={`${keyOf(l)}:${l.variationId ?? "base"}:${l.sku}:${idx}`}>
+                        <TableCell>
+                          <div className="h-20 w-20 relative rounded-md overflow-hidden">
+                            <Image
+                              src={l.image || "/placeholder.svg"}
+                              alt={l.title}
+                              fill
+                              sizes="80px"
+                              className="object-cover"
+                            />
+                          </div>
+                        </TableCell>
 
-                          <TableCell className="text-right">{qty}</TableCell>
-                          {canViewPricing && (
-                            <TableCell className="text-right">
-                              {g.isAffiliate
-                                ? fmtPts(cheapest.unitPrice)
-                                : fmtMoney(cheapest.unitPrice)}
-                            </TableCell>
+                        <TableCell className="font-medium">
+                          {l.title}
+                          {!l.isAffiliate && l.supplierName && (
+                            <div className="text-xs text-muted-foreground mt-0.5">
+                              Supplier: {l.supplierName}
+                            </div>
                           )}
-                          {canViewPricing && (
-                            <TableCell className="text-right">
-                              {g.isAffiliate ? fmtPts(sub) : fmtMoney(sub)}
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      );
-                    })}
+                        </TableCell>
+
+                        <TableCell>{l.sku}</TableCell>
+
+                        <TableCell className="hidden md:table-cell max-w-xs">
+                          {(() => {
+                            const clean = stripHtml(l.description);
+                            const short = truncate(clean, 8);
+                            return <span title={clean}>{short}</span>;
+                          })()}
+                        </TableCell>
+
+                        <TableCell className="text-right">{l.quantity}</TableCell>
+
+                        {canViewPricing && (
+                          <TableCell className="text-right">
+                            {l.isAffiliate ? fmtPts(l.unitPrice) : fmtMoney(l.unitPrice)}
+                          </TableCell>
+                        )}
+
+                        {canViewPricing && (
+                          <TableCell className="text-right">
+                            {l.isAffiliate
+                              ? fmtPts(l.unitPrice * l.quantity)
+                              : fmtMoney(l.unitPrice * l.quantity)}
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
               </div>
@@ -798,8 +732,8 @@ export default function OrderView() {
                               <div className="max-w-[85%] flex flex-col">
                                 <div
                                   className={`flex items-start gap-2 ${m.isInternal
-                                      ? "flex-row-reverse"
-                                      : "flex-row"
+                                    ? "flex-row-reverse"
+                                    : "flex-row"
                                     }`}
                                 >
                                   <Avatar className="w-8 h-8 flex-shrink-0">
@@ -813,8 +747,8 @@ export default function OrderView() {
                                   </Avatar>
                                   <div
                                     className={`rounded-lg p-3 break-words ${m.isInternal
-                                        ? "bg-primary text-primary-foreground"
-                                        : "bg-muted text-foreground"
+                                      ? "bg-primary text-primary-foreground"
+                                      : "bg-muted text-foreground"
                                       }`}
                                   >
                                     <p className="text-sm">{m.message}</p>
@@ -868,39 +802,39 @@ export default function OrderView() {
           </Card>
           {/* ───────────────────────── ORDER NOTES ───────────────────────── */}
           <Card className="h-[560px] flex flex-col">
-    <CardHeader className="flex-shrink-0 pb-3">
-      <CardTitle className="flex items-center gap-2">
-        <MessageSquarePlus className="h-5 w-5" />
-        Order Notes
-      </CardTitle>
-    </CardHeader>
-    <CardContent className="flex-1 flex flex-col min-h-0 px-0">
-      {/* controls under the title so the title stands alone */}
-      <div className="px-4 pb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button
-              variant={notesScope === "staff" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setNotesScope("staff")}
-            >
-              Staff view
-            </Button>
-            <Button
-              variant={notesScope === "customer" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setNotesScope("customer")}
-            >
-              Customer view
-            </Button>
-          </div>
-        </div>
-        <div className="text-sm text-muted-foreground mt-2">
-          Notes are encrypted. Public notes are visible to the customer.
-        </div>
-      </div>
+            <CardHeader className="flex-shrink-0 pb-3">
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquarePlus className="h-5 w-5" />
+                Order Notes
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1 flex flex-col min-h-0 px-0">
+              {/* controls under the title so the title stands alone */}
+              <div className="px-4 pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Button
+                      variant={notesScope === "staff" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setNotesScope("staff")}
+                    >
+                      Staff view
+                    </Button>
+                    <Button
+                      variant={notesScope === "customer" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setNotesScope("customer")}
+                    >
+                      Customer view
+                    </Button>
+                  </div>
+                </div>
+                <div className="text-sm text-muted-foreground mt-2">
+                  Notes are encrypted. Public notes are visible to the customer.
+                </div>
+              </div>
               <div className="flex-1 min-h-0">
-                 <ScrollArea className="h-full px-4">
+                <ScrollArea className="h-full px-4">
                   <div className="px-1 py-3 space-y-3">
                     {notesLoading ? (
                       <div className="flex items-center justify-center py-10 text-muted-foreground">

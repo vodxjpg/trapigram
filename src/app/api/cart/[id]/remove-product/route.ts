@@ -76,7 +76,7 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
     parsed = cartProductSchema.parse({ productId, variationId }); // will throw if productId missing
   }
 
-    // normalize variationId: ensure string|null and treat empty as null
+  // normalize variationId: ensure string|null and treat empty as null
   const normVariationId: string | null =
     typeof parsed.variationId === "string" && parsed.variationId.trim().length > 0
       ? parsed.variationId
@@ -84,7 +84,6 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
   const withVariation = normVariationId !== null;
 
   try {
-    
 
     const delSql = `
       DELETE FROM "cartProducts"

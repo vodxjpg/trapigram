@@ -211,7 +211,7 @@ export async function POST(
           [quantity, unitPrice, existing[0].id],
         );
       } else {
-       if (withVariation) {
+        if (withVariation) {
           await client.query(
             `INSERT INTO "cartProducts"
             (id,"cartId","productId","affiliateProductId","variationId",
@@ -246,7 +246,7 @@ export async function POST(
       }
 
       /* 5) ▼ reserve stock */
-     await adjustStock(client, body.productId, variationId, country, -body.quantity);
+      await adjustStock(client, body.productId, variationId, country, -body.quantity);
 
       /* 6) ▼ cart hash */
       const { rows: rowsHash } = await client.query(
