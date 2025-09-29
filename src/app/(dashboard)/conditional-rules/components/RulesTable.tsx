@@ -138,7 +138,7 @@ function buildActionLabels(r: RuleRow): string[] {
 
   if (r.action === "send_coupon") {
     const id = p?.couponId ? ` (#${String(p.couponId).slice(0, 6)}...)` : "";
-    pushChannelsSuffix(`Send coupon${id}`);
+    pushChannelsSuffix(`Send coupon`);
     return texts;
   }
 
@@ -147,9 +147,9 @@ function buildActionLabels(r: RuleRow): string[] {
     if (ids.length === 0) {
       pushChannelsSuffix("Recommend products");
     } else if (ids.length === 1) {
-      pushChannelsSuffix(`Recommend product ${ids[0]}`);
+      pushChannelsSuffix(`Recommend product `);
     } else {
-      pushChannelsSuffix(`Recommend products ${joinWithCommaLimited(ids, 2)}`);
+      pushChannelsSuffix(`Recommend products`);
     }
     return texts;
   }
@@ -163,7 +163,7 @@ function buildActionLabels(r: RuleRow): string[] {
 
     if (t === "send_coupon") {
       const id = pay?.couponId ? ` (#${String(pay.couponId).slice(0, 6)}...)` : "";
-      texts.push(`Send coupon${id}`);
+      texts.push(`Send coupon`);
     } else if (t === "product_recommendation") {
       const ids: string[] = Array.isArray(pay?.productIds) ? pay.productIds : [];
       if (ids.length === 0) {
