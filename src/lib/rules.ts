@@ -166,34 +166,44 @@ async function appendOrderAutomationEvent(opts: {
     `SELECT "orderMeta" FROM orders WHERE id = $1 AND "organizationId" = $2`,
     [orderId, organizationId],
   );
-  const raw = rows[0]?.orderMeta;
+
+    const raw = rows[0]?.orderMeta;
   let meta: any;
   try {
-    meta = typeof raw === "string" ? JSON.parse(raw) : raw || {};
-  } catch {
-    meta = {};
-  }
-  const automation = meta.automation && typeof meta.automation === "object" ? meta.automation : {};
-  const events = Array.isArray(automation.events) ? automation.events : [];
-  events.push(entry);
-  automation.events = events;
+    meta = typeof raw === "string" ? JSON.parse(raw) : (raw ?? {});
+  } catch { meta = {}; }
 
-  // maintain a convenience "maxPointsMultiplier" for fast lookups by the later spending-award flow
+  // ✅ Normalize: ensure a plain object; arrays drop props on JSON.stringify
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) meta = {};
+
+  // Get/create automation root (must also be a plain object)
+  const automationRoot = (meta as any).automation;
+  const automation =
+    automationRoot && typeof automationRoot === "object" && !Array.isArray(automationRoot)
+      ? automationRoot
+      : {};
+
+  const events = Array.isArray((automation as any).events) ? (automation as any).events : [];
+  events.push(entry);
+  (automation as any).events = events;
+
+  // Keep a convenience max for quick reads during spending awards
   if (entry?.event === "points_multiplier" && typeof entry.factor === "number") {
     const prevMax = Math.max(
       1,
       ...events
         .filter((e: any) => e?.event === "points_multiplier" && Number.isFinite(Number(e.factor)))
-        .map((e: any) => Number(e.factor)),
+        .map((e: any) => Number(e.factor))
     );
-    automation.maxPointsMultiplier = prevMax; // "be max" semantics across rules
+    (automation as any).maxPointsMultiplier = prevMax;
   }
 
-  meta.automation = automation;
+  (meta as any).automation = automation;
   await pool.query(
     `UPDATE orders SET "orderMeta" = $3, "updatedAt" = NOW() WHERE id = $1 AND "organizationId" = $2`,
     [orderId, organizationId, JSON.stringify(meta)],
   );
+
 }
 
 /* Affiliate points helpers (same semantics as /api/affiliate/points) */
