@@ -90,9 +90,9 @@ function buildConditionLabels(r: RuleRow): string[] {
         if (ids.length === 0) {
           labels.push("Contains product");
         } else if (ids.length === 1) {
-          labels.push(`Contains product ${ids[0]}`);
+          labels.push(`Contains product`);
         } else {
-          labels.push(`Contains products ${joinWithCommaLimited(ids, 2)}`);
+          labels.push(`Contains products`);
         }
         break;
       }
@@ -169,9 +169,9 @@ function buildActionLabels(r: RuleRow): string[] {
       if (ids.length === 0) {
         texts.push("Recommend products");
       } else if (ids.length === 1) {
-        texts.push(`Recommend product ${ids[0]}`);
+        texts.push(`Recommend product`);
       } else {
-        texts.push(`Recommend products ${joinWithCommaLimited(ids, 2)}`);
+        texts.push(`Recommend products`);
       }
     } else if (t === "multiply_points") {
       const factor = Number(pay?.factor ?? 0);
