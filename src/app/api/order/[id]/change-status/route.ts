@@ -1049,7 +1049,7 @@ export async function PATCH(
         // Notify on these status changes; outbox dedupe will prevent duplicates.
         const shouldNotify =
           newStatus === "pending_payment" || newStatus === "paid" || newStatus === "completed" || newStatus === "cancelled" || newStatus === "refunded";
- 
+
 
         if (shouldNotify) {
           const productList = await buildProductListForCart(ord.cartId);
@@ -1932,30 +1932,50 @@ export async function PATCH(
           const baselineDeltaClamped = baselineDelta > 0 ? baselineDelta : 0;
 
           // Get per-order multiplier from orderMeta (max across entries). Default 1.0
+          // Get per-order multiplier from orderMeta. Prefer the convenience
+          // automation.maxPointsMultiplier; fall back to scanning events.
           let maxMultiplier = 1.0;
           try {
             const { rows: [metaRow] } = await pool.query(
               `SELECT "orderMeta" FROM orders WHERE id = $1`,
               [id],
             );
-            const rawMeta = metaRow?.orderMeta;
-            const arr: any[] = Array.isArray(rawMeta) ? rawMeta
-              : Array.isArray(JSON.parse(rawMeta ?? "[]")) ? JSON.parse(rawMeta ?? "[]")
-                : [];
-            // Also support object-style { automation: { events: [...] } }
-            let cand: any[] = arr;
-            if (!Array.isArray(arr) && rawMeta && typeof rawMeta === "object" && rawMeta.automation?.events) {
-              cand = Array.isArray(rawMeta.automation.events) ? rawMeta.automation.events : [];
+
+            const raw = metaRow?.orderMeta;
+            const meta = typeof raw === "string"
+              ? (raw.trim().startsWith("{") || raw.trim().startsWith("["))
+                ? JSON.parse(raw)
+                : {}
+              : (raw ?? {});
+
+            // New format: object with automation{ maxPointsMultiplier, events[] }
+            if (meta && typeof meta === "object" && meta.automation) {
+              const m = Number(meta.automation.maxPointsMultiplier);
+              if (Number.isFinite(m) && m > 1) {
+                maxMultiplier = m;
+              } else if (Array.isArray(meta.automation.events)) {
+                for (const e of meta.automation.events) {
+                  if (String(e?.event) === "points_multiplier") {
+                    const f = Number(e?.factor);
+                    if (Number.isFinite(f) && f > maxMultiplier) maxMultiplier = f;
+                  }
+                }
+              }
             }
-            for (const e of cand) {
-              if (String(e?.event ?? "") === "points_multiplier") {
-                const f = Number(e?.factor ?? 0);
-                if (Number.isFinite(f) && f > maxMultiplier) maxMultiplier = f;
+
+            // Legacy format: orderMeta is an array of entries
+            if (Array.isArray(meta)) {
+              for (const e of meta) {
+                if (String(e?.event) === "points_multiplier") {
+                  const f = Number(e?.factor);
+                  if (Number.isFinite(f) && f > maxMultiplier) maxMultiplier = f;
+                }
               }
             }
           } catch {
-            /* ignore parse issues; treat as multiplier 1.0 */
+            // keep default 1.0
           }
+
 
           // Extra points that are *only* for the steps caused by this order
           const extraFromMultiplier = round1(
