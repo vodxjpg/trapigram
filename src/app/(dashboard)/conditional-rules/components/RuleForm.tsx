@@ -4,7 +4,7 @@
 import * as React from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useForm, Controller } from "react-hook-form";
+import { useForm, Controller, useFieldArray } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 
@@ -51,12 +51,6 @@ const quillModules = {
 };
 
 const channelsEnum = z.enum(["email", "telegram"]);
-const actionEnum = z.enum([
-  "send_coupon",
-  "product_recommendation",
-  "multiply_points",
-  "award_points",
-]);
 const scopeEnum = z.enum(["per_order", "per_customer"]); // NEW
 
 // UI action item (no subject/body here—shared at rule level)
@@ -200,7 +194,9 @@ function parseMaybeJson<T = any>(v: any): T {
   if (!v) return v as T;
   if (typeof v === "object") return v as T;
   if (typeof v !== "string") return v as T;
-  try { return JSON.parse(v) as T; } catch {
+  try {
+    return JSON.parse(v) as T;
+  } catch {
     return v as T;
   }
 }
@@ -224,8 +220,7 @@ function normalizeActionType(t?: string): ActionItem["type"] {
     return "product_recommendation";
   if (s === "multiply_points" || s === "set_points_multiplier" || s === "points_multiplier")
     return "multiply_points";
-  if (s === "award_points" || s === "grant_points")
-    return "award_points";
+  if (s === "award_points" || s === "grant_points") return "award_points";
   // default safely to coupon (UI already guards with validation)
   return "send_coupon";
 }
@@ -252,20 +247,20 @@ function normalizeOneAction(raw: AnyAction): ActionItem {
 
   if (type === "send_coupon") {
     const couponId =
-      p?.couponId ?? p?.coupon_id ?? (typeof p?.coupon === "string" ? p.coupon : p?.coupon?.id) ?? null;
+      p?.couponId ??
+      p?.coupon_id ??
+      (typeof p?.coupon === "string" ? p.coupon : p?.coupon?.id) ??
+      null;
     return { type, payload: { couponId: couponId ?? null } } as ActionItem;
   }
 
   if (type === "product_recommendation") {
     const productIds =
-      p?.productIds ??
-      p?.product_ids ??
-      extractIds(toArray(p?.products ?? p?.items ?? []));
+      p?.productIds ?? p?.product_ids ?? extractIds(toArray(p?.products ?? p?.items ?? []));
     return { type, payload: { productIds: toArray(productIds) } } as ActionItem;
   }
 
   if (type === "multiply_points") {
-    // accept factor/multiplier in various shapes
     const factorRaw = p?.factor ?? p?.multiplier ?? raw?.factor ?? raw?.multiplier;
     const factor = Number(factorRaw);
     return {
@@ -297,7 +292,7 @@ function normalizeActions(input: any): ActionItem[] {
   const arr = toArray<AnyAction>(input).filter(Boolean);
   if (!arr.length) return [];
   return arr.map(normalizeOneAction);
-  }
+}
 
 // Accept an "object map" actions payload, e.g.
 // { send_coupon: {...}, product_recommendation: {...} }
@@ -315,7 +310,6 @@ function ensureArrayActions(actions: any): ActionItem[] {
   if (Array.isArray(actions)) return normalizeActions(actions);
   return normalizeActionsObjectMap(actions);
 }
-
 
 export default function RuleForm({
   defaultValues,
@@ -337,6 +331,7 @@ export default function RuleForm({
 
   const form = useForm<RuleFormValues>({
     resolver: zodResolver(RuleSchema),
+    shouldUnregister: false,
     defaultValues: {
       name: "",
       description: "",
@@ -353,6 +348,15 @@ export default function RuleForm({
     },
   });
 
+  // Field-array binding for actions
+  const {
+    fields: actionFields,
+    append: appendAction,
+    remove: removeActionRHF,
+    update: updateActionRHF,
+    replace: replaceActions,
+  } = useFieldArray({ control: form.control, name: "actions" });
+
   // Normalize legacy defaults AND pick up payload.scope if present.
   React.useEffect(() => {
     if (!defaultValues) return;
@@ -362,8 +366,7 @@ export default function RuleForm({
     const es = existingSingle ?? {};
     const payload = parseMaybeJson(dv.payload) || parseMaybeJson(es.payload) || {};
 
-    const inferredEvent: string =
-      (dv.event as string) || (es as any).event || "order_paid";
+    const inferredEvent: string = (dv.event as string) || (es as any).event || "order_paid";
 
     const inferredScope: "per_order" | "per_customer" =
       inferredEvent === "customer_inactive"
@@ -374,26 +377,21 @@ export default function RuleForm({
 
     // Channels accepted by this UI
     const allowedChannels = new Set<Channel>(["email", "telegram"]);
-    const rawChannels =
-      (dv.channels as any[]) ?? ((es as any).channels as any[]) ?? ["email"];
+    const rawChannels = (dv.channels as any[]) ?? ((es as any).channels as any[]) ?? ["email"];
     const channels: Channel[] = Array.isArray(rawChannels)
       ? (rawChannels.filter((c) => allowedChannels.has(c)) as Channel[])
       : ["email"];
     if (!channels.length) channels.push("email");
 
-      // ✅ Build actions from any of:
-    //    - dv.actions (coming via defaultValues)
-    //    - es.payload.actions (multi-action rules)
-    //    - single action stored as { action, payload }
-    // and normalize legacy shapes/keys so they render in the UI immediately.
+    // Build actions from any of several shapes
     let actions: ActionItem[] = [];
-         const dvActionsParsed = parseMaybeJson(dv.actions);
-     const payloadActionsParsed = parseMaybeJson(payload?.actions);
+    const dvActionsParsed = parseMaybeJson(dv.actions);
+    const payloadActionsParsed = parseMaybeJson(payload?.actions);
 
-     if (dvActionsParsed) {
-       actions = ensureArrayActions(dvActionsParsed);
-     } else if (payloadActionsParsed) {
-       actions = ensureArrayActions(payloadActionsParsed);
+    if (dvActionsParsed) {
+      actions = ensureArrayActions(dvActionsParsed);
+    } else if (payloadActionsParsed) {
+      actions = ensureArrayActions(payloadActionsParsed);
     } else if (es && typeof (es as any).action === "string") {
       const singleType = (es as any).action;
       if (singleType === "send_coupon") {
@@ -404,21 +402,23 @@ export default function RuleForm({
         actions = ensureArrayActions([
           { type: "product_recommendation", payload: { productIds: payload?.productIds ?? [] } },
         ]);
-      } else if (singleType === "multiply_points" || singleType === "set_points_multiplier" || singleType === "points_multiplier") {
+      } else if (
+        singleType === "multiply_points" ||
+        singleType === "set_points_multiplier" ||
+        singleType === "points_multiplier"
+      ) {
         actions = ensureArrayActions([
           { type: "multiply_points", payload: { factor: payload?.factor ?? payload?.multiplier ?? 1 } },
         ]);
       } else if (singleType === "award_points" || singleType === "grant_points") {
-        actions = ensureArrayActions([
-          { type: "award_points", payload: { points: payload?.points ?? 0.1 } },
-        ]);
+        actions = ensureArrayActions([{ type: "award_points", payload: { points: payload?.points ?? 0.1 } }]);
       }
     }
-      // Only auto-insert a default action for CREATE mode. For EDIT,
-  // showing an empty state is safer than hiding the user's real data.
-  if (!actions.length && mode === "create") {
-    actions = [{ type: "send_coupon", payload: {} }];
-  }
+
+    // Only auto-insert a default action for CREATE mode. EDIT shows empty state
+    if (!actions.length && mode === "create") {
+      actions = [{ type: "send_coupon", payload: {} }];
+    }
 
     form.reset({
       name: dv.name ?? "",
@@ -434,28 +434,32 @@ export default function RuleForm({
       conditions: payload.conditions ?? { op: "AND", items: [] },
       actions,
     } as RuleFormValues);
+
+    // Sync the field-array immediately after reset so UI renders values
+    replaceActions(actions as any);
   }, [defaultValues, existingSingle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const disabled = form.formState.isSubmitting;
-  // Watch specific fields; fall back to current form values to avoid a timing gap after reset
-const actions = (form.watch("actions") ?? form.getValues("actions") ?? []) as ActionItem[];
-const currentEvent = form.watch("event") ?? form.getValues("event");
-const watch = {
-  templateSubject: form.watch("templateSubject"),
-  templateMessage: form.watch("templateMessage"),
-  countries: form.watch("countries"),
-  runScope: form.watch("runScope"),
-  enabled: form.watch("enabled"),
-};
+
+  // Watch specific fields; fall back to current values to avoid gaps after reset
+  const actionsValues =
+    (form.watch("actions") ?? form.getValues("actions") ?? []) as ActionItem[];
+  const currentEvent = form.watch("event") ?? form.getValues("event");
+  const w = {
+    templateSubject: form.watch("templateSubject"),
+    templateMessage: form.watch("templateMessage"),
+    countries: form.watch("countries"),
+    runScope: form.watch("runScope"),
+    enabled: form.watch("enabled"),
+    conditions: form.watch("conditions"),
+    channels: form.watch("channels"),
+  };
 
   const allowedKinds = allowedKindsForEvent(currentEvent);
 
   // If user selects "customer_inactive", force per_customer in the UI.
   React.useEffect(() => {
-    if (
-      currentEvent === "customer_inactive" &&
-      watch.runScope !== "per_customer"
-    ) {
+    if (currentEvent === "customer_inactive" && w.runScope !== "per_customer") {
       form.setValue("runScope", "per_customer", { shouldDirty: true });
     }
   }, [currentEvent]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -463,8 +467,8 @@ const watch = {
   const ensureCouponIfUsed = (): string | null => {
     const acts = form.getValues("actions") || [];
     for (let i = 0; i < acts.length; i++) {
-      const a = acts[i];
-      if (a.type === "send_coupon" && !a.payload?.couponId) {
+      const a = acts[i] as ActionItem;
+      if (a.type === "send_coupon" && !(a as any).payload?.couponId) {
         return `Action #${i + 1}: Please select a coupon.`;
       }
     }
@@ -506,9 +510,7 @@ const watch = {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      alert(
-        typeof body?.error === "string" ? body.error : "Failed to save rule"
-      );
+      alert(typeof body?.error === "string" ? body.error : "Failed to save rule");
       return;
     }
     router.push("/conditional-rules");
@@ -516,26 +518,19 @@ const watch = {
   }
 
   const updateAction = (idx: number, patch: Partial<ActionItem>) => {
-    const next = [...actions];
-    next[idx] = { ...next[idx], ...patch } as ActionItem;
-    form.setValue("actions", next, { shouldDirty: true });
+    const cur = (form.getValues(`actions.${idx}`) || {}) as ActionItem;
+    updateActionRHF(idx, { ...(cur as any), ...(patch as any) });
+    form.trigger("actions");
   };
 
   const addAction = () => {
-    form.setValue(
-      "actions",
-      [...actions, { type: "send_coupon", payload: {} }],
-      { shouldDirty: true }
-    );
+    appendAction({ type: "send_coupon", payload: {} } as any);
   };
 
   const removeAction = (idx: number) => {
-    if (actions.length <= 1) return;
-    form.setValue(
-      "actions",
-      actions.filter((_, i) => i !== idx),
-      { shouldDirty: true }
-    );
+    // Allow removing down to zero in EDIT mode; in CREATE we keep at least one
+    if (mode === "create" && actionFields.length <= 1) return;
+    removeActionRHF(idx);
   };
 
   return (
@@ -571,12 +566,7 @@ const watch = {
               <Label htmlFor="description">Description</Label>
               <Hint text="Optional note for teammates. Customers never see this." />
             </div>
-            <Textarea
-              id="description"
-              rows={3}
-              {...form.register("description")}
-              disabled={disabled}
-            />
+            <Textarea id="description" rows={3} {...form.register("description")} disabled={disabled} />
           </div>
 
           <div className="grid md:grid-cols-2 gap-4">
@@ -589,35 +579,19 @@ const watch = {
                 control={form.control}
                 name="event"
                 render={({ field }) => (
-                  <Select
-                    disabled={disabled}
-                    onValueChange={field.onChange}
-                    value={field.value}
-                  >
+                  <Select disabled={disabled} onValueChange={field.onChange} value={field.value}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select trigger" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="order_placed">Order placed</SelectItem>
-                      <SelectItem value="order_partially_paid">
-                        Order partially paid
-                      </SelectItem>
-                      <SelectItem value="order_pending_payment">
-                        Order pending payment
-                      </SelectItem>
+                      <SelectItem value="order_partially_paid">Order partially paid</SelectItem>
+                      <SelectItem value="order_pending_payment">Order pending payment</SelectItem>
                       <SelectItem value="order_paid">Order paid</SelectItem>
-                      <SelectItem value="order_completed">
-                        Order completed
-                      </SelectItem>
-                      <SelectItem value="order_cancelled">
-                        Order cancelled
-                      </SelectItem>
-                      <SelectItem value="order_refunded">
-                        Order refunded
-                      </SelectItem>
-                      <SelectItem value="customer_inactive">
-                        Customer inactive
-                      </SelectItem>
+                      <SelectItem value="order_completed">Order completed</SelectItem>
+                      <SelectItem value="order_cancelled">Order cancelled</SelectItem>
+                      <SelectItem value="order_refunded">Order refunded</SelectItem>
+                      <SelectItem value="customer_inactive">Customer inactive</SelectItem>
                     </SelectContent>
                   </Select>
                 )}
@@ -627,7 +601,7 @@ const watch = {
             <div className="flex items-end gap-2">
               <Switch
                 id="enabled"
-                checked={form.watch("enabled")}
+                checked={w.enabled}
                 onCheckedChange={(v) => form.setValue("enabled", v)}
                 disabled={disabled}
               />
@@ -647,11 +621,9 @@ const watch = {
           </div>
           <div className="space-y-2">
             <RadioGroup
-              value={watch.runScope}
+              value={w.runScope}
               onValueChange={(v) =>
-                form.setValue("runScope", v as "per_order" | "per_customer", {
-                  shouldDirty: true,
-                })
+                form.setValue("runScope", v as "per_order" | "per_customer", { shouldDirty: true })
               }
               className="grid md:grid-cols-2 gap-3"
             >
@@ -659,36 +631,30 @@ const watch = {
                 <RadioGroupItem
                   value="per_order"
                   id="scope-order"
-                  disabled={disabled || watch.event === "customer_inactive"}
+                  disabled={disabled || (form.watch("event") ?? form.getValues("event")) === "customer_inactive"}
                 />
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium">Per order</span>
                     <Hint text="We’ll run this rule once for each order that matches. If a customer places 3 orders, it can run 3 times (one per order)." />
                   </div>
-                  {watch.event === "customer_inactive" && (
+                  {currentEvent === "customer_inactive" && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      Not available for “customer inactive” (there’s no order
-                      for that trigger).
+                      Not available for “customer inactive” (there’s no order for that trigger).
                     </p>
                   )}
                 </div>
               </label>
 
               <label className="flex items-start gap-3 rounded-xl border p-3">
-                <RadioGroupItem
-                  value="per_customer"
-                  id="scope-customer"
-                  disabled={disabled}
-                />
+                <RadioGroupItem value="per_customer" id="scope-customer" disabled={disabled} />
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium">Per customer</span>
                     <Hint text="We’ll run this rule only once for each customer, across all time. Even if they make future orders, it won’t re-run." />
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Tip: For re-engagement cycles, consider separate rules (e.g.,
-                    a different coupon at 60/120 days).
+                    Tip: For re-engagement cycles, consider separate rules (e.g., a different coupon at 60/120 days).
                   </p>
                 </div>
               </label>
@@ -703,23 +669,14 @@ const watch = {
             <Hint text="Extra filters the order/customer must pass. e.g. order total ≥ amount, contains a product, or no orders for N days." />
           </div>
 
-          <OrgCountriesSelect
-            value={form.watch("countries")}
-            onChange={(codes) => form.setValue("countries", codes)}
-            disabled={disabled}
-          />
+          <OrgCountriesSelect value={w.countries} onChange={(codes) => form.setValue("countries", codes)} disabled={disabled} />
 
           <ConditionsBuilder
-            value={
-              (watch.conditions ??
-                ({ op: "AND", items: [] } as ConditionsGroup)) as ConditionsGroup
-            }
-            onChange={(v) =>
-              form.setValue("conditions", v, { shouldDirty: true })
-            }
+            value={(w.conditions ?? ({ op: "AND", items: [] } as ConditionsGroup)) as ConditionsGroup}
+            onChange={(v) => form.setValue("conditions", v, { shouldDirty: true })}
             disabled={disabled}
             allowedKinds={allowedKinds}
-            ruleCountries={form.watch("countries")}
+            ruleCountries={w.countries}
           />
         </section>
 
@@ -735,7 +692,7 @@ const watch = {
               <Hint text="Email and/or Telegram. We’ll deliver the same message to each selected channel." />
             </div>
             <ChannelsPicker
-              value={form.watch("channels") as Channel[]}
+              value={(w.channels as Channel[]) ?? []}
               onChange={(v) => form.setValue("channels", v)}
               disabled={disabled}
             />
@@ -754,194 +711,197 @@ const watch = {
             </Button>
           </div>
 
-              {/* In EDIT mode, do not inject a phantom default row.
-         In CREATE mode, the form.defaultValues already include one. */}
-     {actions.length === 0 && mode === "edit" && (
-       <div className="text-sm text-muted-foreground">
-         No actions in this rule yet. Add one above.
-       </div>
-     )}
+          {/* In EDIT mode, do not inject a phantom default row.
+              In CREATE mode, defaultValues already include one. */}
+          {actionFields.length === 0 && mode === "edit" && (
+            <div className="text-sm text-muted-foreground">No actions in this rule yet. Add one above.</div>
+          )}
 
-     {actions.map((a, idx) => (
-            <div key={idx} className="rounded-xl border p-4 md:p-6 grid gap-4">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <Label className="min-w-24">Type</Label>
-                  <Hint text="Choose the kind of content this action contributes: a coupon or a set of products." />
-                </div>
-                <Select
-                  value={a.type}
-                  onValueChange={(v) =>
-                    updateAction(idx, {
-                      type: v as ActionItem["type"],
-                      payload: {},
-                    })
-                  }
-                  disabled={disabled}
-                >
-                  <SelectTrigger className="w-64">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="send_coupon">Send coupon</SelectItem>
-                    <SelectItem value="product_recommendation">
-                      Recommend product
-                    </SelectItem>
-                    {isOrderEvent(currentEvent) && (
-                      <SelectItem value="multiply_points">
-                        Set points multiplier
-                      </SelectItem>
-                    )}
-                    <SelectItem value="award_points">
-                      Award fixed points
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+          {actionFields.map((field, idx) => {
+            const a = (actionsValues[idx] ?? field) as ActionItem;
 
-                <div className="ml-auto">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => removeAction(idx)}
-                    disabled={disabled || actions.length <= 1}
+            return (
+              <div key={field.id} className="rounded-xl border p-4 md:p-6 grid gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <Label className="min-w-24">Type</Label>
+                    <Hint text="Choose the kind of content this action contributes: a coupon or a set of products." />
+                  </div>
+                  <Select
+                    value={(a as any).type ?? ""}
+                    onValueChange={(v) =>
+                      updateAction(idx, {
+                        type: v as ActionItem["type"],
+                        payload: {},
+                      })
+                    }
+                    disabled={disabled}
                   >
-                    − Remove
-                  </Button>
+                    <SelectTrigger className="w-64">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="send_coupon">Send coupon</SelectItem>
+                      <SelectItem value="product_recommendation">Recommend product</SelectItem>
+                      {isOrderEvent(currentEvent) && (
+                        <SelectItem value="multiply_points">Set points multiplier</SelectItem>
+                      )}
+                      <SelectItem value="award_points">Award fixed points</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <div className="ml-auto">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => removeAction(idx)}
+                      disabled={disabled || (mode === "create" && actionFields.length <= 1)}
+                    >
+                      − Remove
+                    </Button>
+                  </div>
                 </div>
+
+                {(a as any).type === "send_coupon" && (
+                  <div className="grid gap-4">
+                    <div className="flex items-center gap-2">
+                      <Label>Coupon</Label>
+                      <Hint text="Pick a coupon valid for the selected countries. In the message body, use {coupon} to show its code." />
+                    </div>
+                    <CouponSelect
+                      value={((a as any).payload?.couponId ?? null) as any}
+                      onChange={(id) =>
+                        updateAction(idx, {
+                          payload: { ...(a as any).payload, couponId: id },
+                        })
+                      }
+                      ruleCountries={w.countries}
+                      disabled={disabled}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Will populate <code>{`{coupon}`}</code> in the message body.
+                    </p>
+                  </div>
+                )}
+
+                {(a as any).type === "multiply_points" && (
+                  <div className="grid gap-4">
+                    <div className="flex items-center gap-2">
+                      <Label>Multiplier</Label>
+                      <Hint text="Sets a multiplier for the buyer’s spending-based points on this order only. If multiple rules set it, we’ll keep the highest multiplier." />
+                    </div>
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <Input
+                        type="number"
+                        min={0.1}
+                        {...numberInputStep01}
+                        value={
+                          Number.isFinite((a as any).payload?.factor)
+                            ? (a as any).payload.factor
+                            : ""
+                        }
+                        onChange={(e) =>
+                          updateAction(idx, {
+                            payload: {
+                              ...(a as any).payload,
+                              factor: Number(e.target.value || 0),
+                            },
+                          })
+                        }
+                        disabled={disabled}
+                        placeholder="e.g. 1.5"
+                      />
+                      <Input
+                        placeholder="Optional description (internal)"
+                        value={(a as any).payload?.description ?? ""}
+                        onChange={(e) =>
+                          updateAction(idx, {
+                            payload: {
+                              ...(a as any).payload,
+                              description: e.target.value,
+                            },
+                          })
+                        }
+                        disabled={disabled}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Applies only to spending milestone points awarded at payment time. Buyer only; referrers are not
+                      affected.
+                    </p>
+                  </div>
+                )}
+
+                {(a as any).type === "award_points" && (
+                  <div className="grid gap-4">
+                    <div className="flex items-center gap-2">
+                      <Label>Points</Label>
+                      <Hint text="Immediately credits the buyer with a fixed number of affiliate points. Supports one decimal (e.g., 1.5). We round to the nearest 0.1." />
+                    </div>
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <Input
+                        type="number"
+                        min={0.1}
+                        {...numberInputStep01}
+                        value={
+                          Number.isFinite((a as any).payload?.points)
+                            ? (a as any).payload.points
+                            : ""
+                        }
+                        onChange={(e) =>
+                          updateAction(idx, {
+                            payload: {
+                              ...(a as any).payload,
+                              points: Number(e.target.value || 0),
+                            },
+                          })
+                        }
+                        disabled={disabled}
+                        placeholder="e.g. 10 or 1.5"
+                      />
+                      <Input
+                        placeholder="Optional description (internal)"
+                        value={(a as any).payload?.description ?? ""}
+                        onChange={(e) =>
+                          updateAction(idx, {
+                            payload: {
+                              ...(a as any).payload,
+                              description: e.target.value,
+                            },
+                          })
+                        }
+                        disabled={disabled}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {(a as any).type === "product_recommendation" && (
+                  <div className="grid gap-4">
+                    <div className="flex items-center gap-2">
+                      <Label>Products to recommend</Label>
+                      <Hint text="Pick one or more products. In the message body, use {selected_products} to render them as a list." />
+                    </div>
+                    <ProductMulti
+                      label="Products to recommend"
+                      value={toArray<string>((a as any).payload?.productIds ?? [])}
+                      onChange={(ids) =>
+                        updateAction(idx, {
+                          payload: { ...(a as any).payload, productIds: ids },
+                        })
+                      }
+                      disabled={disabled}
+                      ruleCountries={w.countries}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Will populate <code>{`{selected_products}`}</code> (and <code>{`{recommended_products}`}</code>) in
+                      the message body.
+                    </p>
+                  </div>
+                )}
               </div>
-
-              {a.type === "send_coupon" && (
-                <div className="grid gap-4">
-                  <div className="flex items-center gap-2">
-                    <Label>Coupon</Label>
-                    <Hint text="Pick a coupon valid for the selected countries. In the message body, use {coupon} to show its code." />
-                  </div>
-                  <CouponSelect
-                    value={(a as any).payload?.couponId ?? null}
-                    onChange={(id) =>
-                      updateAction(idx, {
-                        payload: { ...(a as any).payload, couponId: id },
-                      })
-                    }
-                    ruleCountries={form.watch("countries")}
-                    disabled={disabled}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Will populate <code>{`{coupon}`}</code> in the message body.
-                  </p>
-                </div>
-              )}
-
-              {a.type === "multiply_points" && (
-                <div className="grid gap-4">
-                  <div className="flex items-center gap-2">
-                    <Label>Multiplier</Label>
-                    <Hint text="Sets a multiplier for the buyer’s spending-based points on this order only. If multiple rules set it, we’ll keep the highest multiplier." />
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <Input
-                      type="number"
-                      min={0.1}
-                      {...numberInputStep01}
-                      value={(a as any).payload?.factor ?? ""}
-                      onChange={(e) =>
-                        updateAction(idx, {
-                          payload: {
-                            ...(a as any).payload,
-                            factor: Number(e.target.value || 0),
-                          },
-                        })
-                      }
-                      disabled={disabled}
-                      placeholder="e.g. 1.5"
-                    />
-                    <Input
-                      placeholder="Optional description (internal)"
-                      value={(a as any).payload?.description ?? ""}
-                      onChange={(e) =>
-                        updateAction(idx, {
-                          payload: {
-                            ...(a as any).payload,
-                            description: e.target.value,
-                          },
-                        })
-                      }
-                      disabled={disabled}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Applies only to spending milestone points awarded at payment
-                    time. Buyer only; referrers are not affected.
-                  </p>
-                </div>
-              )}
-
-              {a.type === "award_points" && (
-                <div className="grid gap-4">
-                  <div className="flex items-center gap-2">
-                    <Label>Points</Label>
-                    <Hint text="Immediately credits the buyer with a fixed number of affiliate points. Supports one decimal (e.g., 1.5). We round to the nearest 0.1." />
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <Input
-                      type="number"
-                      min={0.1}
-                      {...numberInputStep01}
-                      value={(a as any).payload?.points ?? ""}
-                      onChange={(e) =>
-                        updateAction(idx, {
-                          payload: {
-                            ...(a as any).payload,
-                            points: Number(e.target.value || 0),
-                          },
-                        })
-                      }
-                      disabled={disabled}
-                      placeholder="e.g. 10 or 1.5"
-                    />
-                    <Input
-                      placeholder="Optional description (internal)"
-                      value={(a as any).payload?.description ?? ""}
-                      onChange={(e) =>
-                        updateAction(idx, {
-                          payload: {
-                            ...(a as any).payload,
-                            description: e.target.value,
-                          },
-                        })
-                      }
-                      disabled={disabled}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {a.type === "product_recommendation" && (
-                <div className="grid gap-4">
-                  <div className="flex items-center gap-2">
-                    <Label>Products to recommend</Label>
-                    <Hint text="Pick one or more products. In the message body, use {selected_products} to render them as a list." />
-                  </div>
-                  <ProductMulti
-                    label="Products to recommend"
-                    value={((a as any).payload?.productIds ?? []) as string[]}
-                    onChange={(ids) =>
-                      updateAction(idx, {
-                        payload: { ...(a as any).payload, productIds: ids },
-                      })
-                    }
-                    disabled={disabled}
-                    ruleCountries={form.watch("countries")}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Will populate <code>{`{selected_products}`}</code> (and{" "}
-                    <code>{`{recommended_products}`}</code>) in the message
-                    body.
-                  </p>
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </section>
 
         {/* Shared Message — at the end for clarity */}
@@ -957,12 +917,8 @@ const watch = {
               <Hint text="Subject for email notifications. Telegram ignores this field." />
             </div>
             <Input
-              value={watch.templateSubject ?? ""}
-              onChange={(e) =>
-                form.setValue("templateSubject", e.target.value, {
-                  shouldDirty: true,
-                })
-              }
+              value={w.templateSubject ?? ""}
+              onChange={(e) => form.setValue("templateSubject", e.target.value, { shouldDirty: true })}
               disabled={disabled}
             />
           </div>
@@ -974,15 +930,12 @@ const watch = {
             </div>
             <ReactQuill
               theme="snow"
-              value={watch.templateMessage ?? ""}
-              onChange={(html) =>
-                form.setValue("templateMessage", html, { shouldDirty: true })
-              }
+              value={w.templateMessage ?? ""}
+              onChange={(html) => form.setValue("templateMessage", html, { shouldDirty: true })}
               modules={quillModules}
             />
             <p className="text-xs text-muted-foreground">
-              Placeholders: <code>{`{coupon}`}</code>,{" "}
-              <code>{`{selected_products}`}</code> (or{" "}
+              Placeholders: <code>{`{coupon}`}</code>, <code>{`{selected_products}`}</code> (or{" "}
               <code>{`{recommended_products}`}</code>).
             </p>
           </div>
@@ -996,9 +949,7 @@ const watch = {
             type="button"
             variant="outline"
             onClick={() => {
-              history.length > 1
-                ? router.back()
-                : router.push("/conditional-rules");
+              history.length > 1 ? router.back() : router.push("/conditional-rules");
             }}
             disabled={disabled}
           >
