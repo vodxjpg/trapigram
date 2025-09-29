@@ -880,7 +880,7 @@ export default function RuleForm({
                   <div className="grid gap-4">
                     <div className="flex items-center gap-2">
                       <Label>Products to recommend</Label>
-                      <Hint text="Pick one or more products. In the message body, use {selected_products} to render them as a list." />
+                      <Hint text="Pick one or more products. In the message body, use {recommended_products} to render them as a list." />
                     </div>
                     <ProductMulti
                       label="Products to recommend"
@@ -894,7 +894,7 @@ export default function RuleForm({
                       ruleCountries={w.countries}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Will populate <code>{`{selected_products}`}</code> (and <code>{`{recommended_products}`}</code>) in
+                      Will populate <code>{`{recommended_products}`}</code> in
                       the message body.
                     </p>
                   </div>
@@ -926,7 +926,7 @@ export default function RuleForm({
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label>Body (HTML)</Label>
-              <Hint text="Write your message with formatting. Helpful placeholders: {coupon}, {selected_products}. We’ll render the products as a list." />
+              <Hint text="Write your message with formatting. Helpful placeholders: {coupon}, {recommended_products}. We’ll render the products as a list." />
             </div>
             <ReactQuill
               theme="snow"
@@ -935,8 +935,7 @@ export default function RuleForm({
               modules={quillModules}
             />
             <p className="text-xs text-muted-foreground">
-              Placeholders: <code>{`{coupon}`}</code>, <code>{`{selected_products}`}</code> (or{" "}
-              <code>{`{recommended_products}`}</code>).
+              Placeholders: <code>{`{coupon}`}</code>, <code>{`{recommended_products}`}</code>
             </p>
           </div>
         </section>
