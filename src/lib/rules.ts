@@ -511,7 +511,7 @@ export async function processAutomationRules(opts: {
       }
 
       if (!message) {
-        message = `<p>Here’s an update for you.</p>{selected_products}{coupon}`;
+        message = `<p>Here’s an update for you.</p>{recommended_products}{coupon}`;
       }
     } else if (raw.action === "send_coupon") {
       const code = await getCouponCode(organizationId, payload.couponId);
@@ -525,7 +525,7 @@ export async function processAutomationRules(opts: {
       const listHtml = titles.length ? `<ul>${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : "";
       replacements.selected_products = listHtml;
       replacements.recommended_products = listHtml;
-      if (!message) message = `<p>We think you'll love these:</p>{selected_products}`;
+      if (!message) message = `<p>We think you'll love these:</p>{recommended_products}`;
     }
 
     // apply placeholders

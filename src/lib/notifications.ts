@@ -49,16 +49,34 @@ const applyVars = (txt: string, vars: Record<string, string>) =>
 /** stripTags – quick server-side HTML removal */
 const stripTags = (html: string) => html.replace(/<[^>]+>/g, "");
 
-const toTelegramHtml = (html: string) =>
-  html
+// Convert rich HTML to Telegram-safe HTML/text
+const toTelegramHtml = (html: string) => {
+  let out = html || "";
+  // lists → bullets
+  out = out
+    .replace(/<\s*ul[^>]*>/gi, "")
+    .replace(/<\s*\/\s*ul\s*>/gi, "")
+    .replace(/<\s*li[^>]*>\s*/gi, "• ")
+    .replace(/<\s*\/\s*li\s*>/gi, "\n");
+  // paragraphs/line breaks
+  out = out
     .replace(/<\s*p[^>]*>/gi, "")
     .replace(/<\/\s*p\s*>/gi, "\n")
-    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\s*br\s*\/?>/gi, "\n");
+  // basic formatting
+  out = out
     .replace(/<\s*strong\s*>/gi, "<b>")
     .replace(/<\s*\/\s*strong\s*>/gi, "</b>")
     .replace(/<\s*em\s*>/gi, "<i>")
-    .replace(/<\s*\/\s*em\s*>/gi, "</i>")
-    .trim();
+    .replace(/<\s*\/\s*em\s*>/gi, "</i>");
+  // links → "text (url)"
+  out = out.replace(/<\s*a[^>]*href="([^"]+)"[^>]*>(.*?)<\/\s*a\s*>/gi, "$2 ($1)");
+  // drop any remaining tags
+  out = out.replace(/<[^>]+>/g, "");
+  // tidy up multiple blank lines
+  out = out.replace(/\n{3,}/g, "\n\n").trim();
+  return out;
+};
 
 const pickTemplate = (
   role: "admin" | "user",
@@ -636,8 +654,8 @@ async function dispatchTelegram(opts: {
   });
 
   await Promise.all(
-    targets.map((t) =>
-      fetch(BOT, {
+   targets.map(async (t) => {
+     const res = await fetch(BOT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -646,9 +664,16 @@ async function dispatchTelegram(opts: {
           parse_mode: "HTML",
           disable_web_page_preview: true,
           ...(t.markup ? { reply_markup: t.markup } : {}),
-        }),
-      }).catch(() => null),
-    ),
+         }),
+ }).catch((e) => {
+   console.warn("[telegram] network error", e);
+   return null;
+ });
+ if (res && !res.ok) {
+   const err = await res.text().catch(() => "");
+   console.error("[telegram] API error", res.status, res.statusText, err.slice(0, 300));
+ }
+    }),
   );
   console.log("[telegram] sent", { count: targets.length });
 }
