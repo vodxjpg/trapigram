@@ -45,7 +45,7 @@ import {
     Search,
     Edit,
     Calendar as CalendarIcon,
-    ArrowLeft
+    ArrowLeft,
 } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -67,6 +67,7 @@ type SuppliersResponse = { suppliers: Supplier[] } | Supplier[];
 
 type Product = {
     id: string;
+    variationId?: string | null;
     title: string;
     sku: string;
     description: string;
@@ -82,7 +83,14 @@ type Product = {
     cost?: number;
 };
 
-type OrderItem = { product: Product; quantity: number };
+// token helpers
+const tokenOf = (p: Product) => `${p.id}:${p.variationId ?? "base"}`;
+const parseToken = (t: string) => {
+    const [id, v] = String(t).split(":");
+    return { id, variationId: v === "base" ? null : v };
+};
+
+type OrderItem = { lineId: string; product: Product; quantity: number };
 
 type Warehouse = { id: string; name: string; countries: string[] };
 
@@ -93,15 +101,8 @@ type OrderStatus = "draft" | "pending" | "completed";
 /* ------------------------------------------------------------------ */
 
 const DEBOUNCE_MS = 400;
-const REMOTE_SEARCH_MIN = 3;  // when to hit the API
-const LOCAL_FILTER_MIN = 1;   // when to start client-side filtering
-
-function firstPointPrice(pp: any): number {
-    if (!pp) return 0;
-    const firstLvl = (Object.values(pp)[0] as any) ?? {};
-    const firstCtMap = (Object.values(firstLvl)[0] as any) ?? {};
-    return firstCtMap.sale ?? firstCtMap.regular ?? 0;
-}
+const REMOTE_SEARCH_MIN = 3; // when to hit the API
+const LOCAL_FILTER_MIN = 1; // when to start client-side filtering
 
 function asArray<T = any>(v: any): T[] {
     return Array.isArray(v) ? v : [];
@@ -127,13 +128,46 @@ function normalizeAllocationsPayload(payload: any): Array<{
     }));
 }
 
+/** Map helpers used by remote search (prevents runtime errors) */
+const mapShop = (p: any): Product => {
+    const costVals = Object.values(p?.cost ?? {}).map((n: any) => Number(n) || 0);
+    const safeCost = costVals.length ? Math.max(...costVals) : 0;
+    return {
+        id: p.id,
+        variationId: p.variationId ?? null,
+        title: p.title,
+        sku: p.sku,
+        description: p.description,
+        image: p.image,
+        regularPrice: p.regularPrice,
+        price: Number(Object.values(p?.salePrice ?? p?.regularPrice ?? {})[0] ?? 0),
+        cost: safeCost,
+        stockData: p.stockData ?? {},
+        isAffiliate: false,
+        subtotal: 0,
+        categories: p.categories ?? [],
+    };
+};
+const mapAff = (a: any): Product => ({
+    id: a.id,
+    variationId: null,
+    title: a.title,
+    sku: a.sku,
+    description: a.description,
+    image: a.image,
+    regularPrice: Object.fromEntries(Object.entries(a.cost ?? {})),
+    price: Number(Object.values(a.pointsPrice ?? {})[0] ?? 0),
+    stockData: a.stock ?? {},
+    isAffiliate: true,
+    subtotal: 0,
+    categories: [],
+});
+
 /* ------------------------------------------------------------------ */
 /* Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function PurchaseOrderSupply({
-    orderId: initialOrderId,
-}: { orderId?: string }) {
+export default function PurchaseOrderSupply({ orderId: initialOrderId }: { orderId?: string }) {
     const router = useRouter();
     /* Suppliers + cart */
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -153,16 +187,14 @@ export default function PurchaseOrderSupply({
     const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
     const [editingProductId, setEditingProductId] = useState<string | null>(null);
 
-    // Track added products to disable them in the Select
-    const [addedProductIds, setAddedProductIds] = useState<Set<string>>(
-        () => new Set()
-    );
+    // Track added products to disable them in the Select (by productId:variationId)
+    const [addedProductIds, setAddedProductIds] = useState<Set<string>>(() => new Set());
 
     // Single source of truth for order id/status
     const [currentOrderId, setCurrentOrderId] = useState<string | null>(initialOrderId ?? null);
     const [orderStatus, setOrderStatus] = useState<OrderStatus | null>(null);
     const isLocked = orderStatus === "completed";
-    const isPending = orderStatus === "pending" || orderStatus === "completed"
+    const isPending = orderStatus === "pending" || orderStatus === "completed";
 
     /* When editing, hydrate from API */
     useEffect(() => {
@@ -200,10 +232,7 @@ export default function PurchaseOrderSupply({
         }
         return Object.entries(buckets)
             .sort(([a], [b]) => a.localeCompare(b))
-            .map(
-                ([label, items]) =>
-                    [label, items.sort((x, y) => x.title.localeCompare(y.title))] as const
-            );
+            .map(([label, items]) => [label, items.sort((x, y) => x.title.localeCompare(y.title))] as const);
     };
 
     /* Displayed lines */
@@ -240,8 +269,7 @@ export default function PurchaseOrderSupply({
                 const res = await fetch("/api/product-categories?all=1");
                 if (res.ok) {
                     const data = await res.json();
-                    const rows: Array<{ id: string; name: string }> =
-                        data.categories ?? data.items ?? [];
+                    const rows: Array<{ id: string; name: string }> = data.categories ?? data.items ?? [];
                     setCategoryMap(Object.fromEntries(rows.map((c) => [c.id, c.name])));
                 }
             } catch {
@@ -250,27 +278,25 @@ export default function PurchaseOrderSupply({
         })();
     }, []);
 
-    /* Load products (shop + affiliate) */
+    /* Load products (shop) */
     useEffect(() => {
         (async () => {
             setProductsLoading(true);
             try {
-                // Initial load:
-                const [normRes, affRes] = await Promise.all([
+                const [normRes] = await Promise.all([
                     fetch("/api/products?page=1&pageSize=1000&ownedOnly=1"),
-                    fetch("/api/affiliate/products?limit=1000"),
                 ]);
-                if (!normRes.ok || !affRes.ok) throw new Error("Failed to fetch products");
+                if (!normRes.ok) throw new Error("Failed to fetch products");
 
                 const { productsFlat: norm } = await normRes.json();
 
                 const all: Product[] = [
                     ...norm.map((p: any) => {
-                        // guard against empty/undefined cost maps
                         const costVals = Object.values(p?.cost ?? {}).map((n: any) => Number(n) || 0);
                         const safeCost = costVals.length ? Math.max(...costVals) : 0;
                         return {
                             id: p.id,
+                            variationId: p.variationId ?? null,
                             title: p.title,
                             allowBackorders: !!p.allowBackorders,
                             sku: p.sku,
@@ -282,10 +308,9 @@ export default function PurchaseOrderSupply({
                             isAffiliate: false,
                             subtotal: 0,
                             categories: p.categories ?? [],
-                            // keep price present for type completeness; we primarily show `cost` for local
                             price: Number(Object.values(p?.salePrice ?? p?.regularPrice ?? {})[0] ?? 0),
                         } as Product;
-                    })
+                    }),
                 ];
                 setProducts(all);
             } catch (e: any) {
@@ -309,11 +334,12 @@ export default function PurchaseOrderSupply({
                 setProdSearching(true);
                 const [shop, aff] = await Promise.all([
                     fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20&ownedOnly=1`)
-                        .then(r => r.json()).then(d => d.products as any[]),
+                        .then((r) => r.json())
+                        .then((d) => d.products as any[]),
                     fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`)
-                        .then(r => r.json()).then(d => d.products as any[]),
+                        .then((r) => r.json())
+                        .then((d) => d.products as any[]),
                 ]);
-                // ...mapping stays the same
                 setProdResults([...shop.map(mapShop), ...aff.map(mapAff)]);
             } catch {
                 setProdResults([]);
@@ -324,18 +350,14 @@ export default function PurchaseOrderSupply({
         return () => clearTimeout(t);
     }, [prodTerm]);
 
-
-    /* ▼▼ match the “good” dropdown’s local filtering (title + SKU) ▼▼ */
+    /* Local filtering (title + SKU) */
     const filteredProducts = useMemo(() => {
         const q = prodTerm.trim().toLowerCase();
-        if (q.length < LOCAL_FILTER_MIN) return products;  // now filters from 1+ char
+        if (q.length < LOCAL_FILTER_MIN) return products;
         return products.filter(
-            (p) =>
-                p.title.toLowerCase().includes(q) ||
-                p.sku.toLowerCase().includes(q)
+            (p) => p.title.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
         );
     }, [products, prodTerm]);
-
 
     const totalSelectedQty = useMemo(
         () => orderItems.reduce((sum, it) => sum + Number(it.quantity ?? 0), 0),
@@ -378,31 +400,75 @@ export default function PurchaseOrderSupply({
             });
             if (!res.ok) throw new Error(`Failed to reload cart (${res.status})`);
             const data = await res.json().catch(() => ({}));
-            const rows = data?.resultCartProducts ?? [];
 
-            const mapped: OrderItem[] = rows.map((r: any) => ({
-                product: {
-                    id: r.productId ?? r.id,
-                    title: r.title,
-                    sku: r.sku,
-                    description: r.description,
-                    image: r.image,
-                    price: r.unitPrice ?? r.unitCost ?? 0,
-                    regularPrice: {} as Record<string, number>,
-                    stockData: {} as Record<string, Record<string, number>>,
-                    subtotal:
-                        r.subtotal ??
-                        Number(r.unitPrice ?? r.unitCost ?? 0) * Number(r.quantity ?? 0),
-                } as Product,
-                quantity: Number(r.quantity ?? 0),
-            }));
+            // Accept both shapes: { resultCartProducts: [...] } or [...]
+            const rows: any[] = Array.isArray(data?.resultCartProducts)
+                ? data.resultCartProducts
+                : Array.isArray(data)
+                    ? data
+                    : [];
+
+            const catalog = [...products, ...prodResults];
+
+            const findVariantInCatalog = (variationId?: string | null, sku?: string | null) => {
+                const vid = variationId ?? null;
+                if (vid) {
+                    const byVid = catalog.find((p) => (p.variationId ?? null) === vid);
+                    if (byVid) return byVid;
+                }
+                if (sku) {
+                    const bySku = catalog.find((p) => p.sku === sku);
+                    if (bySku) return bySku;
+                }
+                return null;
+            };
+
+            const mapped: OrderItem[] = rows.map((r) => {
+                const cat = findVariantInCatalog(r.variationId ?? null, r.sku ?? null);
+
+                // IMPORTANT: product id comes from catalog row (variant’s parent product)
+                const pid: string = cat?.id ?? (r.productId ?? "");
+                const vid: string | null = (cat?.variationId ?? null) ?? (r.variationId ?? null);
+
+                // Unit cost/price in this endpoint may be cost (string) or unitCost
+                const unit = Number(r.unitCost ?? r.cost ?? r.unitPrice ?? 0) || 0;
+                const qty = Number(r.quantity ?? 0) || 0;
+
+                return {
+                    lineId: String(r.id ?? `${pid}:${vid ?? "base"}`), // stable per-line key
+                    product: {
+                        id: pid,
+                        variationId: vid,
+                        title: cat?.title ?? r.title ?? "",
+                        sku: cat?.sku ?? r.sku ?? "",
+                        description: r.description ?? cat?.description ?? "",
+                        image: r.image ?? cat?.image ?? "",
+                        price: unit,
+                        regularPrice: {} as Record<string, number>,
+                        stockData: {} as Record<string, Record<string, number>>,
+                        subtotal: Number(r.subtotal) || unit * qty,
+                        isAffiliate: !!cat?.isAffiliate,
+                        categories: cat?.categories ?? [],
+                    },
+                    quantity: qty,
+                };
+            });
 
             setOrderItems(mapped);
-            setAddedProductIds(new Set(mapped.map((m) => m.product.id)));
+            setAddedProductIds(new Set(mapped.map((m) => tokenOf(m.product))));
         } catch (e: any) {
             toast.error(e?.message || "Could not refresh cart items");
         }
     };
+
+    const sel = (() => {
+        const { id, variationId } = selectedProduct
+            ? parseToken(selectedProduct)
+            : { id: "", variationId: null };
+        return [...products, ...prodResults].find(
+            (p) => p.id === id && (p.variationId ?? null) === (variationId ?? null)
+        );
+    })();
 
     /* Quick add product (NO drawer) */
     const handleQuickAddProduct = async () => {
@@ -430,23 +496,15 @@ export default function PurchaseOrderSupply({
                     unitCost: 0,
                 }))
             );
-
+            const { id: productId, variationId } = parseToken(selectedProduct);
             const res = await fetch(`/api/suppliersCart/${cartId}/add-product`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productId: selectedProduct, allocations }),
+                body: JSON.stringify({ productId, variationId, allocations }),
             });
-            if (!res.ok) {
-                const msg = await res.text().catch(() => "Failed to add product");
-                throw new Error(msg);
-            }
+            if (!res.ok) throw new Error(await res.text().catch(() => "Failed to add product"));
 
-            setAddedProductIds((prev) => {
-                const next = new Set(prev);
-                next.add(selectedProduct);
-                return next;
-            });
-
+            setAddedProductIds((prev) => new Set(prev).add(selectedProduct));
             await reloadCartLines(cartId);
             setSelectedProduct("");
             toast.success("Product added to cart");
@@ -455,38 +513,54 @@ export default function PurchaseOrderSupply({
         }
     };
 
-    const removeProductFromCart = async (productId: string) => {
+    const removeProductFromCart = async (token: string, lineId?: string) => {
         if (isLocked || isPending) return;
         if (!cartId) return toast.error("Generate the suppliers cart first");
 
-        try {
-            const res = await fetch(`/api/suppliersCart/product/${productId}`, {
-                method: "DELETE",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    supplierCartId: cartId,          // body must include the suppliers cart id
-                    // suppliercartId: cartId,       // ← uncomment if your API expects this exact casing
-                }),
-            });
+        const { id: productId, variationId } = parseToken(token);
 
-            if (!res.ok) throw new Error(await res.text().catch(() => "Failed to remove product"));
+        const res = await fetch(`/api/suppliersCart/product/${productId}`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ supplierCartId: cartId, variationId }), // pass variant
+        });
+        if (!res.ok) throw new Error(await res.text().catch(() => "Failed to remove product"));
 
-            // Optimistic local update
-            setOrderItems(prev => prev.filter(it => it.product.id !== productId));
-            setAddedProductIds(prev => {
-                const next = new Set(prev);
-                next.delete(productId);
-                return next;
-            });
+        // Optimistic remove by lineId when available (prevents removing the wrong variant visually)
+        setOrderItems((prev) =>
+            prev.filter((it) => (lineId ? it.lineId !== lineId : tokenOf(it.product) !== token))
+        );
+        setAddedProductIds((prev) => {
+            const next = new Set(prev);
+            next.delete(token);
+            return next;
+        });
 
-            toast.success("Product removed from cart");
-            // Re-sync from server to keep totals/quantities correct
-            await reloadCartLines(cartId);
-        } catch (e: any) {
-            toast.error(e?.message || "Could not remove product");
-        }
+        await reloadCartLines(cartId);
+        toast.success("Product removed from cart");
     };
 
+    // Rehydrate title/SKU once catalog is available
+    useEffect(() => {
+        if (!orderItems.length || !products.length) return;
+        setOrderItems((prev) =>
+            prev.map((it) => {
+                const cat = products.find(
+                    (p) => p.id === it.product.id && (p.variationId ?? null) === (it.product.variationId ?? null)
+                );
+                if (!cat) return it;
+                if (it.product.title === cat.title && it.product.sku === cat.sku) return it;
+                return {
+                    ...it,
+                    product: {
+                        ...it.product,
+                        title: cat.title,
+                        sku: cat.sku,
+                    },
+                };
+            })
+        );
+    }, [products, orderItems.length]);
 
     /* Edit flow (Drawer) */
     const ensureWarehouses = async (): Promise<Warehouse[]> => {
@@ -503,16 +577,16 @@ export default function PurchaseOrderSupply({
         return whs;
     };
 
-    const handleEditClick = async (productId: string) => {
+    const handleEditClick = async (token: string) => {
         if (isLocked) return toast.error("This order is completed and cannot be modified");
         if (!orderGenerated || !cartId) {
             toast.error("Generate the suppliers cart first");
             return;
         }
         try {
-            setSelectedProduct(productId);
-            setEditingProductId(productId);
-
+            setSelectedProduct(token);
+            setEditingProductId(token);
+            const { id: productId, variationId } = parseToken(token);
             const wRes = await fetch("/api/warehouses", {
                 headers: {
                     "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
@@ -523,10 +597,10 @@ export default function PurchaseOrderSupply({
             const whs: Warehouse[] = wData?.warehouses ?? [];
             setWarehouses(whs);
 
-            const aRes = await fetch(`/api/suppliersCart/product/${productId}`, {
-                headers: { "Content-Type": "application/json" },
-                cache: "no-store",
-            });
+            const aRes = await fetch(
+                `/api/suppliersCart/product/${productId}${variationId ? `?variationId=${variationId}` : ""}`,
+                { headers: { "Content-Type": "application/json" }, cache: "no-store" }
+            );
             if (!aRes.ok) throw new Error("Failed to load product allocations");
 
             // Response has two objects: `result` (allocations) and `cost` (per-country costs).
@@ -534,8 +608,7 @@ export default function PurchaseOrderSupply({
             const rows = normalizeAllocationsPayload(json?.result);
             // Extract country → cost map robustly (accept {cost:{CL:..}} or {CL:..})
             const rawCost = json?.stock?.cost ?? {};
-            const countryCostMap: Record<string, number> =
-                (rawCost?.cost ?? rawCost) || {};
+            const countryCostMap: Record<string, number> = (rawCost?.cost ?? rawCost) || {};
 
             // Seed the editable grid with default costs for every warehouse/country
             const zero: Record<string, Record<string, { qty: number; cost: number }>> = {};
@@ -547,13 +620,13 @@ export default function PurchaseOrderSupply({
                 }
             }
 
-            // Apply existing allocations (keep qty; cost falls back to suggested cost for that country)
+            // Apply existing allocations
             for (const r of rows) {
                 if (!r.warehouseId || !r.country) continue;
                 if (!zero[r.warehouseId]) zero[r.warehouseId] = {};
                 const suggested = Number(countryCostMap?.[r.country] ?? 0) || 0;
                 const qty = Number(r.quantity || 0);
-                const cost = qty > 0 ? (Number(r.unitCost) || suggested) : suggested;
+                const cost = qty > 0 ? Number(r.unitCost) || suggested : suggested;
                 zero[r.warehouseId][r.country] = { qty, cost };
             }
 
@@ -611,8 +684,7 @@ export default function PurchaseOrderSupply({
     const totalQty = useMemo(
         () =>
             Object.values(editable).reduce(
-                (sum, byCt) =>
-                    sum + Object.values(byCt).reduce((s, v) => s + (Number(v?.qty) || 0), 0),
+                (sum, byCt) => sum + Object.values(byCt).reduce((s, v) => s + (Number(v?.qty) || 0), 0),
                 0
             ),
         [editable]
@@ -620,13 +692,12 @@ export default function PurchaseOrderSupply({
 
     /* Save allocations (PATCH edit) */
     const saveAllocations = async () => {
-        if (!cartId || !editingProductId) {
-            toast.error("Nothing to save");
-            return;
-        }
+        if (!cartId || !editingProductId) return toast.error("Nothing to save");
+        const { id: productId, variationId } = parseToken(editingProductId);
         const allocations = Object.entries(editable).flatMap(([warehouseId, byCt]) =>
             Object.entries(byCt).map(([country, v]) => ({
                 warehouseId,
+                variationId,
                 country,
                 quantity: Number(v?.qty || 0),
                 unitCost: Number(v?.cost || 0),
@@ -635,12 +706,13 @@ export default function PurchaseOrderSupply({
 
         setAdding(true);
         try {
-            const res = await fetch(`/api/suppliersCart/product/${editingProductId}`, {
+            const res = await fetch(`/api/suppliersCart/product/${productId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     supplierCartId: cartId,
-                    productId: editingProductId,
+                    productId,
+                    variationId,
                     allocations,
                 }),
             });
@@ -671,13 +743,11 @@ export default function PurchaseOrderSupply({
                 supplierCartId: cartId,
                 note: notes || "",
                 draft: isDraft,
-                submitAction
+                submitAction,
             };
             if (expectedAt) payload.expectedAt = expectedAt.toISOString();
 
-            const url = currentOrderId
-                ? `/api/suppliersOrder/${currentOrderId}`
-                : `/api/suppliersOrder`;
+            const url = currentOrderId ? `/api/suppliersOrder/${currentOrderId}` : `/api/suppliersOrder`;
             const method = currentOrderId ? "PATCH" : "POST";
 
             const res = await fetch(url, {
@@ -713,13 +783,12 @@ export default function PurchaseOrderSupply({
             .join("");
     }
 
-    /* ─────────────────────────────────────────────────────────────
-       Match the "good" dropdown behavior for selecting a product
-       – cache remote rows into local state, then reset the search
-    ───────────────────────────────────────────────────────────── */
-    const pickProduct = (id: string, obj: Product) => {
-        setSelectedProduct(id);
-        if (!products.some((p) => p.id === id)) setProducts((prev) => [...prev, obj]);
+    /* Match the dropdown behavior for selecting a product */
+    const pickProduct = (token: string, obj: Product) => {
+        setSelectedProduct(token);
+        if (!products.some((p) => tokenOf(p) === token)) {
+            setProducts((prev) => [...prev, obj]);
+        }
         setProdTerm("");
         setProdResults([]);
     };
@@ -787,34 +856,23 @@ export default function PurchaseOrderSupply({
                                 <div className="mb-4">
                                     <div className="border rounded-lg overflow-hidden">
                                         <div className="bg-muted/50 px-4 py-2 border-b">
-                                            <h4 className="font-medium text-sm">
-                                                Added Products ({orderItems.length})
-                                            </h4>
+                                            <h4 className="font-medium text-sm">Added Products ({orderItems.length})</h4>
                                         </div>
                                         <div className="divide-y">
-                                            {orderItems.map(({ product, quantity }, idx) => (
+                                            {orderItems.map(({ lineId, product, quantity }) => (
                                                 <div
-                                                    key={`${product.id}-${idx}`}
+                                                    key={lineId}
                                                     className="flex items-center gap-3 p-3 hover:bg-muted/30"
                                                 >
                                                     <div className="relative h-10 w-10 flex-shrink-0">
                                                         <Skeleton className="h-10 w-10 rounded-full" />
-                                                        <span
-                                                            className="
-                                                          absolute inset-0 grid place-items-center
-                                                          text-xs font-medium text-muted-foreground
-                                                        "
-                                                        >
+                                                        <span className="absolute inset-0 grid place-items-center text-xs font-medium text-muted-foreground">
                                                             {getInitials(product.title)}
                                                         </span>
                                                     </div>
                                                     <div className="flex-1 min-w-0">
-                                                        <h5 className="font-medium text-sm truncate">
-                                                            {product.title}
-                                                        </h5>
-                                                        <p className="text-xs text-muted-foreground">
-                                                            SKU: {product.sku}
-                                                        </p>
+                                                        <h5 className="font-medium text-sm truncate">{product.title}</h5>
+                                                        <p className="text-xs text-muted-foreground">SKU: {product.sku}</p>
                                                     </div>
 
                                                     <Button
@@ -822,7 +880,7 @@ export default function PurchaseOrderSupply({
                                                         size="sm"
                                                         title="Edit allocations"
                                                         className="flex items-center space-x-1"
-                                                        onClick={() => handleEditClick(product.id)}
+                                                        onClick={() => handleEditClick(tokenOf(product))}
                                                         disabled={isPending}
                                                     >
                                                         <span>{quantity ?? 0}</span>
@@ -833,12 +891,11 @@ export default function PurchaseOrderSupply({
                                                         size="sm"
                                                         title="Remove"
                                                         className="flex items-center space-x-1"
-                                                        onClick={() => removeProductFromCart(product.id)}
+                                                        onClick={() => removeProductFromCart(tokenOf(product), lineId)}
                                                         disabled={isPending || isLocked}
                                                     >
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
-
                                                 </div>
                                             ))}
                                         </div>
@@ -851,9 +908,13 @@ export default function PurchaseOrderSupply({
                                 <div className="flex-1">
                                     <Label>Select Product</Label>
                                     <Select
-                                        value={selectedProduct}
+                                        value={selectedProduct} // token, e.g. "prod123:varA"
                                         onValueChange={(val) => {
-                                            const obj = [...products, ...prodResults].find((p) => p.id === val);
+                                            const { id, variationId } = parseToken(val);
+                                            const obj = [...products, ...prodResults].find(
+                                                (p) =>
+                                                    p.id === id && (p.variationId ?? null) === (variationId ?? null)
+                                            );
                                             if (obj) pickProduct(val, obj);
                                         }}
                                         disabled={productsLoading}
@@ -866,53 +927,61 @@ export default function PurchaseOrderSupply({
 
                                         <SelectContent className="w-[520px]">
                                             {/* Inline search box */}
-                                            <div className="p-3 border-b flex items-center gap-2" onKeyDown={(e) => e.stopPropagation()}>
+                                            <div
+                                                className="p-3 border-b flex items-center gap-2"
+                                                onKeyDown={(e) => e.stopPropagation()}
+                                            >
                                                 <Search className="h-4 w-4 text-muted-foreground" />
                                                 <Input
                                                     value={prodTerm}
                                                     onChange={(e) => setProdTerm(e.target.value)}
-                                                    onKeyDown={(e) => e.stopPropagation()}   // <- KEY: cancel bubbling to Radix Select
+                                                    onKeyDown={(e) => e.stopPropagation()}
                                                     autoFocus
                                                     placeholder="Search products"
                                                     className="h-8"
                                                 />
                                             </div>
                                             <ScrollArea className="max-h-72">
-                                                {/* If there are no owned products at all, show an explanatory message */}
                                                 {!productsLoading && products.length === 0 && (
                                                     <div className="px-3 py-2 text-sm text-muted-foreground">
                                                         You don’t have any products of your own
                                                     </div>
                                                 )}
-                                                {/* Local (grouped) shop products */}
-                                                {groupByCategory(
-                                                    filteredProducts.filter((p) => !p.isAffiliate)
-                                                ).map(([label, items]) => (
-                                                    <SelectGroup key={label}>
-                                                        <SelectLabel>{label}</SelectLabel>
-                                                        {items.map((p) => {
-                                                            const disabled = addedProductIds.has(p.id);
-                                                            return (
-                                                                <SelectItem key={p.id} value={p.id} disabled={disabled}>
-                                                                    {p.title} — {typeof p.cost === "number" ? `$${p.cost.toFixed(2)}` : `$${Number(p.price ?? 0).toFixed(2)}`}
-                                                                    {disabled ? " (added)" : ""}
-                                                                </SelectItem>
-                                                            );
-                                                        })}
-                                                        <SelectSeparator />
-                                                    </SelectGroup>
-                                                ))}
 
-                                                {/* Local affiliate products (only if present locally) */}
+                                                {/* Local (grouped) shop products */}
+                                                {groupByCategory(filteredProducts.filter((p) => !p.isAffiliate)).map(
+                                                    ([label, items]) => (
+                                                        <SelectGroup key={label}>
+                                                            <SelectLabel>{label}</SelectLabel>
+                                                            {items.map((p) => {
+                                                                const token = tokenOf(p);
+                                                                const disabled = addedProductIds.has(token);
+                                                                return (
+                                                                    <SelectItem key={token} value={token} disabled={disabled}>
+                                                                        {p.title} —{" "}
+                                                                        {typeof p.cost === "number"
+                                                                            ? `$${p.cost.toFixed(2)}`
+                                                                            : `$${Number(p.price ?? 0).toFixed(2)}`}
+                                                                        {disabled ? " (added)" : ""}
+                                                                    </SelectItem>
+                                                                );
+                                                            })}
+                                                            <SelectSeparator />
+                                                        </SelectGroup>
+                                                    )
+                                                )}
+
+                                                {/* Local affiliate products */}
                                                 {filteredProducts.some((p) => p.isAffiliate) && (
                                                     <SelectGroup>
                                                         <SelectLabel>Affiliate</SelectLabel>
                                                         {filteredProducts
                                                             .filter((p) => p.isAffiliate)
                                                             .map((p) => {
-                                                                const disabled = addedProductIds.has(p.id);
+                                                                const token = tokenOf(p);
+                                                                const disabled = addedProductIds.has(token);
                                                                 return (
-                                                                    <SelectItem key={p.id} value={p.id} disabled={disabled}>
+                                                                    <SelectItem key={token} value={token} disabled={disabled}>
                                                                         {p.title} — {Number(p.price ?? 0).toFixed(2)} pts
                                                                         {disabled ? " (added)" : ""}
                                                                     </SelectItem>
@@ -933,13 +1002,10 @@ export default function PurchaseOrderSupply({
                                                             <SelectGroup key={`remote-${label}`}>
                                                                 <SelectLabel>{label} — search</SelectLabel>
                                                                 {items.map((p) => {
-                                                                    const disabled = addedProductIds.has(p.id);
+                                                                    const token = tokenOf(p);
+                                                                    const disabled = addedProductIds.has(token);
                                                                     return (
-                                                                        <SelectItem
-                                                                            key={p.id}
-                                                                            value={p.id}
-                                                                            disabled={disabled}
-                                                                        >
+                                                                        <SelectItem key={token} value={token} disabled={disabled}>
                                                                             {p.title} — ${Number(p.price ?? 0).toFixed(2)}
                                                                             <span className="ml-1 text-xs text-muted-foreground">
                                                                                 (remote)
@@ -959,18 +1025,12 @@ export default function PurchaseOrderSupply({
                                                                 <SelectGroup>
                                                                     <SelectLabel>Affiliate — search</SelectLabel>
                                                                     {prodResults
-                                                                        .filter(
-                                                                            (p) =>
-                                                                                p.isAffiliate && !products.some((lp) => lp.id === p.id)
-                                                                        )
+                                                                        .filter((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id))
                                                                         .map((p) => {
-                                                                            const disabled = addedProductIds.has(p.id);
+                                                                            const token = tokenOf(p);
+                                                                            const disabled = addedProductIds.has(token);
                                                                             return (
-                                                                                <SelectItem
-                                                                                    key={p.id}
-                                                                                    value={p.id}
-                                                                                    disabled={disabled}
-                                                                                >
+                                                                                <SelectItem key={token} value={token} disabled={disabled}>
                                                                                     {p.title} — {Number(p.price ?? 0).toFixed(2)} pts
                                                                                     <span className="ml-1 text-xs text-muted-foreground">
                                                                                         (remote)
@@ -985,14 +1045,10 @@ export default function PurchaseOrderSupply({
                                                 )}
 
                                                 {prodSearching && (
-                                                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                                                        Searching…
-                                                    </div>
+                                                    <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
                                                 )}
                                                 {!prodSearching && prodTerm && prodResults.length === 0 && (
-                                                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                                                        No matches
-                                                    </div>
+                                                    <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
                                                 )}
                                             </ScrollArea>
                                         </SelectContent>
@@ -1007,7 +1063,8 @@ export default function PurchaseOrderSupply({
                                             !selectedProduct ||
                                             !orderGenerated ||
                                             addedProductIds.has(selectedProduct) ||
-                                            isLocked || isPending
+                                            isLocked ||
+                                            isPending
                                         }
                                     >
                                         <Plus className="h-4 w-4 mr-2" /> Add Product
@@ -1079,11 +1136,11 @@ export default function PurchaseOrderSupply({
                                             selected={expectedAt}
                                             onSelect={setExpectedAt}
                                             disabled={(date) => {
-                                                const today = new Date()
-                                                today.setHours(0, 0, 0, 0)      // start of today
-                                                const d = new Date(date)
-                                                d.setHours(0, 0, 0, 0)
-                                                return d <= today               // disable today and any past date
+                                                const today = new Date();
+                                                today.setHours(0, 0, 0, 0);
+                                                const d = new Date(date);
+                                                d.setHours(0, 0, 0, 0);
+                                                return d <= today;
                                             }}
                                             initialFocus
                                         />
@@ -1094,7 +1151,8 @@ export default function PurchaseOrderSupply({
                                         Select a supplier to choose a date.
                                     </p>
                                 )}
-                            </div>                                                        {/* Buttons on one line */}
+                            </div>
+                            {/* Buttons on one line */}
                             <div className="flex w-full items-center justify-center gap-2">
                                 <Button
                                     variant="outline"
@@ -1111,8 +1169,7 @@ export default function PurchaseOrderSupply({
                                 </Button>
                             </div>
                             <p className="text-xs text-muted-foreground text-center">
-                                Generate a cart, add products, pick an expected date, then place the
-                                order.
+                                Generate a cart, add products, pick an expected date, then place the order.
                             </p>
                         </CardFooter>
                     </Card>
@@ -1138,14 +1195,8 @@ export default function PurchaseOrderSupply({
                 >
                     <DrawerHeader className="px-6 py-4">
                         <div className="flex items-center justify-between">
-                            <DrawerTitle className="text-base sm:text-lg">
-                                Allocate —{" "}
-                                <span className="font-normal">
-                                    {selectedProduct
-                                        ? [...products, ...prodResults].find((p) => p.id === selectedProduct)
-                                            ?.title
-                                        : ""}
-                                </span>
+                            <DrawerTitle>
+                                Allocate — <span className="font-normal">{sel?.title ?? ""}</span>
                             </DrawerTitle>
                             <DrawerClose asChild>
                                 <Button variant="ghost" size="icon" aria-label="Close">
@@ -1216,11 +1267,7 @@ export default function PurchaseOrderSupply({
                                                                     className="mt-1 w-full"
                                                                     value={cell.cost}
                                                                     onChange={(e) =>
-                                                                        handleCostChange(
-                                                                            w.id,
-                                                                            c,
-                                                                            parseFloat(e.target.value) || 0
-                                                                        )
+                                                                        handleCostChange(w.id, c, parseFloat(e.target.value) || 0)
                                                                     }
                                                                     disabled={qtyIsZero}
                                                                     placeholder={qtyIsZero ? "Set Qty first" : undefined}

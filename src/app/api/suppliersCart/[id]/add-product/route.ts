@@ -16,7 +16,7 @@ export async function POST(
     try {
         const { id: supplierCartId } = await params;
         const body = await req.json()
-        const { productId, allocations: products } = body
+        const { productId, variationId, allocations: products } = body
 
         /* supplier context */
         const { rows: clientRows } = await pool.query(
@@ -34,10 +34,10 @@ export async function POST(
             const supplierProductId = uuidv4()
             const received = 0
             const productQuery = `INSERT INTO "supplierCartProducts"
-                    (id, "supplierCartId", "productId", "warehouseId", quantity, received, cost, country, "createdAt", "updatedAt")
-                    VALUES($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+                    (id, "supplierCartId", "productId", "variationId", "warehouseId", quantity, received, cost, country, "createdAt", "updatedAt")
+                    VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
                     RETURNING *`
-            const productResult = await pool.query(productQuery, [supplierProductId, supplierCartId, productId, prod.warehouseId, prod.quantity, received, prod.unitCost, prod.country])
+            const productResult = await pool.query(productQuery, [supplierProductId, supplierCartId, productId, variationId, prod.warehouseId, prod.quantity, received, prod.unitCost, prod.country])
             const result = productResult.rows[0]
             allProducts.push(result)
         }
