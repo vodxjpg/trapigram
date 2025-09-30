@@ -117,6 +117,13 @@ const DEBOUNCE_MS = 400;
 
 type NiftipayNet = { chain: string; asset: string; label: string };
 
+const keyFor = (p: Product) => `${p.id}::${p.variationId ?? ""}`;
+const parseKey = (k: string) => {
+  const [id, raw] = k.split("::");
+  return { id, variationId: raw ? raw : null };
+};
+
+
 // Mirror create-form: fetch Niftipay networks via our backend proxy
 async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
   const r = await fetch("/api/niftipay/payment-methods");
@@ -173,8 +180,12 @@ const stockForCountry = (
   );
 
 // Quantity currently in cart for a given product
-const inCartQty = (pid: string, items: OrderItem[]) =>
-  items.reduce((sum, it) => sum + (it.product.id === pid ? it.quantity : 0), 0);
+const inCartQty = (pid: string, items: OrderItem[], variationId: string | null = null) =>
+  items.reduce((sum, it) => {
+    if (it.product.id !== pid) return sum;
+    if (variationId !== null && (it.product.variationId ?? null) !== variationId) return sum;
+    return sum + it.quantity;
+   }, 0);
 
 // Aggregate server lines by product (hide price-bucket details in UI to match Create page)
 function mergeLinesByProduct(
@@ -300,7 +311,8 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
   const [productsLoading, setProductsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState<string>(""); // holds `${productId}::${variationId}`
+
 
   // keep text while typing; coerce on blur/use
   const [quantityText, setQuantityText] = useState("1");
@@ -497,24 +509,25 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         throw new Error("Failed to fetch product lists");
       }
 
-      const { products: norm } = await normRes.json();
+      const { productsFlat: normFlat } = await normRes.json();
       const { products: aff } = await affRes.json();
-
       const all: Product[] = [
-        ...norm.map((p: any) => ({
-          id: p.id,
-          allowBackorders: !!p.allowBackorders,
-          title: p.title,
-          sku: p.sku,
-          description: p.description,
-          image: p.image,
-          regularPrice: p.regularPrice,
-          price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
-          stockData: p.stockData,
-          isAffiliate: false,
-          subtotal: 0,
-          categories: p.categories ?? [],
-        })),
+       // each variation becomes a selectable row (title already includes the variant label)
+       ...normFlat.map((p: any) => ({
+         id: p.productId,                  // parent id
+         variationId: p.variationId ?? null,
+         allowBackorders: !!p.allowBackorders,
+         title: p.title,                   // already “Product – Color Red, Size L” etc.
+         sku: p.sku,
+         description: p.description,
+         image: p.image,
+         regularPrice: p.regularPrice,     // per-variation price map
+         price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
+         stockData: p.stockData,           // per-variation stock
+         isAffiliate: false,
+         subtotal: 0,
+         categories: p.categories ?? [],
+       })),
         ...aff.map((a: any) => {
           const lvlKeys = Object.keys(a.pointsPrice ?? {});
           const countryKeys = lvlKeys.length ? Object.keys(a.pointsPrice[lvlKeys[0]] ?? {}) : [];
@@ -638,18 +651,24 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
     const t = setTimeout(async () => {
       try {
         setProdSearching(true);
-        const [shop, aff] = await Promise.all([
+        const [shopFlat, aff] = await Promise.all([
           fetch(`/api/products?search=${encodeURIComponent(q)}&page=1&pageSize=20`)
             .then((r) => r.json())
-            .then((d) => d.products as any[]),
+            .then((d) => d.productsFlat as any[]),
           fetch(`/api/affiliate/products?search=${encodeURIComponent(q)}&limit=20`)
             .then((r) => r.json())
             .then((d) => d.products as any[]),
         ]);
 
-        const mapShop = (p: any): Product => ({
-          ...p,
+       const mapShop = (p: any): Product => ({
+          id: p.productId,
+          variationId: p.variationId ?? null,
           allowBackorders: !!p.allowBackorders,
+          title: p.title,
+          sku: p.sku,
+          description: p.description,
+          image: p.image,
+          regularPrice: p.regularPrice,
           price: Object.values(p.salePrice ?? p.regularPrice)[0] ?? 0,
           stockData: p.stockData,
           subtotal: 0,
@@ -672,7 +691,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           categories: [],
         });
 
-        setProdResults([...shop.map(mapShop), ...aff.map(mapAff)]);
+        setProdResults([...shopFlat.map(mapShop), ...aff.map(mapAff)]);
       } catch {
         setProdResults([]);
       } finally {
@@ -798,12 +817,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
       return;
     }
 
-    const product = [...products, ...prodResults].find((p) => p.id === selectedProduct);
+    const { id: productId, variationId } = parseKey(selectedProduct);
+    const product = [...products, ...prodResults].find(
+      (p) => p.id === productId && (p.variationId ?? "") === (variationId ?? "")
+    );
     if (!product) return;
 
     const hasFiniteStock = Object.keys(product.stockData || {}).length > 0;
     const base = stockForCountry(product.stockData, clientCountry);
-    const already = inCartQty(product.id, orderItems);
+    const already = inCartQty(product.id, orderItems, product.variationId ?? null);
     const remaining = hasFiniteStock ? Math.max(0, base - already) : Infinity;
 
     const qty = parseQty(quantityText);
@@ -819,8 +841,8 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          productId: selectedProduct,
-          variationId: product.variationId ?? null,
+          productId,
+         variationId: product.variationId ?? null,
           quantity: qty,
           price: unitPrice, // (edit route expects "price")
           country: clientCountry,
@@ -901,25 +923,29 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         // aggregate to match Create page UI
         const aggregated = mergeLinesByProduct(lines);
         const mapped: OrderItem[] = aggregated.map((l: any) => {
-          const prev = orderItems.find((it) => it.product.id === l.id);
-          const pMatch = findProduct(l.id);
-          return {
-            product: {
-              id: l.id,
-              title: l.sample.title,
-              sku: l.sample.sku,
-              description: l.sample.description,
-              image: l.sample.image,
-              price: l.unitPrice,
-              regularPrice: { [clientCountry]: l.unitPrice, ...(pMatch?.regularPrice ?? {}) },
-              stockData: prev?.product.stockData ?? pMatch?.stockData ?? {},
-              allowBackorders: prev?.product.allowBackorders ?? pMatch?.allowBackorders,
-              subtotal: l.subtotal,
-            },
-            quantity: l.quantity,
-            isAffiliate: l.isAffiliate,
-          };
-        });
+              const prev = orderItems.find((it) => it.product.id === l.id);
+              const pMatch = findProduct(l.id);
+              return {
+                product: {
+                  id: l.id,
+                  variationId: l.variationId ?? null,              // <— keep variant
+                  title: l.sample.title,
+                  sku: l.sample.sku,
+                  description: l.sample.description,
+                  image: l.sample.image,
+                  price: l.unitPrice,
+                  regularPrice: { [clientCountry]: l.unitPrice, ...(pMatch?.regularPrice ?? {}) },
+                  stockData: prev?.product.stockData ?? pMatch?.stockData ?? {},
+                  allowBackorders: prev?.product.allowBackorders ?? pMatch?.allowBackorders,
+                  subtotal: l.subtotal,
+                  categories: pMatch?.categories ?? [],
+                  isAffiliate: l.isAffiliate,
+                } as Product,
+                quantity: l.quantity,
+                isAffiliate: l.isAffiliate,
+              };
+            });
+
 
         setOrderItems(mapped);
         toast.success(`Quantity ${action === "add" ? "increased" : "decreased"}!`);
@@ -1273,7 +1299,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                         : (findProduct(product.id) ?? product);
 
                       const base = stockForCountry(pHydrate.stockData, clientCountry);
-                      const used = inCartQty(product.id, orderItems);
+                      const used = inCartQty(product.id, orderItems, product.variationId ?? null);
                       const remaining = Math.max(0, base - used);
                       const finite = Object.keys(pHydrate.stockData || {}).length > 0;
                       const disablePlus = finite && !pHydrate.allowBackorders && remaining === 0;
@@ -1369,14 +1395,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                     <Select
                       value={selectedProduct}
                       onValueChange={(val) => {
-                        const obj = [...products, ...prodResults].find((p) => p.id === val);
+                       const { id, variationId } = parseKey(val);
+const obj = [...products, ...prodResults].find(
+  (p) => p.id === id && (p.variationId ?? "") === (variationId ?? "")
+);
                         if (!obj) return;
 
                         const hasFiniteStock = Object.keys(obj.stockData || {}).length > 0;
                         const base = stockForCountry(obj.stockData, clientCountry);
-                        const remaining = hasFiniteStock
-                          ? Math.max(0, base - inCartQty(obj.id, orderItems))
-                          : Infinity;
+                        const remaining = hasFiniteStock ? Math.max(0, base - inCartQty(obj.id, orderItems, obj.variationId ?? null)) : Infinity;
 
                         if (hasFiniteStock && remaining === 0 && !obj.allowBackorders) {
                           toast.error("This product is out of stock for the selected country.");
@@ -1417,7 +1444,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                                   const shouldDisable = finite ? remaining === 0 && !p.allowBackorders : false;
 
                                   return (
-                                    <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
+                                    <SelectItem key={keyFor(p)} value={keyFor(p)} disabled={shouldDisable}>
                                       <span className="block max-w-[420px] truncate">
                                         {p.title} — ${price}
                                         {finite && (
@@ -1443,7 +1470,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                               {filteredProducts
                                 .filter((p) => p.isAffiliate)
                                 .map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>
+                                  <SelectItem key={keyFor(p)} value={keyFor(p)}>
                                     {p.title} — {p.price} pts
                                   </SelectItem>
                                 ))}
@@ -1469,7 +1496,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                                     const remaining = finite ? Math.max(0, base - already) : Infinity;
                                     const shouldDisable = finite ? remaining === 0 && !p.allowBackorders : false;
                                     return (
-                                      <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
+                                      <SelectItem key={keyFor(p)} value={keyFor(p)} disabled={shouldDisable}>
                                         <span className="block max-w-[420px] truncate">
                                           {p.title} — ${price}
                                           <span className="ml-2 text-xs text-muted-foreground">
@@ -1499,7 +1526,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                                     {prodResults
                                       .filter((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id))
                                       .map((p) => (
-                                        <SelectItem key={p.id} value={p.id}>
+                                        <SelectItem key={keyFor(p)} value={keyFor(p)}>
                                           {p.title} — {p.price} pts
                                           <span className="ml-1 text-xs text-muted-foreground">(remote)</span>
                                         </SelectItem>
