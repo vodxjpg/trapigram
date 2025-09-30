@@ -374,7 +374,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   }, [orderId, notesScope]);
 
   /* ——————————————————— HELPERS ——————————————————— */
-  const findProduct = (id: string) => [...products, ...prodResults].find((p) => p.id === id);
+  // Variant-aware lookup (parent id + variation id)
+  const findProduct = (id: string, variationId: string | null = null) =>
+    [...products, ...prodResults].find(
+      (p) => p.id === id && (p.variationId ?? null) === (variationId ?? null)
+    );
   const calcRowSubtotal = (p: Product, qty: number) =>
     (p.regularPrice[clientCountry] ?? p.price) * qty;
 
@@ -390,12 +394,12 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
       // Map to <OrderItem>, hydrating stock/flags from catalog when available
       const items: OrderItem[] = aggregated.map((l) => {
-        const pMatch = findProduct(l.id);
+        const pMatch = findProduct(l.id, l.variationId ?? null);
         return {
           product: {
             id: l.id,
             variationId: l.variationId ?? null, // ⬅️ keep it on the product
-            title: l.sample.title,
+            title: pMatch?.title ?? l.sample.title,
             sku: l.sample.sku,
             description: l.sample.description,
             image: l.sample.image,
@@ -554,7 +558,9 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           } as Product;
         }),
       ];
-      setProducts(all);
+      // Deduplicate by (parentId::variationId) to avoid duplicate SelectItems
+      const deduped = Array.from(new Map(all.map((p) => [keyFor(p), p])).values());
+      setProducts(deduped);
     } catch (e: any) {
       console.error(e);
       toast.error(e.message || "Failed loading products");
@@ -691,7 +697,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
           categories: [],
         });
 
-        setProdResults([...shopFlat.map(mapShop), ...aff.map(mapAff)]);
+         // Build, then dedupe remote results by (parentId::variationId)
+        const combined = [...shopFlat.map(mapShop), ...aff.map(mapAff)];
+        const unique = Array.from(new Map(combined.map((p) => [keyFor(p), p])).values());
+        setProdResults(unique);
       } catch {
         setProdResults([]);
       } finally {
@@ -702,9 +711,11 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   }, [prodTerm]);
 
   /* helper: keep remote rows in `products` so Select can resolve labels */
-  const pickProduct = (id: string, obj: Product) => {
-    setSelectedProduct(id);
-    if (!products.some((p) => p.id === id)) setProducts((prev) => [...prev, obj]);
+  const pickProduct = (value: string, obj: Product) => {
+    // value is `${productId}::${variationId}`
+    setSelectedProduct(value);
+    // Avoid injecting duplicates into products
+    if (!products.some((p) => keyFor(p) === value)) setProducts((prev) => [...prev, obj]);
     setProdTerm("");
     setProdResults([]);
   };
@@ -923,28 +934,30 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         // aggregate to match Create page UI
         const aggregated = mergeLinesByProduct(lines);
         const mapped: OrderItem[] = aggregated.map((l: any) => {
-              const prev = orderItems.find((it) => it.product.id === l.id);
-              const pMatch = findProduct(l.id);
-              return {
-                product: {
-                  id: l.id,
-                  variationId: l.variationId ?? null,              // <— keep variant
-                  title: l.sample.title,
-                  sku: l.sample.sku,
-                  description: l.sample.description,
-                  image: l.sample.image,
-                  price: l.unitPrice,
-                  regularPrice: { [clientCountry]: l.unitPrice, ...(pMatch?.regularPrice ?? {}) },
-                  stockData: prev?.product.stockData ?? pMatch?.stockData ?? {},
-                  allowBackorders: prev?.product.allowBackorders ?? pMatch?.allowBackorders,
-                  subtotal: l.subtotal,
-                  categories: pMatch?.categories ?? [],
-                  isAffiliate: l.isAffiliate,
-                } as Product,
-                quantity: l.quantity,
+        const prev = orderItems.find(
+          (it) => it.product.id === l.id && (it.product.variationId ?? null) === (l.variationId ?? null)
+        );
+        const pMatch = findProduct(l.id, l.variationId ?? null);
+            return {
+              product: {
+                id: l.id,
+                variationId: l.variationId ?? null,              // <— keep variant
+                title: pMatch?.title ?? l.sample.title,
+                sku: l.sample.sku,
+                description: l.sample.description,
+                image: l.sample.image,
+                price: l.unitPrice,
+                regularPrice: { [clientCountry]: l.unitPrice, ...(pMatch?.regularPrice ?? {}) },
+                stockData: prev?.product.stockData ?? pMatch?.stockData ?? {},
+                allowBackorders: prev?.product.allowBackorders ?? pMatch?.allowBackorders,
+                subtotal: l.subtotal,
+                categories: pMatch?.categories ?? [],
                 isAffiliate: l.isAffiliate,
-              };
-            });
+              } as Product,
+              quantity: l.quantity,
+              isAffiliate: l.isAffiliate,
+            };
+          });
 
 
         setOrderItems(mapped);
@@ -1294,9 +1307,10 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                       const price = product.regularPrice?.[clientCountry] ?? product.price;
 
                       // For stock line we prefer product.stockData; if empty, hydrate from catalog
-                      const pHydrate = product.stockData && Object.keys(product.stockData).length
-                        ? product
-                        : (findProduct(product.id) ?? product);
+                      const pHydrate =
+                          product.stockData && Object.keys(product.stockData).length
+                            ? product
+                            : (findProduct(product.id, product.variationId ?? null) ?? product);
 
                       const base = stockForCountry(pHydrate.stockData, clientCountry);
                       const used = inCartQty(product.id, orderItems, product.variationId ?? null);
@@ -1395,16 +1409,15 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                     <Select
                       value={selectedProduct}
                       onValueChange={(val) => {
-                       const { id, variationId } = parseKey(val);
-const obj = [...products, ...prodResults].find(
-  (p) => p.id === id && (p.variationId ?? "") === (variationId ?? "")
-);
+                      const { id, variationId } = parseKey(val);
+                      const obj = findProduct(id, variationId);
                         if (!obj) return;
 
                         const hasFiniteStock = Object.keys(obj.stockData || {}).length > 0;
                         const base = stockForCountry(obj.stockData, clientCountry);
-                        const remaining = hasFiniteStock ? Math.max(0, base - inCartQty(obj.id, orderItems, obj.variationId ?? null)) : Infinity;
-
+                        const remaining = hasFiniteStock
+                                          ? Math.max(0, base - inCartQty(obj.id, orderItems, obj.variationId ?? null))
+                                          : Infinity;
                         if (hasFiniteStock && remaining === 0 && !obj.allowBackorders) {
                           toast.error("This product is out of stock for the selected country.");
                           return;
@@ -1439,7 +1452,7 @@ const obj = [...products, ...prodResults].find(
                                   const price = p.regularPrice?.[clientCountry] ?? p.price;
                                   const finite = Object.keys(p.stockData || {}).length > 0;
                                   const base = stockForCountry(p.stockData, clientCountry);
-                                  const already = inCartQty(p.id, orderItems);
+                                  const already = inCartQty(p.id, orderItems, p.variationId ?? null);
                                   const remaining = finite ? Math.max(0, base - already) : Infinity;
                                   const shouldDisable = finite ? remaining === 0 && !p.allowBackorders : false;
 
@@ -1482,8 +1495,9 @@ const obj = [...products, ...prodResults].find(
                           {prodResults.length > 0 && (
                             <>
                               {groupByCategory(
+                                // Exclude remote items that already exist locally, by key
                                 prodResults.filter(
-                                  (p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id)
+                                  (p) => !p.isAffiliate && !products.some((lp) => keyFor(lp) === keyFor(p))
                                 )
                               ).map(([label, items]) => (
                                 <SelectGroup key={`remote-${label}`}>
@@ -1492,7 +1506,7 @@ const obj = [...products, ...prodResults].find(
                                     const price = p.regularPrice?.[clientCountry] ?? p.price;
                                     const finite = Object.keys(p.stockData || {}).length > 0;
                                     const base = stockForCountry(p.stockData, clientCountry);
-                                    const already = inCartQty(p.id, orderItems);
+                                    const already = inCartQty(p.id, orderItems, p.variationId ?? null);
                                     const remaining = finite ? Math.max(0, base - already) : Infinity;
                                     const shouldDisable = finite ? remaining === 0 && !p.allowBackorders : false;
                                     return (
@@ -1519,7 +1533,7 @@ const obj = [...products, ...prodResults].find(
                               ))}
 
                               {prodResults.some(
-                                (p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)
+                                (p) => p.isAffiliate && !products.some((lp) => keyFor(lp) === keyFor(p))
                               ) && (
                                   <SelectGroup>
                                     <SelectLabel>Affiliate — search</SelectLabel>
