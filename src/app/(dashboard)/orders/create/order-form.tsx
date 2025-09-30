@@ -1623,7 +1623,7 @@ export default function OrderForm() {
                               Unit Price: {formatCurrency(price, clientCountry)}
                             </span>
                             <span className="font-medium">
-                              ${formatCurrency(product.subtotal ?? price * quantity, clientCountry)}
+                              {formatCurrency(product.subtotal ?? price * quantity, clientCountry)}
                             </span>
                           </div>
                           {/* Stock (client country), decreased by qty already in cart */}
