@@ -215,30 +215,37 @@ export async function PATCH(
       if (!isAffiliate) {
         const tiers = (await tierPricing(organizationId)) as Tier[];
         const tier = findTier(tiers, country, data.productId, variationId, clientId);
-
+        console.log(tier)
 
         if (tier) {
-
+          const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
+          const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
           const { rows: sumRow } = await client.query(
             `SELECT COALESCE(SUM(quantity),0)::int AS qty
-               FROM "cartProducts"
-              WHERE "cartId" = $1
-                AND "productId" = $2
-                ${withVariation ? 'AND "variationId" = $3' : ''}`,
-            [cartId, data.productId, ...(withVariation ? [data.variationId] : [])],
+                 FROM "cartProducts"
+                WHERE "cartId" = $1
+                  AND ( ("productId" = ANY($2::text[]))
+                        OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
+            [cartId, tierProdIds, tierVarIds],
           );
+
           const qtyBefore = Number(sumRow[0].qty);
           const qtyAfter = qtyBefore - oldQty + newQty;
 
           pricePerUnit = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
+
           await client.query(
             `UPDATE "cartProducts"
-                SET "unitPrice" = $1,
-                    "updatedAt" = NOW()
-              WHERE "cartId"   = $2
-                AND "productId" = $3`,
-            [pricePerUnit, cartId, data.productId],
+              SET "unitPrice" = $1,
+                  "updatedAt" = NOW()
+            WHERE "cartId" = $2
+              AND (
+                ("productId" = ANY($3::text[]))
+                OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[]))
+              )`,
+            [pricePerUnit, cartId, tierProdIds, tierVarIds],
           );
+
         }
       }
 

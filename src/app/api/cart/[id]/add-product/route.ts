@@ -188,16 +188,16 @@ export async function POST(
           unitPrice = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
 
           await client.query(
-  `UPDATE "cartProducts"
-      SET "unitPrice" = $1,
-          "updatedAt" = NOW()
-    WHERE "cartId" = $2
-      AND (
-        ("productId" = ANY($3::text[]))
-        OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[]))
-      )`,
-  [unitPrice, cartId, tierProdIds, tierVarIds],
-);
+            `UPDATE "cartProducts"
+              SET "unitPrice" = $1,
+                  "updatedAt" = NOW()
+            WHERE "cartId" = $2
+              AND (
+                ("productId" = ANY($3::text[]))
+                OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[]))
+              )`,
+            [unitPrice, cartId, tierProdIds, tierVarIds],
+          );
 
         }
       }

@@ -431,6 +431,7 @@ export function DiscountRuleForm({
           if (!res.ok)
             throw new Error(`Failed to fetch products (${res.status})`);
           const json = await res.json();
+          console.log(json)
           collected.push(...json.products);
           totalPages = json.pagination?.totalPages ?? 1;
           page++;
