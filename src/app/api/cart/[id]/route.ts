@@ -87,20 +87,22 @@ export async function GET(
     /* 3. Assemble normal + affiliate products */
     const prodQ = `
      SELECT
-       p.id, p.title, p.description, p.image, p.sku,
-       cp.quantity, cp."unitPrice",
-       cp."createdAt",                     /* NEW */
-       false AS "isAffiliate"
+      p.id, p.title, p.description, p.image, p.sku,
+      cp.quantity, cp."unitPrice",
+      cp."variationId",
+      cp."createdAt",
+      false AS "isAffiliate"
      FROM products p
      JOIN "cartProducts" cp ON p.id = cp."productId"
      WHERE cp."cartId" = $1
    `;
     const affQ = `
-     SELECT
-       ap.id, ap.title, ap.description, ap.image, ap.sku,
-       cp.quantity, cp."unitPrice",
-       cp."createdAt",                     /* NEW */
-       true  AS "isAffiliate"
+    SELECT
+      ap.id, ap.title, ap.description, ap.image, ap.sku,
+      cp.quantity, cp."unitPrice",
+      cp."variationId",
+      cp."createdAt",
+      true  AS "isAffiliate"
      FROM "affiliateProducts" ap
      JOIN "cartProducts" cp ON ap.id = cp."affiliateProductId"
      WHERE cp."cartId" = $1
@@ -112,12 +114,13 @@ export async function GET(
     ]);
 
     const lines = [...prod.rows, ...aff.rows]
-      .sort((a, b) => a.createdAt - b.createdAt)          /* NEW */
+      .sort((a, b) => a.createdAt - b.createdAt)
       .map((l: any) => ({
-        ...l,
+        ...l, // now includes variationId
         unitPrice: Number(l.unitPrice),
         subtotal: Number(l.unitPrice) * l.quantity,
       }));
+
 
 
     // extract removedItems if we re-priced above

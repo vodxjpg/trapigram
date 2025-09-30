@@ -63,7 +63,9 @@ interface Product {
   allowBackorders?: boolean;
   isAffiliate?: boolean;
   categories?: string[];
+  variationId?: string | null; // ⬅️ for variable products
 }
+
 interface OrderItem {
   product: Product;
   quantity: number;
@@ -182,28 +184,34 @@ function mergeLinesByProduct(
     unitPrice: number;
     subtotal: number;
     isAffiliate: boolean;
+    variationId?: string | null;
     [key: string]: any;
   }>
 ) {
-  const map: Record<
+  const map = new Map<
     string,
     { quantity: number; subtotal: number; unitPrice: number; isAffiliate: boolean; sample: any }
-  > = {};
+  >();
+
   for (const l of lines) {
-    if (!map[l.id]) {
-      map[l.id] = {
+    const key = `${l.id}:${l.variationId ?? "null"}`; // ⬅️ keep variants separate
+    if (!map.has(key)) {
+      map.set(key, {
         quantity: 0,
         subtotal: 0,
         unitPrice: l.unitPrice,
         isAffiliate: l.isAffiliate,
-        sample: l,
-      };
+        sample: l, // carries variationId
+      });
     }
-    map[l.id].quantity += l.quantity;
-    map[l.id].subtotal += l.subtotal;
+    const acc = map.get(key)!;
+    acc.quantity += l.quantity;
+    acc.subtotal += l.subtotal;
   }
-  return Object.entries(map).map(([id, v]) => ({
-    id,
+
+  return Array.from(map.values()).map((v) => ({
+    id: v.sample.id,
+    variationId: v.sample.variationId ?? null, // ⬅️ surface it
     quantity: v.quantity,
     subtotal: v.subtotal,
     unitPrice: v.unitPrice,
@@ -211,6 +219,7 @@ function mergeLinesByProduct(
     sample: v.sample,
   }));
 }
+
 
 async function fetchJsonVerbose(url: string, opts: RequestInit = {}, tag = url) {
   const res = await fetch(url, { credentials: "include", ...opts });
@@ -373,24 +382,25 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         return {
           product: {
             id: l.id,
+            variationId: l.variationId ?? null, // ⬅️ keep it on the product
             title: l.sample.title,
             sku: l.sample.sku,
             description: l.sample.description,
             image: l.sample.image,
-            // keep unit price per line as “price” (same as Create mapping)
+            regularPrice: pMatch?.regularPrice ?? {},
             price: l.unitPrice,
-            regularPrice: { [clientCountry]: l.unitPrice, ...(pMatch?.regularPrice ?? {}) },
             stockData: pMatch?.stockData ?? {},
-            allowBackorders: pMatch?.allowBackorders,
             subtotal: l.subtotal,
+            allowBackorders: pMatch?.allowBackorders,
             isAffiliate: l.isAffiliate,
-          } as Product,
+            categories: pMatch?.categories ?? [],
+          },
           quantity: l.quantity,
           isAffiliate: l.isAffiliate,
         };
       });
-
       setOrderItems(items);
+
     } catch (e: any) {
       toast.error(e.message || "Failed loading cart");
     }
@@ -836,616 +846,568 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   };
 
   // Remove product
-  const removeProduct = async (productId: string, idx: number) => {
-    if (!cartId) {
-      toast.error("No cart created yet!");
-      return;
-    }
-    try {
-      const res = await fetch(`/api/cart/${cartId}/remove-product`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        const msg =
-          (body.error as string) ??
-          (body.message as string) ??
-          "Failed to remove product";
-        throw new Error(msg);
+  const removeProduct = async (productId: string, variationId: string | null) => {
+      if (!cartId) {
+        toast.error("No cart created yet!");
+        return;
       }
-      await loadCart();
-      toast.success("Product removed from cart");
-    } catch (error: any) {
-      console.error("removeProduct error:", error);
-      toast.error(error.message || "Could not remove product");
-    }
-  };
+      try {
+        const res = await fetch(`/api/cart/${cartId}/remove-product`, {
+          method: "POST", // or DELETE
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ productId, variationId }),
+        });
 
-  // Update product quantity
-  const updateQuantity = async (productId: string, action: "add" | "subtract") => {
-    if (!cartId) {
-      toast.error("Cart hasn’t been created yet!");
-      return;
-    }
-    try {
-      const res = await fetch(`/api/cart/${cartId}/update-product`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, action }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        console.error("PATCH /order failed", body);
-        throw new Error(body.error || "Failed to update quantity");
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          const msg =
+            (body.error as string) ??
+            (body.message as string) ??
+            "Failed to remove product";
+          throw new Error(msg);
+        }
+        await loadCart();
+        toast.success("Product removed from cart");
+      } catch (error: any) {
+        console.error("removeProduct error:", error);
+        toast.error(error.message || "Could not remove product");
       }
-      // Server returns { lines: [...] }
-      const { lines } = await res.json();
+    };
 
-      // aggregate to match Create page UI
-      const aggregated = mergeLinesByProduct(lines);
-      const mapped: OrderItem[] = aggregated.map((l: any) => {
-        const prev = orderItems.find((it) => it.product.id === l.id);
-        const pMatch = findProduct(l.id);
-        return {
-          product: {
-            id: l.id,
-            title: l.sample.title,
-            sku: l.sample.sku,
-            description: l.sample.description,
-            image: l.sample.image,
-            price: l.unitPrice,
-            regularPrice: { [clientCountry]: l.unitPrice, ...(pMatch?.regularPrice ?? {}) },
-            stockData: prev?.product.stockData ?? pMatch?.stockData ?? {},
-            allowBackorders: prev?.product.allowBackorders ?? pMatch?.allowBackorders,
-            subtotal: l.subtotal,
-          },
-          quantity: l.quantity,
-          isAffiliate: l.isAffiliate,
-        };
-      });
-
-      setOrderItems(mapped);
-      toast.success(`Quantity ${action === "add" ? "increased" : "decreased"}!`);
-    } catch (err: any) {
-      toast.error(err.message);
-    }
-  };
-
-  // Update order (shipping/payment etc.)
-  const handleUpdateOrder = async () => {
-    if (!orderData?.id) return;
-
-    try {
-      const pmObj = paymentMethods.find((p) => p.id === selectedPaymentMethod);
-      const oldPM = orderData.shippingInfo.payment?.toLowerCase();
-      const newPM = pmObj?.name.toLowerCase();
-
-      const prevNA =
-        orderData.orderMeta?.[0]?.order
-          ? `${orderData.orderMeta[0].order.network}:${orderData.orderMeta[0].order.asset}`
-          : null;
-
-      const needDelete =
-        oldPM === "niftipay" &&
-        ((newPM !== "niftipay") ||
-          (newPM === "niftipay" && prevNA && selectedNiftipay && selectedNiftipay !== prevNA));
-
-      if (needDelete) {
-        const niftipayMethod = paymentMethods.find((p) => p.name.toLowerCase() === "niftipay");
-        const key = niftipayMethod?.apiKey;
-        if (!key) {
-          toast.error("Niftipay API key missing");
-          return;
-        }
-        const findRes = await fetchJsonVerbose(
-          `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-          { credentials: "omit", headers: { "x-api-key": key } },
-          "Niftipay FIND by reference"
-        );
-        if (!findRes.ok) {
-          toast.error("Could not look up Niftipay invoice");
-          return;
-        }
-        const { orders: found = [] } = await findRes.clone().json().catch(() => ({ orders: [] }));
-        const existing = found.find((o: any) => o.reference === orderData.orderKey);
-        if (existing && existing.status !== "cancelled") {
-          const patch = await fetchJsonVerbose(
-            `${NIFTIPAY_BASE}/api/orders/${existing.id}`,
-            {
-              method: "PATCH",
-              credentials: "omit",
-              headers: { "Content-Type": "application/json", "x-api-key": key },
-              body: JSON.stringify({ status: "cancelled" }),
-            },
-            "Niftipay CANCEL"
-          );
-          if (!patch.ok) {
-            const err = await patch.json().catch(() => ({}));
-            toast.error(err.error || "Failed to cancel previous Niftipay invoice");
-            return;
-          }
-          toast.success("Previous crypto invoice cancelled");
-        }
+    // Update product quantity
+    const updateQuantity = async (productId: string, variationId: string | null, action: "add" | "subtract") => {
+      if (!cartId) {
+        toast.error("Cart hasn’t been created yet!");
+        return;
       }
-
-      const selectedAddressText = addresses.find((a) => a.id === selectedAddressId)?.address ?? null;
-
-      const res = await fetchJsonVerbose(
-        `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
-        {
+      try {
+        const res = await fetch(`/api/cart/${cartId}/update-product`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({
-            discount: discount ? Number(discount) : orderData.discount,
-            couponCode: newCoupon || orderData.coupon,
-            address: selectedAddressText,
-            total,
-            shippingMethod: selectedShippingMethod,
-            shippingCompany: selectedShippingCompany,
-            paymentMethodId: selectedPaymentMethod,
-          }),
-        }
-      );
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const rawMsg = err?.error ?? `Request failed (${res.status})`;
-        if (!showFriendlyCreateOrderError(rawMsg)) {
-          toast.error(rawMsg);
-        }
-        return;
-      }
-
-      if (newPM === "niftipay") {
-        if (!niftipayNetworks.length) {
-          toast.error("Niftipay isn’t configured. Choose another payment method.");
-          return;
-        }
-        const key = pmObj?.apiKey;
-        if (!key) {
-          toast.error("Niftipay API key missing");
-          return;
-        } else if (!selectedNiftipay) {
-          toast.error("Select crypto network/asset first");
-          return;
-        }
-
-        const [chain, asset] = selectedNiftipay.split(":");
-        await fetchJsonVerbose(
-          `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
-          {
-            credentials: "omit",
-            method: "DELETE",
-            headers: { "x-api-key": key },
-          },
-          "DELETE OLD Niftipay"
-        );
-
-        const niftipayRes = await fetch(`${NIFTIPAY_BASE}/api/orders?replaceCancelled=1`, {
-          method: "POST",
-          credentials: "omit",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": pmObj!.apiKey!,
-          },
-          body: JSON.stringify({
-            network: chain,
-            asset,
-            amount: total,
-            currency: orderData.currency ?? "EUR",
-            firstName: orderData.client.firstName,
-            lastName: orderData.client.lastName,
-            email: orderData.client.email || "user@trapyfy.com",
-            merchantId,
-            reference: orderData.orderKey,
-          }),
+          body: JSON.stringify({ productId, variationId, action }),
         });
 
-        if (!niftipayRes.ok) {
-          const errorBody = await niftipayRes.json().catch(() => ({ error: "Unknown error" }));
-          const rawMsg = errorBody?.error;
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          console.error("PATCH /order failed", body);
+          throw new Error(body.error || "Failed to update quantity");
+        }
+        // Server returns { lines: [...] }
+        const { lines } = await res.json();
+
+        // aggregate to match Create page UI
+        const aggregated = mergeLinesByProduct(lines);
+        const mapped: OrderItem[] = aggregated.map((l: any) => {
+          const prev = orderItems.find((it) => it.product.id === l.id);
+          const pMatch = findProduct(l.id);
+          return {
+            product: {
+              id: l.id,
+              title: l.sample.title,
+              sku: l.sample.sku,
+              description: l.sample.description,
+              image: l.sample.image,
+              price: l.unitPrice,
+              regularPrice: { [clientCountry]: l.unitPrice, ...(pMatch?.regularPrice ?? {}) },
+              stockData: prev?.product.stockData ?? pMatch?.stockData ?? {},
+              allowBackorders: prev?.product.allowBackorders ?? pMatch?.allowBackorders,
+              subtotal: l.subtotal,
+            },
+            quantity: l.quantity,
+            isAffiliate: l.isAffiliate,
+          };
+        });
+
+        setOrderItems(mapped);
+        toast.success(`Quantity ${action === "add" ? "increased" : "decreased"}!`);
+      } catch (err: any) {
+        toast.error(err.message);
+      }
+    };
+
+    // Update order (shipping/payment etc.)
+    const handleUpdateOrder = async () => {
+      if (!orderData?.id) return;
+
+      try {
+        const pmObj = paymentMethods.find((p) => p.id === selectedPaymentMethod);
+        const oldPM = orderData.shippingInfo.payment?.toLowerCase();
+        const newPM = pmObj?.name.toLowerCase();
+
+        const prevNA =
+          orderData.orderMeta?.[0]?.order
+            ? `${orderData.orderMeta[0].order.network}:${orderData.orderMeta[0].order.asset}`
+            : null;
+
+        const needDelete =
+          oldPM === "niftipay" &&
+          ((newPM !== "niftipay") ||
+            (newPM === "niftipay" && prevNA && selectedNiftipay && selectedNiftipay !== prevNA));
+
+        if (needDelete) {
+          const niftipayMethod = paymentMethods.find((p) => p.name.toLowerCase() === "niftipay");
+          const key = niftipayMethod?.apiKey;
+          if (!key) {
+            toast.error("Niftipay API key missing");
+            return;
+          }
+          const findRes = await fetchJsonVerbose(
+            `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+            { credentials: "omit", headers: { "x-api-key": key } },
+            "Niftipay FIND by reference"
+          );
+          if (!findRes.ok) {
+            toast.error("Could not look up Niftipay invoice");
+            return;
+          }
+          const { orders: found = [] } = await findRes.clone().json().catch(() => ({ orders: [] }));
+          const existing = found.find((o: any) => o.reference === orderData.orderKey);
+          if (existing && existing.status !== "cancelled") {
+            const patch = await fetchJsonVerbose(
+              `${NIFTIPAY_BASE}/api/orders/${existing.id}`,
+              {
+                method: "PATCH",
+                credentials: "omit",
+                headers: { "Content-Type": "application/json", "x-api-key": key },
+                body: JSON.stringify({ status: "cancelled" }),
+              },
+              "Niftipay CANCEL"
+            );
+            if (!patch.ok) {
+              const err = await patch.json().catch(() => ({}));
+              toast.error(err.error || "Failed to cancel previous Niftipay invoice");
+              return;
+            }
+            toast.success("Previous crypto invoice cancelled");
+          }
+        }
+
+        const selectedAddressText = addresses.find((a) => a.id === selectedAddressId)?.address ?? null;
+
+        const res = await fetchJsonVerbose(
+          `/api/order/${orderData.id}?organizationId=${activeOrg?.id}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              discount: discount ? Number(discount) : orderData.discount,
+              couponCode: newCoupon || orderData.coupon,
+              address: selectedAddressText,
+              total,
+              shippingMethod: selectedShippingMethod,
+              shippingCompany: selectedShippingCompany,
+              paymentMethodId: selectedPaymentMethod,
+            }),
+          }
+        );
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          const rawMsg = err?.error ?? `Request failed (${res.status})`;
           if (!showFriendlyCreateOrderError(rawMsg)) {
-            toast.error(rawMsg || "Failed to create new Niftipay order");
+            toast.error(rawMsg);
           }
           return;
         }
 
-        const niftipayMeta = await niftipayRes.json();
-        await fetch(`/api/order/${orderData.id}?organizationId=${activeOrg?.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ orderMeta: [niftipayMeta] }),
-        });
-        toast.success(`Niftipay invoice created: send ${niftipayMeta.order.amount} ${asset}`);
-      }
+        if (newPM === "niftipay") {
+          if (!niftipayNetworks.length) {
+            toast.error("Niftipay isn’t configured. Choose another payment method.");
+            return;
+          }
+          const key = pmObj?.apiKey;
+          if (!key) {
+            toast.error("Niftipay API key missing");
+            return;
+          } else if (!selectedNiftipay) {
+            toast.error("Select crypto network/asset first");
+            return;
+          }
 
-      toast.success("Order updated!");
-      router.push("/orders");
-    } catch (err: any) {
-      if (!showFriendlyCreateOrderError(err?.message)) {
-        toast.error(err?.message || "Update failed");
+          const [chain, asset] = selectedNiftipay.split(":");
+          await fetchJsonVerbose(
+            `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(orderData.orderKey)}`,
+            {
+              credentials: "omit",
+              method: "DELETE",
+              headers: { "x-api-key": key },
+            },
+            "DELETE OLD Niftipay"
+          );
+
+          const niftipayRes = await fetch(`${NIFTIPAY_BASE}/api/orders?replaceCancelled=1`, {
+            method: "POST",
+            credentials: "omit",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": pmObj!.apiKey!,
+            },
+            body: JSON.stringify({
+              network: chain,
+              asset,
+              amount: total,
+              currency: orderData.currency ?? "EUR",
+              firstName: orderData.client.firstName,
+              lastName: orderData.client.lastName,
+              email: orderData.client.email || "user@trapyfy.com",
+              merchantId,
+              reference: orderData.orderKey,
+            }),
+          });
+
+          if (!niftipayRes.ok) {
+            const errorBody = await niftipayRes.json().catch(() => ({ error: "Unknown error" }));
+            const rawMsg = errorBody?.error;
+            if (!showFriendlyCreateOrderError(rawMsg)) {
+              toast.error(rawMsg || "Failed to create new Niftipay order");
+            }
+            return;
+          }
+
+          const niftipayMeta = await niftipayRes.json();
+          await fetch(`/api/order/${orderData.id}?organizationId=${activeOrg?.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ orderMeta: [niftipayMeta] }),
+          });
+          toast.success(`Niftipay invoice created: send ${niftipayMeta.order.amount} ${asset}`);
+        }
+
+        toast.success("Order updated!");
+        router.push("/orders");
+      } catch (err: any) {
+        if (!showFriendlyCreateOrderError(err?.message)) {
+          toast.error(err?.message || "Update failed");
+        }
       }
-    }
-  };
+    };
 
     // ───────────── Notes mutations ─────────────
-  const createNote = async () => {
-    if (!orderId || !newNote.trim() || !currentUserId) return;
-    setCreatingNote(true);
-    try {
-      const res = await fetch(`/api/order/${orderId}/notes`, {
-        method: "POST",
+    const createNote = async () => {
+      if (!orderId || !newNote.trim() || !currentUserId) return;
+      setCreatingNote(true);
+      try {
+        const res = await fetch(`/api/order/${orderId}/notes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            note: newNote,
+            visibleToCustomer: newNotePublic,
+            authorRole: "staff",
+            authorUserId: currentUserId,
+          }),
+        });
+        if (!res.ok) throw new Error("Failed to create note");
+        setNewNote(""); setNewNotePublic(false);
+        await fetchNotes();
+      } finally { setCreatingNote(false); }
+    };
+    const toggleNoteVisibility = async (noteId: string, visible: boolean) => {
+      await fetch(`/api/order-notes/${noteId}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          note: newNote,
-          visibleToCustomer: newNotePublic,
-          authorRole: "staff",
-          authorUserId: currentUserId,
-        }),
+        body: JSON.stringify({ visibleToCustomer: visible }),
       });
-      if (!res.ok) throw new Error("Failed to create note");
-      setNewNote(""); setNewNotePublic(false);
       await fetchNotes();
-    } finally { setCreatingNote(false); }
-  };
-  const toggleNoteVisibility = async (noteId: string, visible: boolean) => {
-    await fetch(`/api/order-notes/${noteId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ visibleToCustomer: visible }),
-    });
-    await fetchNotes();
-  };
-  const deleteNote = async (noteId: string) => {
-    await fetch(`/api/order-notes/${noteId}`, { method: "DELETE" });
-    await fetchNotes();
-  };
+    };
+    const deleteNote = async (noteId: string) => {
+      await fetch(`/api/order-notes/${noteId}`, { method: "DELETE" });
+      await fetchNotes();
+    };
 
-  /* ——————————————————— RENDER ——————————————————— */
-  return (
-    <div className="container mx-auto py-6">
-      <h1 className="text-3xl font-bold mb-6">Update Order</h1>
+    /* ——————————————————— RENDER ——————————————————— */
+    return (
+      <div className="container mx-auto py-6">
+        <h1 className="text-3xl font-bold mb-6">Update Order</h1>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* LEFT COLUMN */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Order information (keep this card) */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Order Information</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Customer</p>
-                  <p className="text-lg font-medium">
-                    {orderData?.client?.firstName} {orderData?.client?.lastName} —{" "}
-                    {orderData?.client?.username} ({orderData?.client?.email})
-                  </p>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* LEFT COLUMN */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Order information (keep this card) */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Order Information</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Customer</p>
+                    <p className="text-lg font-medium">
+                      {orderData?.client?.firstName} {orderData?.client?.lastName} —{" "}
+                      {orderData?.client?.username} ({orderData?.client?.email})
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Order ID</p>
+                    <p className="font-mono break-all">{orderData?.id ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Order&nbsp;number</p>
+                    <p className="font-medium">{orderData?.orderKey ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Cart ID</p>
+                    <p className="font-medium">{orderData?.cartId ?? "—"}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Order ID</p>
-                  <p className="font-mono break-all">{orderData?.id ?? "—"}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Order&nbsp;number</p>
-                  <p className="font-medium">{orderData?.orderKey ?? "—"}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Cart ID</p>
-                  <p className="font-medium">{orderData?.cartId ?? "—"}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
             {/* ───────────────────────── ORDER NOTES ───────────────────────── */}
-  <Card>
-    <CardHeader>
-      <CardTitle className="flex items-center gap-2">
-        <MessageSquarePlus className="h-5 w-5" /> Order Notes
-      </CardTitle>
-    </CardHeader>
-    <CardContent className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Button
-            variant={notesScope === "staff" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setNotesScope("staff")}
-          >
-            Staff view
-          </Button>
-          <Button
-            variant={notesScope === "customer" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setNotesScope("customer")}
-          >
-            Customer view
-          </Button>
-        </div>
-        <div className="text-sm text-muted-foreground">
-          Public notes are visible to the customer.
-        </div>
-      </div>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <MessageSquarePlus className="h-5 w-5" /> Order Notes
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant={notesScope === "staff" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setNotesScope("staff")}
+                    >
+                      Staff view
+                    </Button>
+                    <Button
+                      variant={notesScope === "customer" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setNotesScope("customer")}
+                    >
+                      Customer view
+                    </Button>
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    Public notes are visible to the customer.
+                  </div>
+                </div>
 
-      <div className="border rounded-lg">
-        <ScrollArea className="h-64">
-          <div className="p-3 space-y-3">
-            {notesLoading ? (
-              <div className="flex items-center justify-center py-8 text-muted-foreground">
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Loading notes…
-              </div>
-            ) : notes.length === 0 ? (
-              <div className="text-center text-muted-foreground py-8">
-                No notes yet.
-              </div>
-            ) : (
-              notes.map((n) => (
-                <div key={n.id} className="border rounded-md p-2">
+                <div className="border rounded-lg">
+                  <ScrollArea className="h-64">
+                    <div className="p-3 space-y-3">
+                      {notesLoading ? (
+                        <div className="flex items-center justify-center py-8 text-muted-foreground">
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Loading notes…
+                        </div>
+                      ) : notes.length === 0 ? (
+                        <div className="text-center text-muted-foreground py-8">
+                          No notes yet.
+                        </div>
+                      ) : (
+                        notes.map((n) => (
+                          <div key={n.id} className="border rounded-md p-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Badge variant="secondary">
+                                  {n.authorRole === "staff" ? "Staff" : "Client"}
+                                </Badge>
+                                <Badge className={n.visibleToCustomer ? "bg-green-600" : "bg-gray-500"}>
+                                  {n.visibleToCustomer ? "Customer-visible" : "Staff-only"}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  size="icon" variant="ghost"
+                                  onClick={() => toggleNoteVisibility(n.id, !n.visibleToCustomer)}
+                                  title={n.visibleToCustomer ? "Make staff-only" : "Make public"}
+                                >
+                                  {n.visibleToCustomer ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                </Button>
+                                <Button size="icon" variant="ghost" onClick={() => deleteNote(n.id)} title="Delete">
+                                  <Trash className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                            <p className="mt-2 text-sm whitespace-pre-wrap">{n.note}</p>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {new Date(n.createdAt).toLocaleString()}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </ScrollArea>
+                </div>
+
+                <div className="space-y-3">
+                  <Textarea
+                    value={newNote}
+                    placeholder="Add a note for this order…"
+                    onChange={(e) => setNewNote(e.target.value)}
+                  />
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Badge variant="secondary">
-                        {n.authorRole === "staff" ? "Staff" : "Client"}
-                      </Badge>
-                      <Badge className={n.visibleToCustomer ? "bg-green-600" : "bg-gray-500"}>
-                        {n.visibleToCustomer ? "Customer-visible" : "Staff-only"}
-                      </Badge>
+                      <Switch id="public-note-edit" checked={newNotePublic} onCheckedChange={setNewNotePublic} />
+                      <Label htmlFor="public-note-edit" className="text-sm">Visible to customer</Label>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="icon" variant="ghost"
-                        onClick={() => toggleNoteVisibility(n.id, !n.visibleToCustomer)}
-                        title={n.visibleToCustomer ? "Make staff-only" : "Make public"}
-                      >
-                        {n.visibleToCustomer ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => deleteNote(n.id)} title="Delete">
-                        <Trash className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-sm whitespace-pre-wrap">{n.note}</p>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {new Date(n.createdAt).toLocaleString()}
+                    <Button onClick={createNote} disabled={!newNote.trim() || !currentUserId || creatingNote}>
+                      {creatingNote && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      Add Note
+                    </Button>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-        </ScrollArea>
-      </div>
+              </CardContent>
+            </Card>
 
-      <div className="space-y-3">
-        <Textarea
-          value={newNote}
-          placeholder="Add a note for this order…"
-          onChange={(e) => setNewNote(e.target.value)}
-        />
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Switch id="public-note-edit" checked={newNotePublic} onCheckedChange={setNewNotePublic} />
-            <Label htmlFor="public-note-edit" className="text-sm">Visible to customer</Label>
-          </div>
-          <Button onClick={createNote} disabled={!newNote.trim() || !currentUserId || creatingNote}>
-            {creatingNote && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Add Note
-          </Button>
-        </div>
-      </div>
-    </CardContent>
-  </Card>
+            {/* Product Selection (mirror Create page layout/UX) */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Package className="h-5 w-5" /> Product Selection
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {orderItems.length > 0 && (
+                  <div className="space-y-4 mb-4">
+                    {orderItems.map(({ product, quantity }, idx) => {
+                      const price = product.regularPrice?.[clientCountry] ?? product.price;
 
-          {/* Product Selection (mirror Create page layout/UX) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Package className="h-5 w-5" /> Product Selection
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {orderItems.length > 0 && (
-                <div className="space-y-4 mb-4">
-                  {orderItems.map(({ product, quantity }, idx) => {
-                    const price = product.regularPrice?.[clientCountry] ?? product.price;
+                      // For stock line we prefer product.stockData; if empty, hydrate from catalog
+                      const pHydrate = product.stockData && Object.keys(product.stockData).length
+                        ? product
+                        : (findProduct(product.id) ?? product);
 
-                    // For stock line we prefer product.stockData; if empty, hydrate from catalog
-                    const pHydrate = product.stockData && Object.keys(product.stockData).length
-                      ? product
-                      : (findProduct(product.id) ?? product);
+                      const base = stockForCountry(pHydrate.stockData, clientCountry);
+                      const used = inCartQty(product.id, orderItems);
+                      const remaining = Math.max(0, base - used);
+                      const finite = Object.keys(pHydrate.stockData || {}).length > 0;
+                      const disablePlus = finite && !pHydrate.allowBackorders && remaining === 0;
 
-                    const base = stockForCountry(pHydrate.stockData, clientCountry);
-                    const used = inCartQty(product.id, orderItems);
-                    const remaining = Math.max(0, base - used);
-                    const finite = Object.keys(pHydrate.stockData || {}).length > 0;
-                    const disablePlus = finite && !pHydrate.allowBackorders && remaining === 0;
-
-                    return (
-                      <div
-                        key={product.id}
-                        className={
-                          "flex items-center gap-4 p-4 border rounded-lg" +
-                          (stockErrors[product.id] ? " border-red-500" : "")
-                        }
-                      >
-                        {product.image ? (
-                          <Image
-                            src={product.image}
-                            alt={product.title}
-                            width={80}
-                            height={80}
-                            className="rounded-md"
-                          />
-                        ) : (
-                          <div className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-400">
-                            No image
-                          </div>
-                        )}
-                        <div className="flex-1">
-                          <div className="flex justify-between">
-                            <h3 className="font-medium">{product.title}</h3>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => removeProduct(product.id, idx)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                          <p className="text-sm text-muted-foreground">SKU: {product.sku}</p>
-                          <div
-                            className="text-sm"
-                            dangerouslySetInnerHTML={{ __html: product.description }}
-                          />
-
-                          <div className="flex items-center gap-2 mt-2">
-                            <Button variant="ghost" size="icon" onClick={() => updateQuantity(product.id, "subtract")}>
-                              <Minus className="h-4 w-4" />
-                            </Button>
-                            <span className="font-medium">{quantity}</span>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => updateQuantity(product.id, "add")}
-                              disabled={disablePlus}
-                              aria-disabled={disablePlus}
-                              title={disablePlus ? "Out of stock" : undefined}
-                            >
-                              <Plus className="h-4 w-4" />
-                            </Button>
-                          </div>
-
-                          {stockErrors[product.id] && (
-                            <p className="text-red-600 text-sm mt-1">
-                              Only {stockErrors[product.id]} available
-                            </p>
-                          )}
-
-                          <div className="flex justify-between mt-2">
-                            <span className="font-medium">
-                              Unit Price: {formatCurrency(price, clientCountry)}
-                            </span>
-                            <span className="font-medium">
-                              {formatCurrency(product.subtotal ?? price * quantity, clientCountry)}
-                            </span>
-                          </div>
-
-                          {/* Stock (client country), decreased by qty already in cart */}
-                          {Object.keys(pHydrate.stockData || {}).length > 0 && (
-                            <div className="mt-1 text-xs text-muted-foreground">
-                              Stock in {clientCountry || "country"}: {remaining}
-                              {remaining === 0 && pHydrate.allowBackorders ? " (backorder allowed)" : ""}
+                      return (
+                        <div
+                          key={product.id}
+                          className={
+                            "flex items-center gap-4 p-4 border rounded-lg" +
+                            (stockErrors[product.id] ? " border-red-500" : "")
+                          }
+                        >
+                          {product.image ? (
+                            <Image
+                              src={product.image}
+                              alt={product.title}
+                              width={80}
+                              height={80}
+                              className="rounded-md"
+                            />
+                          ) : (
+                            <div className="w-20 h-20 bg-gray-100 rounded-md flex items-center justify-center text-gray-400">
+                              No image
                             </div>
                           )}
+                          <div className="flex-1">
+                            <div className="flex justify-between">
+                              <h3 className="font-medium">{product.title}</h3>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => removeProduct(product.id, product.variationId ?? null)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                            <p className="text-sm text-muted-foreground">SKU: {product.sku}</p>
+                            <div
+                              className="text-sm"
+                              dangerouslySetInnerHTML={{ __html: product.description }}
+                            />
+
+                            <div className="flex items-center gap-2 mt-2">
+
+                              +                            <Button variant="ghost" size="icon" onClick={() => updateQuantity(product.id, product.variationId ?? null, "subtract")}>
+                                <Minus className="h-4 w-4" />
+                              </Button>
+                              <span className="font-medium">{quantity}</span>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => updateQuantity(product.id, product.variationId ?? null, "add")}
+                                disabled={disablePlus}
+                                aria-disabled={disablePlus}
+                                title={disablePlus ? "Out of stock" : undefined}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            </div>
+
+                            {stockErrors[product.id] && (
+                              <p className="text-red-600 text-sm mt-1">
+                                Only {stockErrors[product.id]} available
+                              </p>
+                            )}
+
+                            <div className="flex justify-between mt-2">
+                              <span className="font-medium">
+                                Unit Price: {formatCurrency(price, clientCountry)}
+                              </span>
+                              <span className="font-medium">
+                                {formatCurrency(product.subtotal ?? price * quantity, clientCountry)}
+                              </span>
+                            </div>
+
+                            {/* Stock (client country), decreased by qty already in cart */}
+                            {Object.keys(pHydrate.stockData || {}).length > 0 && (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                Stock in {clientCountry || "country"}: {remaining}
+                                {remaining === 0 && pHydrate.allowBackorders ? " (backorder allowed)" : ""}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                      );
+                    })}
+                  </div>
+                )}
 
-              {/* Add product row (same UX as Create) */}
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  <Label>Select Product</Label>
-                  <Select
-                    value={selectedProduct}
-                    onValueChange={(val) => {
-                      const obj = [...products, ...prodResults].find((p) => p.id === val);
-                      if (!obj) return;
+                {/* Add product row (same UX as Create) */}
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="flex-1">
+                    <Label>Select Product</Label>
+                    <Select
+                      value={selectedProduct}
+                      onValueChange={(val) => {
+                        const obj = [...products, ...prodResults].find((p) => p.id === val);
+                        if (!obj) return;
 
-                      const hasFiniteStock = Object.keys(obj.stockData || {}).length > 0;
-                      const base = stockForCountry(obj.stockData, clientCountry);
-                      const remaining = hasFiniteStock
-                        ? Math.max(0, base - inCartQty(obj.id, orderItems))
-                        : Infinity;
+                        const hasFiniteStock = Object.keys(obj.stockData || {}).length > 0;
+                        const base = stockForCountry(obj.stockData, clientCountry);
+                        const remaining = hasFiniteStock
+                          ? Math.max(0, base - inCartQty(obj.id, orderItems))
+                          : Infinity;
 
-                      if (hasFiniteStock && remaining === 0 && !obj.allowBackorders) {
-                        toast.error("This product is out of stock for the selected country.");
-                        return;
-                      }
-                      pickProduct(val, obj);
-                    }}
-                    disabled={productsLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={productsLoading ? "Loading…" : "Select a product"} />
-                    </SelectTrigger>
+                        if (hasFiniteStock && remaining === 0 && !obj.allowBackorders) {
+                          toast.error("This product is out of stock for the selected country.");
+                          return;
+                        }
+                        pickProduct(val, obj);
+                      }}
+                      disabled={productsLoading}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={productsLoading ? "Loading…" : "Select a product"} />
+                      </SelectTrigger>
 
-                    <SelectContent className="w-[500px]">
-                      {/* — search bar — */}
-                      <div className="p-3 border-b flex items-center gap-2">
-                        <Search className="h-4 w-4 text-muted-foreground" />
-                        <Input
-                          value={prodTerm}
-                          onChange={(e) => setProdTerm(e.target.value)}
-                          placeholder="Search products (min 3 chars)"
-                          className="h-8"
-                        />
-                      </div>
+                      <SelectContent className="w-[500px]">
+                        {/* — search bar — */}
+                        <div className="p-3 border-b flex items-center gap-2">
+                          <Search className="h-4 w-4 text-muted-foreground" />
+                          <Input
+                            value={prodTerm}
+                            onChange={(e) => setProdTerm(e.target.value)}
+                            placeholder="Search products (min 3 chars)"
+                            className="h-8"
+                          />
+                        </div>
 
-                      <ScrollArea className="max-h-72">
-                        {/* Local grouped (shop) */}
-                        {groupByCategory(filteredProducts.filter((p) => !p.isAffiliate)).map(
-                          ([label, items]) => (
-                            <SelectGroup key={label}>
-                              <SelectLabel>{label}</SelectLabel>
-                              {items.map((p) => {
-                                const price = p.regularPrice?.[clientCountry] ?? p.price;
-                                const finite = Object.keys(p.stockData || {}).length > 0;
-                                const base = stockForCountry(p.stockData, clientCountry);
-                                const already = inCartQty(p.id, orderItems);
-                                const remaining = finite ? Math.max(0, base - already) : Infinity;
-                                const shouldDisable = finite ? remaining === 0 && !p.allowBackorders : false;
-
-                                return (
-                                  <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
-                                    <span className="block max-w-[420px] truncate">
-                                      {p.title} — ${price}
-                                      {finite && (
-                                        <span className="ml-2 text-xs text-muted-foreground">
-                                          Stock: {remaining}
-                                          {remaining === 0 && p.allowBackorders ? " (backorder)" : ""}
-                                          {shouldDisable ? " (out of stock)" : ""}
-                                        </span>
-                                      )}
-                                    </span>
-                                  </SelectItem>
-                                );
-                              })}
-                              <SelectSeparator />
-                            </SelectGroup>
-                          )
-                        )}
-
-                        {/* Local affiliate */}
-                        {filteredProducts.some((p) => p.isAffiliate) && (
-                          <SelectGroup>
-                            <SelectLabel>Affiliate</SelectLabel>
-                            {filteredProducts
-                              .filter((p) => p.isAffiliate)
-                              .map((p) => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.title} — {p.price} pts
-                                </SelectItem>
-                              ))}
-                            <SelectSeparator />
-                          </SelectGroup>
-                        )}
-
-                        {/* Remote results (not yet cached) */}
-                        {prodResults.length > 0 && (
-                          <>
-                            {groupByCategory(
-                              prodResults.filter(
-                                (p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id)
-                              )
-                            ).map(([label, items]) => (
-                              <SelectGroup key={`remote-${label}`}>
-                                <SelectLabel>{label} — search</SelectLabel>
+                        <ScrollArea className="max-h-72">
+                          {/* Local grouped (shop) */}
+                          {groupByCategory(filteredProducts.filter((p) => !p.isAffiliate)).map(
+                            ([label, items]) => (
+                              <SelectGroup key={label}>
+                                <SelectLabel>{label}</SelectLabel>
                                 {items.map((p) => {
                                   const price = p.regularPrice?.[clientCountry] ?? p.price;
                                   const finite = Object.keys(p.stockData || {}).length > 0;
@@ -1453,363 +1415,416 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                                   const already = inCartQty(p.id, orderItems);
                                   const remaining = finite ? Math.max(0, base - already) : Infinity;
                                   const shouldDisable = finite ? remaining === 0 && !p.allowBackorders : false;
+
                                   return (
                                     <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
                                       <span className="block max-w-[420px] truncate">
                                         {p.title} — ${price}
-                                        <span className="ml-2 text-xs text-muted-foreground">
-                                          {finite ? (
-                                            <>
-                                              Stock: {remaining}
-                                              {remaining === 0 && p.allowBackorders ? " (backorder)" : ""}
-                                              {shouldDisable ? " (out of stock)" : ""}
-                                            </>
-                                          ) : (
-                                            "remote"
-                                          )}
-                                        </span>
+                                        {finite && (
+                                          <span className="ml-2 text-xs text-muted-foreground">
+                                            Stock: {remaining}
+                                            {remaining === 0 && p.allowBackorders ? " (backorder)" : ""}
+                                            {shouldDisable ? " (out of stock)" : ""}
+                                          </span>
+                                        )}
                                       </span>
                                     </SelectItem>
                                   );
                                 })}
                                 <SelectSeparator />
                               </SelectGroup>
-                            ))}
+                            )
+                          )}
 
-                            {prodResults.some(
-                              (p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)
-                            ) && (
-                                <SelectGroup>
-                                  <SelectLabel>Affiliate — search</SelectLabel>
-                                  {prodResults
-                                    .filter((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id))
-                                    .map((p) => (
-                                      <SelectItem key={p.id} value={p.id}>
-                                        {p.title} — {p.price} pts
-                                        <span className="ml-1 text-xs text-muted-foreground">(remote)</span>
+                          {/* Local affiliate */}
+                          {filteredProducts.some((p) => p.isAffiliate) && (
+                            <SelectGroup>
+                              <SelectLabel>Affiliate</SelectLabel>
+                              {filteredProducts
+                                .filter((p) => p.isAffiliate)
+                                .map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>
+                                    {p.title} — {p.price} pts
+                                  </SelectItem>
+                                ))}
+                              <SelectSeparator />
+                            </SelectGroup>
+                          )}
+
+                          {/* Remote results (not yet cached) */}
+                          {prodResults.length > 0 && (
+                            <>
+                              {groupByCategory(
+                                prodResults.filter(
+                                  (p) => !p.isAffiliate && !products.some((lp) => lp.id === p.id)
+                                )
+                              ).map(([label, items]) => (
+                                <SelectGroup key={`remote-${label}`}>
+                                  <SelectLabel>{label} — search</SelectLabel>
+                                  {items.map((p) => {
+                                    const price = p.regularPrice?.[clientCountry] ?? p.price;
+                                    const finite = Object.keys(p.stockData || {}).length > 0;
+                                    const base = stockForCountry(p.stockData, clientCountry);
+                                    const already = inCartQty(p.id, orderItems);
+                                    const remaining = finite ? Math.max(0, base - already) : Infinity;
+                                    const shouldDisable = finite ? remaining === 0 && !p.allowBackorders : false;
+                                    return (
+                                      <SelectItem key={p.id} value={p.id} disabled={shouldDisable}>
+                                        <span className="block max-w-[420px] truncate">
+                                          {p.title} — ${price}
+                                          <span className="ml-2 text-xs text-muted-foreground">
+                                            {finite ? (
+                                              <>
+                                                Stock: {remaining}
+                                                {remaining === 0 && p.allowBackorders ? " (backorder)" : ""}
+                                                {shouldDisable ? " (out of stock)" : ""}
+                                              </>
+                                            ) : (
+                                              "remote"
+                                            )}
+                                          </span>
+                                        </span>
                                       </SelectItem>
-                                    ))}
+                                    );
+                                  })}
+                                  <SelectSeparator />
                                 </SelectGroup>
-                              )}
-                          </>
-                        )}
+                              ))}
 
-                        {prodSearching && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
-                        )}
-                        {!prodSearching && prodTerm && prodResults.length === 0 && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
-                        )}
-                      </ScrollArea>
-                    </SelectContent>
-                  </Select>
-                </div>
+                              {prodResults.some(
+                                (p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)
+                              ) && (
+                                  <SelectGroup>
+                                    <SelectLabel>Affiliate — search</SelectLabel>
+                                    {prodResults
+                                      .filter((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id))
+                                      .map((p) => (
+                                        <SelectItem key={p.id} value={p.id}>
+                                          {p.title} — {p.price} pts
+                                          <span className="ml-1 text-xs text-muted-foreground">(remote)</span>
+                                        </SelectItem>
+                                      ))}
+                                  </SelectGroup>
+                                )}
+                            </>
+                          )}
 
-                <div className="w-24">
-                  <Label>Quantity</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={quantityText}
-                    onChange={(e) => {
-                      const v = e.target.value.replace(/[^0-9]/g, "");
-                      setQuantityText(v);
-                    }}
-                    onBlur={() => setQuantityText(String(parseQty(quantityText)))}
-                  />
-                </div>
+                          {prodSearching && (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
+                          )}
+                          {!prodSearching && prodTerm && prodResults.length === 0 && (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
+                          )}
+                        </ScrollArea>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-                <div className="flex items-end">
-                  <Button onClick={addProduct} disabled={!selectedProduct}>
-                    <Plus className="h-4 w-4 mr-2" /> Add Product
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Discount Coupon (same component layout) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Tag className="h-5 w-5" /> Discount Coupon
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="flex justify-between items-center">
-                <p className="text-lg font-medium">
-                  {newCoupon ? newCoupon : orderData?.coupon || "—"}
-                </p>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="newCouponSwitch" className="text-sm">
-                    New coupon?
-                  </Label>
-                  <Switch
-                    id="newCouponSwitch"
-                    checked={showNewCoupon}
-                    onCheckedChange={setShowNewCoupon}
-                  />
-                </div>
-              </div>
-
-              {showNewCoupon && (
-                <>
-                  <Separator />
-                  <div className="flex gap-4 flex-wrap">
+                  <div className="w-24">
+                    <Label>Quantity</Label>
                     <Input
-                      className="flex-1 min-w-[200px]"
-                      placeholder="Enter coupon code"
-                      disabled={couponApplied}
-                      value={newCoupon}
-                      onChange={(e) => setNewCoupon(e.target.value)}
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={quantityText}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/[^0-9]/g, "");
+                        setQuantityText(v);
+                      }}
+                      onBlur={() => setQuantityText(String(parseQty(quantityText)))}
                     />
-                    <Button
-                      disabled={!newCoupon || couponApplied}
-                      onClick={handleApplyCoupon}
-                    >
-                      Apply Coupon
+                  </div>
+
+                  <div className="flex items-end">
+                    <Button onClick={addProduct} disabled={!selectedProduct}>
+                      <Plus className="h-4 w-4 mr-2" /> Add Product
                     </Button>
                   </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
+                </div>
+              </CardContent>
+            </Card>
 
-          {/* Shipping Address (same layout) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Truck className="h-5 w-5" /> Shipping Address
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {addresses.map((addr) => (
-                  <label key={addr.id} className="flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="address"
-                      value={addr.id}
-                      checked={selectedAddressId === addr.id}
-                      onChange={() => setSelectedAddressId(addr.id)}
-                      className="h-4 w-4"
+            {/* Discount Coupon (same component layout) */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Tag className="h-5 w-5" /> Discount Coupon
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                <div className="flex justify-between items-center">
+                  <p className="text-lg font-medium">
+                    {newCoupon ? newCoupon : orderData?.coupon || "—"}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="newCouponSwitch" className="text-sm">
+                      New coupon?
+                    </Label>
+                    <Switch
+                      id="newCouponSwitch"
+                      checked={showNewCoupon}
+                      onCheckedChange={setShowNewCoupon}
                     />
-                    <span className="text-sm whitespace-pre-line break-words">{addr.address}</span>
-                  </label>
-                ))}
-              </div>
-              <Separator className="my-3" />
-              <div className="flex gap-4">
-                <Textarea
-                  className="flex-1 min-h-[140px] whitespace-pre-line"
-                  placeholder="New address (multi-line)"
-                  value={newAddress}
-                  onChange={(e) => setNewAddress(e.target.value)}
-                />
-                <Button onClick={handleAddAddress} disabled={!newAddress}>
-                  Add Address
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Shipping Method & Company (same layout) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Truck className="h-5 w-5" /> Shipping
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Method */}
-                <div>
-                  <Label>Method</Label>
-                  <Select
-                    value={selectedShippingMethod}
-                    onValueChange={setSelectedShippingMethod}
-                  >
-                    <SelectTrigger>
-                      <SelectValue
-                        placeholder={shippingLoading ? "Loading…" : "Select method"}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {shippingMethods.map((m) => {
-                        const tier = m.costs.find(
-                          ({ minOrderCost, maxOrderCost }) =>
-                            total >= minOrderCost &&
-                            (maxOrderCost === 0 || total <= maxOrderCost)
-                        );
-                        const cost = tier ? tier.shipmentCost : 0;
-
-                        return (
-                          <SelectItem key={m.id} value={m.id}>
-                            <span className="block max-w-[280px] truncate">
-                              {m.title} — {m.description} — ${cost.toFixed(2)}
-                            </span>
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
+                  </div>
                 </div>
-                {/* Company */}
-                <div>
-                  <Label>Company</Label>
-                  <Select
-                    value={selectedShippingCompany}
-                    onValueChange={setSelectedShippingCompany}
-                  >
-                    <SelectTrigger>
-                      <SelectValue
-                        placeholder={shippingLoading ? "Loading…" : "Select company"}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {shippingCompanies.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
 
-          {/* Payment Method (same layout) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CreditCard className="h-5 w-5" /> Payment Method
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Label>Select Payment Method</Label>
-              <Select
-                value={selectedPaymentMethod}
-                onValueChange={setSelectedPaymentMethod}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select payment method" />
-                </SelectTrigger>
-                <SelectContent>
-                  {paymentMethods.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.name}
-                    </SelectItem>
+                {showNewCoupon && (
+                  <>
+                    <Separator />
+                    <div className="flex gap-4 flex-wrap">
+                      <Input
+                        className="flex-1 min-w-[200px]"
+                        placeholder="Enter coupon code"
+                        disabled={couponApplied}
+                        value={newCoupon}
+                        onChange={(e) => setNewCoupon(e.target.value)}
+                      />
+                      <Button
+                        disabled={!newCoupon || couponApplied}
+                        onClick={handleApplyCoupon}
+                      >
+                        Apply Coupon
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Shipping Address (same layout) */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Truck className="h-5 w-5" /> Shipping Address
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {addresses.map((addr) => (
+                    <label key={addr.id} className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="address"
+                        value={addr.id}
+                        checked={selectedAddressId === addr.id}
+                        onChange={() => setSelectedAddressId(addr.id)}
+                        className="h-4 w-4"
+                      />
+                      <span className="text-sm whitespace-pre-line break-words">{addr.address}</span>
+                    </label>
                   ))}
-                </SelectContent>
-              </Select>
+                </div>
+                <Separator className="my-3" />
+                <div className="flex gap-4">
+                  <Textarea
+                    className="flex-1 min-h-[140px] whitespace-pre-line"
+                    placeholder="New address (multi-line)"
+                    value={newAddress}
+                    onChange={(e) => setNewAddress(e.target.value)}
+                  />
+                  <Button onClick={handleAddAddress} disabled={!newAddress}>
+                    Add Address
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
 
-              {/* Niftipay chain / asset selector */}
-              {paymentMethods.find(
-                (p) =>
-                  p.id === selectedPaymentMethod &&
-                  p.name.toLowerCase() === "niftipay"
-              ) && (
-                  <div className="mt-4">
-                    <Label>Select Crypto Network</Label>
+            {/* Shipping Method & Company (same layout) */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Truck className="h-5 w-5" /> Shipping
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Method */}
+                  <div>
+                    <Label>Method</Label>
                     <Select
-                      value={selectedNiftipay}
-                      onValueChange={setSelectedNiftipay}
-                      disabled={niftipayLoading}
+                      value={selectedShippingMethod}
+                      onValueChange={setSelectedShippingMethod}
                     >
                       <SelectTrigger>
                         <SelectValue
-                          placeholder={niftipayLoading ? "Loading…" : "Select network"}
+                          placeholder={shippingLoading ? "Loading…" : "Select method"}
                         />
                       </SelectTrigger>
                       <SelectContent>
-                        {niftipayNetworks.map((n) => (
-                          <SelectItem key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
-                            {n.label}
+                        {shippingMethods.map((m) => {
+                          const tier = m.costs.find(
+                            ({ minOrderCost, maxOrderCost }) =>
+                              total >= minOrderCost &&
+                              (maxOrderCost === 0 || total <= maxOrderCost)
+                          );
+                          const cost = tier ? tier.shipmentCost : 0;
+
+                          return (
+                            <SelectItem key={m.id} value={m.id}>
+                              <span className="block max-w-[280px] truncate">
+                                {m.title} — {m.description} — ${cost.toFixed(2)}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {/* Company */}
+                  <div>
+                    <Label>Company</Label>
+                    <Select
+                      value={selectedShippingCompany}
+                      onValueChange={setSelectedShippingCompany}
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={shippingLoading ? "Loading…" : "Select company"}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {shippingCompanies.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
-                )}
-            </CardContent>
-          </Card>
-        </div>
+                </div>
+              </CardContent>
+            </Card>
 
-        {/* RIGHT COLUMN: Order Summary */}
-        <div className="lg:col-span-1">
-          <Card className="sticky top-6">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <DollarSign className="h-5 w-5" /> Order Summary
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span>Client:</span>
-                  <span className="font-medium">{orderData?.clientEmail}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Items:</span>
-                  <span className="font-medium">
-                    {orderItems.reduce((sum, item) => sum + item.quantity, 0)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Subtotal:</span>
-                  <span className="font-medium">{formatCurrency(subtotal, clientCountry)}</span>
-                </div>
+            {/* Payment Method (same layout) */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CreditCard className="h-5 w-5" /> Payment Method
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Label>Select Payment Method</Label>
+                <Select
+                  value={selectedPaymentMethod}
+                  onValueChange={setSelectedPaymentMethod}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select payment method" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentMethods.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-                {orderData?.pointsRedeemed > 0 && (
-                  <div className="flex justify-between text-blue-600">
-                    <span>Points Redeemed:</span>
+                {/* Niftipay chain / asset selector */}
+                {paymentMethods.find(
+                  (p) =>
+                    p.id === selectedPaymentMethod &&
+                    p.name.toLowerCase() === "niftipay"
+                ) && (
+                    <div className="mt-4">
+                      <Label>Select Crypto Network</Label>
+                      <Select
+                        value={selectedNiftipay}
+                        onValueChange={setSelectedNiftipay}
+                        disabled={niftipayLoading}
+                      >
+                        <SelectTrigger>
+                          <SelectValue
+                            placeholder={niftipayLoading ? "Loading…" : "Select network"}
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {niftipayNetworks.map((n) => (
+                            <SelectItem key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
+                              {n.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* RIGHT COLUMN: Order Summary */}
+          <div className="lg:col-span-1">
+            <Card className="sticky top-6">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <DollarSign className="h-5 w-5" /> Order Summary
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <span>Client:</span>
+                    <span className="font-medium">{orderData?.clientEmail}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Items:</span>
                     <span className="font-medium">
-                      {orderData.pointsRedeemed} pts
+                      {orderItems.reduce((sum, item) => sum + item.quantity, 0)}
                     </span>
                   </div>
-                )}
+                  <div className="flex justify-between">
+                    <span>Subtotal:</span>
+                    <span className="font-medium">{formatCurrency(subtotal, clientCountry)}</span>
+                  </div>
 
-                {orderData?.pointsRedeemedAmount > 0 && (
+                  {orderData?.pointsRedeemed > 0 && (
+                    <div className="flex justify-between text-blue-600">
+                      <span>Points Redeemed:</span>
+                      <span className="font-medium">
+                        {orderData.pointsRedeemed} pts
+                      </span>
+                    </div>
+                  )}
+
+                  {orderData?.pointsRedeemedAmount > 0 && (
+                    <div className="flex justify-between text-green-600">
+                      <span>Points Discount:</span>
+                      <span className="font-medium">
+                        -{formatCurrency(orderData.pointsRedeemedAmount, clientCountry)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-green-600">
-                    <span>Points Discount:</span>
+                    <span>
+                      Discount
+                      {discountType === "percentage" ? ` (${value.toFixed(2)}%)` : ""}:
+                    </span>
+                    <span className="font-medium">–{formatCurrency(discount, clientCountry)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Shipping:</span>
                     <span className="font-medium">
-                      -{formatCurrency(orderData.pointsRedeemedAmount, clientCountry)}
+                      {orderData?.shipping != null
+                        ? formatCurrency(orderData.shipping, clientCountry)
+                        : "—"}
                     </span>
                   </div>
-                )}
-                <div className="flex justify-between text-green-600">
-                  <span>
-                    Discount
-                    {discountType === "percentage" ? ` (${value.toFixed(2)}%)` : ""}:
-                  </span>
-                  <span className="font-medium">–{formatCurrency(discount, clientCountry)}</span>
+                  <Separator />
+                  <div className="flex justify-between text-lg font-bold">
+                    <span>Total:</span>
+                    <span>{formatCurrency(total, clientCountry)}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span>Shipping:</span>
-                  <span className="font-medium">
-                    {orderData?.shipping != null
-                      ? formatCurrency(orderData.shipping, clientCountry)
-                      : "—"}
-                  </span>
-                </div>
-                <Separator />
-                <div className="flex justify-between text-lg font-bold">
-                  <span>Total:</span>
-                  <span>{formatCurrency(total, clientCountry)}</span>
-                </div>
-              </div>
-            </CardContent>
-            <CardFooter className="flex flex-col gap-3">
-              <Button className="w-full" onClick={handleUpdateOrder}>
-                Update Order
-              </Button>
-            </CardFooter>
-          </Card>
+              </CardContent>
+              <CardFooter className="flex flex-col gap-3">
+                <Button className="w-full" onClick={handleUpdateOrder}>
+                  Update Order
+                </Button>
+              </CardFooter>
+            </Card>
+          </div>
         </div>
       </div>
-    </div>
-  );
-}
+    );
+  }

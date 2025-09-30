@@ -301,7 +301,7 @@ export async function PATCH(
           const [p, a] = await Promise.all([
             c.query(
               `SELECT p.id,p.title,p.description,p.image,p.sku,
-                      cp.quantity,cp."unitPrice",false AS "isAffiliate"
+       cp.quantity,cp."unitPrice",cp."variationId",false AS "isAffiliate"
                  FROM products p
                  JOIN "cartProducts" cp ON cp."productId" = p.id
                 WHERE cp."cartId" = $1
@@ -310,7 +310,8 @@ export async function PATCH(
             ),
             c.query(
               `SELECT ap.id,ap.title,ap.description,ap.image,ap.sku,
-                      cp.quantity,cp."unitPrice",true AS "isAffiliate"
+       cp.quantity,cp."unitPrice",cp."variationId",true AS "isAffiliate"
+
                  FROM "affiliateProducts" ap
                  JOIN "cartProducts"    cp ON cp."affiliateProductId" = ap.id
                 WHERE cp."cartId" = $1
@@ -320,7 +321,7 @@ export async function PATCH(
           ]);
 
           return [...p.rows, ...a.rows].map((l: any) => ({
-            ...l,
+            ...l, // includes variationId
             unitPrice: Number(l.unitPrice),
             subtotal: Number(l.unitPrice) * l.quantity,
           }));
