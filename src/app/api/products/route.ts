@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { sql } from "kysely";
 import { propagateDeleteDeep } from "@/lib/propagate-delete";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
@@ -210,16 +211,34 @@ export async function GET(req: NextRequest) {
             eb.or([eb("p.sku", "is", null), eb("p.sku", "not ilike", "SHD%")]),
           ),
         )
-        .groupBy("p.id")
-        .orderBy(("p." + orderBy) as any, orderDir)
+              .groupBy("p.id")
+      // Case-insensitive sort for text columns in JOIN path
+      .$if(orderBy === "title", (q) =>
+        q.orderBy(sql`lower(p.title)`, orderDir as any)
+      )
+      .$if(orderBy === "sku", (q) =>
+        q.orderBy(sql`lower(p.sku)`, orderDir as any)
+      )
+      .$if(orderBy !== "title" && orderBy !== "sku", (q) =>
+        q.orderBy(("p." + orderBy) as any, orderDir)
+      )
+      .orderBy("p.id", "asc")
         .limit(pageSize)
         .offset((page - 1) * pageSize);
 
       idRows = await jq.execute();
     } else {
       // No term filter → use the original simple products query
-      idRows = await idQuery
-        .orderBy(orderBy as any, orderDir)
+      // Case-insensitive sort for text columns; deterministic tie-break by id.
+       if (orderBy === "title") {
+         idQuery = idQuery.orderBy(sql`lower(title)`, orderDir as any);
+       } else if (orderBy === "sku") {
+         idQuery = idQuery.orderBy(sql`lower(sku)`, orderDir as any);
+       } else {
+         idQuery = idQuery.orderBy(orderBy as any, orderDir);
+       }
+       idRows = await idQuery
+        .orderBy("id", "asc")
         .limit(pageSize)
         .offset((page - 1) * pageSize)
         .execute();
@@ -284,7 +303,10 @@ export async function GET(req: NextRequest) {
     }
 
     /* -------- STEP 2 – core product rows ------------------------ */
-    const productRows = await db
+    /* -------- STEP 2 – core product rows ------------------------
+     NOTE: we DO NOT sort here again by title/sku.
+     We preserve the order from STEP 1 using the list of ids. */
+  let productRows = await db
       .selectFrom("products")
       .select([
         "id",
@@ -304,8 +326,15 @@ export async function GET(req: NextRequest) {
         "updatedAt",
       ])
       .where("id", "in", productIds)
-      .orderBy(orderBy as any, orderDir)
       .execute();
+
+    // Preserve STEP 1 order (which already applies pagination + sorting)
+    const idOrder = new Map<string, number>(
+      productIds.map((id, idx) => [id, idx])
+    );
+    productRows.sort(
+      (a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0)
+    );
 
     /* -------- STEP 3 – related data in bulk --------------------- */
     const stockRows = await db
