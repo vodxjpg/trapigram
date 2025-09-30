@@ -27,15 +27,14 @@ function findTier(
   tiers: Tier[],
   country: string,
   productId: string,
+  variationId: string | null,
   clientId?: string | null,
 ): Tier | null {
   const candidates = tiers.filter(
     (t) =>
       t.active === true &&
       t.countries.includes(country) &&
-      t.products.some(
-        (p) => p.productId === productId || p.variationId === productId,
-      ),
+      t.products.some((p) => p.productId === productId || p.variationId === variationId),
   );
   if (!candidates.length) return null;
 
@@ -156,8 +155,8 @@ export async function POST(
 
 
       if (withVariation) {
-        sql += ` AND "variationId" = $3`
-        values.push(body.variationId)
+        sql += ` AND "variationId" = $3`;
+        values.push(variationId);
       }
 
       const { rows: existing } = await client.query(sql, values);
@@ -169,19 +168,18 @@ export async function POST(
       let unitPrice = basePrice;
       if (!isAffiliate) {
         const tiers = (await tierPricing(organizationId)) as Tier[];
-        const tier = findTier(tiers, country, body.productId, clientId);
+        const tier = findTier(tiers, country, body.productId, variationId, clientId);
 
         if (tier) {
-          const tierIds = tier.products
-            .map((p) => p.productId)
-            .filter(Boolean) as string[];
-
+          const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
+          const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
           const { rows: sumRow } = await client.query(
             `SELECT COALESCE(SUM(quantity),0)::int AS qty
-               FROM "cartProducts"
-              WHERE "cartId" = $1
-                AND "productId" = ANY($2::text[])`,
-            [cartId, tierIds],
+                 FROM "cartProducts"
+                WHERE "cartId" = $1
+                  AND ( ("productId" = ANY($2::text[]))
+                        OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
+            [cartId, tierProdIds, tierVarIds],
           );
 
           const qtyBefore = Number(sumRow[0].qty);
@@ -190,13 +188,17 @@ export async function POST(
           unitPrice = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
 
           await client.query(
-            `UPDATE "cartProducts"
-                SET "unitPrice" = $1,
-                    "updatedAt" = NOW()
-              WHERE "cartId" = $2
-                AND "productId" = ANY($3::text[])`,
-            [unitPrice, cartId, tierIds],
-          );
+  `UPDATE "cartProducts"
+      SET "unitPrice" = $1,
+          "updatedAt" = NOW()
+    WHERE "cartId" = $2
+      AND (
+        ("productId" = ANY($3::text[]))
+        OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[]))
+      )`,
+  [unitPrice, cartId, tierProdIds, tierVarIds],
+);
+
         }
       }
 
@@ -251,7 +253,8 @@ export async function POST(
       /* 6) ▼ cart hash */
       const { rows: rowsHash } = await client.query(
         `SELECT COALESCE("productId","affiliateProductId") AS pid,
-                quantity,"unitPrice"
+          "variationId",
+          quantity,"unitPrice"
            FROM "cartProducts"
           WHERE "cartId" = $1`,
         [cartId],
@@ -279,6 +282,7 @@ export async function POST(
       const base = prodRows[0];
       const product = {
         id: base.id,
+        variationId,
         title: base.title,
         sku: base.sku,
         description: base.description,

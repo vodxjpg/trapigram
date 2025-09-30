@@ -820,6 +820,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           productId: selectedProduct,
+          variationId: product.variationId ?? null,
           quantity: qty,
           price: unitPrice, // (edit route expects "price")
           country: clientCountry,
@@ -1279,7 +1280,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
 
                       return (
                         <div
-                          key={product.id}
+                          key={`${product.id}:${product.variationId ?? 'null'}`}
                           className={
                             "flex items-center gap-4 p-4 border rounded-lg" +
                             (stockErrors[product.id] ? " border-red-500" : "")
@@ -1315,9 +1316,8 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
                               dangerouslySetInnerHTML={{ __html: product.description }}
                             />
 
-                            <div className="flex items-center gap-2 mt-2">
-
-                              +                            <Button variant="ghost" size="icon" onClick={() => updateQuantity(product.id, product.variationId ?? null, "subtract")}>
+                             <div className="flex items-center gap-2 mt-2"> 
+                              <Button variant="ghost" size="icon" onClick={() => updateQuantity(product.id, product.variationId ?? null, "subtract")}>
                                 <Minus className="h-4 w-4" />
                               </Button>
                               <span className="font-medium">{quantity}</span>

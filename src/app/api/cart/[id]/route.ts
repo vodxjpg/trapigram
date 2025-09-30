@@ -38,40 +38,50 @@ export async function GET(
           [client.country, id],
         );
 
-        const { rows: lines } = await tx.query<{ id: string; productId: string }>(
-          `SELECT id,"productId",quantity FROM "cartProducts" WHERE "cartId"=$1`,
+       // 1) include variationId in the query + types
+        const { rows: lines } = await tx.query<{
+          id: string;
+          productId: string;
+          variationId: string | null;
+          quantity: number;
+        }>(
+          `SELECT id,"productId","variationId",quantity
+            FROM "cartProducts"
+            WHERE "cartId"=$1`,
           [id],
         );
+
         for (const line of lines) {
           try {
+            // 2) normalize variationId and pass it in
+            const vId =
+              typeof line.variationId === "string" && line.variationId.trim().length > 0
+                ? line.variationId
+                : null;
+
             const { price } = await resolveUnitPrice(
               line.productId,
+              vId,                 // ← NEW
               client.country,
-              client.levelId,
+              client.levelId,      // ← 4th arg
             );
+
             await tx.query(
               `UPDATE "cartProducts"
-                            SET "unitPrice" = $1, "updatedAt" = NOW()
-                          WHERE id = $2`,
+                  SET "unitPrice" = $1, "updatedAt" = NOW()
+                WHERE id = $2`,
               [price, line.id],
             );
           } catch (err: any) {
             if (err.message.startsWith("No money price for")) {
-              // remove the bad line and record it
-              await tx.query(
-                `DELETE FROM "cartProducts" WHERE id = $1`,
-                [line.id],
-              );
-              removedItems.push({
-                productId: line.productId,
-                reason: err.message,  // e.g. "No money price for GB"
-              });
+              await tx.query(`DELETE FROM "cartProducts" WHERE id = $1`, [line.id]);
+              removedItems.push({ productId: line.productId, reason: err.message });
               continue;
             }
-            // any other error: rollback everything
             throw err;
           }
         }
+
 
         await tx.query("COMMIT");
         // stash removedItems in the transaction-scoped variable for later

@@ -214,7 +214,8 @@ export async function PATCH(
       let pricePerUnit = basePrice;
       if (!isAffiliate) {
         const tiers = (await tierPricing(organizationId)) as Tier[];
-        const tier = findTier(tiers, country, data.productId, data.variationId, clientId);
+        const tier = findTier(tiers, country, data.productId, variationId, clientId);
+
 
         if (tier) {
 
