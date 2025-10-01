@@ -3,17 +3,17 @@ import useSWR from "swr"
 import type { Product } from "@/types/product"
 
 interface UseProductsProps {
-   page: number
-   pageSize: number
-   search?: string
-   /* ───────── new optional filters ───────── */
-   status?: "published" | "draft"
-   categoryId?: string
-   attributeId?: string
-   attributeTermId?: string
- orderBy?: "createdAt" | "updatedAt" | "title" | "sku"
- orderDir?: "asc" | "desc"
- }
+  page: number
+  pageSize: number
+  search?: string
+  /* ───────── new optional filters ───────── */
+  status?: "published" | "draft"
+  categoryId?: string
+  attributeId?: string
+  attributeTermId?: string
+  orderBy?: "createdAt" | "updatedAt" | "title" | "sku"
+  orderDir?: "asc" | "desc"
+}
 
 // Generic fetcher returns parsed JSON directly
 const fetcher = async (url: string) => {
@@ -26,27 +26,27 @@ const fetcher = async (url: string) => {
 
 // Hook for paginated product list
 export function useProducts({
-    page,
-    pageSize,
-    search,
-    status,
-    categoryId,
-    attributeId,
-    attributeTermId,
-    orderBy,
-    orderDir,
-  }: UseProductsProps) {
- const params = new URLSearchParams({
-     page:     page.toString(),
-     pageSize: pageSize.toString(),
-     ...(search      ? { search }      : {}),
-     ...(status      ? { status }      : {}),
-     ...(categoryId  ? { categoryId }  : {}),
-     ...(attributeId ? { attributeId } : {}),
-     ...(attributeTermId ? { attributeTermId } : {}),
-       ...(orderBy     ? { orderBy }     : {}),
-  ...(orderDir    ? { orderDir }    : {}),
-   })
+  page,
+  pageSize,
+  search,
+  status,
+  categoryId,
+  attributeId,
+  attributeTermId,
+  orderBy,
+  orderDir,
+}: UseProductsProps) {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    pageSize: pageSize.toString(),
+    ...(search ? { search } : {}),
+    ...(status ? { status } : {}),
+    ...(categoryId ? { categoryId } : {}),
+    ...(attributeId ? { attributeId } : {}),
+    ...(attributeTermId ? { attributeTermId } : {}),
+    ...(orderBy ? { orderBy } : {}),
+    ...(orderDir ? { orderDir } : {}),
+  })
 
   const { data, error, mutate } = useSWR<{
     products: Product[]
@@ -57,9 +57,11 @@ export function useProducts({
     { revalidateOnFocus: false }
   )
 
+  console.log(data)
+
   return {
-    products:   data?.products   || [],
-    isLoading:  !data && !error,
+    products: data?.productsFlat || [],
+    isLoading: !data && !error,
     totalPages: data?.pagination?.totalPages ?? 1,
     mutate,
   }
@@ -84,7 +86,7 @@ export function useProduct(productId: string) {
   )
 
   return {
-    product:   data ?? null,
+    product: data ?? null,
     isLoading: !data && !error,
     mutate,
   }

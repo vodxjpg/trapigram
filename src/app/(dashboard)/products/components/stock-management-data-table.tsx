@@ -120,7 +120,7 @@ export function StockManagementDataTable() {
         if (!mounted) return;
         setCategoryOptions(categories ?? []);
       })
-      .catch(() => {});
+      .catch(() => { });
 
     fetch("/api/product-attributes?page=1&pageSize=1000", {
       headers: {
@@ -132,7 +132,7 @@ export function StockManagementDataTable() {
         if (!mounted) return;
         setAttributeOptions(attributes ?? []);
       })
-      .catch(() => {});
+      .catch(() => { });
 
     return () => {
       mounted = false;
@@ -163,7 +163,7 @@ export function StockManagementDataTable() {
         const { terms } = await res.json();
         setTermOptions(terms ?? []);
         setAttributeTermFilter("");
-      } catch {}
+      } catch { }
     })();
     return () => controller.abort();
   }, [attributeFilter]);
@@ -553,12 +553,12 @@ function StockDrawer({
         Object.entries(countries).map(([country, quantity]) => ({
           warehouseId,
           productId: product.id,
-          variationId: null,
+          variationId: product.variationId,
           country,
           quantity,
         }))
     );
-
+    console.log(warehouseStock)
     try {
       await fetch(`/api/products/${product.id}`, {
         method: "PATCH",

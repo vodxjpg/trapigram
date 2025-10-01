@@ -177,18 +177,18 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
     defaultValues: initialData
       ? (initialData as any)
       : {
-          title: "",
-          description: "",
-          image: null,
-          sku: "",
-          status: "draft",
-          productType: "simple",
-          allowBackorders: false,
-          manageStock: false,
-          pointsPrice: blankPtsFor(countries, levels),
-          cost: blankCostFor(countries),
-          minLevelId: null,
-        },
+        title: "",
+        description: "",
+        image: null,
+        sku: "",
+        status: "draft",
+        productType: "simple",
+        allowBackorders: false,
+        manageStock: false,
+        pointsPrice: blankPtsFor(countries, levels),
+        cost: blankCostFor(countries),
+        minLevelId: null,
+      },
   });
 
   /* ensure blank points map for new product after countries load */
@@ -303,9 +303,8 @@ export function AffiliateProductForm({ productId, initialData }: Props) {
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
         <Tabs defaultValue="general" className="w-full">
           <TabsList
-            className={`grid w-full ${
-              form.watch("productType") === "variable" ? "grid-cols-4" : "grid-cols-5"
-            }`}
+            className={`grid w-full ${form.watch("productType") === "variable" ? "grid-cols-4" : "grid-cols-5"
+              }`}
           >
             <TabsTrigger value="general">General</TabsTrigger>
             {form.watch("productType") === "simple" && (

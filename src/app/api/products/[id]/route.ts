@@ -31,7 +31,7 @@ function mergePriceMaps(
 function parseMap<T extends Record<string, any> | null>(m: any): T {
   if (!m) return {} as any;
   if (typeof m === "string") {
-    try { return JSON.parse(m) as T; } catch {}
+    try { return JSON.parse(m) as T; } catch { }
   }
   return (m || {}) as T;
 }
@@ -391,20 +391,20 @@ export async function GET(
   }
 
   const variations = variationsRaw.map((v) => {
-    const vReg  = parseMap<Record<string, number> | null>(v.regularPrice);
-    const vSal  = parseMap<Record<string, number> | null>(v.salePrice);
+    const vReg = parseMap<Record<string, number> | null>(v.regularPrice);
+    const vSal = parseMap<Record<string, number> | null>(v.salePrice);
     const vCost = parseMap<Record<string, number> | null>(v.cost);
 
     const allowedForVar =
       isShared
         ? (allowedCountriesByVariation.get(v.id) ||
-           allowedCountriesForProduct ||
-           linkCountries ||
-           [])
+          allowedCountriesForProduct ||
+          linkCountries ||
+          [])
         : null;
 
-    const fReg  = isShared ? pickKeys(vReg,  allowedForVar as string[]) : vReg;
-    const fSale = isShared ? pickKeys(vSal,  allowedForVar as string[]) : vSal;
+    const fReg = isShared ? pickKeys(vReg, allowedForVar as string[]) : vReg;
+    const fSale = isShared ? pickKeys(vSal, allowedForVar as string[]) : vSal;
     const fCost = isShared ? pickKeys(vCost, allowedForVar as string[]) : vCost;
     return {
       id: v.id,
@@ -423,23 +423,23 @@ export async function GET(
     };
   });
 
- 
-    /* ---------- top-level price/cost parsing + filtering ---- */
+
+  /* ---------- top-level price/cost parsing + filtering ---- */
   const prodRegular = parseMap<Record<string, number> | null>(raw.regularPrice);
-  const prodSale    = parseMap<Record<string, number> | null>(raw.salePrice);
-  const prodCost    = parseMap<Record<string, number> | null>(raw.cost);
+  const prodSale = parseMap<Record<string, number> | null>(raw.salePrice);
+  const prodCost = parseMap<Record<string, number> | null>(raw.cost);
 
   const fProdReg = isShared ? pickKeys(prodRegular, allowedCountriesForProduct) : prodRegular;
-  const fProdSal = isShared ? pickKeys(prodSale,    allowedCountriesForProduct) : prodSale;
-  const fProdCost= isShared ? pickKeys(prodCost,    allowedCountriesForProduct) : prodCost;
+  const fProdSal = isShared ? pickKeys(prodSale, allowedCountriesForProduct) : prodSale;
+  const fProdCost = isShared ? pickKeys(prodCost, allowedCountriesForProduct) : prodCost;
 
   /* ---------- final product payload ------------------------------ */
   const product = {
     ...raw,
     // keep DB-shaped fields filtered too
     regularPrice: fProdReg,
-    salePrice:    fProdSal,
-    cost:         fProdCost || {},
+    salePrice: fProdSal,
+    cost: fProdCost || {},
     // editor-friendly merged map
     prices: mergePriceMaps(fProdReg, fProdSal),
     stockData,
@@ -600,7 +600,7 @@ export async function PATCH(
 
         for (const v of variations) {
           if (!existingIds.has(v.id)) continue;
-                    let vPrices = v.prices;
+          let vPrices = v.prices;
           const allowedForVar =
             patchAllowedByVariation.get(v.id) ||
             patchAllowedForProduct ||
@@ -821,8 +821,11 @@ export async function PATCH(
     if (parsedUpdate.warehouseStock) {
       const nextProductIds = new Set<string>();
       // Delete existing stock entries for this product (User A's warehouses)
-      await db.deleteFrom("warehouseStock").where("productId", "=", id).execute();
-
+      if (parsedUpdate.warehouseStock[0].variationId) {
+        await db.deleteFrom("warehouseStock").where("productId", "=", id).where("variationId", "=", parsedUpdate.warehouseStock[0].variationId).execute();
+      } else {
+        await db.deleteFrom("warehouseStock").where("productId", "=", id).execute();
+      }
       // Insert new stock entries for User A
       for (const entry of parsedUpdate.warehouseStock) {
         await db
