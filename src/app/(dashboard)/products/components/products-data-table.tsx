@@ -408,10 +408,21 @@ export function ProductsDataTable({
       },
       {
         accessorKey: "title",
-        header: "Product Title",
-        cell: ({ row }) => (
-          <div className="font-medium">{row.original.title}</div>
+        // Make the title column sortable like "Created At"
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            className="px-0 hover:bg-transparent"
+            onClick={() =>
+              column.toggleSorting(column.getIsSorted() === "asc")
+            }
+          >
+            Product&nbsp;Title
+            <ArrowUpDown className="ml-1 h-3 w-3" />
+          </Button>
         ),
+        sortingFn: "alphanumeric",
+        cell: ({ row }) => <div className="font-medium">{row.original.title}</div>,
       },
       {
         accessorKey: "sku",
@@ -657,7 +668,7 @@ export function ProductsDataTable({
   useEffect(() => {
     if (!sorting.length) return;
     const { id, desc } = sorting[0];
-    // allow only columns we’ve whitelisted
+    // allow only columns we’ve whitelisted (includes "title" for alphabetical sort)
     const isOrderField = (col: string): col is OrderField =>
       ["createdAt", "updatedAt", "title", "sku"].includes(col);
     if (!isOrderField(id)) return;
