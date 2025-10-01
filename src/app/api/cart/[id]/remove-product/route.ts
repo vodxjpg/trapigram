@@ -15,18 +15,30 @@ const cartProductSchema = z.object({
   variationId: z.string().nullable().optional(),
 });
 
+/**
+ * DOs:
+ *  - country match is case-insensitive
+ *  - compare productId directly; only compare variationId when present
+ *    (previously it compared p.variationId === productId by mistake)
+ */
+
 function pickTierForClient(
   tiers: Tier[],
   country: string,
   productId: string,
+  variationId: string | null,
   clientId?: string | null,
 ): Tier | null {
-  const candidates = tiers.filter(
-    (t) =>
-      t.active === true &&
-      t.countries.includes(country) &&
-      t.products.some((p) => p.productId === productId || p.variationId === productId),
-  );
+  const CC = (country || "").toUpperCase();
+  const inTier = (t: Tier) =>
+    t.active === true &&
+    t.countries.some((c) => (c || "").toUpperCase() === CC) &&
+    t.products.some(
+      (p) =>
+        (p.productId && p.productId === productId) ||
+        (!!variationId && p.variationId === variationId),
+    );
+  const candidates = tiers.filter(inTier);
   if (!candidates.length) return null;
 
   const targets = (t: Tier): string[] =>
@@ -121,18 +133,20 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
     /* Tier-pricing re-evaluation (normal products only) */
     if (!deleted.affiliateProductId && country && levelId) {
       const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
-      const tier = pickTierForClient(tiers, country, deleted.productId, clientId);
+      const tier = pickTierForClient(tiers, country, deleted.productId, normVariationId, clientId);
 
       if (tier) {
-        const tierIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
+        const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
+        const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
 
         // Combined qty of all tier products left in the cart
         const { rows: qRows } = await pool.query(
           `SELECT COALESCE(SUM(quantity),0)::int AS qty
              FROM "cartProducts"
             WHERE "cartId" = $1
-              AND "productId" = ANY($2::text[])`,
-          [cartId, tierIds],
+              AND ( ("productId" = ANY($2::text[]))
+                    OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
+          [cartId, tierProdIds, tierVarIds],
         );
         const qtyAfter = Number(qRows[0]?.qty ?? 0);
 
@@ -144,8 +158,9 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
             `SELECT id,"productId","variationId"
                FROM "cartProducts"
               WHERE "cartId" = $1
-                AND "productId" = ANY($2::text[])`,
-            [cartId, tierIds],
+                            AND ( ("productId" = ANY($2::text[]))
+                      OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
+            [cartId, tierProdIds, tierVarIds],
           );
 
           for (const line of lines) {
@@ -166,10 +181,13 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
           // Still inside a tier → apply same price for all tier products in the cart
           await pool.query(
             `UPDATE "cartProducts"
-                SET "unitPrice" = $1, "updatedAt" = NOW()
-              WHERE "cartId" = $2
-                AND "productId" = ANY($3::text[])`,
-            [newUnit, cartId, tierIds],
+                  SET "unitPrice" = $1, "updatedAt" = NOW()
+                WHERE "cartId" = $2
+                  AND (
+                    ("productId" = ANY($3::text[]))
+                    OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[]))
+                  )`,
+            [newUnit, cartId, tierProdIds, tierVarIds],
           );
         }
       }

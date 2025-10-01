@@ -23,6 +23,13 @@ const cartProductSchema = z.object({
   // unitPrice comes from server-side logic -> remove from schema
 });
 
+/**
+ * Case-insensitive country match + precise membership:
+ * - Match productId directly
+ * - Only match variationId when the current line actually has one
+ *   (avoid treating `null === null` as a match).
+ */
+
 function findTier(
   tiers: Tier[],
   country: string,
@@ -30,12 +37,16 @@ function findTier(
   variationId: string | null,
   clientId?: string | null,
 ): Tier | null {
-  const candidates = tiers.filter(
-    (t) =>
-      t.active === true &&
-      t.countries.includes(country) &&
-      t.products.some((p) => p.productId === productId || p.variationId === variationId),
-  );
+  const CC = (country || "").toUpperCase();
+  const inTier = (t: Tier) =>
+    t.active === true &&
+    t.countries.some((c) => (c || "").toUpperCase() === CC) &&
+    t.products.some(
+      (p) =>
+        (p.productId && p.productId === productId) ||
+        (!!variationId && p.variationId === variationId),
+    );
+  const candidates = tiers.filter(inTier);
   if (!candidates.length) return null;
 
   const targets = (t: Tier): string[] =>
