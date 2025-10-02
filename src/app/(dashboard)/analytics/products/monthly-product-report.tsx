@@ -46,7 +46,13 @@ import {
 import { CalendarIcon } from "lucide-react";
 
 interface ProductStats {
-  id: string;
+  kind: "product" | "variation" | "affiliate";
+  productId?: string | null;
+  variationId?: string | null;
+  affiliateProductId?: string | null;
+
+  // existing fields...
+  id?: string;            // optional, no longer used for linking
   month: string;
   product: string;
   sku: string;
@@ -70,6 +76,25 @@ type DatePreset =
 const fmtYearMonth = (iso: string | null): string =>
   iso ? new Date(iso).toISOString().slice(0, 7) : "—";
 
+const productReportUrl = (r: ProductStats) => {
+  // Default kind if missing (derive from which ID is present)
+  const kind =
+    r.kind ??
+    (r.variationId ? "variation" : r.affiliateProductId ? "affiliate" : "product");
+
+  const qs = new URLSearchParams({ kind });
+
+  if (kind === "affiliate" && r.affiliateProductId) {
+    qs.set("affiliateProductId", r.affiliateProductId);
+  } else if (kind === "variation") {
+    if (r.productId) qs.set("productId", r.productId);
+    if (r.variationId) qs.set("variationId", r.variationId);
+  } else if (kind === "product" && r.productId) {
+    qs.set("productId", r.productId);
+  }
+
+  return `/analytics/products/daily?${qs.toString()}`;
+};
 export default function MonthlyProductReport() {
   const router = useRouter();
 
@@ -86,8 +111,8 @@ export default function MonthlyProductReport() {
   }, [viewLoading, canView, router]);
 
   // ❗Never return before hooks – compute flags and gate UI later
-const permsLoading = viewLoading;
-const canShow = !permsLoading && canView;
+  const permsLoading = viewLoading;
+  const canShow = !permsLoading && canView;
 
   const [data, setData] = useState<ProductStats[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,11 +175,33 @@ const canShow = !permsLoading && canView;
         setError(null);
         const fromDate = format(dateRange.from, "yyyy-MM-dd");
         const toDate = format(dateRange.to, "yyyy-MM-dd");
-
-        const res = await fetch(`/api/report/product/?from=${fromDate}&to=${toDate}`);
+        // NOTE: new endpoint path & shape
+        const res = await fetch(`/api/report/product?from=${fromDate}&to=${toDate}`);
         if (!res.ok) throw new Error("Failed to load product stats");
         const json = await res.json();
-        if (!cancelled) setData(json.values.stats);
+        // server returns { stats: [...] }
+        const raw: any[] = json?.stats ?? json?.values?.stats ?? [];
+        const monthIso = new Date(dateRange.from).toISOString(); // label month with the filter start
+
+        const mapped: ProductStats[] = raw.map((r: any) => ({
+          // keep kind & identifiers so productReportUrl has what it needs
+          kind:
+            r.kind ??
+            (r.variationId ? "variation" : r.affiliateProductId ? "affiliate" : "product"),
+          productId: r.productId ?? null,
+          variationId: r.variationId ?? null,
+          affiliateProductId: r.affiliateProductId ?? null,
+
+          // existing view fields
+          id: r.variationId ?? r.productId ?? r.affiliateProductId ?? "unknown",
+          month: monthIso,
+          product: r.title ?? r.product ?? "—",
+          sku: r.sku ?? "—",
+          quantity: Number(r.quantity ?? r.qty ?? 0) || 0,
+        }));
+
+        if (!cancelled) setData(mapped);
+
       } catch (err: any) {
         if (!cancelled) setError(err.message);
       } finally {
@@ -163,7 +210,7 @@ const canShow = !permsLoading && canView;
     })();
 
     return () => { cancelled = true; };
-}, [dateRange, canShow]);
+  }, [dateRange, canShow]);
 
   // Sort by quantity (highest first)
   const sortedData = [...data].sort((a, b) => b.quantity - a.quantity);
@@ -247,9 +294,9 @@ const canShow = !permsLoading && canView;
                 {sortedData.length > 0 ? (
                   sortedData.map((row, index) => (
                     <TableRow
-                      key={`${row.month}-${row.product}-${index}`}
+                      key={`${row.kind}-${row.productId ?? row.variationId ?? row.affiliateProductId ?? "na"}-${index}`}
                       className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => router.push(`/analytics/products/${row.id}`)}
+                      onClick={() => router.push(productReportUrl(row))}
                     >
                       <TableCell>{fmtYearMonth(row.month)}</TableCell>
                       <TableCell>{row.product}</TableCell>
@@ -297,7 +344,7 @@ const canShow = !permsLoading && canView;
                       fill="var(--color-quantity)"
                       radius={[4, 4, 0, 0]}
                       label={{ position: "top", fill: "var(--foreground)", fontSize: 12 }}
-                      onClick={(bar) => router.push(`/analytics/products/${(bar as any).id}`)}
+                      onClick={(_, index) => router.push(productReportUrl(sortedData[index]))}
                       cursor="pointer"
                     />
                   </BarChart>

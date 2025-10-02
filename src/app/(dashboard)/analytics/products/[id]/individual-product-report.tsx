@@ -1,8 +1,8 @@
 // src/app/(dashboard)/analytics/products/[id]/individual-product-report.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useState, useEffect, useMemo } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
@@ -26,29 +26,86 @@ interface DailyData { date: string; quantity: number; title: string; sku: string
 interface MonthlyData { month: string; quantity: number; title: string; sku: string; }
 interface DateRange { from: Date; to: Date; }
 type DatePreset = "currentMonth" | "lastMonth" | "custom";
+type ItemKind = "product" | "variation" | "affiliate";
 
 export default function IndividualProductReport() {
   const router = useRouter();
-  const params = useParams();
-  const productId = params.id;
+  const params = useParams<{ id: string }>();
+  const search = useSearchParams();
+
   const onBack = () => router.back();
 
-  // --- Permissions: productsReport.view
+  // --- Permissions
   const { data: activeOrg } = authClient.useActiveOrganization();
   const orgId = activeOrg?.id ?? null;
   const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
     orgId,
     { productsReport: ["view"] }
   );
-
   useEffect(() => {
     if (!viewLoading && !canView) router.replace("/analytics/products");
   }, [viewLoading, canView, router]);
+  const permsLoading = viewLoading;
+  const canShow = !permsLoading && canView;
 
-  // ❗Don’t return before hooks; compute flags now and gate UI later
-const permsLoading = viewLoading;
-const canShow = !permsLoading && canView;
+  // ── Target resolution: read query params with fallback to legacy [id]
+  const target = useMemo(() => {
+    const kindParam = (search.get("kind") as ItemKind | null) ?? null;
+    const qpProductId = search.get("productId");
+    const qpVariationId = search.get("variationId");
+    const qpAffiliateId = search.get("affiliateProductId");
 
+    // If explicit kind in query → trust it
+    if (kindParam === "affiliate" && qpAffiliateId) {
+      return { kind: "affiliate" as ItemKind, affiliateProductId: qpAffiliateId };
+    }
+    if (kindParam === "variation" && qpProductId && qpVariationId) {
+      return { kind: "variation" as ItemKind, productId: qpProductId, variationId: qpVariationId };
+    }
+    if (kindParam === "product" && qpProductId) {
+      return { kind: "product" as ItemKind, productId: qpProductId };
+    }
+
+    // Legacy fallback: treat /[id] as a simple product id
+    const legacyId = params.id;
+    return { kind: "product" as ItemKind, productId: String(legacyId) };
+  }, [params.id, search]);
+
+  // Helpers to build API URLs (new query-style endpoints),
+  // with graceful fallback to legacy path endpoints if needed.
+  const buildDailyUrl = (fromISO: string, toISO: string) => {
+    const qs = new URLSearchParams({ kind: target.kind, from: fromISO, to: toISO });
+    if (target.kind === "affiliate" && target.affiliateProductId) {
+      qs.set("affiliateProductId", target.affiliateProductId);
+    } else if (target.kind === "variation" && target.productId && target.variationId) {
+      qs.set("productId", target.productId);
+      qs.set("variationId", target.variationId);
+    } else if (target.kind === "product" && target.productId) {
+      qs.set("productId", target.productId);
+    }
+    return `/api/report/product/daily?${qs.toString()}`;
+  };
+
+  const buildMonthlyUrl = (year: number) => {
+    const qs = new URLSearchParams({ kind: target.kind, year: String(year) });
+    if (target.kind === "affiliate" && target.affiliateProductId) {
+      qs.set("affiliateProductId", target.affiliateProductId);
+    } else if (target.kind === "variation" && target.productId && target.variationId) {
+      qs.set("productId", target.productId);
+      qs.set("variationId", target.variationId);
+    } else if (target.kind === "product" && target.productId) {
+      qs.set("productId", target.productId);
+    }
+    return `/api/report/product/monthly?${qs.toString()}`;
+  };
+
+  // Legacy endpoints (used if your backend hasn’t been updated yet)
+  const legacyDailyUrl = (fromISO: string, toISO: string) =>
+    `/api/report/product/${target.productId}/daily/?from=${fromISO}&to=${toISO}`;
+  const legacyMonthlyUrl = (year: number) =>
+    `/api/report/product/${target.productId}/monthly/?year=${year}`;
+
+  // ── UI state
   const [dailyData, setDailyData] = useState<DailyData[]>([]);
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,8 +122,9 @@ const canShow = !permsLoading && canView;
   const [sku, setSku] = useState("");
 
   const [yearFilter, setYearFilter] = useState<number>(new Date().getFullYear());
-  const yearFilterOptions = [2025, 2026, 2027];
+  const yearFilterOptions = [new Date().getFullYear(), new Date().getFullYear() - 1, new Date().getFullYear() - 2];
 
+  // Date preset → range
   const getDateRangeFromPreset = (preset: DatePreset): DateRange => {
     const today = new Date();
     switch (preset) {
@@ -106,55 +164,78 @@ const canShow = !permsLoading && canView;
     return "";
   };
 
-  // Daily report (guarded)
+  // ── Fetch Daily (prefers new query-style endpoint; falls back to legacy if needed)
   useEffect(() => {
-   if (!canShow) return;
+    if (!canShow) return;
     let cancelled = false;
+
     (async () => {
       setLoading(true);
+      setError(null);
       try {
         const fromDate = format(dateRange.from, "yyyy-MM-dd");
         const toDate = format(dateRange.to, "yyyy-MM-dd");
-        const res = await fetch(`/api/report/product/${productId}/daily/?from=${fromDate}&to=${toDate}`);
+
+        let url = buildDailyUrl(fromDate, toDate);
+        let res = await fetch(url);
+
+        // If server doesn’t support the new endpoint yet, fallback to legacy (simple product only)
+        if (!res.ok && target.kind === "product" && target.productId) {
+          res = await fetch(legacyDailyUrl(fromDate, toDate));
+        }
         if (!res.ok) throw new Error("Failed to load daily report");
+
         const json = await res.json();
         if (!cancelled) {
-          setDailyData(json.daily);
-          setTitle(json.title);
-          setSku(json.sku);
+          // Expect shape: { daily: DailyData[], title: string, sku: string }
+          setDailyData(json.daily ?? []);
+          setTitle(json.title ?? "");
+          setSku(json.sku ?? "");
         }
       } catch (e: any) {
-        if (!cancelled) setError(e.message);
+        if (!cancelled) setError(e.message ?? "Failed to load daily report");
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
- }, [productId, dateRange, canShow]);
 
-  // Monthly report (guarded)
+    return () => { cancelled = true; };
+  }, [target, dateRange, canShow]);
+
+  // ── Fetch Monthly (same fallback approach)
   useEffect(() => {
-   if (!canShow) return;
+    if (!canShow) return;
     let cancelled = false;
+
     (async () => {
       setLoading(true);
+      setError(null);
       try {
-        const res = await fetch(`/api/report/product/${productId}/monthly/?year=${yearFilter}`);
+        let url = buildMonthlyUrl(yearFilter);
+        let res = await fetch(url);
+
+        // ⬇️ instead of throwing, allow empty data
+        if (!res.ok) {
+          setMonthlyData([]);           // <-- show “No monthly data …”
+          return;
+        }
         if (!res.ok) throw new Error("Failed to load monthly report");
+
         const json = await res.json();
-        if (!cancelled) setMonthlyData(json.monthly);
+        if (!cancelled) setMonthlyData(json.monthly ?? []);
       } catch (e: any) {
-        if (!cancelled) setError(e.message);
+        if (!cancelled) setError(e.message ?? "Failed to load monthly report");
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
-}, [productId, yearFilter, canShow]);
 
- // 🔒 Render gates AFTER all hooks have been called
-if (permsLoading) return <div>Loading permissions…</div>;
-if (!canShow) return null; // redirect effect handles it
+    return () => { cancelled = true; };
+  }, [target, yearFilter, canShow]);
+
+  // 🔒 Render gates AFTER all hooks have been called
+  if (permsLoading) return <div>Loading permissions…</div>;
+  if (!canShow) return null;
   if (loading) return <div>Loading product report…</div>;
   if (error) return <div className="text-red-600">Error: {error}</div>;
   if (!dailyData) return <div>No data available</div>;
@@ -162,15 +243,18 @@ if (!canShow) return null; // redirect effect handles it
   return (
     <div className="container mx-auto py-8 px-4">
       <div className="flex items-center gap-4 mb-6">
-        {onBack && (
-          <Button variant="outline" size="sm" onClick={onBack}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
-        )}
+        <Button variant="outline" size="sm" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back
+        </Button>
         <div>
           <h1 className="text-3xl font-bold">{title}</h1>
           <p className="text-muted-foreground">SKU: {sku}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {target.kind === "variation" && `Variation report`}
+            {target.kind === "affiliate" && `Affiliate product report`}
+            {target.kind === "product" && `Simple product report`}
+          </p>
         </div>
       </div>
 
@@ -206,7 +290,7 @@ if (!canShow) return null; // redirect effect handles it
                         <Select value={selectedMonth.toString()} onValueChange={(v) => setSelectedMonth(Number.parseInt(v))}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {["January","February","March","April","May","June","July","August","September","October","November","December"].map(
+                            {["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].map(
                               (m, i) => <SelectItem key={i} value={i.toString()}>{m}</SelectItem>
                             )}
                           </SelectContent>
@@ -217,7 +301,7 @@ if (!canShow) return null; // redirect effect handles it
                         <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(Number.parseInt(v))}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {[new Date().getFullYear(), new Date().getFullYear()-1, new Date().getFullYear()-2].map(
+                            {yearFilterOptions.map(
                               (y) => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
                             )}
                           </SelectContent>
