@@ -60,7 +60,7 @@ export function useProducts({
   console.log(data)
 
   return {
-    products: data?.productsFlat || [],
+    products: data?.products || [],
     isLoading: !data && !error,
     totalPages: data?.pagination?.totalPages ?? 1,
     mutate,
