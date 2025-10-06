@@ -20,7 +20,7 @@ export async function GET(
       return NextResponse.json({ error: "Cart not found" }, { status: 404 });
     const cart = cartRes.rows[0];
 
-    // (Your previous coupon clear)
+    // Clear coupon (keeping your behavior)
     await pool.query(`UPDATE carts SET "couponCode" = NULL WHERE id = $1`, [id]);
 
     const clientRes = await pool.query(
@@ -29,11 +29,11 @@ export async function GET(
     );
     const client = clientRes.rows[0];
 
-    /* 2) Re-price if the client’s country changed (unchanged, but shortened) */
+    /* 2) Re-price if client’s country changed */
+    let removedItems: { productId: string; reason: string }[] = [];
     if (cart.country !== client.country) {
       const tx = await pool.connect();
       try {
-        const removedItems: { productId: string; reason: string }[] = [];
         await tx.query("BEGIN");
         await tx.query(`UPDATE carts SET country=$1 WHERE id=$2`, [client.country, id]);
 
@@ -44,19 +44,25 @@ export async function GET(
           quantity: number;
         }>(
           `SELECT id,"productId","variationId",quantity
-             FROM "cartProducts" WHERE "cartId"=$1`,
+             FROM "cartProducts"
+             WHERE "cartId"=$1`,
           [id],
         );
 
         for (const line of lines) {
           try {
-            const vId = (typeof line.variationId === "string" && line.variationId.trim()) ? line.variationId : null;
+            const vId =
+              typeof line.variationId === "string" && line.variationId.trim()
+                ? line.variationId
+                : null;
+
             const { price } = await resolveUnitPrice(
               line.productId,
               vId,
               client.country,
               client.levelId,
             );
+
             await tx.query(
               `UPDATE "cartProducts"
                  SET "unitPrice" = $1, "updatedAt" = NOW()
@@ -74,15 +80,6 @@ export async function GET(
         }
 
         await tx.query("COMMIT");
-        // stash removedItems in a temp table row so we can fetch later (no hacks on pool)
-        await pool.query(
-          `INSERT INTO "cartTmpRemoved"
-             ("cartId","payload","createdAt")
-           VALUES ($1, $2, NOW())
-           ON CONFLICT ("cartId")
-           DO UPDATE SET "payload" = EXCLUDED."payload", "createdAt" = NOW()`,
-          [id, JSON.stringify(removedItems)]
-        );
       } catch (e) {
         await tx.query("ROLLBACK");
         throw e;
@@ -92,15 +89,12 @@ export async function GET(
     }
 
     /* 3) Fetch lines (NORMAL + AFFILIATE), include variation join */
-    const baseSelect = `
+    const prodQ = `
       SELECT
-        p.id,
-        p.title,
-        p.description,
+        p.id, p.title, p.description,
         COALESCE(v.image, p.image) AS image,
         COALESCE(v.sku,   p.sku)   AS sku,
-        cp.quantity,
-        cp."unitPrice",
+        cp.quantity, cp."unitPrice",
         cp."variationId",
         cp."createdAt",
         v.attributes AS "variantAttributes",
@@ -110,16 +104,10 @@ export async function GET(
       LEFT JOIN "productVariations" v ON v.id = cp."variationId"
       WHERE cp."cartId" = $1
     `;
-
-    const affSelect = `
+    const affQ = `
       SELECT
-        ap.id,
-        ap.title,
-        ap.description,
-        ap.image,
-        ap.sku,
-        cp.quantity,
-        cp."unitPrice",
+        ap.id, ap.title, ap.description, ap.image, ap.sku,
+        cp.quantity, cp."unitPrice",
         cp."variationId",
         cp."createdAt",
         NULL::jsonb AS "variantAttributes",
@@ -130,14 +118,12 @@ export async function GET(
     `;
 
     const [prod, aff] = await Promise.all([
-      pool.query(baseSelect, [id]),
-      pool.query(affSelect, [id]),
+      pool.query(prodQ, [id]),
+      pool.query(affQ, [id]),
     ]);
-
     const rows = [...prod.rows, ...aff.rows];
 
-    /* 3b) Build variant label maps (attribute/term → names) */
-    // Collect ids from variation attributes
+    /* 3b) Build variant label maps */
     const attrIds = new Set<string>();
     const termIds = new Set<string>();
     for (const r of rows) {
@@ -201,33 +187,22 @@ export async function GET(
           titleWithVariant,
         };
       })
-      .sort((a: any, b: any) => new Date(a.createdat).getTime() - new Date(b.createdat).getTime());
+      .sort(
+        (a: any, b: any) =>
+          new Date(a.createdat).getTime() - new Date(b.createdat).getTime()
+      );
 
-    /* 3d) pull removedItems left by the re-price transaction */
-    let removedItems: { productId: string; reason: string }[] = [];
-    const tmp = await pool.query(
-      `SELECT "payload" FROM "cartTmpRemoved" WHERE "cartId" = $1`,
-      [id]
-    );
-    if (tmp.rowCount) {
-      try { removedItems = JSON.parse(tmp.rows[0].payload || "[]"); } catch {}
-      // clean up so we don’t keep re-sending
-      await pool.query(`DELETE FROM "cartTmpRemoved" WHERE "cartId" = $1`, [id]);
-    }
-
-    /* 4) Respond (legacy + new keys) */
+    /* 4) Return (legacy + new keys) */
     return NextResponse.json(
       {
-        // legacy
-        resultCartProducts: lines,
-        // new
-        lines,
-        removedItems,
+        resultCartProducts: lines, // legacy key
+        lines,                     // new key
+        removedItems,              // in-memory from this request
       },
       { status: 200 },
     );
   } catch (error: any) {
-    console.error("[GET /api/cart/:id]", error);
+    console.error("[GET /api/cart/:id] error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
