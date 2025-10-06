@@ -15,7 +15,7 @@ import { processAutomationRules } from "@/lib/rules";
 // Vercel runtime hints (keep these AFTER all imports)
 export const runtime = "nodejs";
 export const preferredRegion = ["iad1"];
-
+const FEE_GRACE_DAYS = Number(process.env.FEE_CANCELLATION_GRACE_DAYS ?? "3");
 // Small helper: fetch with timeout and JSON parsing
 
 function round1(n: number) {
@@ -1640,6 +1640,27 @@ export async function PATCH(
           err
         );
       }
+      // NEW: If a fee exists for this order and it's NOT yet invoiced, and we are within grace, void it.
+      try {
+        await pool.query(
+          `
+          WITH fee AS (
+            SELECT of.id
+              FROM "orderFees" of
+         LEFT JOIN "invoiceItems" ii ON ii."orderFeeId" = of.id
+             WHERE of."orderId" = $1
+               AND ii."orderFeeId" IS NULL
+               AND NOW() <= of."capturedAt" + ($2 || ' days')::interval
+             LIMIT 1
+          )
+          DELETE FROM "orderFees" of
+           WHERE of.id IN (SELECT id FROM fee)
+          `,
+          [id, FEE_GRACE_DAYS]
+        );
+      } catch (e) {
+        console.warn("[fees] could not void fee on cancel (maybe already invoiced or outside grace)", e);
+      }
     }
 
     if (newStatus === "refunded") {
@@ -1651,6 +1672,27 @@ export async function PATCH(
           `Failed to update revenue for order ${id}:`,
           err
         );
+      }
+            // Same voiding logic on refund
+      try {
+        await pool.query(
+          `
+          WITH fee AS (
+            SELECT of.id
+              FROM "orderFees" of
+         LEFT JOIN "invoiceItems" ii ON ii."orderFeeId" = of.id
+             WHERE of."orderId" = $1
+               AND ii."orderFeeId" IS NULL
+               AND NOW() <= of."capturedAt" + ($2 || ' days')::interval
+             LIMIT 1
+          )
+          DELETE FROM "orderFees" of
+           WHERE of.id IN (SELECT id FROM fee)
+          `,
+          [id, FEE_GRACE_DAYS]
+        );
+      } catch (e) {
+        console.warn("[fees] could not void fee on refund (maybe already invoiced or outside grace)", e);
       }
     }
 

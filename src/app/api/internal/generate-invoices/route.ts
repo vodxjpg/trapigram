@@ -1,38 +1,39 @@
 // src/app/api/internal/generate-invoices/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "kysely";
-import { Selectable } from "kysely";
 import { db } from "@/lib/db";
 import { requireInternalAuth } from "@/lib/internalAuth";
 import crypto from "crypto";
 
 /**
- * Why this file changed:
- * - Added GET handler and relaxed-auth path for trusted scheduler calls (Vercel Cron).
- * - Kept original POST behavior and all business logic intact.
+ * Endpoint purpose:
+ * - Generates monthly invoices per user (org owners) on their signup day-of-month.
+ * - Only includes fees from orders that are PAID-LIKE, or were canceled/refunded AFTER a grace window.
+ * - Skips minting zero-amount invoices (but still creates them if there was activity).
  *
- * Trusted cron detection:
- * - If request has header `x-vercel-cron: 1`, we allow execution without INTERNAL_API_SECRET.
- * - Otherwise we require `x-internal-secret: <INTERNAL_API_SECRET>` (existing behavior).
+ * Auth:
+ * - GET/POST both supported.
+ * - Vercel Cron is allowed via `x-vercel-cron: 1`.
+ * - Otherwise requires `x-internal-secret: <INTERNAL_API_SECRET>`.
  *
- * Notes:
- * - GET is idempotent: it only inserts missing invoices for the computed window.
- * - You can still force a specific computation date with ?date=YYYY-MM-DD on either method.
+ * Testing:
+ * - You can force the "today" used for windows with `?date=YYYY-MM-DD`.
  */
 
 const MINT_ENDPOINT = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/niftipay-invoice`;
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET!;
+const GRACE_DAYS = Number(process.env.FEE_CANCELLATION_GRACE_DAYS ?? "3");
 
 /** Shared runner (invoked by both GET and POST) */
 async function runGenerateInvoices(req: NextRequest) {
-  // ── 1) Auth
+  // 1) Auth
   const isCron = req.headers.get("x-vercel-cron") === "1";
   if (!isCron) {
     const authErr = requireInternalAuth(req);
     if (authErr) return authErr;
   }
 
-  // ── 2) Pick “today” and its day-of-month (accept ?date=YYYY-MM-DD)
+  // 2) Choose "today" (supports ?date=YYYY-MM-DD for testing)
   const url = new URL(req.url);
   const today = url.searchParams.get("date")
     ? new Date(url.searchParams.get("date")!)
@@ -40,17 +41,15 @@ async function runGenerateInvoices(req: NextRequest) {
   const genDay = today.getUTCDate();
 
   console.log(
-    `[generate-invoices] invoked for date=${today
-      .toISOString()
-      .slice(0, 10)} (day=${genDay}) isCron=${isCron}`
+    `[generate-invoices] invoked for date=${today.toISOString().slice(0, 10)} (day=${genDay}) isCron=${isCron}, graceDays=${GRACE_DAYS}`
   );
 
-  // ── 2a) Compute dueDate = today + 7 days
+  // 2a) Compute dueDate = today + 7 days
   const dueDateObj = new Date(today);
   dueDateObj.setUTCDate(dueDateObj.getUTCDate() + 7);
   const due = dueDateObj.toISOString().slice(0, 10);
 
-  // ── 3) Fetch all org-owners
+  // 3) Fetch all org-owners
   const owners = await db
     .selectFrom("member as m")
     .innerJoin("user as u", "u.id", "m.userId")
@@ -60,14 +59,15 @@ async function runGenerateInvoices(req: NextRequest) {
 
   console.log(`[generate-invoices] total owners fetched: ${owners.length}`);
 
-  // ── 4) Only those whose signup-day matches today’s (and who signed up before today)
+  // 4) Only those whose signup day matches today’s and who signed up before today
   const eligible = owners.filter(({ createdAt }) => {
     const d = new Date(createdAt);
     return d.getUTCDate() === genDay && d < today;
   });
   console.log(
-    `[generate-invoices] eligible owners (signup DOM === ${genDay}): ` +
-      (eligible.length ? eligible.map((o) => o.userId).join(", ") : "<none>")
+    `[generate-invoices] eligible owners (signup DOM === ${genDay}): ${
+      eligible.length ? eligible.map((o) => o.userId).join(", ") : "<none>"
+    }`
   );
 
   const created: Array<{
@@ -80,9 +80,9 @@ async function runGenerateInvoices(req: NextRequest) {
     createdAt: string;
   }> = [];
 
-  // ── 5) Loop & invoice
+  // 5) Loop & invoice per owner
   for (const { userId } of eligible) {
-    // compute last-month window relative to genDay
+    // Compute the last-month window relative to genDay
     const y = today.getUTCFullYear();
     const m = today.getUTCMonth();
     const start = new Date(Date.UTC(y, m - 1, genDay, 0, 0, 0));
@@ -92,7 +92,7 @@ async function runGenerateInvoices(req: NextRequest) {
 
     console.log(`— user ${userId}: window ${ps} → ${pe}, due ${due}`);
 
-    // skip if already invoiced
+    // Skip if already invoiced
     const exists = await db
       .selectFrom("userInvoices")
       .select("id")
@@ -105,37 +105,64 @@ async function runGenerateInvoices(req: NextRequest) {
       continue;
     }
 
-    // sum up fees for the period
-    const sumRow = await db
-      .selectFrom("orderFees")
-      .select(sql<number>`coalesce(sum("feeAmount"), 0)`.as("total"))
-      .where("userId", "=", userId)
-      .where("capturedAt", ">=", start)
-      .where("capturedAt", "<=", end)
-      .executeTakeFirst();
-    const total = Number(sumRow?.total ?? 0);
-    console.log(`  → total fees for period: ${total}`);
+    /**
+     * Predicate:
+     * Include fees captured within the window where:
+     *  - Order status is paid-like (paid/pending_payment/completed)
+     *    OR
+     *  - Order is cancelled/refunded BUT cancellation/refund happened AFTER
+     *    the grace window from fee capture time (i.e., too late to dodge fees)
+     */
+    const whereQualifyingFees = (eb: any) => {
+      const grace = sql`(f."capturedAt" + make_interval(days => ${GRACE_DAYS}))`;
+      return eb.or([
+        eb("o.status", "in", ["paid", "pending_payment", "completed"]),
+        eb.and([
+          eb("o.status", "in", ["cancelled", "refunded"]),
+          eb.or([
+            sql<boolean>`o."dateCancelled" IS NULL`,
+            sql<boolean>`o."dateCancelled" > ${grace}`,
+          ]),
+        ]),
+      ]);
+    };
 
-    // For zero-fee users, still create a $0 invoice if there was activity (any fee rows) in the window.
+    // 6) Sum qualifying fees for the period
+    const sumRow = await db
+      .selectFrom("orderFees as f")
+      .innerJoin("orders as o", "o.id", "f.orderId")
+      .select(sql<number>`coalesce(sum(f."feeAmount"), 0)`.as("total"))
+      .where("f.userId", "=", userId)
+      .where("f.capturedAt", ">=", start)
+      .where("f.capturedAt", "<=", end)
+      .where(whereQualifyingFees)
+      .executeTakeFirst();
+
+    const total = Number(sumRow?.total ?? 0);
+    console.log(`  → total qualifying fees for period: ${total}`);
+
+    // 7) If total is 0, still create a $0 invoice if there was any qualifying fee activity
     let hasActivity = false;
     if (total <= 0) {
       const cntRow = await db
-        .selectFrom("orderFees")
+        .selectFrom("orderFees as f")
+        .innerJoin("orders as o", "o.id", "f.orderId")
         .select(sql<number>`count(*)`.as("count"))
-        .where("userId", "=", userId)
-        .where("capturedAt", ">=", start)
-        .where("capturedAt", "<=", end)
+        .where("f.userId", "=", userId)
+        .where("f.capturedAt", ">=", start)
+        .where("f.capturedAt", "<=", end)
+        .where(whereQualifyingFees)
         .executeTakeFirst();
       const feeCount = Number(cntRow?.count ?? 0);
       hasActivity = feeCount > 0;
       if (!hasActivity) {
-        console.log("  → skipping, no fee activity in this window");
+        console.log("  → skipping, no qualifying fee activity in this window");
         continue;
       }
-      console.log("  → zero-amount invoice will be created (activity present)");
+      console.log("  → zero-amount invoice will be created (qualifying activity present)");
     }
 
-    // insert invoice (paidAmount defaults to 0)
+    // 8) Insert invoice header
     const inv = await db
       .insertInto("userInvoices")
       .values({
@@ -169,7 +196,7 @@ async function runGenerateInvoices(req: NextRequest) {
 
     console.log(`  → created invoice ${inv.id}`);
 
-    // ── 6) Mint on-chain immediately (skip mint for zero-amount invoices)
+    // 9) Mint on-chain immediately for nonzero invoices
     if (Number(inv.totalAmount) > 0) {
       try {
         await fetch(MINT_ENDPOINT, {
@@ -188,13 +215,15 @@ async function runGenerateInvoices(req: NextRequest) {
       console.log(`  → skip mint (zero-amount invoice ${inv.id})`);
     }
 
-    // attach each fee line-item
+    // 10) Attach qualifying fee line items
     const fees = await db
-      .selectFrom("orderFees")
-      .select(["id as orderFeeId", "feeAmount as amount"])
-      .where("userId", "=", userId)
-      .where("capturedAt", ">=", start)
-      .where("capturedAt", "<=", end)
+      .selectFrom("orderFees as f")
+      .innerJoin("orders as o", "o.id", "f.orderId")
+      .select(["f.id as orderFeeId", "f.feeAmount as amount"])
+      .where("f.userId", "=", userId)
+      .where("f.capturedAt", ">=", start)
+      .where("f.capturedAt", "<=", end)
+      .where(whereQualifyingFees)
       .execute();
 
     console.log(`  → attaching ${fees.length} fee items`);
@@ -225,12 +254,12 @@ async function runGenerateInvoices(req: NextRequest) {
   return NextResponse.json({ invoices: created });
 }
 
-/** New: idempotent GET so hosted schedulers (e.g., Vercel Cron) can call this safely. */
+/** Idempotent GET for hosted schedulers (e.g., Vercel Cron). */
 export async function GET(req: NextRequest) {
   return runGenerateInvoices(req);
 }
 
-/** Original behavior preserved: POST + secret for manual/internal triggers. */
+/** Manual/internal trigger with secret preserved. */
 export async function POST(req: NextRequest) {
   return runGenerateInvoices(req);
 }
