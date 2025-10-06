@@ -862,7 +862,26 @@ export async function POST(req: NextRequest) {
           updatedAt: new Date(),
         }).execute()
       }
+      // 🧩 If the client did not send attributes, derive productAttributeValues from variations
+      if (!parsedProduct.attributes?.length) {
+        const attrToTerms = new Map<string, Set<string>>();
+        for (const v of parsedProduct.variations) {
+          for (const [attrId, termId] of Object.entries(v.attributes || {})) {
+            if (!attrId || !termId) continue;
+            (attrToTerms.get(attrId) ?? attrToTerms.set(attrId, new Set()).get(attrId)!).add(String(termId));
+          }
+        }
+        for (const [attributeId, termSet] of attrToTerms.entries()) {
+          for (const termId of termSet) {
+            await db.insertInto("productAttributeValues")
+              .values({ productId, attributeId, termId })
+              .execute();
+          }
+        }
+      }
     }
+
+
 
     /* insert warehouseStock entries */
     if (parsedProduct.warehouseStock?.length) {

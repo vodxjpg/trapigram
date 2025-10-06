@@ -118,6 +118,114 @@ const productUpdateSchema = z.object({
   variations: z.array(variationPatchSchema).optional(),
 });
 
+/* ------------------------------------------------------------------ */
+/* helper – derive attributes from variation attribute maps            */
+/* ------------------------------------------------------------------ */
+async function deriveAttributesFromVariations(productId: string) {
+  // 1) pull just the variations' attributes for this product
+  const varRows = await db
+    .selectFrom("productVariations")
+    .select(["attributes"])
+    .where("productId", "=", productId)
+    .execute();
+
+  // collect unique attributeIds and termIds used across all variations
+  const attrToTerms = new Map<string, Set<string>>();
+  const attrIds = new Set<string>();
+  const termIds = new Set<string>();
+
+  for (const r of varRows) {
+    const attrs =
+      typeof r.attributes === "string"
+        ? JSON.parse(r.attributes || "{}")
+        : (r.attributes || {});
+    for (const [attributeId, termId] of Object.entries(attrs)) {
+      if (!attributeId || !termId) continue;
+      attrIds.add(attributeId);
+      termIds.add(String(termId));
+      (attrToTerms.get(attributeId) ??
+        attrToTerms.set(attributeId, new Set()).get(attributeId)!).add(
+        String(termId),
+      );
+    }
+  }
+
+  if (!attrIds.size) return [] as Array<{
+    id: string;
+    name: string;
+    terms: Array<{ id: string; name: string }>;
+    useForVariations: boolean;
+    selectedTerms: string[];
+  }>;
+
+  // 2) name lookups
+  const attrNameRows = await db
+    .selectFrom("productAttributes")
+    .select(["id", "name"])
+    .where("id", "in", Array.from(attrIds))
+    .execute();
+
+  const termNameRows = await db
+    .selectFrom("productAttributeTerms")
+    .select(["id", "name"])
+    .where("id", "in", Array.from(termIds))
+    .execute();
+
+  const ATTR_NAME: Record<string, string> = Object.fromEntries(
+    attrNameRows.map((r) => [r.id, r.name]),
+  );
+  const TERM_NAME: Record<string, string> = Object.fromEntries(
+    termNameRows.map((r) => [r.id, r.name]),
+  );
+
+  // 3) shape to the UI-friendly structure you already use
+  const derived: Array<{
+    id: string;
+    name: string;
+    terms: Array<{ id: string; name: string }>;
+    useForVariations: boolean;
+    selectedTerms: string[];
+  }> = [];
+
+  for (const [attributeId, termSet] of attrToTerms.entries()) {
+    const selectedTerms = Array.from(termSet);
+    derived.push({
+      id: attributeId,
+      name: ATTR_NAME[attributeId] ?? attributeId,
+      terms: selectedTerms.map((tid) => ({
+        id: tid,
+        name: TERM_NAME[tid] ?? tid,
+      })),
+      useForVariations: true, // because these came from variations
+      selectedTerms,
+    });
+  }
+
+  return derived;
+}
+
+/* ------------------------------------------------------------------ */
+/* helper – from incoming variations -> unique (attributeId, termId)  */
+/* ------------------------------------------------------------------ */
+function collectAttributePairs(
+  variations: Array<{ attributes: Record<string, string> | null | undefined }>
+): Array<{ attributeId: string; termId: string }> {
+  const set = new Set<string>();
+  for (const v of variations || []) {
+    const attrs = v?.attributes || {};
+    for (const [attributeId, termId] of Object.entries(attrs)) {
+      if (!attributeId || !termId) continue;
+      set.add(`${attributeId}::${String(termId)}`);
+    }
+  }
+  return Array.from(set).map((k) => {
+    const [attributeId, termId] = k.split("::");
+    return { attributeId, termId };
+  });
+}
+
+
+
 /* ================================================================== */
 /* GET                                                                */
 /* ================================================================== */
@@ -305,7 +413,15 @@ export async function GET(
     .execute();
   const categories = categoryRows.map((r) => r.categoryId);
 
-  /* ---------- attributes (unchanged) ----------------------------- */
+  /* ---------- attributes (with fallback from variations) ----------- */
+  let attributes: Array<{
+    id: string;
+    name: string;
+    terms: Array<{ id: string; name: string }>;
+    useForVariations: boolean;
+    selectedTerms: string[];
+  }> = [];
+
   const attrRows = await db
     .selectFrom("productAttributeValues")
     .innerJoin(
@@ -326,22 +442,35 @@ export async function GET(
     ])
     .where("productAttributeValues.productId", "=", actualProductId)
     .execute();
-  const attributes = attrRows.reduce<any[]>((acc, row) => {
-    let attr = acc.find((a) => a.id === row.id);
-    if (!attr) {
-      attr = {
-        id: row.id,
-        name: row.name,
-        terms: [],
-        selectedTerms: [],
-        useForVariations: false,
-      };
-      acc.push(attr);
-    }
-    attr.terms.push({ id: row.termId, name: row.termName });
-    attr.selectedTerms.push(row.termId);
-    return acc;
-  }, []);
+
+  if (attrRows.length) {
+    // existing table-driven attributes
+    attributes = attrRows.reduce<any[]>((acc, row) => {
+      let attr = acc.find((a) => a.id === row.id);
+      if (!attr) {
+        attr = {
+          id: row.id,
+          name: row.name,
+          terms: [],
+          selectedTerms: [],
+          useForVariations: raw.productType === "variable",
+        };
+        acc.push(attr);
+      }
+      // avoid duplicates if any joins repeat
+      if (!attr.terms.some((t: any) => t.id === row.termId)) {
+        attr.terms.push({ id: row.termId, name: row.termName });
+      }
+      if (!attr.selectedTerms.includes(row.termId)) {
+        attr.selectedTerms.push(row.termId);
+      }
+      return acc;
+    }, []);
+  } else if (raw.productType === "variable") {
+    // ❗ fallback: derive from variations at read-time
+    attributes = await deriveAttributesFromVariations(actualProductId);
+  }
+
 
   /* ---------- variations (if any) -------------------------------- */
   let variationsRaw: any[] = [];
@@ -812,6 +941,27 @@ export async function PATCH(
             .insertInto("productVariations")
             .values({ ...payload, id: v.id, createdAt: new Date() })
             .execute();
+        }
+      }
+            /* ---- keep productAttributeValues in sync with variation usage ----
+        Only when the client actually sent `variations` with this PATCH.
+        We mirror the union of (attributeId, termId) from incoming variations. */
+      {
+        const pairs = collectAttributePairs(parsedUpdate.variations);
+
+        // Replace current rows with the new set (idempotent: we use DISTINCT pairs)
+        await db
+          .deleteFrom("productAttributeValues")
+          .where("productId", "=", id)
+          .execute();
+
+        if (pairs.length) {
+          for (const { attributeId, termId } of pairs) {
+            await db
+              .insertInto("productAttributeValues")
+              .values({ productId: id, attributeId, termId })
+              .execute();
+          }
         }
       }
     }
