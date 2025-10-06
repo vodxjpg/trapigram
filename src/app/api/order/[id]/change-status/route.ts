@@ -1597,7 +1597,12 @@ export async function PATCH(
         });
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (process.env.INTERNAL_API_SECRET) {
+          // Prod/secure path
           headers["x-internal-secret"] = process.env.INTERNAL_API_SECRET;
+        } else {
+          // Dev/staging fallback: explicitly mark this as an in-process/local call.
+          // The endpoint will only accept this header when INTERNAL_API_SECRET is unset.
+          headers["x-local-invoke"] = "1";
         }
         const feeRes = await fetch(feesUrl, {
           method: "POST",
