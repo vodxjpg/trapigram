@@ -600,12 +600,22 @@ async function buildProductListForCart(cartId: string) {
   const { rows } = await pool.query(
     `
       SELECT
-        cp.quantity,
-        COALESCE(p.title, ap.title)                             AS title,
+           cp.quantity,
+    COALESCE(
+      -- Prefers "Parent — SKU:<variant.sku>" when variant exists
+      CASE
+        WHEN cp."variationId" IS NOT NULL THEN
+          p.title || ' — ' ||
+          'SKU:' || COALESCE(pv.sku, '')
+        ELSE p.title
+      END,
+      ap.title
+    )                                                       AS title,
         COALESCE(cat.name, 'Uncategorised')                     AS category
       FROM "cartProducts" cp
       LEFT JOIN products p              ON p.id  = cp."productId"
       LEFT JOIN "affiliateProducts" ap  ON ap.id = cp."affiliateProductId"
+      LEFT JOIN "productVariations" pv  ON pv.id = cp."variationId"
       LEFT JOIN "productCategory" pc    ON pc."productId" = COALESCE(p.id, ap.id)
       LEFT JOIN "productCategories" cat ON cat.id = pc."categoryId"
       WHERE cp."cartId" = $1
@@ -732,20 +742,50 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
     let subtotal = 0;
     for (const it of items) {
       const { rows: [ln] } = await pool.query(
-        `SELECT quantity,"affiliateProductId" FROM "cartProducts" WHERE "cartId" = $1 AND "productId" = $2 LIMIT 1`,
+        `SELECT quantity,"affiliateProductId","variationId"
+   FROM "cartProducts"
+  WHERE "cartId" = $1 AND "productId" = $2
+  LIMIT 1`,
         [o.cartId, it.targetProductId]);
       const qty = Number(ln?.quantity || 0);
       const affId = ln?.affiliateProductId || null;
+      const targetVariationId: string | null = ln?.variationId ?? null;
       const { rows: [sp] } = await pool.query(
         `SELECT cost FROM "sharedProduct" WHERE "shareLinkId" = $1 AND "productId" = $2 LIMIT 1`,
         [it.shareLinkId, it.sourceProductId]);
       const transfer = Number(sp?.cost?.[o.country] ?? 0);
+
+      // 🔁 map targetVariationId (buyer) → sourceVariationId (supplier) for this hop
+      let sourceVariationId: string | null = null;
+      if (targetVariationId) {
+        const { rows: mapVar } = await pool.query(
+          `SELECT "sourceVariationId"
+             FROM "sharedVariationMapping"
+            WHERE "shareLinkId"     = $1
+              AND "sourceProductId" = $2
+              AND "targetProductId" = $3
+              AND "targetVariationId" = $4
+            LIMIT 1`,
+          [it.shareLinkId, it.sourceProductId, it.targetProductId, targetVariationId],
+        );
+        sourceVariationId = mapVar[0]?.sourceVariationId ?? null;
+      }
+
+
       if (qty > 0) {
         await pool.query(
           `INSERT INTO "cartProducts" (id,"cartId","productId","quantity","unitPrice","affiliateProductId")
-           VALUES ($1,$2,$3,$4,$5,$6)`,
+               VALUES ($1,$2,$3,$4,$5,$6)`,
+          // keep backward-compat if your DB doesn't yet have variationId column in this path
           [uuidv4(), supplierCartId, it.sourceProductId, qty, transfer, affId],
         );
+        // If your "cartProducts" table has "variationId", run this extra UPDATE to set it.
+        if (sourceVariationId) {
+          await pool.query(
+            `UPDATE "cartProducts" SET "variationId" = $1 WHERE "cartId" = $2 AND "productId" = $3`,
+            [sourceVariationId, supplierCartId, it.sourceProductId],
+          );
+        }
         subtotal += transfer * qty;
       }
     }
@@ -783,6 +823,7 @@ async function applyItemEffects(
   item: {
     productId: string | null;
     affiliateProductId: string | null;
+    variationId: string | null;
     quantity: number;
     unitPrice: number;
   },
@@ -791,11 +832,12 @@ async function applyItemEffects(
 ) {
   /* stock --------------------------------------------------------- */
   if (item.productId)
-    await adjustStock(c, item.productId, country, effectSign * item.quantity);
+    await adjustStock(c, item.productId, item.variationId ?? null, country, effectSign * item.quantity);
   if (item.affiliateProductId)
     await adjustStock(
       c,
       item.affiliateProductId,
+      item.variationId ?? null,
       country,
       effectSign * item.quantity,
     );
@@ -907,9 +949,9 @@ export async function PATCH(
     let lines: any[] = [];
     if (becameActive || becameInactive) {
       const res = await client.query(
-        `SELECT "productId","affiliateProductId",quantity,"unitPrice"
-           FROM "cartProducts"
-          WHERE "cartId" = $1`,
+        `SELECT "productId","affiliateProductId","variationId",quantity,"unitPrice"
+            FROM "cartProducts"
+           WHERE "cartId" = $1`,
         [ord.cartId],
       );
       lines = res.rows;
@@ -1321,17 +1363,17 @@ export async function PATCH(
           if (wasActive === willBeActive) continue; // no boundary change → skip
           const effectSign: 1 | -1 = willBeActive ? -1 : +1; // -1 reserve, +1 release
           const { rows: lines } = await pool.query(
-            `SELECT "productId","affiliateProductId",quantity
+            `SELECT "productId","affiliateProductId","variationId",quantity
         FROM "cartProducts" WHERE "cartId" = $1`,
             [sb.cartId],
           );
           for (const ln of lines) {
             if (ln.productId) {
-              try { await adjustStock(pool as unknown as Pool, ln.productId, sb.country, effectSign * ln.quantity); }
+              try { await adjustStock(pool as unknown as Pool, ln.productId, ln.variationId ?? null, sb.country, effectSign * ln.quantity); }
               catch (e) { console.warn("[cascade][stock] product adjust failed", { orderId: sb.id, productId: ln.productId }, e); }
             }
             if (ln.affiliateProductId) {
-              try { await adjustStock(pool as unknown as Pool, ln.affiliateProductId, sb.country, effectSign * ln.quantity); }
+              try { await adjustStock(pool as unknown as Pool, ln.affiliateProductId, ln.variationId ?? null, sb.country, effectSign * ln.quantity); }
               catch (e) { console.warn("[cascade][stock] affiliate adjust failed", { orderId: sb.id, productId: ln.affiliateProductId }, e); }
             }
           }

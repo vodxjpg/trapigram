@@ -605,12 +605,13 @@ export async function POST(req: NextRequest) {
         let subtotal = 0;
         for (const it of group.items) {
           const { rows: qtyRow } = await pool.query(
-            `SELECT quantity,"affiliateProductId"
+            `SELECT quantity,"affiliateProductId","variationId"
            FROM "cartProducts"
           WHERE "cartId" = $1 AND "productId" = $2 LIMIT 1`,
             [oldOrder.rows[0].cartId, it.targetProductId],
           );
           const qty = Number(qtyRow[0]?.quantity || 0);
+          const targetVariationId: string | null = qtyRow[0]?.variationId ?? null;
           const affId = qtyRow[0]?.affiliateProductId || null;
 
           const { rows: sp } = await pool.query(
@@ -621,17 +622,43 @@ export async function POST(req: NextRequest) {
           );
           const transfer = Number(sp[0]?.cost?.[oldCart.rows[0].country] ?? 0);
 
+          // 🔁 map targetVariationId (buyer) → sourceVariationId (supplier) for this hop
+          let sourceVariationId: string | null = null;
+          if (targetVariationId) {
+            const { rows: mapVar } = await pool.query(
+              `SELECT "sourceVariationId"
+                 FROM "sharedVariationMapping"
+                WHERE "shareLinkId"     = $1
+                  AND "sourceProductId" = $2
+                  AND "targetProductId" = $3
+                  AND "targetVariationId" = $4
+                LIMIT 1`,
+              [it.shareLinkId, it.sourceProductId, it.targetProductId, targetVariationId],
+            );
+            sourceVariationId = mapVar[0]?.sourceVariationId ?? null;
+          }
+
           if (qty > 0) {
             await pool.query(
               `INSERT INTO "cartProducts"
-             (id,"cartId","productId","quantity","unitPrice","affiliateProductId")
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-              [uuidv4(), newCartId, it.sourceProductId, qty, transfer, affId],
+             (id,"cartId","productId","variationId","quantity","unitPrice","affiliateProductId")
+          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+              [
+                uuidv4(),
+                newCartId,
+                it.sourceProductId,
+                sourceVariationId,   // ✅ keep variant on supplier cart line
+                qty,
+                transfer,
+                affId
+              ],
             );
             subtotal += transfer * qty;
             // reserve supplier stock now (order is ACTIVE)
             try {
-              await adjustStock(pool as any, it.sourceProductId, oldCart.rows[0].country, -qty);
+              // adjustStock currently works at productId level; if you later extend it
+              // to be variation-aware, pass `sourceVariationId` here as well.
+              await adjustStock(pool as any, it.sourceProductId, sourceVariationId, oldCart.rows[0].country, -qty);
             } catch (e) {
               console.warn("[split][stock] reserve failed", { productId: it.sourceProductId, qty, country: oldCart.rows[0].country }, e);
             }
