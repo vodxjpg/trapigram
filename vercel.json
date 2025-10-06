@@ -9,7 +9,7 @@
   },
   "crons": [
     {
-      "path": "/api/internal/generate-invoices",
+       "path": "/api/internal/generate-invoices?token=d4f2e0a7b6c9418f9b0c3e1a5f7d2c8b4e9a6c3d1f52a7b8c9d0e1f2a3b4c5d6",
       "schedule": "0 0 * * *"
     },
     {

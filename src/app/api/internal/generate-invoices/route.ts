@@ -1,6 +1,7 @@
 // src/app/api/internal/generate-invoices/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "kysely";
+import type { Selectable } from "kysely";
 import { db } from "@/lib/db";
 import { requireInternalAuth } from "@/lib/internalAuth";
 import crypto from "crypto";
@@ -23,12 +24,16 @@ import crypto from "crypto";
 const MINT_ENDPOINT = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/niftipay-invoice`;
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET!;
 const GRACE_DAYS = Number(process.env.FEE_CANCELLATION_GRACE_DAYS ?? "3");
-
+const CRON_TOKEN = process.env.CRON_TOKEN || "";
 /** Shared runner (invoked by both GET and POST) */
 async function runGenerateInvoices(req: NextRequest) {
-  // 1) Auth
-  const isCron = req.headers.get("x-vercel-cron") === "1";
-  if (!isCron) {
+    // ── 1) Auth
+  const url = new URL(req.url);
+  const isCronHeader = req.headers.get("x-vercel-cron") === "1";
+  const token = url.searchParams.get("token") || "";
+  const isCronToken = CRON_TOKEN && token && token === CRON_TOKEN;
+  if (!isCronHeader && !isCronToken) {
+    // Fallback to internal secret for manual runs
     const authErr = requireInternalAuth(req);
     if (authErr) return authErr;
   }
@@ -41,7 +46,7 @@ async function runGenerateInvoices(req: NextRequest) {
   const genDay = today.getUTCDate();
 
   console.log(
-    `[generate-invoices] invoked for date=${today.toISOString().slice(0, 10)} (day=${genDay}) isCron=${isCron}, graceDays=${GRACE_DAYS}`
+    `[generate-invoices] invoked for date=${today.toISOString() .slice(0, 10)} (day=${genDay}) isCronHeader=${isCronHeader} isCronToken=${isCronToken}, graceDays=${GRACE_DAYS}`
   );
 
   // 2a) Compute dueDate = today + 7 days

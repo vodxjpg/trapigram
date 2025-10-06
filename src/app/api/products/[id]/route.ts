@@ -334,7 +334,9 @@ export async function GET(
       stockData,
       stockStatus: raw.manageStock ? "managed" : "unmanaged",
       categories: categoryRows.map((r) => r.categoryId),
-      attributes: [], // service account doesn’t need attribute expansion
+      attributes: raw.productType === "variable"
+        ? await deriveAttributesFromVariations(id)
+        : [],
       variations,
     };
 
