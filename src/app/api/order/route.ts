@@ -407,66 +407,88 @@ export async function POST(req: NextRequest) {
 
     // We’ll create supplier orders org-by-org for *every hop* up the chain.
     type MapItem = {
-      organizationId: string;      // supplier org for this hop
-      shareLinkId: string;         // share link used *at this hop*
-      sourceProductId: string;     // supplier’s product at this hop
-      targetProductId: string;     // leaf product in C’s cart (used to read qty)
-      downstreamOrganizationId: string; // the org *requesting from* this supplier at this hop
+      organizationId: string;
+      shareLinkId: string;
+      sourceProductId: string;      // supplier’s product for this hop
+      targetProductId: string;      // buyer (leaf) product id
+      targetVariationId: string | null; // buyer variation id for THIS cart line
+      qty: number;                  // quantity for THIS cart line
+      affiliateProductId: string | null;
+      downstreamOrganizationId: string; // who’s ordering from this supplier at this hop
     };
+
 
     // hop(0): C’s product → B’s product
     async function firstHop(): Promise<MapItem[]> {
-      const result: MapItem[] = [];
-      for (const ln of oneProducts) {
-        const m = await pool.query(
+  const out: MapItem[] = [];
+  // use C’s actual cart lines (each can have its own variation)
+  const { rows: cartLines } = await pool.query(
+    `SELECT "productId","variationId","quantity","affiliateProductId"
+       FROM "cartProducts"
+      WHERE "cartId" = $1`,
+    [oldOrder.rows[0].cartId],
+  );
+
+      for (const ln of cartLines) {
+        if (!ln.productId) continue;
+        const { rows: [m] } = await pool.query(
           `SELECT "shareLinkId","sourceProductId","targetProductId"
-         FROM "sharedProductMapping"
-        WHERE "targetProductId" = $1
-        LIMIT 1`,
+            FROM "sharedProductMapping"
+            WHERE "targetProductId" = $1
+            LIMIT 1`,
           [ln.productId],
         );
-        if (!m.rows[0]) continue;
-        const orgRow = await pool.query(
-          `SELECT "organizationId" FROM "products" WHERE id = $1`,
-          [m.rows[0].sourceProductId],
+        if (!m) continue;
+
+        const { rows: [prod] } = await pool.query(
+          `SELECT "organizationId" FROM products WHERE id = $1 LIMIT 1`,
+          [m.sourceProductId],
         );
-        if (!orgRow.rows[0]) continue;
-        result.push({
-          organizationId: orgRow.rows[0].organizationId,
-          shareLinkId: m.rows[0].shareLinkId,
-          sourceProductId: m.rows[0].sourceProductId,
+        if (!prod) continue;
+
+        out.push({
+          organizationId: prod.organizationId,
+          shareLinkId: m.shareLinkId,
+          sourceProductId: m.sourceProductId,
           targetProductId: ln.productId,
-          // For first hop, the downstream that generated the order is the original buyer org (C)
+          targetVariationId: ln.variationId ?? null,
+          qty: Number(ln.quantity ?? 0),
+          affiliateProductId: ln.affiliateProductId ?? null,
           downstreamOrganizationId: oldOrder.rows[0].organizationId,
         });
       }
-      return result;
+      return out;
     }
 
     // hop(n+1): previous hop’s sourceProductId → upstream supplier’s product
     async function nextHopFrom(items: MapItem[]): Promise<MapItem[]> {
       const out: MapItem[] = [];
       for (const it of items) {
-        const m = await pool.query(
+        const { rows: [m] } = await pool.query(
           `SELECT "shareLinkId","sourceProductId","targetProductId"
-         FROM "sharedProductMapping"
-        WHERE "targetProductId" = $1
-        LIMIT 1`,
-          [it.sourceProductId], // climb one hop up
+            FROM "sharedProductMapping"
+            WHERE "targetProductId" = $1
+            LIMIT 1`,
+          [it.sourceProductId], // climb one hop
         );
-        if (!m.rows[0]) continue;
-        const orgRow = await pool.query(
-          `SELECT "organizationId" FROM "products" WHERE id = $1`,
-          [m.rows[0].sourceProductId],
+        if (!m) continue;
+
+        const { rows: [prod] } = await pool.query(
+          `SELECT "organizationId" FROM products WHERE id = $1 LIMIT 1`,
+          [m.sourceProductId],
         );
-        if (!orgRow.rows[0]) continue;
+        if (!prod) continue;
+
         out.push({
-          organizationId: orgRow.rows[0].organizationId,
-          shareLinkId: m.rows[0].shareLinkId,
-          sourceProductId: m.rows[0].sourceProductId,
-          targetProductId: it.targetProductId, // keep C’s leaf for qty lookup
-          // For further hops, the downstream is the previous hop’s supplier org
-          downstreamOrganizationId: it.organizationId,
+          organizationId: prod.organizationId,
+          shareLinkId: m.shareLinkId,
+          sourceProductId: m.sourceProductId,
+          // keep the original buyer leaf references for qty/variation
+          targetProductId: it.targetProductId,
+          targetVariationId: it.targetVariationId,
+          qty: it.qty,
+          affiliateProductId: it.affiliateProductId,
+          downstreamOrganizationId: it.organizationId, // previous hop’s supplier
         });
       }
       return out;
@@ -528,26 +550,21 @@ export async function POST(req: NextRequest) {
 
       // Pre-compute per-group transfer subtotal for shipping split
       const transferSubtotals: Record<string, number> = {};
-      for (const group of groupedArray) {
+      for (const { organizationId, items } of groupedArray) {
         let sum = 0;
-        for (const it of group.items) {
-          const { rows: qtyRow } = await pool.query(
-            `SELECT quantity FROM "cartProducts"
-         WHERE "cartId" = $1 AND "productId" = $2 LIMIT 1`,
-            [oldOrder.rows[0].cartId, it.targetProductId],
-          );
-          const qty = Number(qtyRow[0]?.quantity || 0);
-          const { rows: sp } = await pool.query(
+        for (const it of items) {
+          const { rows: [sp] } = await pool.query(
             `SELECT cost FROM "sharedProduct"
-           WHERE "shareLinkId" = $1 AND "productId" = $2
-           LIMIT 1`,
+              WHERE "shareLinkId" = $1 AND "productId" = $2
+              LIMIT 1`,
             [it.shareLinkId, it.sourceProductId],
           );
-          const transfer = Number(sp[0]?.cost?.[oldCart.rows[0].country] ?? 0);
-          sum += transfer * qty;
+          const transfer = Number(sp?.cost?.[oldCart.rows[0].country] ?? 0);
+          sum += transfer * it.qty;
         }
-        transferSubtotals[group.organizationId] = sum;
+        transferSubtotals[organizationId] = sum;
       }
+
 
       // Only the first hop (sellers who ship to the buyer) should receive buyer shipping.
       const buyerShipping = includeShipping ? Number(oldOrder.rows[0].shippingTotal || 0) : 0;
@@ -601,18 +618,12 @@ export async function POST(req: NextRequest) {
           [newCartId, newClientId, oldCart.rows[0].country, oldCart.rows[0].shippingMethod, false, group.organizationId, newCartHash],
         );
 
-        // add lines at transfer price (qty from buyer’s cart for original leaf product)
+        // add lines at transfer price (use *line-level* qty/variation carried in MapItem)
         let subtotal = 0;
         for (const it of group.items) {
-          const { rows: qtyRow } = await pool.query(
-            `SELECT quantity,"affiliateProductId","variationId"
-           FROM "cartProducts"
-          WHERE "cartId" = $1 AND "productId" = $2 LIMIT 1`,
-            [oldOrder.rows[0].cartId, it.targetProductId],
-          );
-          const qty = Number(qtyRow[0]?.quantity || 0);
-          const targetVariationId: string | null = qtyRow[0]?.variationId ?? null;
-          const affId = qtyRow[0]?.affiliateProductId || null;
+          const qty = Number(it.qty ?? 0);
+          const targetVariationId: string | null = it.targetVariationId ?? null;
+          const affId = it.affiliateProductId ?? null;
 
           const { rows: sp } = await pool.query(
             `SELECT cost FROM "sharedProduct"

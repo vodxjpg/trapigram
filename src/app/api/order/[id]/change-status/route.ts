@@ -653,10 +653,19 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
        FROM "cartProducts" WHERE "cartId" = $1`, [o.cartId]);
   if (!cpRows.length) return;
 
-  type MapItem = { organizationId: string; shareLinkId: string; sourceProductId: string; targetProductId: string; };
+    // Carry line-level qty/variation/affiliate through the hops so we don't re-read buyer cart later.
+  type MapItem = {
+    organizationId: string;
+    shareLinkId: string;
+    sourceProductId: string;     // supplier product for this hop
+    targetProductId: string;     // original buyer leaf product id
+    qty: number;                 // quantity for THIS buyer cart line
+    targetVariationId: string | null;
+    affiliateProductId: string | null;
+  };
   async function firstHop(): Promise<MapItem[]> {
     const out: MapItem[] = [];
-    for (const ln of cpRows) {
+    for (const ln of cpRows) { // ln has productId, quantity, affiliateProductId, unitPrice (variationId not selected above)
       if (!ln.productId) continue;
       const { rows: [m] } = await pool.query(
         `SELECT "shareLinkId","sourceProductId","targetProductId"
@@ -669,7 +678,21 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
         [m.sourceProductId],
       );
       if (!prod) continue;
-      out.push({ organizationId: prod.organizationId, ...m });
+      // Fetch the buyer line's variationId (if any) so we can map it to the supplier variant later.
+      const { rows: [varRow] } = await pool.query(
+        `SELECT "variationId","affiliateProductId","quantity"
+           FROM "cartProducts"
+          WHERE "cartId" = $1 AND "productId" = $2
+          LIMIT 1`,
+        [o.cartId, ln.productId],
+      );
+      out.push({
+        organizationId: prod.organizationId,
+        ...m,
+        qty: Number(varRow?.quantity ?? ln.quantity ?? 0),
+        targetVariationId: varRow?.variationId ?? null,
+        affiliateProductId: varRow?.affiliateProductId ?? null,
+      });
     }
     return out;
   }
@@ -687,7 +710,15 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
         [m.sourceProductId],
       );
       if (!prod) continue;
-      out.push({ organizationId: prod.organizationId, ...m, targetProductId: it.targetProductId });
+            // Preserve the original buyer line details (qty/variation/affiliate) as we climb upstream.
+      out.push({
+        organizationId: prod.organizationId,
+        ...m,
+        targetProductId: it.targetProductId,
+        qty: it.qty,
+        targetVariationId: it.targetVariationId,
+        affiliateProductId: it.affiliateProductId,
+      });
     }
     return out;
   }
@@ -741,15 +772,10 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
     // add items at transfer price
     let subtotal = 0;
     for (const it of items) {
-      const { rows: [ln] } = await pool.query(
-        `SELECT quantity,"affiliateProductId","variationId"
-   FROM "cartProducts"
-  WHERE "cartId" = $1 AND "productId" = $2
-  LIMIT 1`,
-        [o.cartId, it.targetProductId]);
-      const qty = Number(ln?.quantity || 0);
-      const affId = ln?.affiliateProductId || null;
-      const targetVariationId: string | null = ln?.variationId ?? null;
+          // Use carried line-level data from MapItem instead of re-querying the buyer cart
+      const qty = Number(it.qty || 0);
+      const affId = it.affiliateProductId ?? null;
+      const targetVariationId: string | null = it.targetVariationId ?? null;
       const { rows: [sp] } = await pool.query(
         `SELECT cost FROM "sharedProduct" WHERE "shareLinkId" = $1 AND "productId" = $2 LIMIT 1`,
         [it.shareLinkId, it.sourceProductId]);
@@ -773,19 +799,13 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
 
 
       if (qty > 0) {
+        // Insert with variationId directly (if the column exists) to avoid a second UPDATE.
         await pool.query(
-          `INSERT INTO "cartProducts" (id,"cartId","productId","quantity","unitPrice","affiliateProductId")
-               VALUES ($1,$2,$3,$4,$5,$6)`,
-          // keep backward-compat if your DB doesn't yet have variationId column in this path
-          [uuidv4(), supplierCartId, it.sourceProductId, qty, transfer, affId],
+          `INSERT INTO "cartProducts"
+             (id,"cartId","productId","variationId","quantity","unitPrice","affiliateProductId")
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [uuidv4(), supplierCartId, it.sourceProductId, sourceVariationId, qty, transfer, affId],
         );
-        // If your "cartProducts" table has "variationId", run this extra UPDATE to set it.
-        if (sourceVariationId) {
-          await pool.query(
-            `UPDATE "cartProducts" SET "variationId" = $1 WHERE "cartId" = $2 AND "productId" = $3`,
-            [sourceVariationId, supplierCartId, it.sourceProductId],
-          );
-        }
         subtotal += transfer * qty;
       }
     }
