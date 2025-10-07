@@ -55,6 +55,23 @@ type TransformedCategoryRevenue = {
   cost: number;
 };
 
+
+// small JSON helpers
+function readJson(obj: unknown): any {
+  if (!obj) return null;
+  if (typeof obj === "string") {
+    try { return JSON.parse(obj); } catch { return null; }
+  }
+  if (typeof obj === "object") return obj as any;
+  return null;
+}
+function priceByCountry(mapLike: any, country: string): number {
+  const m = readJson(mapLike) || {};
+  const v = m?.[country];
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
 // ── helpers for paid-like behavior ───────────────────────────
 const isPaidLike = (status: unknown) =>
   ["paid", "pending_payment", "completed"].includes(
@@ -139,39 +156,150 @@ export async function getRevenue(id: string, organizationId: string) {
     const to = Math.floor(paidAt.getTime() / 1000);
     const from = to - 3600;
 
-    // products (first-party + affiliate)
-    const productQuery = `SELECT p.*, cp.quantity
-      FROM "cartProducts" cp
-      JOIN products p ON cp."productId" = p.id
-      WHERE cp."cartId" = '${cartId}'`;
-    const productResult = await pool.query(productQuery);
+        // products (first-party + affiliate) – include variationId and unitPrice
+    const productResult = await pool.query(
+      `SELECT p.*, cp.quantity, cp."variationId", cp."unitPrice"
+         FROM "cartProducts" cp
+         JOIN products p ON cp."productId" = p.id
+        WHERE cp."cartId" = $1`,
+      [cartId],
+    );
     const products = productResult.rows;
 
-    const affiliateQuery = `SELECT p.*, cp.quantity
-      FROM "cartProducts" cp
-      JOIN "affiliateProducts" p ON cp."affiliateProductId" = p.id
-      WHERE cp."cartId" = '${cartId}'`;
-    const affiliateResult = await pool.query(affiliateQuery);
+    const affiliateResult = await pool.query(
+      `SELECT ap.*, cp.quantity, cp."unitPrice"
+         FROM "cartProducts" cp
+         JOIN "affiliateProducts" ap ON cp."affiliateProductId" = ap.id
+        WHERE cp."cartId" = $1`,
+      [cartId],
+    );
     const affiliate = affiliateResult.rows;
 
-    const allProducts = products.concat(affiliate);
-
     // categories
-    const categoryQuery = `SELECT cp.*, p.*, pc."categoryId"
-      FROM "cartProducts" AS cp
-      JOIN "products" AS p ON cp."productId" = p."id"
-      LEFT JOIN "productCategory" AS pc ON pc."productId" = p."id"
-      WHERE cp."cartId" = '${cartId}'`;
-    const categoryResult = await pool.query(categoryQuery);
+        const categoryResult = await pool.query(
+      `SELECT cp."quantity", cp."variationId", cp."unitPrice",
+              p."id" AS "productId", p."regularPrice", p."price", p."cost",
+              pc."categoryId"
+         FROM "cartProducts" AS cp
+         JOIN "products"      AS p  ON cp."productId" = p."id"
+    LEFT JOIN "productCategory" AS pc ON pc."productId" = p."id"
+        WHERE cp."cartId" = $1`,
+      [cartId],
+    );
     const categoryData = categoryResult.rows;
+
+        // ── variation-aware effective cost resolver (shared/normal)
+    const mappingCache = new Map<
+      string,
+      { shareLinkId: string; sourceProductId: string } | null
+    >();
+    const varMapCache = new Map<string, string | null>(); // key: share|src|tgt|tgtVar → srcVar
+    const costCache = new Map<string, number>();          // key: productId:variationId:country
+
+    async function mapTargetToSourceVariation(
+      shareLinkId: string,
+      sourceProductId: string,
+      targetProductId: string,
+      targetVariationId: string
+    ): Promise<string | null> {
+      const key = `${shareLinkId}|${sourceProductId}|${targetProductId}|${targetVariationId}`;
+      if (varMapCache.has(key)) return varMapCache.get(key)!;
+      const { rows } = await pool.query(
+        `SELECT "sourceVariationId"
+           FROM "sharedVariationMapping"
+          WHERE "shareLinkId"       = $1
+            AND "sourceProductId"   = $2
+            AND "targetProductId"   = $3
+            AND "targetVariationId" = $4
+          LIMIT 1`,
+        [shareLinkId, sourceProductId, targetProductId, targetVariationId],
+      );
+      const srcVar = rows[0]?.sourceVariationId ?? null;
+      varMapCache.set(key, srcVar);
+      return srcVar;
+    }
+
+    async function resolveEffectiveCost(productId: string, variationId?: string | null): Promise<number> {
+      const cacheKey = `${productId}:${variationId ?? "-"}:${country}`;
+      if (costCache.has(cacheKey)) return costCache.get(cacheKey)!;
+
+      // upstream mapping (if this is a shared clone)
+      let mapping = mappingCache.get(productId);
+      if (mapping === undefined) {
+        const { rows } = await pool.query(
+          `SELECT "shareLinkId","sourceProductId"
+             FROM "sharedProductMapping"
+            WHERE "targetProductId" = $1
+            LIMIT 1`,
+          [productId],
+        );
+        mapping = rows[0]
+          ? { shareLinkId: String(rows[0].shareLinkId), sourceProductId: String(rows[0].sourceProductId) }
+          : null;
+        mappingCache.set(productId, mapping);
+      }
+
+      let eff = 0;
+      if (mapping) {
+        // try variation cost on the SOURCE product
+        if (variationId) {
+          const srcVarId = await mapTargetToSourceVariation(
+            mapping.shareLinkId, mapping.sourceProductId, productId, variationId
+          );
+          if (srcVarId) {
+            const { rows } = await pool.query(
+              `SELECT cost FROM "productVariations" WHERE id = $1 LIMIT 1`,
+              [srcVarId],
+            );
+            eff = priceByCountry(rows[0]?.cost ?? null, country);
+          }
+        }
+        if (!eff) {
+          // fallback: shared product-level cost
+          const { rows } = await pool.query(
+            `SELECT cost
+               FROM "sharedProduct"
+              WHERE "shareLinkId" = $1 AND "productId" = $2
+              LIMIT 1`,
+            [mapping.shareLinkId, mapping.sourceProductId],
+          );
+          eff = priceByCountry(rows[0]?.cost ?? null, country);
+        }
+      } else {
+        // non-shared: use variation cost first, then product cost
+        if (variationId) {
+          const { rows } = await pool.query(
+            `SELECT cost FROM "productVariations" WHERE id = $1 LIMIT 1`,
+            [variationId],
+          );
+          eff = priceByCountry(rows[0]?.cost ?? null, country);
+        }
+        if (!eff) {
+          const { rows } = await pool.query(
+            `SELECT cost FROM products WHERE id = $1 LIMIT 1`,
+            [productId],
+          );
+          eff = priceByCountry(rows[0]?.cost ?? null, country);
+        }
+      }
+
+      costCache.set(cacheKey, eff);
+      return eff;
+    }
 
     const categories: CategoryRevenue[] = [];
     for (const ct of categoryData) {
+      // Prefer actual unit price used at checkout; fallback to catalog price maps
+      const price =
+        Number(ct.unitPrice ?? NaN) ||
+        priceByCountry(ct.regularPrice ?? ct.price ?? null, country) ||
+        0;
+      const effCost = await resolveEffectiveCost(String(ct.productId), ct.variationId ?? null);
       categories.push({
         categoryId: ct.categoryId,
-        price: ct.regularPrice?.[country],
-        cost: ct.cost?.[country],
-        quantity: ct.quantity,
+        price,
+        cost: effCost,
+        quantity: Number(ct.quantity ?? 0),
       });
     }
     const newCategories: TransformedCategoryRevenue[] = categories.map(
@@ -182,11 +310,21 @@ export async function getRevenue(id: string, organizationId: string) {
       }),
     );
 
-    const totalCost = allProducts.reduce((sum, product) => {
-      const c = Number(product?.cost?.[country] || 0);
-      const q = Number(product?.quantity || 0);
-      return sum + c * q;
+    // Total cost: first-party via effective (variation-aware) cost, affiliate by native cost map
+    const productsCost = await (async () => {
+      let sum = 0;
+      for (const p of products) {
+        const unit = await resolveEffectiveCost(String(p.id), p.variationId ?? null);
+        sum += unit * Number(p.quantity ?? 0);
+      }
+      return sum;
+    })();
+    const affiliateCost = affiliate.reduce((sum: number, a: any) => {
+      const unit = priceByCountry(a?.cost ?? null, country);
+      const qty = Number(a?.quantity ?? 0);
+      return sum + unit * qty;
     }, 0);
+    const totalCost = productsCost + affiliateCost;
 
     // 2) get exchange rates for that window (used in both branches)
     const needRates = async () => {

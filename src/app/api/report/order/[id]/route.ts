@@ -122,9 +122,33 @@ function priceByCountry(mapLike: any, country: string): number {
 ──────────────────────────────────────────────────────────────── */
 const mappingCache = new Map<string, { shareLinkId: string; sourceProductId: string } | null>();
 const costCache = new Map<string, number>();
+const varMapCache = new Map<string, string | null>();
 
-async function resolveEffectiveCost(productId: string, country: string): Promise<number> {
-  const key = `${productId}:${country}`;
+async function mapTargetToSourceVariation(
+  shareLinkId: string,
+  sourceProductId: string,
+  targetProductId: string,
+  targetVariationId: string
+): Promise<string | null> {
+  const key = `${shareLinkId}|${sourceProductId}|${targetProductId}|${targetVariationId}`;
+  if (varMapCache.has(key)) return varMapCache.get(key)!;
+  const { rows } = await pool.query(
+    `SELECT "sourceVariationId"
+       FROM "sharedVariationMapping"
+      WHERE "shareLinkId"       = $1
+        AND "sourceProductId"   = $2
+        AND "targetProductId"   = $3
+        AND "targetVariationId" = $4
+      LIMIT 1`,
+    [shareLinkId, sourceProductId, targetProductId, targetVariationId],
+  );
+  const src = rows[0]?.sourceVariationId ?? null;
+  varMapCache.set(key, src);
+  return src;
+}
+
+async function resolveEffectiveCost(productId: string, country: string, variationId?: string | null): Promise<number> {
+  const key = `${productId}:${variationId ?? "-"}:${country}`;
   if (costCache.has(key)) return costCache.get(key)!;
 
   let mapping = mappingCache.get(productId);
@@ -144,17 +168,35 @@ async function resolveEffectiveCost(productId: string, country: string): Promise
 
   let eff = 0;
   if (mapping) {
-    const { rows } = await pool.query(
-      `SELECT cost
-         FROM "sharedProduct"
-        WHERE "shareLinkId" = $1 AND "productId" = $2
-        LIMIT 1`,
-      [mapping.shareLinkId, mapping.sourceProductId],
-    );
-    eff = priceByCountry(rows[0]?.cost ?? null, country);
+    // try variation-specific cost on source product
+    if (variationId) {
+      const srcVarId = await mapTargetToSourceVariation(
+        mapping.shareLinkId, mapping.sourceProductId, productId, variationId
+      );
+      if (srcVarId) {
+        const { rows } = await pool.query(`SELECT cost FROM "productVariations" WHERE id = $1 LIMIT 1`, [srcVarId]);
+        eff = priceByCountry(rows[0]?.cost ?? null, country);
+      }
+    }
+    if (!eff) {
+      const { rows } = await pool.query(
+        `SELECT cost
+           FROM "sharedProduct"
+          WHERE "shareLinkId" = $1 AND "productId" = $2
+          LIMIT 1`,
+        [mapping.shareLinkId, mapping.sourceProductId],
+      );
+      eff = priceByCountry(rows[0]?.cost ?? null, country);
+    }
   } else {
-    const { rows } = await pool.query(`SELECT cost FROM products WHERE id = $1 LIMIT 1`, [productId]);
-    eff = priceByCountry(rows[0]?.cost ?? null, country);
+    if (variationId) {
+      const { rows } = await pool.query(`SELECT cost FROM "productVariations" WHERE id = $1 LIMIT 1`, [variationId]);
+      eff = priceByCountry(rows[0]?.cost ?? null, country);
+    }
+    if (!eff) {
+      const { rows } = await pool.query(`SELECT cost FROM products WHERE id = $1 LIMIT 1`, [productId]);
+      eff = priceByCountry(rows[0]?.cost ?? null, country);
+    }
   }
 
   costCache.set(key, eff);
@@ -270,7 +312,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         Number(ct.unitPrice ?? NaN) ||
         priceByCountry(ct.regularPrice ?? ct.price ?? null, country) ||
         0;
-      const effCost = await resolveEffectiveCost(String(ct.productId), country);
+      const effCost = await resolveEffectiveCost(String(ct.productId), country, ct.variationId ?? null);
       categories.push({
         categoryId: ct.categoryId,
         price,

@@ -195,15 +195,43 @@ async function getRevenue(id: string, organizationId: string) {
     const paymentType = String(order.paymentMethod ?? "").toLowerCase();
     const country: string = order.country;
 
-    // 2) helpers: effective shared cost resolver with tiny caches
-    const mappingCache = new Map<
-      string,
-      { shareLinkId: string; sourceProductId: string } | null
-    >();
-    const costCache = new Map<string, number>();
+    
+      // 2) helpers: effective shared cost resolver with tiny caches (now variation-aware)
+  const mappingCache = new Map<
+    string,
+    { shareLinkId: string; sourceProductId: string } | null
+  >();
+  const varMapCache = new Map<
+    string,
+    string | null
+  >(); // key: shareLinkId|sourceProductId|targetProductId|targetVariationId → sourceVariationId|null
+  const costCache = new Map<string, number>();
 
-    async function resolveEffectiveCost(productId: string): Promise<number> {
-      const cacheKey = `${productId}:${country}`;
+  async function mapTargetToSourceVariation(
+    shareLinkId: string,
+    sourceProductId: string,
+    targetProductId: string,
+    targetVariationId: string
+  ): Promise<string | null> {
+    const key = `${shareLinkId}|${sourceProductId}|${targetProductId}|${targetVariationId}`;
+    if (varMapCache.has(key)) return varMapCache.get(key)!;
+    const { rows } = await pool.query(
+      `SELECT "sourceVariationId"
+         FROM "sharedVariationMapping"
+        WHERE "shareLinkId"       = $1
+          AND "sourceProductId"   = $2
+          AND "targetProductId"   = $3
+          AND "targetVariationId" = $4
+        LIMIT 1`,
+      [shareLinkId, sourceProductId, targetProductId, targetVariationId],
+    );
+    const srcVar = rows[0]?.sourceVariationId ?? null;
+    varMapCache.set(key, srcVar);
+    return srcVar;
+  }
+
+  async function resolveEffectiveCost(productId: string, variationId?: string | null): Promise<number> {
+    const cacheKey = `${productId}:${variationId ?? "-"}:${country}`;
       if (costCache.has(cacheKey)) return costCache.get(cacheKey)!;
 
       // find upstream mapping (if this is a shared clone)
@@ -220,23 +248,53 @@ async function getRevenue(id: string, organizationId: string) {
         mappingCache.set(productId, mapping);
       }
 
-      let eff = 0;
-      if (mapping) {
-        const { rows: [sp] } = await pool.query(
-          `SELECT cost
-             FROM "sharedProduct"
-            WHERE "shareLinkId" = $1 AND "productId" = $2
-            LIMIT 1`,
-          [mapping.shareLinkId, mapping.sourceProductId],
-        );
-        eff = Number(sp?.cost?.[country] ?? 0);
-      } else {
-        const { rows: [p] } = await pool.query(
-          `SELECT cost FROM products WHERE id = $1 LIMIT 1`,
-          [productId],
-        );
-        eff = Number(p?.cost?.[country] ?? 0);
-      }
+         let eff = 0;
+   if (mapping) {
+     // If variation present, try to read source variation cost
+     let srcVarId: string | null = null;
+     if (variationId) {
+       srcVarId = await mapTargetToSourceVariation(
+         mapping.shareLinkId,
+         mapping.sourceProductId,
+         productId,
+         variationId,
+       );
+     }
+     if (srcVarId) {
+       // read cost from productVariations of the SOURCE product’s variation
+       const { rows: [pv] } = await pool.query(
+         `SELECT cost FROM "productVariations" WHERE id = $1 LIMIT 1`,
+         [srcVarId],
+       );
+       eff = Number((pv?.cost ?? {})[country] ?? 0);
+     }
+     if (!eff) {
+       // fallback: product-level shared cost
+       const { rows: [sp] } = await pool.query(
+         `SELECT cost
+            FROM "sharedProduct"
+           WHERE "shareLinkId" = $1 AND "productId" = $2
+           LIMIT 1`,
+         [mapping.shareLinkId, mapping.sourceProductId],
+       );
+       eff = Number((sp?.cost ?? {})[country] ?? 0);
+     }
+   } else {
+     if (variationId) {
+       const { rows: [pv] } = await pool.query(
+         `SELECT cost FROM "productVariations" WHERE id = $1 LIMIT 1`,
+         [variationId],
+       );
+       eff = Number((pv?.cost ?? {})[country] ?? 0);
+     }
+     if (!eff) {
+       const { rows: [p] } = await pool.query(
+         `SELECT cost FROM products WHERE id = $1 LIMIT 1`,
+         [productId],
+       );
+       eff = Number((p?.cost ?? {})[country] ?? 0);
+     }
+   }
 
       costCache.set(cacheKey, eff);
       return eff;
@@ -267,8 +325,9 @@ async function getRevenue(id: string, organizationId: string) {
     );
 
     // category breakdown for native products (affiliate lines are not categorised here)
-    const { rows: catRows } = await pool.query(
-      `SELECT cp.quantity, cp."unitPrice", p."id" AS "productId", pc."categoryId"
+   const { rows: catRows } = await pool.query(
+  `SELECT cp.quantity, cp."unitPrice", cp."variationId",
+          p."id" AS "productId", pc."categoryId"
          FROM "cartProducts" AS cp
          JOIN "products"  AS p  ON cp."productId" = p."id"
     LEFT JOIN "productCategory" AS pc ON pc."productId" = p."id"
@@ -280,7 +339,7 @@ async function getRevenue(id: string, organizationId: string) {
     for (const ct of catRows) {
       const qty = Number(ct.quantity ?? 0);
       const unitPrice = Number(ct.unitPrice ?? 0);
-      const effCost = await resolveEffectiveCost(String(ct.productId));
+      const effCost = await resolveEffectiveCost(String(ct.productId), ct.variationId ?? null);
       categories.push({
         categoryId: ct.categoryId,
         price: unitPrice,
