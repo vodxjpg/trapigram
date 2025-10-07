@@ -1,7 +1,6 @@
 // src/app/api/internal/generate-invoices/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "kysely";
-import type { Selectable } from "kysely";
 import { db } from "@/lib/db";
 import { requireInternalAuth } from "@/lib/internalAuth";
 import crypto from "crypto";
@@ -14,46 +13,58 @@ import crypto from "crypto";
  *
  * Auth:
  * - GET/POST both supported.
- * - Vercel Cron is allowed via `x-vercel-cron: 1`.
+ * - Vercel Cron is allowed via `x-vercel-cron: 1` or by matching ?token=CRON_TOKEN.
  * - Otherwise requires `x-internal-secret: <INTERNAL_API_SECRET>`.
  *
  * Testing:
- * - You can force the "today" used for windows with `?date=YYYY-MM-DD`.
+ * - You can force the "today" used for windows with `?date=YYYY-MM-DD` (UTC).
  */
 
 const MINT_ENDPOINT = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/niftipay-invoice`;
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET!;
 const GRACE_DAYS = Number(process.env.FEE_CANCELLATION_GRACE_DAYS ?? "3");
 const CRON_TOKEN = process.env.CRON_TOKEN || "";
+
+/** Strict UTC parser for YYYY-MM-DD. Returns null on invalid input. */
+function parseYMDToUTC(d?: string | null): Date | null {
+  if (!d) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d.trim());
+  if (!m) return null;
+  const y = Number(m[1]), mo = Number(m[2]) - 1, da = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo, da, 0, 0, 0, 0));
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
 /** Shared runner (invoked by both GET and POST) */
 async function runGenerateInvoices(req: NextRequest) {
-    // ── 1) Auth
+  // ── 1) Auth
   const url = new URL(req.url);
   const isCronHeader = req.headers.get("x-vercel-cron") === "1";
   const token = url.searchParams.get("token") || "";
-  const isCronToken = CRON_TOKEN && token && token === CRON_TOKEN;
+  const isCronToken = Boolean(CRON_TOKEN && token && token === CRON_TOKEN);
+
   if (!isCronHeader && !isCronToken) {
-    // Fallback to internal secret for manual runs
     const authErr = requireInternalAuth(req);
     if (authErr) return authErr;
   }
 
-  // 2) Choose "today" (supports ?date=YYYY-MM-DD for testing)
-  const today = url.searchParams.get("date")
-    ? new Date(url.searchParams.get("date")!)
-    : new Date();
+  // ── 2) Choose "today" (supports ?date=YYYY-MM-DD for testing) – UTC-safe
+  const dateParam = url.searchParams.get("date");
+  const parsed = parseYMDToUTC(dateParam);
+  const today = parsed ?? new Date();
   const genDay = today.getUTCDate();
 
   console.log(
-    `[generate-invoices] invoked for date=${today.toISOString() .slice(0, 10)} (day=${genDay}) isCronHeader=${isCronHeader} isCronToken=${isCronToken}, graceDays=${GRACE_DAYS}`
+    `[generate-invoices] invoked for date=${new Date(today).toISOString().slice(0, 10)} (day=${genDay}) ` +
+      `isCronHeader=${isCronHeader} isCronToken=${isCronToken}, graceDays=${GRACE_DAYS}`
   );
 
-  // 2a) Compute dueDate = today + 7 days
+  // 2a) Compute dueDate = today + 7 days (UTC)
   const dueDateObj = new Date(today);
   dueDateObj.setUTCDate(dueDateObj.getUTCDate() + 7);
   const due = dueDateObj.toISOString().slice(0, 10);
 
-  // 3) Fetch all org-owners
+  // ── 3) Fetch all org-owners (createdAt may be NULL)
   const owners = await db
     .selectFrom("member as m")
     .innerJoin("user as u", "u.id", "m.userId")
@@ -63,11 +74,17 @@ async function runGenerateInvoices(req: NextRequest) {
 
   console.log(`[generate-invoices] total owners fetched: ${owners.length}`);
 
-  // 4) Only those whose signup day matches today’s and who signed up before today
-  const eligible = owners.filter(({ createdAt }) => {
-    const d = new Date(createdAt);
-    return d.getUTCDate() === genDay && d < today;
-  });
+  type OwnerRow = { userId: string; createdAt: Date | null };
+
+  // ── 4) Eligible: signup DOM matches today’s DOM, and signed up before today
+  const eligible = (owners as OwnerRow[]).filter(
+    (o): o is { userId: string; createdAt: Date } => {
+      if (!o.createdAt) return false;
+      const d = new Date(o.createdAt);
+      if (Number.isNaN(d.getTime())) return false;
+      return d.getUTCDate() === genDay && d.getTime() < today.getTime();
+    }
+  );
   console.log(
     `[generate-invoices] eligible owners (signup DOM === ${genDay}): ${
       eligible.length ? eligible.map((o) => o.userId).join(", ") : "<none>"
@@ -84,13 +101,13 @@ async function runGenerateInvoices(req: NextRequest) {
     createdAt: string;
   }> = [];
 
-  // 5) Loop & invoice per owner
+  // ── 5) Loop & invoice per owner
   for (const { userId } of eligible) {
-    // Compute the last-month window relative to genDay
+    // Window: previous month, anchored to genDay (UTC)
     const y = today.getUTCFullYear();
     const m = today.getUTCMonth();
-    const start = new Date(Date.UTC(y, m - 1, genDay, 0, 0, 0));
-    const end = new Date(Date.UTC(y, m, genDay - 1, 23, 59, 59));
+    const start = new Date(Date.UTC(y, m - 1, genDay, 0, 0, 0));          // yyyy-(m-1)-genDay 00:00:00
+    const end = new Date(Date.UTC(y, m, genDay - 1, 23, 59, 59));         // yyyy-m-(genDay-1) 23:59:59
     const ps = start.toISOString().slice(0, 10);
     const pe = end.toISOString().slice(0, 10);
 
@@ -110,12 +127,10 @@ async function runGenerateInvoices(req: NextRequest) {
     }
 
     /**
-     * Predicate:
-     * Include fees captured within the window where:
-     *  - Order status is paid-like (paid/pending_payment/completed)
-     *    OR
-     *  - Order is cancelled/refunded BUT cancellation/refund happened AFTER
-     *    the grace window from fee capture time (i.e., too late to dodge fees)
+     * Qualifying fees:
+     *  - Order status is paid-like (paid/pending_payment/completed), OR
+     *  - Order is cancelled/refunded BUT the cancellation/refund happened AFTER
+     *    the GRACE window from fee capture (too late to dodge fees).
      */
     const whereQualifyingFees = (eb: any) => {
       const grace = sql`(f."capturedAt" + make_interval(days => ${GRACE_DAYS}))`;
@@ -131,7 +146,7 @@ async function runGenerateInvoices(req: NextRequest) {
       ]);
     };
 
-    // 6) Sum qualifying fees for the period
+    // ── 6) Sum qualifying fees for the period
     const sumRow = await db
       .selectFrom("orderFees as f")
       .innerJoin("orders as o", "o.id", "f.orderId")
@@ -145,7 +160,7 @@ async function runGenerateInvoices(req: NextRequest) {
     const total = Number(sumRow?.total ?? 0);
     console.log(`  → total qualifying fees for period: ${total}`);
 
-    // 7) If total is 0, still create a $0 invoice if there was any qualifying fee activity
+    // ── 7) If total is 0, still create a $0 invoice if there was any qualifying fee activity
     let hasActivity = false;
     if (total <= 0) {
       const cntRow = await db
@@ -166,7 +181,7 @@ async function runGenerateInvoices(req: NextRequest) {
       console.log("  → zero-amount invoice will be created (qualifying activity present)");
     }
 
-    // 8) Insert invoice header
+    // ── 8) Insert invoice header
     const inv = await db
       .insertInto("userInvoices")
       .values({
@@ -200,7 +215,7 @@ async function runGenerateInvoices(req: NextRequest) {
 
     console.log(`  → created invoice ${inv.id}`);
 
-    // 9) Mint on-chain immediately for nonzero invoices
+    // ── 9) Mint on-chain immediately for nonzero invoices
     if (Number(inv.totalAmount) > 0) {
       try {
         await fetch(MINT_ENDPOINT, {
@@ -219,7 +234,7 @@ async function runGenerateInvoices(req: NextRequest) {
       console.log(`  → skip mint (zero-amount invoice ${inv.id})`);
     }
 
-    // 10) Attach qualifying fee line items
+    // ── 10) Attach qualifying fee line items
     const fees = await db
       .selectFrom("orderFees as f")
       .innerJoin("orders as o", "o.id", "f.orderId")
@@ -250,7 +265,7 @@ async function runGenerateInvoices(req: NextRequest) {
       periodEnd: inv.periodEnd,
       totalAmount: inv.totalAmount.toString(),
       dueDate: inv.dueDate,
-      createdAt: (inv.createdAt as Date).toISOString(),
+      createdAt: new Date(inv.createdAt as Date).toISOString(),
     });
   }
 
