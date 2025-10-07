@@ -63,6 +63,84 @@ function splitPrices(
   };
 }
 
+/* --------------------------------------------- */
+/* helper – hydrate attrs for shared target      */
+/* --------------------------------------------- */
+async function hydrateSharedAttributes(
+  targetProductId: string,
+  shareLinkId: string,
+  sourceProductId: string
+) {
+  // 1) map targetVariationId -> sourceVariationId
+  const maps = await db
+    .selectFrom("sharedVariationMapping")
+    .select(["sourceVariationId", "targetVariationId"])
+    .where("shareLinkId", "=", shareLinkId)
+    .where("sourceProductId", "=", sourceProductId)
+    .where("targetProductId", "=", targetProductId)
+    .execute();
+  const targetToSource = new Map(maps.map(m => [m.targetVariationId, m.sourceVariationId]));
+
+  if (targetToSource.size === 0) {
+    return { varAttrsByTarget: new Map<string, any>(), productAttributes: [] as any[] };
+  }
+
+  // 2) fetch source variations' attributes
+  const sourceVarIds = Array.from(new Set(maps.map(m => m.sourceVariationId)));
+  const srcRows = await db
+    .selectFrom("productVariations")
+    .select(["id", "attributes"])
+    .where("id", "in", sourceVarIds)
+    .execute();
+  const srcAttrsById = new Map<string, Record<string, string>>();
+  for (const r of srcRows) {
+    const attrs =
+      typeof r.attributes === "string"
+        ? JSON.parse(r.attributes || "{}")
+        : (r.attributes || {});
+    srcAttrsById.set(r.id, attrs);
+  }
+
+  // 3) build: a) per-target-variation attrs, b) union for product-level attributes
+  const varAttrsByTarget = new Map<string, Record<string, string>>();
+  const attrToTerms = new Map<string, Set<string>>();
+
+  for (const [targetVarId, sourceVarId] of targetToSource.entries()) {
+    const attrs = srcAttrsById.get(sourceVarId) || {};
+    varAttrsByTarget.set(targetVarId, attrs);
+    for (const [attributeId, termId] of Object.entries(attrs)) {
+      if (!attributeId || !termId) continue;
+      (attrToTerms.get(attributeId) ??
+        attrToTerms.set(attributeId, new Set()).get(attributeId)!).add(String(termId));
+    }
+  }
+
+  // 4) name lookups for pretty product.attributes
+  const attrIds = Array.from(attrToTerms.keys());
+  const termIds = Array.from(new Set(Array.from(attrToTerms.values()).flatMap(s => Array.from(s))));
+  const attrNameRows = attrIds.length
+    ? await db.selectFrom("productAttributes").select(["id", "name"]).where("id", "in", attrIds).execute()
+    : [];
+  const termNameRows = termIds.length
+    ? await db.selectFrom("productAttributeTerms").select(["id", "name"]).where("id", "in", termIds).execute()
+    : [];
+  const ATTR_NAME: Record<string, string> = Object.fromEntries(attrNameRows.map(r => [r.id, r.name]));
+  const TERM_NAME: Record<string, string> = Object.fromEntries(termNameRows.map(r => [r.id, r.name]));
+
+  const productAttributes = attrIds.map(attributeId => {
+    const selected = Array.from(attrToTerms.get(attributeId) ?? []);
+    return {
+      id: attributeId,
+      name: ATTR_NAME[attributeId] ?? attributeId,
+      terms: selected.map(tid => ({ id: tid, name: TERM_NAME[tid] ?? tid })),
+      useForVariations: true,
+      selectedTerms: selected,
+    };
+  });
+
+  return { varAttrsByTarget, productAttributes };
+}
+
 /* ------------------------------------------------------------------ */
 /* Helper to generate string-based IDs */
 function generateId(prefix: string): string {
@@ -145,8 +223,8 @@ async function deriveAttributesFromVariations(productId: string) {
       termIds.add(String(termId));
       (attrToTerms.get(attributeId) ??
         attrToTerms.set(attributeId, new Set()).get(attributeId)!).add(
-        String(termId),
-      );
+          String(termId),
+        );
     }
   }
 
@@ -469,8 +547,16 @@ export async function GET(
       return acc;
     }, []);
   } else if (raw.productType === "variable") {
-    // ❗ fallback: derive from variations at read-time
+    //  fallback: derive from variations at read-time
     attributes = await deriveAttributesFromVariations(actualProductId);
+
+    // if still empty and this is a shared copy, derive from SOURCE variations
+    if (!attributes.length && isShared && mapping?.shareLinkId && sourceProductId) {
+      const hydrated = await hydrateSharedAttributes(actualProductId, mapping.shareLinkId, sourceProductId);
+      if (hydrated.productAttributes.length) {
+        attributes = hydrated.productAttributes;
+      }
+    }
   }
 
 
@@ -482,6 +568,13 @@ export async function GET(
       .selectAll()
       .where("productId", "=", actualProductId)
       .execute();
+  }
+
+  // If shared: pre-hydrate a map to fill empty variation.attributes from SOURCE
+  let sharedVarAttrs = new Map<string, Record<string, string>>();
+  if (isShared && mapping?.shareLinkId && sourceProductId) {
+    const hydrated = await hydrateSharedAttributes(actualProductId, mapping.shareLinkId, sourceProductId);
+    sharedVarAttrs = hydrated.varAttrsByTarget;
   }
 
   /* ---------- determine allowed countries for shared copies ----- */
@@ -522,6 +615,15 @@ export async function GET(
   }
 
   const variations = variationsRaw.map((v) => {
+    // fill empty attrs from source if present
+    let vAttrs = v.attributes;
+    const hasAny =
+      vAttrs &&
+      typeof vAttrs === "object" &&
+      Object.keys(typeof vAttrs === "string" ? JSON.parse(vAttrs || "{}") : (vAttrs || {})).length > 0;
+    if (!hasAny && sharedVarAttrs.size) {
+      vAttrs = sharedVarAttrs.get(v.id) || v.attributes;
+    }
     const vReg = parseMap<Record<string, number> | null>(v.regularPrice);
     const vSal = parseMap<Record<string, number> | null>(v.salePrice);
     const vCost = parseMap<Record<string, number> | null>(v.cost);
@@ -539,7 +641,7 @@ export async function GET(
     const fCost = isShared ? pickKeys(vCost, allowedForVar as string[]) : vCost;
     return {
       id: v.id,
-      attributes: v.attributes,
+      attributes: vAttrs,
       sku: v.sku,
       image: v.image,
       prices: mergePriceMaps(fReg, fSale),
@@ -877,11 +979,16 @@ export async function PATCH(
     }
 
     /* -------- attributes (unchanged) ---------------------------- */
-    if (parsedUpdate.attributes) {
-      await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
-      for (const a of parsedUpdate.attributes)
-        for (const termId of a.selectedTerms)
-          await db.insertInto("productAttributeValues").values({ productId: id, attributeId: a.id, termId }).execute();
+    if (Array.isArray(parsedUpdate.attributes)) {
+      if (parsedUpdate.attributes.length === 0) {
+        // no-op for attributes when empty array provided
+      } else {
+        await db.deleteFrom("productAttributeValues").where("productId", "=", id).execute();
+        for (const a of parsedUpdate.attributes)
+          for (const termId of a.selectedTerms)
+
+            await db.insertInto("productAttributeValues").values({ productId: id, attributeId: a.id, termId }).execute();
+      }
     }
 
     /* ============================================================== */
@@ -945,9 +1052,9 @@ export async function PATCH(
             .execute();
         }
       }
-            /* ---- keep productAttributeValues in sync with variation usage ----
-        Only when the client actually sent `variations` with this PATCH.
-        We mirror the union of (attributeId, termId) from incoming variations. */
+      /* ---- keep productAttributeValues in sync with variation usage ----
+  Only when the client actually sent `variations` with this PATCH.
+  We mirror the union of (attributeId, termId) from incoming variations. */
       {
         const pairs = collectAttributePairs(parsedUpdate.variations);
 
