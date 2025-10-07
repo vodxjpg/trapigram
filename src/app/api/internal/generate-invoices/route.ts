@@ -39,7 +39,6 @@ async function runGenerateInvoices(req: NextRequest) {
   }
 
   // 2) Choose "today" (supports ?date=YYYY-MM-DD for testing)
-  const url = new URL(req.url);
   const today = url.searchParams.get("date")
     ? new Date(url.searchParams.get("date")!)
     : new Date();
