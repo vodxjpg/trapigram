@@ -1,3 +1,4 @@
+// /home/zodx/Desktop/trapigram/src/app/(landing)/layout.tsx
 import type { Metadata } from "next";
 import { GoogleAnalytics } from '@next/third-parties/google';
 import { Source_Sans_3, Manrope } from "next/font/google";
@@ -14,6 +15,10 @@ const sourceSans = Source_Sans_3({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: siteDetails.metadata.title,
   description: siteDetails.metadata.description,
+  // Correct placement for Google Search Console verification:
+  verification: {
+    google: "8DdB8ldqLMY6KSTJssk-7aQX1rLXXsrpnpa4JWKMyac",
+  },
   openGraph: {
     title: siteDetails.metadata.title,
     description: siteDetails.metadata.description,
