@@ -2,7 +2,7 @@ export const siteDetails = {
     siteName: 'Trapyfy',
     siteUrl: 'https://trapyfy.com/',
     metadata: {
-        title: 'Trapyfy - A bot to rule them all',
+        title: 'Trapyfy - Your telegram bot shop in minutes',
         description: 'Trapyfy empowers businesses with cutting-edge technology solutions to drive success and efficiency workflow.',
     },
     language: 'en-us',
