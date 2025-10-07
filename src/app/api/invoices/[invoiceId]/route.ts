@@ -36,16 +36,17 @@ export async function GET(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // 3) line items
+  // 3) line items (join orders to get orderKey)
   const items = await db
     .selectFrom("invoiceItems as ii")
     .innerJoin("orderFees as of", "of.id", "ii.orderFeeId")
+    .innerJoin("orders as o", "o.id", "of.orderId")
     .select([
       "ii.id as itemId",
       "ii.amount",
-      "of.orderId",
       "of.feeAmount",
       "of.percentApplied",
+      "o.orderKey as orderKey",
     ])
     .where("ii.invoiceId", "=", invoiceId)
     .execute();

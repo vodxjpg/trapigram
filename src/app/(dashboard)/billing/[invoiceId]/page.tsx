@@ -1,3 +1,4 @@
+// src/app/(dashboard)/billing/[invoiceId]/page.tsx
 "use client"
 
 import { useState, useEffect } from "react"
@@ -21,7 +22,7 @@ import { IconCopy } from "@tabler/icons-react"
 
 interface Item {
   itemId: string
-  orderId: string
+  orderKey: string
   feeAmount: string
   percentApplied: string
   amount: string
@@ -188,7 +189,7 @@ export default function InvoiceDetailPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Order ID</TableHead>
+                <TableHead>Order</TableHead>
                 <TableHead>Fee</TableHead>
                 <TableHead>Rate</TableHead>
                 <TableHead>Amount</TableHead>
@@ -197,7 +198,9 @@ export default function InvoiceDetailPage() {
             <TableBody>
               {items.map((it) => (
                 <TableRow key={it.itemId}>
-                  <TableCell>{it.orderId}</TableCell>
+                  <TableCell>
+                    <code className="text-xs">{it.orderKey}</code>
+                  </TableCell>
                   <TableCell>
                     ${parseFloat(it.feeAmount).toFixed(2)}
                   </TableCell>
