@@ -464,12 +464,13 @@ export async function POST(req: NextRequest) {
     async function nextHopFrom(items: MapItem[]): Promise<MapItem[]> {
       const out: MapItem[] = [];
       for (const it of items) {
+        // Find the next hop mapping: previous hop’s SOURCE becomes the next hop’s TARGET
         const { rows: [m] } = await pool.query(
           `SELECT "shareLinkId","sourceProductId","targetProductId"
-            FROM "sharedProductMapping"
+             FROM "sharedProductMapping"
             WHERE "targetProductId" = $1
             LIMIT 1`,
-          [it.sourceProductId], // climb one hop
+          [it.sourceProductId],
         );
         if (!m) continue;
 
@@ -479,13 +480,30 @@ export async function POST(req: NextRequest) {
         );
         if (!prod) continue;
 
+        // Advance the variation: (prev hop’s targetVariationId) → (this hop’s sourceVariationId)
+        let advancedVariationId: string | null = null;
+        if (it.targetVariationId) {
+          const { rows: mapVar } = await pool.query(
+            `SELECT "sourceVariationId"
+               FROM "sharedVariationMapping"
+              WHERE "shareLinkId"       = $1
+                AND "sourceProductId"   = $2
+                AND "targetProductId"   = $3
+                AND "targetVariationId" = $4
+              LIMIT 1`,
+            [m.shareLinkId, m.sourceProductId, m.targetProductId, it.targetVariationId],
+          );
+          advancedVariationId = mapVar[0]?.sourceVariationId ?? null;
+        }
+
         out.push({
           organizationId: prod.organizationId,
           shareLinkId: m.shareLinkId,
           sourceProductId: m.sourceProductId,
-          // keep the original buyer leaf references for qty/variation
+          // Keep the original buyer leaf productId for reporting
           targetProductId: it.targetProductId,
-          targetVariationId: it.targetVariationId,
+          // ✅ carry the advanced (now “target” for the next hop) variation forward
+          targetVariationId: advancedVariationId,
           qty: it.qty,
           affiliateProductId: it.affiliateProductId,
           downstreamOrganizationId: it.organizationId, // previous hop’s supplier

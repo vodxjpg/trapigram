@@ -653,7 +653,7 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
        FROM "cartProducts" WHERE "cartId" = $1`, [o.cartId]);
   if (!cpRows.length) return;
 
-    // Carry line-level qty/variation/affiliate through the hops so we don't re-read buyer cart later.
+  // Carry line-level qty/variation/affiliate through the hops so we don't re-read buyer cart later.
   type MapItem = {
     organizationId: string;
     shareLinkId: string;
@@ -710,13 +710,29 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
         [m.sourceProductId],
       );
       if (!prod) continue;
-            // Preserve the original buyer line details (qty/variation/affiliate) as we climb upstream.
+
+      // Advance the variation for the next hop (same logic as creation path)
+      let advancedVariationId: string | null = null;
+      if (it.targetVariationId) {
+        const { rows: mapVar } = await pool.query(
+          `SELECT "sourceVariationId"
+             FROM "sharedVariationMapping"
+            WHERE "shareLinkId"       = $1
+              AND "sourceProductId"   = $2
+              AND "targetProductId"   = $3
+              AND "targetVariationId" = $4
+            LIMIT 1`,
+          [m.shareLinkId, m.sourceProductId, m.targetProductId, it.targetVariationId],
+        );
+        advancedVariationId = mapVar[0]?.sourceVariationId ?? null;
+      }
+
       out.push({
         organizationId: prod.organizationId,
         ...m,
         targetProductId: it.targetProductId,
         qty: it.qty,
-        targetVariationId: it.targetVariationId,
+        targetVariationId: advancedVariationId, // ✅ carry forward
         affiliateProductId: it.affiliateProductId,
       });
     }
@@ -772,7 +788,7 @@ async function ensureSupplierOrdersExist(baseOrderId: string) {
     // add items at transfer price
     let subtotal = 0;
     for (const it of items) {
-          // Use carried line-level data from MapItem instead of re-querying the buyer cart
+      // Use carried line-level data from MapItem instead of re-querying the buyer cart
       const qty = Number(it.qty || 0);
       const affId = it.affiliateProductId ?? null;
       const targetVariationId: string | null = it.targetVariationId ?? null;
@@ -1673,7 +1689,7 @@ export async function PATCH(
           err
         );
       }
-            // Same voiding logic on refund
+      // Same voiding logic on refund
       try {
         await pool.query(
           `
