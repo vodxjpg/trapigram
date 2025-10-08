@@ -24,7 +24,7 @@ export default function robots(): MetadataRoute.Robots {
       },
     ],
     // Example (uncomment and set your absolute URL if desired):
-    // sitemap: 'https://your-domain.com/sitemap.xml',
-    // host: 'https://your-domain.com',
+    sitemap: 'https://www.trapyfy.com/sitemap.xml',
+    host: 'https://www.trapyfy.com',
   };
 }
