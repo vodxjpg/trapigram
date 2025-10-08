@@ -1,13 +1,16 @@
-///src/app/api/ticket-support-groups/[id]/route.ts
+// /src/app/api/notifications/support-groups/[id]/route.ts
 export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
+const countryCode = z.union([z.string().length(2), z.literal("*")]);
+
 const patchSchema = z.object({
   name: z.string().min(1).optional(),
-  countries: z.array(z.string().length(2)).min(1).optional(),
+  countries: z.array(countryCode).min(1).optional(), // PATCH replaces countries if provided
 });
 
 export async function PATCH(
@@ -24,20 +27,18 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
 
+  const update: Record<string, any> = { updatedAt: new Date() };
+  if ("name" in body) update.name = body.name;
+  if ("countries" in body) update.countries = JSON.stringify(body.countries);
+
   await db
     .updateTable("ticketSupportGroups")
-    .set({
-      ...("name" in body ? { name: body.name } : {}),
-      ...("countries" in body
-        ? { countries: JSON.stringify(body.countries) }
-        : {}),
-      updatedAt: new Date(),
-    })
+    .set(update)
     .where("id", "=", params.id)
     .where("organizationId", "=", ctx.organizationId)
     .execute();
 
-  return NextResponse.json({ id: params.id, updated: true });
+  return NextResponse.json({ id: params.id, updated: true }, { status: 200 });
 }
 
 export async function DELETE(
@@ -53,5 +54,5 @@ export async function DELETE(
     .where("organizationId", "=", ctx.organizationId)
     .execute();
 
-  return NextResponse.json({ id: params.id, deleted: true });
+  return NextResponse.json({ id: params.id, deleted: true }, { status: 200 });
 }
