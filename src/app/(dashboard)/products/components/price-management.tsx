@@ -205,7 +205,7 @@ export function PriceManagement({
                 Apply to all countries
               </Button>
               <Button type="button" variant="outline" onClick={clearSaleForAll}>
-                Clear sale for all
+                Clear all sale prices
               </Button>
             </div>
           </div>

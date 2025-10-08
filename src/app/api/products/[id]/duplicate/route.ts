@@ -1,3 +1,4 @@
+// src/app/api/products/[id]/duplicate
 import { type NextRequest, NextResponse } from "next/server"
 import { v4 as uuidv4 } from "uuid"
 import { db } from "@/lib/db"
@@ -66,6 +67,7 @@ export async function POST(
     /* ---------- new product basics ----------------------------- */
     const newProductId = uuidv4()
     const newSku = await uniqueSku(source.sku, organizationId)
+    const newTitle = `${source.title} - COPY`
 
     /* ---------- insert product --------------------------------- */
     await db
@@ -74,6 +76,7 @@ export async function POST(
         ...source,
         id: newProductId,
         sku: newSku,
+        title: newTitle,
         createdAt: new Date(),
         updatedAt: new Date(),
       })
