@@ -120,11 +120,7 @@ export async function sendNotification(params: SendNotificationParams) {
 
   const isAutomation = type === "automation_rule";
 
-  /* ───────────────── trigger normalization ─────────────────
-   * If a caller sends order notes with trigger "order_note" (or omits it),
-   * treat them as admin-only alerts (to groups), not buyer DMs.
-   *  For automation rules we force a user-only semantics regardless of trigger.
-   */
+  /* ───────────────── trigger normalization ───────────────── */
   const rawTrigger = trigger ?? null;
   const effectiveTrigger = isAutomation
     ? "user_only"
@@ -154,7 +150,6 @@ export async function sendNotification(params: SendNotificationParams) {
   }
 
   /* 1️⃣ templates */
-  // For automation rules we skip DB templates and use the rule's own subject/body
   let tplUser:
     | { role: "admin" | "user"; subject: string | null; message: string; countries: string }
     | undefined;
@@ -176,15 +171,12 @@ export async function sendNotification(params: SendNotificationParams) {
     hasUserTpl = !!tplUser;
     hasAdminTpl = !!tplAdmin;
   }
-  // Decide fan-out based on trigger & template presence
   const suppressAdminFanout = effectiveTrigger === "user_only_email" || isAutomation;
   const suppressUserFanout = effectiveTrigger === "admin_only";
 
-  // admin-only order notes bypass template checks (show exact message + note content)
   const isAdminOnlyOrderNote =
     effectiveTrigger === "admin_only" && type === "order_message";
 
-  // ✅ NEW: user-only order notes also bypass template checks so customers get the raw message
   const isUserOnlyOrderNote =
     type === "order_message" &&
     (effectiveTrigger === "user_only" || effectiveTrigger === "user_only_email");
@@ -194,7 +186,6 @@ export async function sendNotification(params: SendNotificationParams) {
   const shouldUserFanout =
     !suppressUserFanout && (hasUserTpl || isUserOnlyOrderNote);
 
-  // ✅ Force user-only fanout for automation rules
   let finalAdminFanout = shouldAdminFanout;
   let finalUserFanout = shouldUserFanout;
   if (isAutomation) {
@@ -211,8 +202,6 @@ export async function sendNotification(params: SendNotificationParams) {
     shouldUserFanout: finalUserFanout,
   });
 
-  // If neither audience has a template (and it's not an explicit admin-only order note),
-  // skip everything cleanly.
   if (!finalAdminFanout && !finalUserFanout && !isAdminOnlyOrderNote) {
     console.log("[notify] skip: no matching templates for admin or user; nothing to send.");
     return;
@@ -227,28 +216,23 @@ export async function sendNotification(params: SendNotificationParams) {
       ? type.replace(/_/g, " ")
       : (tplSubject || fallback || "").trim();
 
-  
   let subjectUserGeneric = "";
-let subjectAdminGeneric = "";
-let bodyUserGeneric = "";
-let bodyAdminGeneric = "";
+  let subjectAdminGeneric = "";
+  let bodyUserGeneric = "";
+  let bodyAdminGeneric = "";
 
   if (isAutomation) {
-    // Use the rule's own subject + HTML body, apply variables, send ONLY to user
     subjectUserGeneric = applyVars(makeRawSub(null, subject), variables);
     bodyUserGeneric = applyVars(message, variables);
   } else {
-     const rawSubUser = makeRawSub(tplUser?.subject, subject);
-  const rawSubAdm  = makeRawSub(tplAdmin?.subject, subject);
-  subjectUserGeneric  = applyVars(rawSubUser, variables);
-  subjectAdminGeneric = applyVars(rawSubAdm,  variables);
+    const rawSubUser = makeRawSub(tplUser?.subject, subject);
+    const rawSubAdm = makeRawSub(tplAdmin?.subject, subject);
+    subjectUserGeneric = applyVars(rawSubUser, variables);
+    subjectAdminGeneric = applyVars(rawSubAdm, variables);
     bodyUserGeneric = applyVars(tplUser?.message || message, variables);
     bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
   }
-  /* ───────────────── special-case: admin-only order notes ─────────────────
-   * Prefer the caller-provided body over any stored admin template so we can show the
-   * actual order number and the note content verbatim.
-   */
+
   if (!isAutomation && isAdminOnlyOrderNote) {
     bodyAdminGeneric = applyVars(message, variables);
   }
@@ -260,7 +244,6 @@ let bodyAdminGeneric = "";
       "Due to privacy reasons you can only see the product list in your order details page or message notification by the API",
   };
 
-    // For automation rules, DO NOT substitute special email vars; use the rule content as-is.
   const subjectUserEmail = isAutomation
     ? subjectUserGeneric
     : applyVars(makeRawSub(tplUser?.subject, subject), varsEmail);
@@ -273,6 +256,7 @@ let bodyAdminGeneric = "";
   const bodyAdminEmail = isAutomation
     ? bodyAdminGeneric
     : applyVars(tplAdmin?.message || message, varsEmail);
+
   /* 3️⃣ support e-mail (for CC and admin fallback) */
   const supportRow = await db
     .selectFrom("organizationSupportEmail")
@@ -414,12 +398,10 @@ let bodyAdminGeneric = "";
   if (channels.includes("in_app")) {
     console.log("[notify] IN_APP fanout begin");
     const targets = new Set<string | null>();
-    // user-facing
     if (shouldUserFanout) {
       if (userId) targets.add(userId);
       if (clientRow?.userId) targets.add(clientRow.userId);
     }
-    // admin-facing (owners) → only if there is an admin template or admin-only note
     if (finalAdminFanout) {
       ownerIds.forEach((id) => targets.add(id));
     }
@@ -449,12 +431,9 @@ let bodyAdminGeneric = "";
 
   /* — TELEGRAM — */
   if (channels.includes("telegram")) {
-    // Only post to admin groups on admin-only triggers AND when we actually want admin fanout.
-    // DM the client only when we actually want user fanout.
     const wantAdminGroups =
       !isAutomation && effectiveTrigger === "admin_only" && finalAdminFanout;
     const wantClientDM = finalUserFanout;
-
 
     const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
     const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
@@ -472,7 +451,7 @@ let bodyAdminGeneric = "";
       country,
       bodyAdmin: bodyAdminOut,
       bodyUser: bodyUserOut,
-      adminUserIds: [], // groups handle admin broadcast
+      adminUserIds: [],
       clientUserId: wantClientDM ? clientRow?.userId || null : null,
       ticketId,
     });
@@ -532,6 +511,49 @@ async function dispatchWebhook(opts: {
   );
 }
 
+/** Resolve the effective country for Telegram fan-out.
+ *  If `country` is null/empty, try ticket → client country; else return uppercased input.
+ */
+async function resolveCountryForTelegram(opts: {
+  organizationId: string;
+  ticketId?: string | null;
+  country?: string | null;
+}): Promise<string | null> {
+  const c = (opts.country || "").trim();
+  if (c) return c.toUpperCase();
+
+  const ticketId = opts.ticketId?.trim();
+  if (!ticketId) return null;
+
+  // Join ticket → client to fetch the client's country, scoped to this org.
+  const row = await db
+    .selectFrom("tickets as t")
+    .innerJoin("clients as c", "c.id", "t.clientId")
+    .select(["c.country as country"])
+    .where("t.id", "=", ticketId)
+    .where("t.organizationId", "=", opts.organizationId)
+    .executeTakeFirst();
+
+  const cc = (row?.country || "").trim();
+  return cc ? cc.toUpperCase() : null;
+}
+
+/** Country-aware match: if a country is known ⇒ allow exact or "*" wildcard.
+ *  If unknown ⇒ only groups explicitly registered for "*" will receive it.
+ */
+function groupMatchesCountry(rawCountries: unknown, country: string | null): boolean {
+  let arr: string[] = [];
+  try {
+    if (Array.isArray(rawCountries)) arr = rawCountries as string[];
+    else arr = JSON.parse((rawCountries as string) || "[]");
+  } catch {
+    arr = [];
+  }
+  const up = arr.map((x) => (typeof x === "string" ? x.toUpperCase().trim() : "")).filter(Boolean);
+  if (!country) return up.includes("*"); // do NOT broadcast to all when country is unknown
+  return up.includes(country) || up.includes("*");
+}
+
 async function dispatchTelegram(opts: {
   organizationId: string;
   type: string;
@@ -563,6 +585,13 @@ async function dispatchTelegram(opts: {
 
   const BOT = `https://api.telegram.org/bot${row.apiKey}/sendMessage`;
 
+  // 🔎 NEW: resolve effective country if missing, using ticket → client
+  const effectiveCountry = await resolveCountryForTelegram({
+    organizationId,
+    ticketId: ticketId ?? null,
+    country: country ?? null,
+  });
+
   const groupRows = await db
     .selectFrom("notificationGroups")
     .select(["groupId", "countries"])
@@ -570,15 +599,10 @@ async function dispatchTelegram(opts: {
     .execute();
 
   const orderGroupIds = groupRows
-    .filter((g) => {
-      const arr: string[] = Array.isArray(g.countries)
-        ? (g.countries as unknown as string[])
-        : JSON.parse(g.countries || "[]");
-      return country ? arr.includes(country) : true;
-    })
+    .filter((g) => groupMatchesCountry(g.countries, effectiveCountry))
     .map((g) => g.groupId);
 
-  /* 2️⃣ NEW – ticket-support groups (same filter) */
+  /* 2️⃣ ticket-support groups */
   let ticketGroupIds: string[] = [];
   if (type === "ticket_created" || type === "ticket_replied") {
     const supRows = await db
@@ -588,18 +612,13 @@ async function dispatchTelegram(opts: {
       .execute();
 
     ticketGroupIds = supRows
-      .filter((g) => {
-        const arr: string[] = Array.isArray(g.countries)
-          ? (g.countries as unknown as string[])
-          : JSON.parse(g.countries || "[]");
-        return country ? arr.includes(country) : true;
-      })
+      .filter((g) => groupMatchesCountry(g.countries, effectiveCountry))
       .map((g) => g.groupId);
   }
 
   const targets: { chatId: string; text: string; markup?: string }[] = [];
-  const seenChatIds = new Set<string>(); // de-dupe across everything
-  const ticketSet = new Set(ticketGroupIds); // for selective Reply button
+  const seenChatIds = new Set<string>();
+  const ticketSet = new Set(ticketGroupIds);
   const uniqueGroupIds = Array.from(new Set([...orderGroupIds, ...ticketGroupIds]));
   console.log("[telegram] targets discovery", {
     hasBodyAdmin: Boolean(bodyAdmin && bodyAdmin.trim().length),
@@ -608,42 +627,39 @@ async function dispatchTelegram(opts: {
     ticketGroupCount: ticketGroupIds.length,
     uniqueGroupCount: uniqueGroupIds.length,
     hasClientDM: Boolean(clientUserId),
+    effectiveCountry,
   });
 
   if (bodyAdmin.trim()) {
     const safeAdmin = toTelegramHtml(bodyAdmin);
-    // admins (user IDs in here)
     for (const id of adminUserIds) {
       if (id && !seenChatIds.has(id)) {
         seenChatIds.add(id);
         targets.push({ chatId: id, text: safeAdmin });
       }
     }
-    // groups (orders + tickets) – de-duplicated
     for (const id of uniqueGroupIds) {
       if (!id || seenChatIds.has(id)) continue;
       seenChatIds.add(id);
       const markup =
         ticketId && ticketSet.has(id)
           ? JSON.stringify({
-            inline_keyboard: [
-              [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
-            ],
-          })
+              inline_keyboard: [
+                [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
+              ],
+            })
           : undefined;
       targets.push({ chatId: id, text: safeAdmin, ...(markup ? { markup } : {}) });
     }
   }
 
   if (clientUserId && bodyUser.trim()) {
-    // client DM – also respect de-dupe (paranoia)
     if (!seenChatIds.has(clientUserId)) {
       seenChatIds.add(clientUserId);
       targets.push({ chatId: clientUserId, text: toTelegramHtml(bodyUser) });
     }
   }
 
-  // Summarize where this will go (mask chat ids)
   const mask = (s: string) => (s.length > 6 ? `${s.slice(0, 2)}…${s.slice(-4)}` : s);
   console.log("[telegram] final targets", {
     count: targets.length,
@@ -654,8 +670,8 @@ async function dispatchTelegram(opts: {
   });
 
   await Promise.all(
-   targets.map(async (t) => {
-     const res = await fetch(BOT, {
+    targets.map(async (t) => {
+      const res = await fetch(BOT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -664,15 +680,15 @@ async function dispatchTelegram(opts: {
           parse_mode: "HTML",
           disable_web_page_preview: true,
           ...(t.markup ? { reply_markup: t.markup } : {}),
-         }),
- }).catch((e) => {
-   console.warn("[telegram] network error", e);
-   return null;
- });
- if (res && !res.ok) {
-   const err = await res.text().catch(() => "");
-   console.error("[telegram] API error", res.status, res.statusText, err.slice(0, 300));
- }
+        }),
+      }).catch((e) => {
+        console.warn("[telegram] network error", e);
+        return null;
+      });
+      if (res && !res.ok) {
+        const err = await res.text().catch(() => "");
+        console.error("[telegram] API error", res.status, res.statusText, err.slice(0, 300));
+      }
     }),
   );
   console.log("[telegram] sent", { count: targets.length });
