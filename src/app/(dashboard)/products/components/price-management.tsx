@@ -8,6 +8,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -179,16 +180,17 @@ export function PriceManagement({
                 onChange={(e) => setBulkSale(e.target.value)}
               />
             </div>
-            <div className="md:col-span-3 flex items-end gap-2">
-              <label className="flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4"
+            <div className="md:col-span-3 flex items-end">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="only-empty-toggle"
                   checked={onlyEmpty}
-                  onChange={(e) => setOnlyEmpty(e.target.checked)}
+                  onCheckedChange={setOnlyEmpty}
                 />
-                Only fill empty fields
-              </label>
+                <label htmlFor="only-empty-toggle" className="text-xs select-none">
+                  Only fill empty fields
+                </label>
+              </div>
             </div>
             <div className="md:col-span-12 flex flex-wrap gap-2">
               <Button
