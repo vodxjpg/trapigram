@@ -3,10 +3,11 @@
 ───────────────────────────────────────────────────────────────── */
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -48,6 +49,10 @@ export function PriceManagement({
   onCostChange,
 }: Props) {
   const [open, setOpen] = useState(true);
+  const [bulkCost, setBulkCost] = useState<string>("");
+  const [bulkRegular, setBulkRegular] = useState<string>("");
+  const [bulkSale, setBulkSale] = useState<string>("");
+  const [onlyEmpty, setOnlyEmpty] = useState<boolean>(false);
 
   /* ---------- helpers ---------- */
   const patchPrice = (
@@ -67,6 +72,61 @@ export function PriceManagement({
   const patchCost = (country: string, cost: number) =>
     onCostChange({ ...costData, [country]: cost });
 
+    const parsedBulk = useMemo(() => {
+    const toNum = (s: string) => {
+      const n = Number.parseFloat(s);
+      return Number.isFinite(n) ? n : null;
+    };
+    return {
+      cost: toNum(bulkCost),
+      regular: toNum(bulkRegular),
+      sale: bulkSale.trim() === "" ? null : toNum(bulkSale),
+    };
+  }, [bulkCost, bulkRegular, bulkSale]);
+
+  const applyBulk = () => {
+    const nextPrices: PriceMap = { ...priceData };
+    const nextCosts: CostMap = { ...costData };
+
+    countries.forEach((c) => {
+      // cost
+      if (parsedBulk.cost !== null) {
+        const should = !onlyEmpty || (onlyEmpty && (!Number.isFinite(nextCosts[c]) || (nextCosts[c] ?? 0) === 0));
+        if (should) nextCosts[c] = parsedBulk.cost!;
+      }
+      // regular price
+      if (parsedBulk.regular !== null) {
+        const cur = nextPrices[c] || { regular: 0, sale: null };
+        const should = !onlyEmpty || (onlyEmpty && (!Number.isFinite(cur.regular) || cur.regular === 0));
+        nextPrices[c] = {
+          ...cur,
+          regular: should ? parsedBulk.regular! : cur.regular,
+        };
+      }
+      // sale price
+      if (parsedBulk.sale !== undefined) {
+        const cur = nextPrices[c] || { regular: 0, sale: null };
+        const should = !onlyEmpty || (onlyEmpty && (cur.sale == null || cur.sale === 0));
+        nextPrices[c] = {
+          ...cur,
+          sale: should ? parsedBulk.sale : cur.sale,
+        };
+      }
+    });
+
+    onPriceChange(nextPrices);
+    onCostChange(nextCosts);
+  };
+
+  const clearSaleForAll = () => {
+    const next: PriceMap = { ...priceData };
+    countries.forEach((c) => {
+      const cur = next[c] || { regular: 0, sale: null };
+      next[c] = { ...cur, sale: null };
+    });
+    onPriceChange(next);
+  };
+
   /* ---------- render ---------- */
   return (
     <Card>
@@ -84,6 +144,69 @@ export function PriceManagement({
 
       {open && (
         <CardContent>
+                    {/* Bulk row ---------------------------------------------------- */}
+          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-12">
+            <div className="md:col-span-3">
+              <label className="block text-xs mb-1">Bulk Cost (all countries)</label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="e.g. 5.00"
+                value={bulkCost}
+                onChange={(e) => setBulkCost(e.target.value)}
+              />
+            </div>
+            <div className="md:col-span-3">
+              <label className="block text-xs mb-1">Bulk Regular (all countries)</label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="e.g. 9.99"
+                value={bulkRegular}
+                onChange={(e) => setBulkRegular(e.target.value)}
+              />
+            </div>
+            <div className="md:col-span-3">
+              <label className="block text-xs mb-1">Bulk Sale (all countries, optional)</label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="leave empty to keep"
+                value={bulkSale}
+                onChange={(e) => setBulkSale(e.target.value)}
+              />
+            </div>
+            <div className="md:col-span-3 flex items-end gap-2">
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={onlyEmpty}
+                  onChange={(e) => setOnlyEmpty(e.target.checked)}
+                />
+                Only fill empty fields
+              </label>
+            </div>
+            <div className="md:col-span-12 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                onClick={applyBulk}
+                disabled={
+                  parsedBulk.cost === null &&
+                  parsedBulk.regular === null &&
+                  parsedBulk.sale === undefined
+                }
+              >
+                Apply to all countries
+              </Button>
+              <Button type="button" variant="outline" onClick={clearSaleForAll}>
+                Clear sale for all
+              </Button>
+            </div>
+          </div>
           {/* horizontal scroll on small screens */}
           <div className="overflow-x-auto">
             <Table className="min-w-[520px]">
