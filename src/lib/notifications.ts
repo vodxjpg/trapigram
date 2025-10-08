@@ -358,6 +358,19 @@ export async function sendNotification(params: SendNotificationParams) {
   console.log("[notify] master log inserted");
 
   /* 6️⃣ channel fan-out */
+
+  // For ticket events, always include telegram fanout (admin groups are the primary support surface).
+  // This is a defensive guard so callers don't need to remember to add "telegram".
+  const isTicketEvent =
+    type === "ticket_created" || type === "ticket_replied";
+  const includeTelegram =
+    channels.includes("telegram") || isTicketEvent;
+  if (isTicketEvent && !channels.includes("telegram")) {
+    console.log("[notify] add channel 'telegram' for ticket event", {
+      type,
+      originalChannels: channels,
+    });
+  }
   /* — EMAIL — */
   if (channels.includes("email")) {
     console.log("[notify] EMAIL fanout", {
@@ -452,12 +465,11 @@ export async function sendNotification(params: SendNotificationParams) {
   }
 
   /* — TELEGRAM — */
-  if (channels.includes("telegram")) {
+  if (includeTelegram) {
     // Admin groups:
     //  - For order/admin notes: previous behavior still honored via finalAdminFanout.
     //  - For ticket events (ticket_created|ticket_replied): ALWAYS allow admin groups
     //    (even if there is no admin template), because groups are the primary support channel.
-    const isTicketEvent = type === "ticket_created" || type === "ticket_replied";
     const wantAdminGroups =
       !isAutomation && (finalAdminFanout || isTicketEvent);
     const wantClientDM = finalUserFanout;
