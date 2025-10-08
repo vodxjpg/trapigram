@@ -27,14 +27,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-// Normalize order-note trigger to admin_only at the edge as well
-const normalized =
+
+// Normalize order-note trigger to admin_only at the edge as well,
+// and normalize country to UPPERCASE to match stored support-group codes.
+const normalizedBase =
   body.type === "order_message" &&
   (!body.trigger || body.trigger === "order_note")
     ? { ...body, trigger: "admin_only" as const }
     : body;
 
- await sendNotification({ ...normalized, organizationId: ctx.organizationId });
+  const normalized: typeof normalizedBase = {
+    ...normalizedBase,
+    country:
+      typeof normalizedBase.country === "string" && normalizedBase.country.length === 2
+        ? normalizedBase.country.toUpperCase()
+        : normalizedBase.country ?? null,
+  };
+
+  await sendNotification({ ...normalized, organizationId: ctx.organizationId });
 
   return NextResponse.json({ ok: true }, { status: 201 });
 }

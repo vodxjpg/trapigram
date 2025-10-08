@@ -94,6 +94,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
 
+    // Normalize countries to UPPERCASE (and trim), to match dispatcher comparisons
+  const normCountries = data.countries.map((c) => (c === "*" ? "*" : c.toUpperCase().trim()));
+
   // Look up existing group by (organizationId, groupId)
   const existing = await db
     .selectFrom("ticketSupportGroups")
@@ -108,8 +111,8 @@ export async function POST(req: NextRequest) {
     const prevCountries = parseCountries(existing.countries);
     const nextCountries =
       mode === "replace"
-        ? data.countries
-        : Array.from(new Set([...(prevCountries || []), ...data.countries]));
+      ? normCountries
+      : Array.from(new Set([...(prevCountries || []), ...normCountries]));
 
     await db
       .updateTable("ticketSupportGroups")
@@ -136,7 +139,7 @@ export async function POST(req: NextRequest) {
       id,
       organizationId: ctx.organizationId,
       name: data.name,
-      countries: JSON.stringify(data.countries),
+      countries: JSON.stringify(normCountries),
       groupId: data.groupId,
       createdAt: now,
       updatedAt: now,
