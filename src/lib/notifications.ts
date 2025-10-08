@@ -133,16 +133,12 @@ export async function sendNotification(params: SendNotificationParams) {
       : rawTrigger;
 
   // ───────────────── DEBUG overview (no secrets) ─────────────────
-  // Normalize country to 2-letter UPPER if present.
-  const countryNorm =
-    typeof country === "string" && country.length === 2 ? country.toUpperCase() : null;
-
   console.log("[notify] dispatch start", {
     organizationId,
     type,
     trigger: effectiveTrigger,
     channels,
-    country: countryNorm,
+    country,
     hasSubject: Boolean(subject),
     hasMessageHtml: Boolean(message && message.length),
     userId,
@@ -231,21 +227,21 @@ export async function sendNotification(params: SendNotificationParams) {
       ? type.replace(/_/g, " ")
       : (tplSubject || fallback || "").trim();
 
-
+  
   let subjectUserGeneric = "";
-  let subjectAdminGeneric = "";
-  let bodyUserGeneric = "";
-  let bodyAdminGeneric = "";
+let subjectAdminGeneric = "";
+let bodyUserGeneric = "";
+let bodyAdminGeneric = "";
 
   if (isAutomation) {
     // Use the rule's own subject + HTML body, apply variables, send ONLY to user
     subjectUserGeneric = applyVars(makeRawSub(null, subject), variables);
     bodyUserGeneric = applyVars(message, variables);
   } else {
-    const rawSubUser = makeRawSub(tplUser?.subject, subject);
-    const rawSubAdm = makeRawSub(tplAdmin?.subject, subject);
-    subjectUserGeneric = applyVars(rawSubUser, variables);
-    subjectAdminGeneric = applyVars(rawSubAdm, variables);
+     const rawSubUser = makeRawSub(tplUser?.subject, subject);
+  const rawSubAdm  = makeRawSub(tplAdmin?.subject, subject);
+  subjectUserGeneric  = applyVars(rawSubUser, variables);
+  subjectAdminGeneric = applyVars(rawSubAdm,  variables);
     bodyUserGeneric = applyVars(tplUser?.message || message, variables);
     bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
   }
@@ -264,7 +260,7 @@ export async function sendNotification(params: SendNotificationParams) {
       "Due to privacy reasons you can only see the product list in your order details page or message notification by the API",
   };
 
-  // For automation rules, DO NOT substitute special email vars; use the rule content as-is.
+    // For automation rules, DO NOT substitute special email vars; use the rule content as-is.
   const subjectUserEmail = isAutomation
     ? subjectUserGeneric
     : applyVars(makeRawSub(tplUser?.subject, subject), varsEmail);
@@ -282,7 +278,7 @@ export async function sendNotification(params: SendNotificationParams) {
     .selectFrom("organizationSupportEmail")
     .select(["email"])
     .where("organizationId", "=", organizationId)
-    .$if(countryNorm !== null, (q) => q.where("country", "=", countryNorm!))
+    .$if(country !== null, (q) => q.where("country", "=", country!))
     .orderBy("isGlobal desc")
     .limit(1)
     .executeTakeFirst();
@@ -453,17 +449,14 @@ export async function sendNotification(params: SendNotificationParams) {
 
   /* — TELEGRAM — */
   if (channels.includes("telegram")) {
-    // Admin groups:
-    //  - For order/admin notes: previous behavior still honored via finalAdminFanout.
-    //  - For ticket events (ticket_created|ticket_replied): ALWAYS allow admin groups
-    //    (even if there is no admin template), because groups are the primary support channel.
-    const isTicketEvent = type === "ticket_created" || type === "ticket_replied";
+    // Only post to admin groups on admin-only triggers AND when we actually want admin fanout.
+    // DM the client only when we actually want user fanout.
     const wantAdminGroups =
-      !isAutomation && (finalAdminFanout || isTicketEvent);
+      !isAutomation && effectiveTrigger === "admin_only" && finalAdminFanout;
     const wantClientDM = finalUserFanout;
 
 
-    const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric || message : "";
+    const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
     const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
     console.log("[notify] TELEGRAM fanout", {
       wantAdminGroups,
@@ -476,7 +469,7 @@ export async function sendNotification(params: SendNotificationParams) {
     await dispatchTelegram({
       organizationId,
       type,
-      country: countryNorm,
+      country,
       bodyAdmin: bodyAdminOut,
       bodyUser: bodyUserOut,
       adminUserIds: [], // groups handle admin broadcast
@@ -576,26 +569,13 @@ async function dispatchTelegram(opts: {
     .where("organizationId", "=", organizationId)
     .execute();
 
-  const matchCountries = (raw: unknown, c: string | null) => {
-    const arr: string[] = Array.isArray(raw)
-      ? (raw as string[])
-      : (() => {
-        try {
-          const parsed = JSON.parse((raw as string) || "[]");
-          return Array.isArray(parsed) ? (parsed as string[]) : [];
-        } catch {
-          return [];
-        }
-      })();
-    // Normalize to UPPER for comparison
-    const set = new Set(arr.map((x) => (typeof x === "string" ? x.toUpperCase() : x)));
-    if (!c) return true;                // no country => all groups
-    if (set.has("*")) return true;      // wildcard => all countries
-    return set.has(c);                  // exact match
-  };
-
   const orderGroupIds = groupRows
-    .filter((g) => matchCountries(g.countries, country))
+    .filter((g) => {
+      const arr: string[] = Array.isArray(g.countries)
+        ? (g.countries as unknown as string[])
+        : JSON.parse(g.countries || "[]");
+      return country ? arr.includes(country) : true;
+    })
     .map((g) => g.groupId);
 
   /* 2️⃣ NEW – ticket-support groups (same filter) */
@@ -608,7 +588,12 @@ async function dispatchTelegram(opts: {
       .execute();
 
     ticketGroupIds = supRows
-      .filter((g) => matchCountries(g.countries, country))
+      .filter((g) => {
+        const arr: string[] = Array.isArray(g.countries)
+          ? (g.countries as unknown as string[])
+          : JSON.parse(g.countries || "[]");
+        return country ? arr.includes(country) : true;
+      })
       .map((g) => g.groupId);
   }
 
@@ -640,11 +625,11 @@ async function dispatchTelegram(opts: {
       seenChatIds.add(id);
       const markup =
         ticketId && ticketSet.has(id)
-          ? {
+          ? JSON.stringify({
             inline_keyboard: [
               [{ text: "💬 Reply", callback_data: `support:reply:${ticketId}` }],
             ],
-          }
+          })
           : undefined;
       targets.push({ chatId: id, text: safeAdmin, ...(markup ? { markup } : {}) });
     }
@@ -669,8 +654,8 @@ async function dispatchTelegram(opts: {
   });
 
   await Promise.all(
-    targets.map(async (t) => {
-      const res = await fetch(BOT, {
+   targets.map(async (t) => {
+     const res = await fetch(BOT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -679,15 +664,15 @@ async function dispatchTelegram(opts: {
           parse_mode: "HTML",
           disable_web_page_preview: true,
           ...(t.markup ? { reply_markup: t.markup } : {}),
-        }),
-      }).catch((e) => {
-        console.warn("[telegram] network error", e);
-        return null;
-      });
-      if (res && !res.ok) {
-        const err = await res.text().catch(() => "");
-        console.error("[telegram] API error", res.status, res.statusText, err.slice(0, 300));
-      }
+         }),
+ }).catch((e) => {
+   console.warn("[telegram] network error", e);
+   return null;
+ });
+ if (res && !res.ok) {
+   const err = await res.text().catch(() => "");
+   console.error("[telegram] API error", res.status, res.statusText, err.slice(0, 300));
+ }
     }),
   );
   console.log("[telegram] sent", { count: targets.length });

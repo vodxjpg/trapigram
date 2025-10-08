@@ -28,13 +28,13 @@ export async function PATCH(
   }
 
   const update: Record<string, any> = { updatedAt: new Date() };
-  if ("name" in body) update.name = body.name;
-  if ("countries" in body) {
-    const norm = (body.countries ?? []).map((c) =>
-      c === "*" ? "*" : c.toUpperCase().trim(),
-    );
-    update.countries = JSON.stringify(norm);
-  }
+    if ("name" in body) update.name = body.name;
+    if ("countries" in body) {
+      const norm = (body.countries ?? []).map((c) =>
+        c === "*" ? "*" : c.toUpperCase().trim(),
+      );
+      update.countries = JSON.stringify(norm);
+    }
 
   await db
     .updateTable("ticketSupportGroups")
