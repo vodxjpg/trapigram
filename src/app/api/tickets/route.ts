@@ -4,10 +4,7 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { getContext } from "@/lib/context";
-import {
-  sendNotification,
-  NotificationChannel,
-} from "@/lib/notifications";
+import { sendNotification } from "@/lib/notifications";
 import type { PoolClient } from "pg";
 
 /* ────────────────────────────────────────────────────────────────── *
@@ -80,21 +77,26 @@ export async function GET(req: NextRequest) {
       [organizationId],
     );
 
-    // ---------- build WHERE ----------
-    const where: string[] = [`"organizationId" = $1`];
+    // ---------- build WHERE (two variants: count vs. list with alias) ----------
+    const whereCount: string[] = [`"organizationId" = $1`];
+    const whereList: string[] = [`t."organizationId" = $1`];
     const values: any[] = [organizationId];
 
     if (search) {
       values.push(`%${search}%`);
-      where.push(`title ILIKE $${values.length}`);
+      const idx = values.length;
+      whereCount.push(`title ILIKE $${idx}`);
+      whereList.push(`t.title ILIKE $${idx}`);
     }
     if (clientId) {
       values.push(clientId);
-      where.push(`"clientId" = $${values.length}`);
+      const idx = values.length;
+      whereCount.push(`"clientId" = $${idx}`);
+      whereList.push(`t."clientId" = $${idx}`);
     }
 
     // ---------- count ----------
-    const countSQL = `SELECT COUNT(*) FROM tickets WHERE ${where.join(" AND ")}`;
+    const countSQL = `SELECT COUNT(*) FROM tickets WHERE ${whereCount.join(" AND ")}`;
     const countRows = await pool.query(countSQL, values);
     const totalRows = Number(countRows.rows[0].count) || 0;
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -119,7 +121,7 @@ export async function GET(req: NextRequest) {
         c.username    AS "username"
       FROM tickets t
       LEFT JOIN clients c ON c.id = t."clientId"
-      WHERE ${where.join(" AND ")}
+      WHERE ${whereList.join(" AND ")}
       ORDER BY t."createdAt" DESC
       LIMIT $${listValues.length - 1} OFFSET $${listValues.length};
     `;
@@ -217,4 +219,3 @@ export async function POST(req: NextRequest) {
     client.release();
   }
 }
-
