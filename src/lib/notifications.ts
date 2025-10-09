@@ -525,7 +525,7 @@ export async function sendNotification(params: SendNotificationParams) {
       ticketId,
     });
     console.log("[notify] TELEGRAM done");
-  }>
+  }
 }
 
 /* ───────── in-app & webhook helpers (unchanged) ───────── */
