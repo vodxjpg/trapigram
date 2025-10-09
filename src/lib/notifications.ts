@@ -46,34 +46,26 @@ const applyVars = (txt: string, vars: Record<string, string>) =>
     txt,
   );
 
-/** stripTags – quick server-side HTML removal */
 const stripTags = (html: string) => html.replace(/<[^>]+>/g, "");
 
-// Convert rich HTML to Telegram-safe HTML/text
 const toTelegramHtml = (html: string) => {
   let out = html || "";
-  // lists → bullets
   out = out
     .replace(/<\s*ul[^>]*>/gi, "")
     .replace(/<\s*\/\s*ul\s*>/gi, "")
     .replace(/<\s*li[^>]*>\s*/gi, "• ")
     .replace(/<\s*\/\s*li\s*>/gi, "\n");
-  // paragraphs/line breaks
   out = out
     .replace(/<\s*p[^>]*>/gi, "")
     .replace(/<\/\s*p\s*>/gi, "\n")
     .replace(/<\s*br\s*\/?>/gi, "\n");
-  // basic formatting
   out = out
     .replace(/<\s*strong\s*>/gi, "<b>")
     .replace(/<\s*\/\s*strong\s*>/gi, "</b>")
     .replace(/<\s*em\s*>/gi, "<i>")
     .replace(/<\s*\/\s*em\s*>/gi, "</i>");
-  // links → "text (url)"
   out = out.replace(/<\s*a[^>]*href="([^"]+)"[^>]*>(.*?)<\/\s*a\s*>/gi, "$2 ($1)");
-  // drop any remaining tags EXCEPT b/i/code
   out = out.replace(/<(?!\/?(?:b|i|code)\b)[^>]+>/g, "");
-  // tidy up multiple blank lines
   out = out.replace(/\n{3,}/g, "\n\n").trim();
   return out;
 };
@@ -120,7 +112,6 @@ export async function sendNotification(params: SendNotificationParams) {
 
   const isAutomation = type === "automation_rule";
 
-  /* ───────────────── trigger normalization ───────────────── */
   const rawTrigger = trigger ?? null;
   const effectiveTrigger = isAutomation
     ? "user_only"
@@ -128,7 +119,6 @@ export async function sendNotification(params: SendNotificationParams) {
       ? "admin_only"
       : rawTrigger;
 
-  // ───────────────── DEBUG overview (no secrets) ─────────────────
   console.log("[notify] dispatch start", {
     organizationId,
     type,
@@ -143,13 +133,11 @@ export async function sendNotification(params: SendNotificationParams) {
     ticketId,
   });
 
-  /* enrich variables (tracking link) */
   if (variables.tracking_number) {
     const tn = variables.tracking_number;
     variables.tracking_number = `${tn}<br>https://www.ordertracker.com/track/${tn}`;
   }
 
-  /* 1️⃣ templates */
   let tplUser:
     | { role: "admin" | "user"; subject: string | null; message: string; countries: string }
     | undefined;
@@ -207,7 +195,6 @@ export async function sendNotification(params: SendNotificationParams) {
     return;
   }
 
-  /* 2️⃣ subjects & bodies – generic (all channels) */
   const makeRawSub = (
     tplSubject: string | null | undefined,
     fallback: string | undefined,
@@ -237,7 +224,6 @@ export async function sendNotification(params: SendNotificationParams) {
     bodyAdminGeneric = applyVars(message, variables);
   }
 
-  /* 2️⃣-bis subjects & bodies – e-mail only (product list hidden) */
   const varsEmail = {
     ...variables,
     product_list:
@@ -257,7 +243,6 @@ export async function sendNotification(params: SendNotificationParams) {
     ? bodyAdminGeneric
     : applyVars(tplAdmin?.message || message, varsEmail);
 
-  /* 3️⃣ support e-mail (for CC and admin fallback) */
   const supportRow = await db
     .selectFrom("organizationSupportEmail")
     .select(["email"])
@@ -269,7 +254,6 @@ export async function sendNotification(params: SendNotificationParams) {
   const supportEmail = supportRow?.email || null;
   console.log("[notify] support email", { present: Boolean(supportEmail) });
 
-  /* 4️⃣ e-mail targets */
   const adminEmails: string[] = [];
   const userEmails: string[] = [];
 
@@ -317,7 +301,6 @@ export async function sendNotification(params: SendNotificationParams) {
     userPreview: userEmails.slice(0, 3),
   });
 
-  /* 5️⃣ master log */
   await db
     .insertInto("notifications")
     .values({
@@ -337,8 +320,6 @@ export async function sendNotification(params: SendNotificationParams) {
 
   console.log("[notify] master log inserted");
 
-  /* 6️⃣ channel fan-out */
-  /* — EMAIL — */
   if (channels.includes("email")) {
     console.log("[notify] EMAIL fanout", {
       shouldAdminFanout: finalAdminFanout,
@@ -394,7 +375,6 @@ export async function sendNotification(params: SendNotificationParams) {
     console.log("[notify] EMAIL done");
   }
 
-  /* — IN-APP — */
   if (channels.includes("in_app")) {
     console.log("[notify] IN_APP fanout begin");
     const targets = new Set<string | null>();
@@ -420,7 +400,6 @@ export async function sendNotification(params: SendNotificationParams) {
     });
   }
 
-  /* — WEBHOOK — */
   if (channels.includes("webhook")) {
     if (!isAutomation && finalAdminFanout) {
       console.log("[notify] WEBHOOK dispatch");
@@ -429,7 +408,6 @@ export async function sendNotification(params: SendNotificationParams) {
     }
   }
 
-  /* — TELEGRAM — */
   if (channels.includes("telegram")) {
     const wantAdminGroups =
       !isAutomation && effectiveTrigger === "admin_only" && finalAdminFanout;
@@ -511,9 +489,7 @@ async function dispatchWebhook(opts: {
   );
 }
 
-/** Resolve the effective country for Telegram fan-out.
- *  If `country` is null/empty, try ticket → client country; else return uppercased input.
- */
+/** Resolve effective country for Telegram ticket fan-out. */
 async function resolveCountryForTelegram(opts: {
   organizationId: string;
   ticketId?: string | null;
@@ -525,7 +501,6 @@ async function resolveCountryForTelegram(opts: {
   const ticketId = opts.ticketId?.trim();
   if (!ticketId) return null;
 
-  // Join ticket → client to fetch the client's country, scoped to this org.
   const row = await db
     .selectFrom("tickets as t")
     .innerJoin("clients as c", "c.id", "t.clientId")
@@ -538,8 +513,8 @@ async function resolveCountryForTelegram(opts: {
   return cc ? cc.toUpperCase() : null;
 }
 
-/** Country-aware match: if a country is known ⇒ allow exact or "*" wildcard.
- *  If unknown ⇒ only groups explicitly registered for "*" will receive it.
+/** Country-aware match with "*" wildcard support.
+ *  If `country` is unknown ⇒ only groups registered for "*" receive it.
  */
 function groupMatchesCountry(rawCountries: unknown, country: string | null): boolean {
   let arr: string[] = [];
@@ -550,7 +525,7 @@ function groupMatchesCountry(rawCountries: unknown, country: string | null): boo
     arr = [];
   }
   const up = arr.map((x) => (typeof x === "string" ? x.toUpperCase().trim() : "")).filter(Boolean);
-  if (!country) return up.includes("*"); // do NOT broadcast to all when country is unknown
+  if (!country) return up.includes("*");
   return up.includes(country) || up.includes("*");
 }
 
@@ -585,25 +560,19 @@ async function dispatchTelegram(opts: {
 
   const BOT = `https://api.telegram.org/bot${row.apiKey}/sendMessage`;
 
-  // 🔎 NEW: resolve effective country if missing, using ticket → client
+  // 🔎 Resolve effective country (ticket → client as fallback)
   const effectiveCountry = await resolveCountryForTelegram({
     organizationId,
     ticketId: ticketId ?? null,
     country: country ?? null,
   });
 
-  const groupRows = await db
-    .selectFrom("notificationGroups")
-    .select(["groupId", "countries"])
-    .where("organizationId", "=", organizationId)
-    .execute();
-
-  const orderGroupIds = groupRows
-    .filter((g) => groupMatchesCountry(g.countries, effectiveCountry))
-    .map((g) => g.groupId);
-
-  /* 2️⃣ ticket-support groups */
+  // ⛔ Core fix:
+  // For ticket events, DO NOT use generic notificationGroups at all.
+  // Only use ticketSupportGroups (scoped by org + country).
+  let orderGroupIds: string[] = [];
   let ticketGroupIds: string[] = [];
+
   if (type === "ticket_created" || type === "ticket_replied") {
     const supRows = await db
       .selectFrom("ticketSupportGroups")
@@ -612,6 +581,17 @@ async function dispatchTelegram(opts: {
       .execute();
 
     ticketGroupIds = supRows
+      .filter((g) => groupMatchesCountry(g.countries, effectiveCountry))
+      .map((g) => g.groupId);
+  } else {
+    // Non-ticket types keep the legacy generic groups behavior
+    const groupRows = await db
+      .selectFrom("notificationGroups")
+      .select(["groupId", "countries"])
+      .where("organizationId", "=", organizationId)
+      .execute();
+
+    orderGroupIds = groupRows
       .filter((g) => groupMatchesCountry(g.countries, effectiveCountry))
       .map((g) => g.groupId);
   }
@@ -628,6 +608,7 @@ async function dispatchTelegram(opts: {
     uniqueGroupCount: uniqueGroupIds.length,
     hasClientDM: Boolean(clientUserId),
     effectiveCountry,
+    type,
   });
 
   if (bodyAdmin.trim()) {
