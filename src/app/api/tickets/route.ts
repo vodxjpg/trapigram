@@ -81,20 +81,20 @@ export async function GET(req: NextRequest) {
     );
 
     // ---------- build WHERE ----------
-    const where: string[] = [`t."organizationId" = $1`];
+    const where: string[] = [`"organizationId" = $1`];
     const values: any[] = [organizationId];
 
     if (search) {
       values.push(`%${search}%`);
-      where.push(`t.title ILIKE $${values.length}`);
+      where.push(`title ILIKE $${values.length}`);
     }
     if (clientId) {
       values.push(clientId);
-      where.push(`t."clientId" = $${values.length}`);
+      where.push(`"clientId" = $${values.length}`);
     }
 
     // ---------- count ----------
-    const countSQL = `SELECT COUNT(*) FROM tickets t WHERE ${where.join(" AND ")}`;
+    const countSQL = `SELECT COUNT(*) FROM tickets WHERE ${where.join(" AND ")}`;
     const countRows = await pool.query(countSQL, values);
     const totalRows = Number(countRows.rows[0].count) || 0;
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -113,6 +113,7 @@ export async function GET(req: NextRequest) {
         t."lastMessageAt",
         t."createdAt",
         t."updatedAt",
+        /* 👇 add customer identity for table subtitle */
         c."firstName" AS "firstName",
         c."lastName"  AS "lastName",
         c.username    AS "username"
@@ -134,6 +135,8 @@ export async function GET(req: NextRequest) {
   }
 }
 
+
+
 /* ────────────────────────────────────────────────────────────────── *
  * POST /api/tickets
  * NO permission enforcement                                          *
@@ -152,7 +155,7 @@ export async function POST(req: NextRequest) {
     await client.query("BEGIN");
 
     const ticketId = uuidv4();
-    const ticketKey = await getNextTicketKeyTx(client, organizationId);
+    const ticketKey = await getNextTicketKeyTx(client, organizationId); // ← await!
 
     const insertSQL = `
       INSERT INTO tickets
@@ -170,7 +173,7 @@ export async function POST(req: NextRequest) {
       data.title,
       data.priority,
       data.status,
-      ticketKey,
+      ticketKey,              // now a number, not {}
     ])).rows[0];
 
     await client.query("COMMIT");
@@ -180,8 +183,10 @@ export async function POST(req: NextRequest) {
       `SELECT country FROM clients WHERE id = $1 LIMIT 1`,
       [data.clientId],
     );
-    const clientCountry = (cli?.country ?? null) as string | null;
+    const clientCountry = cli?.country ?? null;
 
+    // (Optional) Keep subject/variables as-is. If you want, include the human key:
+    // subject: `Ticket #${ticketKey} created`,
     await sendNotification({
       organizationId,
       type: "ticket_created",
@@ -191,12 +196,12 @@ export async function POST(req: NextRequest) {
         ticket_number: ticketId,
         ticket_id: ticketId,
         ticket_title: inserted.title,
+        // optionally add: ticket_key: String(ticketKey)
       },
-      // 🔧 Include Telegram so support groups are notified immediately.
-      channels: ["email", "in_app", "telegram"],
+      channels: ["email", "in_app"],
       clientId: inserted.clientId,
       ticketId: ticketId,
-      country: clientCountry, // ensures country-scoped group match
+      country: clientCountry,
       url: `/tickets/${ticketId}`,
     });
 
@@ -212,3 +217,4 @@ export async function POST(req: NextRequest) {
     client.release();
   }
 }
+
