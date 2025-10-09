@@ -262,7 +262,8 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                     <span className="text-xs">{`{received_amt}`} - Output order's crypto received amount (works with Coinslick)</span>,&nbsp;<br></br>
                     <span className="text-xs">{`{pending_amt}`} - Output order's crypto pending amount (works with Coinslick)</span>,&nbsp;<br></br>
                     <span className="text-xs">{`{asset}`} - Output order's crypto asset (works with Coinslick)</span>,&nbsp;<br></br>
-                    <span className="text-xs">{`{ticket_number}`} - Output support ticket number</span>
+                    <span className="text-xs">{`{ticket_number}`} - Output support ticket number</span>,&nbsp;<br></br>
+                    <span className="text-xs">{`{ticket_content}`} - Output support ticket message content</span>
                   </div>
                   <FormControl>
                     <ReactQuill theme="snow" value={field.value} onChange={field.onChange} modules={quillModules} />

@@ -153,10 +153,11 @@ export async function POST(
           {
             clientId: ticketClientId,
             country: clientCountry,
+            ticketKey,
           },
         ],
       } = await pool.query(
-        `SELECT t."clientId", c.country
+        `SELECT t."clientId", c.country, t."ticketKey"
            FROM tickets t
            JOIN clients c ON c.id = t."clientId"
           WHERE t.id = $1
@@ -169,8 +170,14 @@ export async function POST(
         organizationId,
         type: "ticket_replied",
         message: `Update on your ticket: <strong>${messageText}</strong>`,
-        subject: `Reply on ticket #${ticketId}`,
-        variables: { ticket_number: ticketId },
+        // Show the human ticket number in subjects
+        subject: `Reply on ticket #${ticketKey}`,
+        // Template placeholders
+        variables: {
+          ticket_number: String(ticketKey),
+          ticket_content: messageText,
+          ticket_id: ticketId, // back-compat
+        },
         channels,
         clientId: ticketClientId,
         ticketId,

@@ -192,13 +192,18 @@ export async function POST(req: NextRequest) {
     await sendNotification({
       organizationId,
       type: "ticket_created",
-      subject: `Ticket #${ticketId} created`,
+      subject: `Ticket #${ticketKey} created`,
       message: `New ticket created: <strong>${inserted.title}</strong>`,
       variables: {
-        ticket_number: ticketId,
+        // Use the human ticket number for templates
+        ticket_number: String(ticketKey),
+        // Back-compat if any old templates reference it
         ticket_id: ticketId,
         ticket_title: inserted.title,
         // optionally add: ticket_key: String(ticketKey)
+        // New placeholder – content (none at creation time)
+        ticket_content: "",
+        // optionally: ticket_key: String(ticketKey)
       },
       channels: ["email", "in_app", "telegram"],
       trigger: "admin_only",           // ← makes this an admin/team notification
