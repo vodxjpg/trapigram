@@ -1199,6 +1199,7 @@ export async function PATCH(
             channels: ["in_app", "telegram"],
             dedupeSalt: `merchant_admin:${newStatus}`,
             payload: {
+              orderId: id,
               message: `Order #${ord.orderKey} is now <b>${newStatus}</b><br>{product_list}`,
               subject: `Order #${ord.orderKey} ${newStatus}`,
               variables: {
@@ -1225,6 +1226,7 @@ export async function PATCH(
               channels: ["email"],
               dedupeSalt: `buyer_email:${newStatus}`,
               payload: {
+                orderId: id,
                 message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
                 subject: `Order #${ord.orderKey} ${newStatus}`,
                 variables: {
@@ -1400,6 +1402,7 @@ export async function PATCH(
                 channels: ["in_app", "telegram"],
                 dedupeSalt: `supplier_admin:${newStatus}`,
                 payload: {
+                  orderId: sb.id,
                   message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
                   subject: `Order #${sb.orderKey} ${newStatus}`,
                   variables: {
@@ -1425,6 +1428,7 @@ export async function PATCH(
                   channels: ["email"],
                   dedupeSalt: `supplier_buyer:${newStatus}`,
                   payload: {
+                    orderId: sb.id,
                     message: `Your order status is now <b>${newStatus}</b><br>{product_list}`,
                     subject: `Order #${sb.orderKey} ${newStatus}`,
                     variables: {
@@ -1804,8 +1808,8 @@ export async function PATCH(
         variables: { order_id: id, order_number: ord.orderKey, order_status: newStatus, order_currency: orderCurrency },
         clientId: ord.clientId ?? null,
         userId: null,
-        url: `/orders/${id}`,
         orderId: id,
+        url: `/orders/${id}`,
       });
     } catch (e) {
       console.warn("[rules] base order (post-revenue) failed", e);

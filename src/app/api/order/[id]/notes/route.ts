@@ -193,6 +193,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await sendNotification({
         type: "order_message",         // re-use existing type (no template needed)
         message,
+        orderId,
         country: order.country ?? null,
         channels: ["telegram", "in_app", "webhook"], // same spirit as paid-order alerts
         organizationId,               // injected in notifications route; include here for clarity
@@ -247,6 +248,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           order_number: String(key),
           note_content: payload.note,
         },
+        orderId,
         country: order2.country ?? null,
         trigger: "user_only_email",               // suppress admin fan-out
         channels: ["telegram", "in_app", "email"],

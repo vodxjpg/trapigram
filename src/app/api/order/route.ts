@@ -781,6 +781,7 @@ export async function POST(req: NextRequest) {
         await sendNotification({
           organizationId: group.organizationId,
           type: "order_placed",
+          orderId: newOrderIdLocal,
           subject: `Shared order created (S-${orderKey})`,
           message: `A shared order was created for your organisation.<br>{product_list}`,
           variables: { product_list: productList, order_number: `S-${orderKey}` },

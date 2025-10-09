@@ -148,6 +148,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { noteId: st
       await sendNotification({
         organizationId,
         type: "order_message",
+        orderId: r.orderId,
         message,
         variables: { order_number: String(key), note_content: noteContent },
         country: order.country ?? null,

@@ -27,7 +27,6 @@ type OutboxRow = {
 };
 
 export function makeDedupeKey(input: Record<string, any>) {
-  // Stable hash over a sorted-key JSON to avoid accidental mismatches
   const h = crypto.createHash("sha256");
   h.update(JSON.stringify(input, Object.keys(input).sort()));
   return h.digest("hex");
@@ -46,8 +45,7 @@ export async function enqueueNotificationFanout(opts: {
   trigger?: string | null;
   channels: NotificationChannel[]; // fan-out
   payload: {
-    // the same fields you’d pass to sendNotification,
-    // BUT WITHOUT 'channels' (we add per-row)
+    orderId?: string | null;
     message: string;
     subject?: string;
     variables?: Record<string, string>;
@@ -62,13 +60,8 @@ export async function enqueueNotificationFanout(opts: {
   const rows: OutboxRow[] = [];
 
   for (const ch of opts.channels) {
-    // For admin-only triggers we normalize salt so multiple admin code paths
-    // (e.g., "merchant_admin:paid" vs "store_admin:paid") collapse into one
-    // dedupe identity per (org, order, type, trigger, channel, message).
     const normalizedSalt =
       (opts.trigger ?? "") === "admin_only" ? "admin" : (opts.dedupeSalt ?? "");
-    // NEW: for admin_only + (order_paid|order_completed) we use a STABLE, payload-agnostic key
-    // so different code paths with slightly different messages/vars still dedupe correctly.
     const isAdminOnlyOrder =
       (opts.trigger ?? "") === "admin_only" &&
       (opts.type === "order_paid" ||
@@ -76,32 +69,30 @@ export async function enqueueNotificationFanout(opts: {
         opts.type === "order_pending_payment") &&
       Boolean(opts.orderId);
     const dedupeKey = isAdminOnlyOrder
-      ? // payload-agnostic stable key (works across processes/instances)
-      `admin:${opts.organizationId}:${opts.orderId}:${opts.type}:${ch}`
-      : // original content-hash key for all other cases
-      makeDedupeKey({
-        org: opts.organizationId,
-        order: opts.orderId ?? null,
-        type: opts.type,
-        trigger: opts.trigger ?? null,
-        channel: ch,
-        salt: normalizedSalt,
-        clientId: opts.payload.clientId ?? null,
-        userId: opts.payload.userId ?? null,
-        vars: opts.payload.variables ?? {},
-        // keep the key compact – message/subject can be large but meaningful to dedupe by
-        subject: opts.payload.subject ?? "",
-        message: opts.payload.message ?? "",
-      });
+      ? `admin:${opts.organizationId}:${opts.orderId}:${opts.type}:${ch}`
+      : makeDedupeKey({
+          org: opts.organizationId,
+          order: opts.orderId ?? null,
+          orderInPayload: opts.payload.orderId ?? null,
+          type: opts.type,
+          trigger: opts.trigger ?? null,
+          channel: ch,
+          salt: normalizedSalt,
+          clientId: opts.payload.clientId ?? null,
+          userId: opts.payload.userId ?? null,
+          vars: opts.payload.variables ?? {},
+          subject: opts.payload.subject ?? "",
+          message: opts.payload.message ?? "",
+        });
 
     rows.push({
-      id: `out_${uuidv4()}`, // TEXT id (visibly non-UUID)
+      id: `out_${uuidv4()}`,
       organizationId: opts.organizationId,
       orderId: opts.orderId ?? null,
       type: opts.type,
       trigger: opts.trigger ?? null,
       channel: ch,
-      payload: { ...opts.payload }, // will be stored as JSONB
+      payload: { ...opts.payload },
       dedupeKey,
       attempts: 0,
       maxAttempts: 8,
@@ -112,7 +103,6 @@ export async function enqueueNotificationFanout(opts: {
       updatedAt: new Date(),
     });
 
-    // DEBUG: show what we intend to enqueue (one per channel)
     console.log("[outbox.enqueue] prepared", {
       id_preview: rows[rows.length - 1].id,
       org: opts.organizationId,
@@ -121,28 +111,24 @@ export async function enqueueNotificationFanout(opts: {
       trigger: opts.trigger ?? null,
       channel: ch,
       dedupeKey,
-      // don't print payload body (can be large); show small meta instead
       hasSubject: Boolean(opts.payload.subject),
       hasVars: Boolean(opts.payload.variables && Object.keys(opts.payload.variables!).length),
       salt: opts.dedupeSalt ?? "",
       saltNormalized: normalizedSalt,
       dedupeStrategy: isAdminOnlyOrder ? "stable-admin-order" : "hash",
     });
-
   }
 
-  // Upsert by dedupeKey (ignore if exists) – one row per channel
   for (const r of rows) {
     const res = await db
       .insertInto("notificationOutbox")
       .values({
-        id: r.id, // TEXT
-        organizationId: r.organizationId, // TEXT
-        orderId: r.orderId ?? null, // UUID or null
+        id: r.id,
+        organizationId: r.organizationId,
+        orderId: r.orderId ?? null,
         type: r.type,
         trigger: r.trigger ?? null,
         channel: r.channel,
-        // Pass the object so PG stores JSONB; our drain handles both string/object just in case.
         payload: r.payload,
         dedupeKey: r.dedupeKey,
         attempts: r.attempts,
@@ -155,7 +141,7 @@ export async function enqueueNotificationFanout(opts: {
       })
       .onConflict((oc) => oc.column("dedupeKey").doNothing())
       .execute();
-    // We can't rely on insert result for "did nothing" with all drivers; check existence for clarity.
+
     const existing = await db
       .selectFrom("notificationOutbox")
       .select(["id", "status", "attempts"])
@@ -198,7 +184,6 @@ export async function drainNotificationOutbox(limit = 10) {
 
   for (const row of due) {
     const id = row.id as string;
-    // Cope with historical rows where payload may have been stringified
     const payload =
       typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
 
@@ -214,10 +199,11 @@ export async function drainNotificationOutbox(limit = 10) {
         maxAttempts: row.maxAttempts,
         dedupeKey: (row as any).dedupeKey,
       });
-      // Send exactly one channel
+
       await sendNotification({
-        organizationId: row.organizationId as string, // TEXT
+        organizationId: row.organizationId as string,
         type: row.type as NotificationType,
+        orderId: (payload.orderId as string | null) ?? (row.orderId as string | null) ?? null,
         trigger: (row.trigger as string | null) ?? null,
         channels: [row.channel as NotificationChannel],
         ...payload,
@@ -233,7 +219,7 @@ export async function drainNotificationOutbox(limit = 10) {
         .where("id", "=", id)
         .execute();
       console.log("[outbox.drain] marked sent", { id });
-      // After a SUCCESS: mark “notifiedPaidOrCompleted” for paid/completed
+
       if (
         row.orderId &&
         (row.type === "order_paid" || row.type === "order_completed")

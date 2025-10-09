@@ -157,6 +157,8 @@ export async function POST(
           : `Reply regarding order #${orderKey}`,
         variables: { order_number: orderKey },
         channels,
+        orderId: id,
+        trigger: customerSent ? "admin_only" : "user_only",
         clientId: customerSent ? null : orderClientId,
         country: orderCountry,
         url: `/orders/${id}`,

@@ -37,6 +37,8 @@ export interface SendNotificationParams {
   clientId?: string | null;
   url?: string | null;
   ticketId?: string | null;
+  /** NEW: used to resolve authoritative org/client for order-related events */
+  orderId?: string | null;
 }
 
 /* ───────────────── helpers ───────────────── */
@@ -116,18 +118,20 @@ export async function sendNotification(params: SendNotificationParams) {
     clientId = null,
     url = null,
     ticketId = null,
+    orderId = null,
   } = params;
 
   const isAutomation = type === "automation_rule";
 
   /* ────────────────────────────────
-   * SAFETY GUARD (core fix):
-   * For ticket notifications, derive the authoritative organizationId/clientId
-   * from the ticket row when ticketId is present.
-   * This prevents cross-organization Telegram routing if a caller passes wrong IDs.
+   * SAFETY GUARD #1 (tickets):
+   * Derive authoritative org/client from the ticket row when ticketId is present.
+   * Prevents cross-organization routing if a caller passes wrong IDs.
    * ──────────────────────────────── */
   let resolvedOrganizationId = organizationId;
   let resolvedClientId = clientId;
+   let resolvedOrderId = orderId;
+   let resolvedTicketId = ticketId;
 
   if ((type === "ticket_created" || type === "ticket_replied") && ticketId) {
     try {
@@ -162,10 +166,88 @@ export async function sendNotification(params: SendNotificationParams) {
     }
   }
 
+  /* ────────────────────────────────
+   * SAFETY GUARD #2 (orders):
+   * For order-* events (including order_message), if orderId is present,
+   * derive authoritative org/client from the order row.
+   * This closes cross-tenant leaks for order notifications.
+   * ──────────────────────────────── */
+  const isOrderEvent =
+    type.startsWith("order_") || type === "order_message";
+  if (isOrderEvent && orderId) {
+    try {
+      const orow = await db
+        .selectFrom("orders")
+        .select(["organizationId", "clientId"])
+        .where("id", "=", orderId)
+        .executeTakeFirst();
+
+      if (orow?.organizationId) {
+        if (orow.organizationId !== resolvedOrganizationId) {
+          console.warn("[notify] overriding organizationId from order", {
+            provided: resolvedOrganizationId,
+            fromOrder: orow.organizationId,
+            orderId,
+          });
+        }
+        resolvedOrganizationId = orow.organizationId;
+      }
+      if (orow?.clientId) {
+        if (resolvedClientId && resolvedClientId !== orow.clientId) {
+          console.warn("[notify] overriding clientId from order", {
+            provided: resolvedClientId,
+            fromOrder: orow.clientId,
+            orderId,
+          });
+        }
+        resolvedClientId = orow.clientId;
+      }
+    } catch (e) {
+      console.error("[notify] failed to resolve org/client from order", { orderId, e });
+    }
+  }
+
+    /* ────────────────────────────────
+   * SAFETY GUARD (orders):
+   * For any order-related notification (status changes, messages, etc.)
+   * if an orderId is provided, derive the authoritative organization/client
+   * from the order row. This prevents cross-org/group routing when a caller
+   * accidentally passes the wrong org/client.
+   * ──────────────────────────────── */
+  const isOrderRelated =
+    type === "order_message" ||
+    type === "order_placed" ||
+    type === "order_pending_payment" ||
+    type === "order_partially_paid" ||
+    type === "order_paid" ||
+    type === "order_completed" ||
+    type === "order_cancelled" ||
+    type === "order_refunded" ||
+    type === "order_shipped";
+
+  if (isOrderRelated && orderId) {
+    try {
+      const orow = await db
+        .selectFrom("orders")
+        .select(["organizationId", "clientId"])
+        .where("id", "=", orderId)
+        .executeTakeFirst();
+      if (orow?.organizationId && orow.organizationId !== resolvedOrganizationId) {
+        console.warn("[notify] overriding organizationId from order", {
+          provided: resolvedOrganizationId, fromOrder: orow.organizationId, orderId,
+        });
+        resolvedOrganizationId = orow.organizationId;
+      }
+      if (orow?.clientId && resolvedClientId !== orow.clientId) {
+        resolvedClientId = orow.clientId;
+      }
+    } catch (e) { console.error("[notify] failed to resolve org/client from order", { orderId, e }); }
+  }
+
   /* ───────────────── trigger normalization ─────────────────
    * If a caller sends order notes with trigger "order_note" (or omits it),
    * treat them as admin-only alerts (to groups), not buyer DMs.
-   *  For automation rules we force a user-only semantics regardless of trigger.
+   * For automation rules we force a user-only semantics regardless of trigger.
    */
   const rawTrigger = trigger ?? null;
   const effectiveTrigger = isAutomation
@@ -188,6 +270,7 @@ export async function sendNotification(params: SendNotificationParams) {
     clientId_provided: clientId,
     clientId_resolved: resolvedClientId,
     urlPresent: Boolean(url),
+    orderId: resolvedOrderId,
     ticketId,
   });
 
@@ -228,7 +311,7 @@ export async function sendNotification(params: SendNotificationParams) {
   const isAdminOnlyOrderNote =
     effectiveTrigger === "admin_only" && type === "order_message";
 
-  // ✅ NEW: user-only order notes also bypass template checks so customers get the raw message
+  // ✅ user-only order notes also bypass template checks so customers get the raw message
   const isUserOnlyOrderNote =
     type === "order_message" &&
     (effectiveTrigger === "user_only" || effectiveTrigger === "user_only_email");
@@ -255,8 +338,6 @@ export async function sendNotification(params: SendNotificationParams) {
     shouldUserFanout: finalUserFanout,
   });
 
-  // If neither audience has a template (and it's not an explicit admin-only order note),
-  // skip everything cleanly.
   if (!finalAdminFanout && !finalUserFanout && !isAdminOnlyOrderNote) {
     console.log("[notify] skip: no matching templates for admin or user; nothing to send.");
     return;
@@ -271,14 +352,12 @@ export async function sendNotification(params: SendNotificationParams) {
       ? type.replace(/_/g, " ")
       : (tplSubject || fallback || "").trim();
 
-  
   let subjectUserGeneric = "";
   let subjectAdminGeneric = "";
   let bodyUserGeneric = "";
   let bodyAdminGeneric = "";
 
   if (isAutomation) {
-    // Use the rule's own subject + HTML body, apply variables, send ONLY to user
     subjectUserGeneric = applyVars(makeRawSub(null, subject), variables);
     bodyUserGeneric = applyVars(message, variables);
   } else {
@@ -289,10 +368,8 @@ export async function sendNotification(params: SendNotificationParams) {
     bodyUserGeneric = applyVars(tplUser?.message || message, variables);
     bodyAdminGeneric = applyVars(tplAdmin?.message || message, variables);
   }
-  /* ───────────────── special-case: admin-only order notes ─────────────────
-   * Prefer the caller-provided body over any stored admin template so we can show the
-   * actual order number and the note content verbatim.
-   */
+
+  /* special-case: admin-only order notes – prefer caller body */
   if (!isAutomation && isAdminOnlyOrderNote) {
     bodyAdminGeneric = applyVars(message, variables);
   }
@@ -304,7 +381,6 @@ export async function sendNotification(params: SendNotificationParams) {
       "Due to privacy reasons you can only see the product list in your order details page or message notification by the API",
   };
 
-  // For automation rules, DO NOT substitute special email vars; use the rule content as-is.
   const subjectUserEmail = isAutomation
     ? subjectUserGeneric
     : applyVars(makeRawSub(tplUser?.subject, subject), varsEmail);
@@ -330,7 +406,7 @@ export async function sendNotification(params: SendNotificationParams) {
   const supportEmail = supportRow?.email || null;
   console.log("[notify] support email", { present: Boolean(supportEmail) });
 
-  /* 4️⃣ e-mail targets */
+  /* 4️⃣ e-mail targets (scoped to resolved org) */
   const adminEmails: string[] = [];
   const userEmails: string[] = [];
 
@@ -361,10 +437,12 @@ export async function sendNotification(params: SendNotificationParams) {
 
   let clientRow: { email: string | null; userId: string | null } | null = null;
   if (resolvedClientId) {
+    // IMPORTANT: constrain client by resolved organization to avoid cross-tenant DM
     clientRow = await db
       .selectFrom("clients")
       .select(["email", "userId"])
       .where("id", "=", resolvedClientId)
+      .where("organizationId", "=", resolvedOrganizationId)
       .executeTakeFirst();
     if (clientRow?.email) userEmails.push(clientRow.email);
   }
@@ -460,7 +538,7 @@ export async function sendNotification(params: SendNotificationParams) {
     console.log("[notify] IN_APP fanout begin");
     const targets = new Set<string | null>();
     // user-facing
-    if (shouldUserFanout) {
+    if (finalUserFanout) {
       if (userId) targets.add(userId);
       if (clientRow?.userId) targets.add(clientRow.userId);
     }
@@ -487,12 +565,16 @@ export async function sendNotification(params: SendNotificationParams) {
   if (channels.includes("webhook")) {
     if (!isAutomation && finalAdminFanout) {
       console.log("[notify] WEBHOOK dispatch");
-      await dispatchWebhook({ organizationId: resolvedOrganizationId, type, message: bodyUserGeneric });
+      await dispatchWebhook({
+        organizationId: resolvedOrganizationId,
+        type,
+        message: bodyUserGeneric,
+      });
       console.log("[notify] WEBHOOK done");
     }
   }
 
-    /* — TELEGRAM — */
+  /* — TELEGRAM — */
   if (channels.includes("telegram")) {
     const isTicket = type === "ticket_created" || type === "ticket_replied";
 
@@ -501,7 +583,7 @@ export async function sendNotification(params: SendNotificationParams) {
       ? true
       : (!isAutomation && effectiveTrigger === "admin_only" && finalAdminFanout);
 
-    const wantClientDM = finalUserFanout; // unchanged
+    const wantClientDM = finalUserFanout;
 
     const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
     const bodyUserOut  = wantClientDM   ? bodyUserGeneric  : "";
@@ -528,7 +610,7 @@ export async function sendNotification(params: SendNotificationParams) {
   }
 }
 
-/* ───────── in-app & webhook helpers (unchanged) ───────── */
+/* ───────── in-app & webhook helpers (unchanged logic) ───────── */
 async function dispatchInApp(opts: {
   organizationId: string;
   userId: string | null;
@@ -617,7 +699,7 @@ async function dispatchTelegram(opts: {
     .where("organizationId", "=", organizationId)
     .execute();
 
-    // helper: treat [] or ["*"] as global; otherwise match exact country
+  // helper: treat [] or ["*"] as global; otherwise match exact country
   const includeByCountry = (arr: unknown): boolean => {
     const a: string[] = Array.isArray(arr)
       ? (arr as string[])
@@ -629,10 +711,10 @@ async function dispatchTelegram(opts: {
   };
 
   const orderGroupIds = groupRows
-  .filter((g) => includeByCountry(g.countries))
-  .map((g) => g.groupId);
+    .filter((g) => includeByCountry(g.countries))
+    .map((g) => g.groupId);
 
-  /* 2️⃣ NEW – ticket-support groups (same filter) */
+  /* ticket-support groups (same filter) */
   let ticketGroupIds: string[] = [];
   if (type === "ticket_created" || type === "ticket_replied") {
     const supRows = await db
@@ -642,15 +724,15 @@ async function dispatchTelegram(opts: {
       .execute();
 
     ticketGroupIds = supRows
-    .filter((g) => includeByCountry(g.countries))
-    .map((g) => g.groupId);
+      .filter((g) => includeByCountry(g.countries))
+      .map((g) => g.groupId);
   }
 
   const targets: { chatId: string; text: string; markup?: string }[] = [];
   const seenChatIds = new Set<string>(); // de-dupe across everything
   const ticketSet = new Set(ticketGroupIds); // for selective Reply button
-    // For tickets, only post to *ticket* support groups; for others use order groups.
   const isTicket = type === "ticket_created" || type === "ticket_replied";
+
   const uniqueGroupIds = Array.from(
     new Set(isTicket ? ticketGroupIds : [...orderGroupIds, ...ticketGroupIds]),
   );
@@ -689,14 +771,12 @@ async function dispatchTelegram(opts: {
   }
 
   if (clientUserId && bodyUser.trim()) {
-    // client DM – also respect de-dupe (paranoia)
     if (!seenChatIds.has(clientUserId)) {
       seenChatIds.add(clientUserId);
       targets.push({ chatId: clientUserId, text: toTelegramHtml(bodyUser) });
     }
   }
 
-  // Summarize where this will go (mask chat ids)
   const mask = (s: string) => (s.length > 6 ? `${s.slice(0, 2)}…${s.slice(-4)}` : s);
   console.log("[telegram] final targets", {
     count: targets.length,
