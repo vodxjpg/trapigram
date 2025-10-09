@@ -10,7 +10,6 @@ import {
 import { useRouter } from "next/navigation";
 import {
     type ColumnDef,
-    flexRender,
     getCoreRowModel,
     getFilteredRowModel,
     getSortedRowModel,
@@ -20,12 +19,11 @@ import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-    Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -37,10 +35,12 @@ import {
     AlertDialogTitle
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { MoreHorizontal, CheckCircle2, Plus, FileSpreadsheet, FileText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
+
+// ⬇️ Use the shared table renderer
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 type OrderStatus = "draft" | "pending" | "completed";
 
@@ -114,14 +114,13 @@ export default function PurchaseSupplyOrdersDataTable() {
         const { order } = await orderRes.json();
         const orderKey = order?.orderKey ?? null;
 
-        // robust supplier extraction in case the API shape varies
         const supplier = order?.supplier ?? {};
         const supplierName = supplier?.name ?? order?.supplierName ?? "";
         const supplierEmail = supplier?.email ?? order?.supplierEmail ?? "";
         const supplierPhone = supplier?.phone ?? order?.supplierPhone ?? "";
 
         const header = {
-            orderId,
+            orderId: orderId,
             orderKey,
             status: order?.status ?? "",
             expectedAt: order?.expectedAt ?? null,
@@ -140,7 +139,6 @@ export default function PurchaseSupplyOrdersDataTable() {
         const data = await linesRes.json();
         const items: any[] = data?.resultCartProducts ?? [];
 
-        // replace the current map + loop in fetchOrderForExport with:
         const map = new Map<
             string,
             { name: string; sku: string; quantity: number; received: number }
@@ -168,7 +166,6 @@ export default function PurchaseSupplyOrdersDataTable() {
             const { header, rows } = await fetchOrderForExport(id);
             const XLSX = await import("xlsx");
 
-            // ⬇️ Header block: show ONLY order key (no internal id)
             const headerAoa = [
                 ["Order", `#${header.orderKey ?? "—"}`],
                 ["Status", header.status || "—"],
@@ -180,7 +177,6 @@ export default function PurchaseSupplyOrdersDataTable() {
 
             const ws = XLSX.utils.aoa_to_sheet(headerAoa);
 
-            // Items table: remove the OrderKey column completely
             const startRow = headerAoa.length + 2;
             const sheetRows = rows.map(r => ({
                 Name: r.name,
@@ -192,8 +188,6 @@ export default function PurchaseSupplyOrdersDataTable() {
 
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Order");
-
-            // (optional) use the key in the filename; falls back to id if missing
             XLSX.writeFile(wb, `order-${header.orderKey ?? id}.xlsx`);
         } catch (e: any) {
             toast.error(e?.message || "Failed to export XLSX");
@@ -215,7 +209,6 @@ export default function PurchaseSupplyOrdersDataTable() {
                 infoValue: { flexGrow: 1 },
                 row: { flexDirection: "row", borderBottomWidth: 1, borderColor: "#eee", paddingVertical: 6 },
                 th: { fontWeight: 700, backgroundColor: "#fafafa" },
-                // table widths WITHOUT order key column
                 cellName: { width: "50%" },
                 cellSku: { width: "30%" },
                 cellQty: { width: "10%", textAlign: "right" },
@@ -225,10 +218,8 @@ export default function PurchaseSupplyOrdersDataTable() {
             const Doc = (
                 <Document>
                     <Page size="A4" style={styles.page}>
-                        {/* ⬇️ Title: show ONLY order key */}
                         <Text style={styles.title}>Order #{header.orderKey ?? "—"}</Text>
 
-                        {/* Order meta */}
                         <View style={styles.infoBox}>
                             <Text style={styles.infoTitle}>Order Information</Text>
                             <View style={styles.infoRow}>
@@ -249,7 +240,6 @@ export default function PurchaseSupplyOrdersDataTable() {
                             </View>
                         </View>
 
-                        {/* Supplier info */}
                         <View style={styles.infoBox}>
                             <Text style={styles.infoTitle}>Supplier Information</Text>
                             <View style={styles.infoRow}>
@@ -266,7 +256,6 @@ export default function PurchaseSupplyOrdersDataTable() {
                             </View>
                         </View>
 
-                        {/* Items table WITHOUT order key column */}
                         <View style={[styles.row, styles.th]}>
                             <Text style={styles.cellName}>Name</Text>
                             <Text style={styles.cellSku}>SKU</Text>
@@ -289,7 +278,7 @@ export default function PurchaseSupplyOrdersDataTable() {
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download = `order-${header.orderKey ?? id}.pdf`; // optional: use key in filename
+            a.download = `order-${header.orderKey ?? id}.pdf`;
             document.body.appendChild(a);
             a.click();
             a.remove();
@@ -299,15 +288,8 @@ export default function PurchaseSupplyOrdersDataTable() {
         }
     };
 
-
     const handleCompleteOrder = (id: string) => {
-        // Navigate to the receive/complete page for this order
         router.push(`/supplier-order/${id}/complete`);
-    };
-
-    const handleExportPDF = (id: string) => {
-        // Open an export endpoint in a new tab; adapt to your API if needed
-        window.open(`/api/suppliersOrder/${id}/export?format=pdf`, "_blank");
     };
 
     // NEW: Delete (only for drafts) using shadcn AlertDialog
@@ -397,7 +379,6 @@ export default function PurchaseSupplyOrdersDataTable() {
                 header: "",
                 cell: ({ row }) => {
                     const { id, status } = row.original;
-                    const canComplete = status === "draft";
                     const isCompleted = status === "completed";
                     return (
                         <DropdownMenu>
@@ -410,7 +391,6 @@ export default function PurchaseSupplyOrdersDataTable() {
                             <DropdownMenuContent align="end">
                                 <DropdownMenuLabel>Actions</DropdownMenuLabel>
 
-                                {/* NEW: Edit */}
                                 <DropdownMenuItem
                                     disabled={isCompleted}
                                     onClick={() => !isCompleted && handleCompleteOrder(id)}
@@ -418,7 +398,6 @@ export default function PurchaseSupplyOrdersDataTable() {
                                     <CheckCircle2 className="mr-2 h-4 w-4" />
                                     Complete order
                                 </DropdownMenuItem>
-                                {/* NEW: Exporters */}
                                 <DropdownMenuItem onClick={() => exportOrderXLSX(id)}>
                                     <FileSpreadsheet className="mr-2 h-4 w-4" />
                                     Export to XLSX
@@ -427,7 +406,7 @@ export default function PurchaseSupplyOrdersDataTable() {
                                     <FileText className="mr-2 h-4 w-4" />
                                     Export to PDF
                                 </DropdownMenuItem>
-                                {/* Draft-only Delete */}
+
                                 {status === "draft" && (
                                     <>
                                         <DropdownMenuSeparator />
@@ -449,7 +428,7 @@ export default function PurchaseSupplyOrdersDataTable() {
                 },
             },
         ],
-        [router] // ← add router as a dependency
+        [router]
     );
 
     const table = useReactTable({
@@ -532,59 +511,21 @@ export default function PurchaseSupplyOrdersDataTable() {
                     </Select>
                 </div>
 
-                {/* New Order (replaces Import/Export/Add product) */}
+                {/* New Order */}
                 <Button onClick={() => router.push("/supplier-order/new")}>
                     <Plus className="mr-2 h-4 w-4" />
                     New Order
                 </Button>
             </div>
 
-            {/* Table */}
-            <div className="rounded-md border overflow-x-auto">
-                <Table>
-                    <TableHeader>
-                        {table.getHeaderGroups().map((hg) => (
-                            <TableRow key={hg.id}>
-                                {hg.headers.map((h) => (
-                                    <TableHead key={h.id}>
-                                        {h.isPlaceholder ? null : flexRender(h.column.columnDef.header, h.getContext())}
-                                    </TableHead>
-                                ))}
-                            </TableRow>
-                        ))}
-                    </TableHeader>
-
-                    <TableBody>
-                        {isLoading ? (
-                            Array.from({ length: 5 }).map((_, r) => (
-                                <TableRow key={r}>
-                                    {Array.from({ length: columns.length }).map((_, c) => (
-                                        <TableCell key={c}>
-                                            <Skeleton className="h-6 w-full" />
-                                        </TableCell>
-                                    ))}
-                                </TableRow>
-                            ))
-                        ) : table.getRowModel().rows?.length ? (
-                            table.getRowModel().rows.map((row) => (
-                                <TableRow key={row.id}>
-                                    {row.getVisibleCells().map((cell) => (
-                                        <TableCell key={cell.id}>
-                                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                        </TableCell>
-                                    ))}
-                                </TableRow>
-                            ))
-                        ) : (
-                            <TableRow>
-                                <TableCell colSpan={columns.length} className="h-24 text-center">
-                                    No orders found.
-                                </TableCell>
-                            </TableRow>
-                        )}
-                    </TableBody>
-                </Table>
-            </div>
+            {/* Standardized table */}
+            <StandardDataTable
+                table={table}
+                columns={columns}
+                isLoading={isLoading}
+                skeletonRows={pageSize}
+                emptyMessage="No orders found."
+            />
 
             {/* Pagination */}
             <div className="flex items-center justify-between space-x-2 py-4">
@@ -611,7 +552,7 @@ export default function PurchaseSupplyOrdersDataTable() {
                 </div>
             </div>
 
-            {/* AlertDialog for deleting drafts */}
+            {/* Delete dialog */}
             <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
                 <AlertDialogContent>
                     <AlertDialogHeader>

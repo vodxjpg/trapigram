@@ -1,7 +1,7 @@
 // src/app/(dashboard)/warehouses/warehouse-table.tsx
 "use client";
 
-import { useState, useEffect, startTransition, type FormEvent } from "react";
+import { useState, useEffect, startTransition, type FormEvent, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -12,22 +12,14 @@ import {
   Trash2,
   Share2,
   RefreshCw,
+  Copy as CopyIcon,
 } from "lucide-react";
 
-import { useDebounce } from "@/hooks/use-debounce"; // ← NEW
+import { useDebounce } from "@/hooks/use-debounce";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
-import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,6 +37,14 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { WarehouseDrawer } from "./warehouse-drawer";
+
+// ⬇️ TanStack + shared table renderer
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -96,15 +96,13 @@ export function WarehouseTable() {
 
   /* ── UI state ─────────────────────────────────────────────────── */
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(
-    null
-  );
+  const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [syncToken, setSyncToken] = useState("");
 
   /* ── search text (debounced) ──────────────────────────────────── */
   const [searchQuery, setSearchQuery] = useState("");
-  const debounced = useDebounce(searchQuery, 300); // ← NEW
+  const debounced = useDebounce(searchQuery, 300);
 
   /* ---------------------------------------------------------------- */
   /*  Guards                                                          */
@@ -131,7 +129,6 @@ export function WarehouseTable() {
     }
   };
 
-  /* initial & on-search fetch */
   useEffect(() => {
     if (!viewLoading && canView) fetchWarehouses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -166,6 +163,15 @@ export function WarehouseTable() {
     if (refresh) fetchWarehouses();
   };
 
+  const handleCopyId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      toast.success("ID copied to clipboard");
+    } catch {
+      toast.error("Could not copy ID");
+    }
+  };
+
   const handleSyncWarehouse = () => {
     let token = syncToken.trim();
     try {
@@ -182,6 +188,110 @@ export function WarehouseTable() {
     setDialogOpen(false);
     router.push(`/share/${token}`);
   };
+
+  /* ---------------------------------------------------------------- */
+  /*  Columns + Table                                                 */
+  /* ---------------------------------------------------------------- */
+  const columns = useMemo<ColumnDef<Warehouse>[]>(() => [
+    {
+      accessorKey: "id",
+      header: "ID",
+      cell: ({ row }) => (
+        <div className="inline-flex items-center gap-1">
+          <span className="truncate max-w-[220px]">{row.original.id}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={() => handleCopyId(row.original.id)}
+          >
+            <CopyIcon className="h-3 w-3" />
+          </Button>
+        </div>
+      ),
+    },
+    {
+      accessorKey: "name",
+      header: "Name",
+      cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    },
+    {
+      accessorKey: "organizationId",
+      header: "Organizations",
+      cell: ({ row }) => (
+        <div className="flex flex-wrap gap-1">
+          {row.original.organizationId.map((id) => (
+            <Badge key={id} variant="outline">{id}</Badge>
+          ))}
+        </div>
+      ),
+    },
+    {
+      accessorKey: "countries",
+      header: "Countries",
+      cell: ({ row }) => (
+        <div className="flex flex-wrap gap-1">
+          {row.original.countries.map((c) => (
+            <Badge key={c} variant="outline">{c}</Badge>
+          ))}
+        </div>
+      ),
+    },
+    {
+      id: "actions",
+      header: "",
+      cell: ({ row }) => {
+        const w = row.original;
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canUpdate && (
+                <DropdownMenuItem onClick={() => handleEdit(w)}>
+                  <Edit className="mr-2 h-4 w-4" />
+                  Edit
+                </DropdownMenuItem>
+              )}
+              {canShare && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link href={`/warehouses/${w.id}/share`} className="flex items-center">
+                      <Share2 className="mr-2 h-4 w-4" />
+                      Share
+                    </Link>
+                  </DropdownMenuItem>
+                </>
+              )}
+              {canDelete && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => handleDelete(w.id)}
+                    className="text-destructive"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+    },
+    // perms in deps so menu updates if permissions change
+  ], [canUpdate, canShare, canDelete]);
+
+  const table = useReactTable({
+    data: warehouses,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   if (viewLoading || !canView) return null;
 
@@ -235,114 +345,14 @@ export function WarehouseTable() {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>ID</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Organizations</TableHead>
-              <TableHead>Countries</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : warehouses.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
-                  No warehouses found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              warehouses.map((w) => (
-                <TableRow key={w.id}>
-                  <TableCell>
-                    <div className="inline-flex items-center gap-1">
-                      <span>{w.id}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => {
-                          navigator.clipboard.writeText(w.id);
-                          toast.success("ID copied to clipboard");
-                        }}
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-medium">{w.name}</TableCell>
-                  <TableCell>
-                    {w.organizationId.map((id) => (
-                      <Badge key={id} variant="outline" className="mr-1">
-                        {id}
-                      </Badge>
-                    ))}
-                  </TableCell>
-                  <TableCell>
-                    {w.countries.map((c) => (
-                      <Badge key={c} variant="outline" className="mr-1">
-                        {c}
-                      </Badge>
-                    ))}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canUpdate && (
-                          <DropdownMenuItem onClick={() => handleEdit(w)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                        )}
-                        {canShare && (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem asChild>
-                              <Link
-                                href={`/warehouses/${w.id}/share`}
-                                className="flex items-center"
-                              >
-                                <Share2 className="mr-2 h-4 w-4" />
-                                Share
-                              </Link>
-                            </DropdownMenuItem>
-                          </>
-                        )}
-                        {canDelete && (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={() => handleDelete(w.id)}
-                              className="text-destructive"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized table */}
+      <StandardDataTable
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        skeletonRows={8}
+        emptyMessage="No warehouses found."
+      />
 
       {/* Drawer */}
       <WarehouseDrawer

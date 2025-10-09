@@ -1,4 +1,4 @@
-// src/app/(dashboard)/products/components/stock-management-data-table.ts
+// File: src/app/(dashboard)/products/components/stock-management-data-table.ts
 "use client";
 
 import { useState, useEffect, useMemo, startTransition } from "react";
@@ -12,23 +12,13 @@ import {
   type SortingState,
   type ColumnFiltersState,
   type VisibilityState,
-  flexRender,
   getCoreRowModel,
   getSortedRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from "@tanstack/react-table";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectTrigger,
@@ -50,8 +40,11 @@ import { Separator } from "@/components/ui/separator";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { useProducts } from "@/hooks/use-products";
-import type { Product } from "../../components/products-data-table";
+import type { Product } from "./products-data-table";
 import { useDebounce } from "@/hooks/use-debounce";
+
+/* NEW: standardized data table wrapper */
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 const fetcher = (url: string) =>
   fetch(url, {
@@ -395,58 +388,14 @@ export function StockManagementDataTable() {
         </Select>
       </div>
 
-      <div className="rounded-md border overflow-x-auto">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((hg) => (
-              <TableRow key={hg.id}>
-                {hg.headers.map((h) => (
-                  <TableHead key={h.id}>
-                    {h.isPlaceholder
-                      ? null
-                      : flexRender(h.column.columnDef.header, h.getContext())}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: pageSize }).map((_, i) => (
-                <TableRow key={i}>
-                  {table.getVisibleLeafColumns().map((_, j) => (
-                    <TableCell key={j}>
-                      <Skeleton className="h-6 w-full" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : table.getRowModel().rows.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext()
-                      )}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={table.getVisibleLeafColumns().length}
-                  className="py-6 text-center"
-                >
-                  No products found.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized Table */}
+      <StandardDataTable<Product>
+        table={table}
+        columns={columns}
+        isLoading={isLoading}
+        emptyMessage="No products found."
+        skeletonRows={pageSize}
+      />
 
       {/* Pagination */}
       <div className="flex items-center justify-between space-x-2 py-4">
@@ -558,7 +507,7 @@ function StockDrawer({
           quantity,
         }))
     );
-    console.log(warehouseStock)
+    console.log(warehouseStock);
     try {
       await fetch(`/api/products/${product.id}`, {
         method: "PATCH",

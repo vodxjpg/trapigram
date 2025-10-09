@@ -6,6 +6,7 @@ import {
   useState,
   useEffect,
   startTransition,
+  useMemo,
 } from "react"
 import { useRouter } from "next/navigation"
 import {
@@ -26,14 +27,6 @@ import { authClient } from "@/lib/auth-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -48,7 +41,15 @@ import {
 } from "@/components/ui/select"
 import { OrganizationDrawer } from "./organization-drawer"
 import { Badge } from "@/components/ui/badge"
-import { useDebounce } from "@/hooks/use-debounce"      // ← NEW
+import { useDebounce } from "@/hooks/use-debounce"
+
+// NEW: TanStack + standardized table
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table"
+import { StandardDataTable } from "@/components/data-table/data-table"
 
 /* -------------------------------------------------------------------- */
 /*  Types                                                               */
@@ -72,23 +73,23 @@ export function OrganizationTable() {
   const router = useRouter()
 
   const [organizations, setOrganizations] = useState<Organization[]>([])
-  const [loading,        setLoading]      = useState(true)
+  const [loading, setLoading] = useState(true)
 
-  const [totalPages,  setTotalPages]   = useState(1)
-  const [currentPage, setCurrentPage]  = useState(1)
-  const [pageSize,    setPageSize]     = useState(10)
+  const [totalPages, setTotalPages] = useState(1)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   // search & debounce
-  const [searchQuery, setSearchQuery]  = useState("")
-  const debounced                      = useDebounce(searchQuery, 300) // ← NEW
+  const [searchQuery, setSearchQuery] = useState("")
+  const debounced = useDebounce(searchQuery, 300)
 
   // in-memory sort
-  const [sortColumn,    setSortColumn]    = useState<string>("name")
+  const [sortColumn, setSortColumn] = useState<"name" | "members">("name")
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 
   // drawer
-  const [drawerOpen,           setDrawerOpen]           = useState(false)
-  const [editingOrganization,  setEditingOrganization]  = useState<Organization | null>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [editingOrganization, setEditingOrganization] = useState<Organization | null>(null)
 
   /* --------------- data fetch -------------------------------------- */
   const fetchOrganizations = async () => {
@@ -104,10 +105,10 @@ export function OrganizationTable() {
       // search (client-side) against debounced value
       const filtered = debounced
         ? fetchedOrgs.filter(
-            (org: Organization) =>
-              org.name.toLowerCase().includes(debounced.toLowerCase()) ||
-              org.slug.toLowerCase().includes(debounced.toLowerCase()),
-          )
+          (org: Organization) =>
+            org.name.toLowerCase().includes(debounced.toLowerCase()) ||
+            org.slug.toLowerCase().includes(debounced.toLowerCase()),
+        )
         : fetchedOrgs
 
       setOrganizations(filtered)
@@ -130,7 +131,6 @@ export function OrganizationTable() {
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     setCurrentPage(1)          // reset pagination
-    /* fetchOrganizations will be invoked automatically by effect */
   }
 
   const handleSort = (column: "name" | "members") => {
@@ -143,25 +143,31 @@ export function OrganizationTable() {
   }
 
   // sort (client-side, stable)
-  const sortedOrganizations = [...organizations].sort((a, b) => {
+  const sortedOrganizations = useMemo(() => {
+    const arr = [...organizations]
     if (sortColumn === "name") {
-      return sortDirection === "asc"
-        ? a.name.localeCompare(b.name)
-        : b.name.localeCompare(a.name)
+      arr.sort((a, b) =>
+        sortDirection === "asc"
+          ? a.name.localeCompare(b.name)
+          : b.name.localeCompare(a.name)
+      )
+    } else if (sortColumn === "members") {
+      arr.sort((a, b) =>
+        sortDirection === "asc"
+          ? a.memberCount - b.memberCount
+          : b.memberCount - a.memberCount
+      )
     }
-    if (sortColumn === "members") {
-      return sortDirection === "asc"
-        ? a.memberCount - b.memberCount
-        : b.memberCount - a.memberCount
-    }
-    return 0
-  })
+    return arr
+  }, [organizations, sortColumn, sortDirection])
 
   // paginate (client-side)
-  const paginatedOrganizations = sortedOrganizations.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize,
-  )
+  const paginatedOrganizations = useMemo(() => {
+    return sortedOrganizations.slice(
+      (currentPage - 1) * pageSize,
+      currentPage * pageSize,
+    )
+  }, [sortedOrganizations, currentPage, pageSize])
 
   /* --------------- CRUD ------------------------------------------- */
   const handleDelete = async (id: string) => {
@@ -200,6 +206,105 @@ export function OrganizationTable() {
     router.push(`/organizations/${slug}`)
   }
 
+  /* -------------------- Columns for StandardDataTable -------------------- */
+  const columns: ColumnDef<Organization>[] = useMemo(
+    () => [
+      {
+        accessorKey: "name",
+        header: () => (
+          <button
+            type="button"
+            className="cursor-pointer select-none"
+            onClick={() => handleSort("name")}
+            aria-label="Sort by name"
+          >
+            Name {sortColumn === "name" && (sortDirection === "asc" ? "↑" : "↓")}
+          </button>
+        ),
+        cell: ({ row }) => (
+          <span
+            className="font-medium cursor-pointer hover:underline"
+            onClick={() => navigateToOrganization(row.original.slug)}
+          >
+            {row.original.name}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "slug",
+        header: "Slug",
+        cell: ({ row }) => row.original.slug,
+      },
+      {
+        id: "members",
+        header: () => (
+          <button
+            type="button"
+            className="cursor-pointer select-none"
+            onClick={() => handleSort("members")}
+            aria-label="Sort by members"
+          >
+            Members {sortColumn === "members" && (sortDirection === "asc" ? "↑" : "↓")}
+          </button>
+        ),
+        cell: ({ row }) => (
+          <Badge variant="outline" className="flex items-center gap-1 w-fit">
+            <Users className="h-3 w-3" /> {row.original.memberCount}
+          </Badge>
+        ),
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const org = row.original
+          const roles = (org.userRole ?? "")
+            .toLowerCase()
+            .split(",")
+            .map((r) => r.trim())
+          const canManage = roles.includes("owner") || roles.includes("admin")
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                    <span className="sr-only">Open menu</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canManage && (
+                    <>
+                      <DropdownMenuItem onClick={() => handleEdit(org)}>
+                        <Edit className="mr-2 h-4 w-4" /> Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => handleDelete(org.id)}
+                        disabled={organizations.length <= 1}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )
+        },
+      },
+    ],
+    // dependencies ensure headers update their arrows and delete disables correctly
+    [sortColumn, sortDirection, organizations.length]
+  )
+
+  /* -------------------- TanStack table instance -------------------- */
+  const table = useReactTable({
+    data: paginatedOrganizations, // keep your manual pagination and sorting
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  })
+
   /* -------------------------------------------------------------------- */
   /*  Render                                                              */
   /* -------------------------------------------------------------------- */
@@ -233,95 +338,14 @@ export function OrganizationTable() {
         </Button>
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead
-                className="cursor-pointer"
-                onClick={() => handleSort("name")}
-              >
-                Name {sortColumn === "name" && (sortDirection === "asc" ? "↑" : "↓")}
-              </TableHead>
-              <TableHead>Slug</TableHead>
-              <TableHead
-                className="cursor-pointer"
-                onClick={() => handleSort("members")}
-              >
-                Members {sortColumn === "members" && (sortDirection === "asc" ? "↑" : "↓")}
-              </TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : paginatedOrganizations.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">
-                  No organizations found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              paginatedOrganizations.map((org) => {
-                const roles = (org.userRole ?? "")
-                  .toLowerCase()
-                  .split(",")
-                  .map((r) => r.trim())
-                const canManage = roles.includes("owner") || roles.includes("admin")
-
-                return (
-                  <TableRow key={org.id}>
-                    <TableCell
-                      className="font-medium cursor-pointer hover:underline"
-                      onClick={() => navigateToOrganization(org.slug)}
-                    >
-                      {org.name}
-                    </TableCell>
-                    <TableCell>{org.slug}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="flex items-center gap-1 w-fit">
-                        <Users className="h-3 w-3" /> {org.memberCount}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                            <span className="sr-only">Open menu</span>
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {canManage && (
-                            <>
-                              <DropdownMenuItem onClick={() => handleEdit(org)}>
-                                <Edit className="mr-2 h-4 w-4" /> Edit
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => handleDelete(org.id)}
-                                disabled={organizations.length <= 1}
-                                className="text-destructive focus:text-destructive"
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" /> Delete
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized Table */}
+      <StandardDataTable<Organization>
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        emptyMessage="No organizations found."
+        skeletonRows={5}
+      />
 
       {/* Pagination */}
       <div className="flex items-center justify-between">

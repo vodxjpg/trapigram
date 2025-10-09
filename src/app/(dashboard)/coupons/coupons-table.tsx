@@ -8,6 +8,7 @@ import React, {
   type FormEvent,
   useRef,
   DragEvent,
+  useMemo,
 } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -34,14 +35,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -67,6 +60,14 @@ import {
 
 import { toast } from "sonner";
 
+/* NEW: TanStack table + standardized renderer */
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
+
 type Coupon = {
   id: string;
   name: string;
@@ -89,9 +90,9 @@ type Coupon = {
 const fmtLocal = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      })
+      dateStyle: "medium",
+      timeStyle: "short",
+    })
     : "—";
 
 export function CouponsTable() {
@@ -118,8 +119,13 @@ export function CouponsTable() {
   const [searchQuery, setSearchQuery] = useState("");
   const debounced = useDebounce(searchQuery, 300);
   const [pageSize, setPageSize] = useState(10);
+
+  /** Keep existing manual sort behavior:
+   * default by name ASC, toggle only on Usage Limit header click.
+   */
   const [sortColumn, setSortColumn] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
   const [couponToDelete, setCouponToDelete] = useState<Coupon | null>(null);
 
   // Import/Export state
@@ -153,6 +159,7 @@ export function CouponsTable() {
 
   useEffect(() => {
     fetchCoupons();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, debounced]);
 
   const handleSort = (col: string) => {
@@ -164,19 +171,23 @@ export function CouponsTable() {
     }
   };
 
-  const sortedCoupons = [...coupons].sort((a, b) => {
+  const sortedCoupons = useMemo(() => {
+    const list = [...coupons];
     if (sortColumn === "name") {
-      return sortDirection === "asc"
-        ? a.name.localeCompare(b.name)
-        : b.name.localeCompare(a.name);
+      list.sort((a, b) =>
+        sortDirection === "asc"
+          ? a.name.localeCompare(b.name)
+          : b.name.localeCompare(a.name)
+      );
+    } else if (sortColumn === "usageLimit") {
+      list.sort((a, b) =>
+        sortDirection === "asc"
+          ? a.usageLimit - b.usageLimit
+          : b.usageLimit - a.usageLimit
+      );
     }
-    if (sortColumn === "usageLimit") {
-      return sortDirection === "asc"
-        ? a.usageLimit - b.usageLimit
-        : b.usageLimit - a.usageLimit;
-    }
-    return 0;
-  });
+    return list;
+  }, [coupons, sortColumn, sortDirection]);
 
   const handleDuplicate = async (id: string) => {
     try {
@@ -293,6 +304,148 @@ export function CouponsTable() {
   };
   const handleDragOver = (e: DragEvent) => e.preventDefault();
 
+  /* -------------------- Columns for StandardDataTable -------------------- */
+  const columns: ColumnDef<Coupon>[] = useMemo(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => row.original.name,
+      },
+      {
+        accessorKey: "code",
+        header: "Code",
+        cell: ({ row }) => row.original.code,
+      },
+      {
+        accessorKey: "description",
+        header: "Description",
+        cell: ({ row }) => row.original.description,
+      },
+      {
+        id: "discount",
+        header: "Discount",
+        cell: ({ row }) =>
+          row.original.discountType === "percentage"
+            ? `${row.original.discountAmount}%`
+            : row.original.discountAmount,
+      },
+      {
+        accessorKey: "startDate",
+        header: "Start Date",
+        cell: ({ row }) => fmtLocal(row.original.startDate),
+      },
+      {
+        accessorKey: "expirationDate",
+        header: "Expiration Date",
+        cell: ({ row }) => fmtLocal(row.original.expirationDate),
+      },
+      {
+        accessorKey: "limitPerUser",
+        header: "Limit / User",
+        cell: ({ row }) => row.original.limitPerUser,
+      },
+      {
+        accessorKey: "usageLimit",
+        header: () => (
+          <button
+            type="button"
+            className="cursor-pointer select-none"
+            onClick={() => handleSort("usageLimit")}
+            aria-label="Sort by usage limit"
+          >
+            Usage Limit {sortColumn === "usageLimit" && (sortDirection === "asc" ? "↑" : "↓")}
+          </button>
+        ),
+        cell: ({ row }) => row.original.usageLimit,
+      },
+      {
+        accessorKey: "usagePerUser",
+        header: "Usage Per User",
+        cell: ({ row }) => row.original.usagePerUser,
+      },
+      {
+        accessorKey: "expendingMinimum",
+        header: "Expending Min",
+        cell: ({ row }) => row.original.expendingMinimum,
+      },
+      {
+        accessorKey: "expendingLimit",
+        header: "Expending Limit",
+        cell: ({ row }) => row.original.expendingLimit,
+      },
+      {
+        id: "countries",
+        header: "Countries",
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {row.original.countries.map((ct) => (
+              <Badge key={ct} variant="outline">
+                {ct}
+              </Badge>
+            ))}
+          </div>
+        ),
+      },
+      {
+        accessorKey: "visibility",
+        header: "Visibility",
+        cell: ({ row }) => (row.original.visibility ? "Visible" : "Hidden"),
+      },
+      {
+        accessorKey: "stackable",
+        header: "Stackable",
+        cell: ({ row }) => (row.original.stackable ? "Yes" : "No"),
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const c = row.original;
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canUpdate && (
+                    <DropdownMenuItem onClick={() => handleEdit(c)}>
+                      <Edit className="mr-2 h-4 w-4" /> Edit
+                    </DropdownMenuItem>
+                  )}
+                  {canUpdate && (
+                    <DropdownMenuItem onClick={() => handleDuplicate(c.id)}>
+                      <Copy className="mr-2 h-4 w-4" /> Duplicate
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && (
+                    <DropdownMenuItem
+                      onClick={() => setCouponToDelete(c)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" /> Delete
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    [canUpdate, canDelete, sortColumn, sortDirection]
+  );
+
+  /* -------------------- TanStack table instance -------------------- */
+  const table = useReactTable({
+    data: sortedCoupons, // keep your manual sorting behavior intact
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   if (permLoading) return null;
 
   return (
@@ -349,11 +502,10 @@ export function CouponsTable() {
             </div>
             {importMessage && (
               <p
-                className={`mt-4 text-center whitespace-pre-line font-medium ${
-                  importMessage.startsWith("✅")
-                    ? "text-green-600"
-                    : "text-red-600"
-                }`}
+                className={`mt-4 text-center whitespace-pre-line font-medium ${importMessage.startsWith("✅")
+                  ? "text-green-600"
+                  : "text-red-600"
+                  }`}
               >
                 {importMessage}
               </p>
@@ -429,113 +581,14 @@ export function CouponsTable() {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Code</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Discount</TableHead>
-              <TableHead>Start Date</TableHead>
-              <TableHead>Expiration Date</TableHead>
-              <TableHead>Limit / User</TableHead>
-              <TableHead
-                className="cursor-pointer"
-                onClick={() => handleSort("usageLimit")}
-              >
-                Usage Limit{" "}
-                {sortColumn === "usageLimit" &&
-                  (sortDirection === "asc" ? "↑" : "↓")}
-              </TableHead>
-              <TableHead>Usage Per User</TableHead>
-              <TableHead>Expending Min</TableHead>
-              <TableHead>Expending Limit</TableHead>
-              <TableHead>Countries</TableHead>
-              <TableHead>Visibility</TableHead>
-              <TableHead>Stackable</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={13} className="h-24 text-center">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : sortedCoupons.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={13} className="h-24 text-center">
-                  No coupons found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              sortedCoupons.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>{c.name}</TableCell>
-                  <TableCell>{c.code}</TableCell>
-                  <TableCell>{c.description}</TableCell>
-                  <TableCell>
-                    {c.discountType === "percentage"
-                      ? `${c.discountAmount}%`
-                      : c.discountAmount}
-                  </TableCell>
-                  <TableCell>{fmtLocal(c.startDate)}</TableCell>
-                  <TableCell>{fmtLocal(c.expirationDate)}</TableCell>
-                  <TableCell>{c.limitPerUser}</TableCell>
-                  <TableCell>{c.usageLimit}</TableCell>
-                  <TableCell>{c.usagePerUser}</TableCell>
-                  <TableCell>{c.expendingMinimum}</TableCell>
-                  <TableCell>{c.expendingLimit}</TableCell>
-                  <TableCell>
-                    {c.countries.map((ct) => (
-                      <Badge key={ct} variant="outline" className="mr-1">
-                        {ct}
-                      </Badge>
-                    ))}
-                  </TableCell>
-                  <TableCell>{c.visibility ? "Visible" : "Hidden"}</TableCell>
-                  <TableCell>{c.stackable ? "Yes" : "No"}</TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canUpdate && (
-                          <DropdownMenuItem onClick={() => handleEdit(c)}>
-                            <Edit className="mr-2 h-4 w-4" /> Edit
-                          </DropdownMenuItem>
-                        )}
-                        {canUpdate && (
-                          <DropdownMenuItem
-                            onClick={() => handleDuplicate(c.id)}
-                          >
-                            <Copy className="mr-2 h-4 w-4" /> Duplicate
-                          </DropdownMenuItem>
-                        )}
-                        {canDelete && (
-                          <DropdownMenuItem
-                            onClick={() => setCouponToDelete(c)}
-                            className="text-destructive focus:text-destructive"
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized Table */}
+      <StandardDataTable<Coupon>
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        emptyMessage="No coupons found."
+        skeletonRows={5}
+      />
 
       {/* Pagination */}
       <div className="flex items-center justify-between">
@@ -582,7 +635,9 @@ export function CouponsTable() {
             <Button
               variant="outline"
               size="icon"
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() =>
+                setCurrentPage((p) => Math.min(totalPages, p + 1))
+              }
               disabled={currentPage === totalPages}
             >
               <ChevronRight className="h-4 w-4" />

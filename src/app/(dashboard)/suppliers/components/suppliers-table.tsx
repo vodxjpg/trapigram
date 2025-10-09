@@ -1,17 +1,12 @@
+// Component: SuppliersView (updated to use StandardDataTable)
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { Search, Plus, ArrowLeft, Save, Pencil, Trash2, MoreVertical } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Sheet,
   SheetContent,
@@ -20,9 +15,6 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Label } from "@/components/ui/label";
-import { Search, Plus, ArrowLeft, Save } from "lucide-react";
-import { toast } from "sonner";
-import { Pencil, Trash2, MoreVertical } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +33,13 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
+import {
+  useReactTable,
+  getCoreRowModel,
+  type ColumnDef,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
+
 interface Supplier {
   id: string;
   code: string;
@@ -49,16 +48,7 @@ interface Supplier {
   phone?: string | null;
 }
 
-type SuppliersResponse =
-  | Supplier[] // if your endpoint returns a bare array
-  | { suppliers: Supplier[] }; // or { suppliers: [...] }
-
-type CreateSupplierBody = {
-  code?: string;
-  name: string;
-  email: string;
-  phone?: string;
-};
+type SuppliersResponse = Supplier[] | { suppliers: Supplier[] };
 
 export function SuppliersView() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -73,6 +63,15 @@ export function SuppliersView() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const isEditing = !!editingId;
+
+  const [formData, setFormData] = useState({
+    code: "",
+    name: "",
+    email: "",
+    phone: "",
+  });
+
+  const itemsPerPage = 10;
 
   const openCreate = () => {
     setEditingId(null);
@@ -105,18 +104,7 @@ export function SuppliersView() {
     }
   };
 
-  const [formData, setFormData] = useState({
-    code: "",
-    name: "",
-    email: "",
-    phone: "",
-  });
-
-  const itemsPerPage = 10;
-
-  // ─────────────────────────────────────────────────────────────
-  // Load suppliers from /api/suppliers
-  // ─────────────────────────────────────────────────────────────
+  // Load suppliers
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -154,26 +142,18 @@ export function SuppliersView() {
     });
   }, [suppliers, searchTerm]);
 
-  const totalPages = Math.ceil(filteredSuppliers.length / itemsPerPage);
+  const totalPages = Math.ceil(filteredSuppliers.length / itemsPerPage) || 1;
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedSuppliers = filteredSuppliers.slice(
     startIndex,
     startIndex + itemsPerPage
   );
 
-  const handleNewSupplier = () => {
-    setFormData({ code: "", name: "", email: "", phone: "" });
-    setIsSheetOpen(true);
-  };
-
-  // ─────────────────────────────────────────────────────────────
-  // Create supplier → POST /api/suppliers
-  // ─────────────────────────────────────────────────────────────
-  // CREATE (POST) and UPDATE (PATCH)
+  // Create/Update
   const handleSave = async () => {
     const name = formData.name.trim();
     const email = formData.email.trim();
-    const code = formData.code.trim(); // can be empty => server autogenerates
+    const code = formData.code.trim();
     const phone = formData.phone.trim();
 
     if (!name || !email) {
@@ -184,15 +164,14 @@ export function SuppliersView() {
     setSaving(true);
     try {
       if (isEditing && editingId) {
-        // PATCH /api/suppliers/:id
         const res = await fetch(`/api/suppliers/${editingId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            code: code || undefined, // don't overwrite with empty string
+            code: code || undefined,
             name,
             email,
-            phone: phone || null, // allow clearing phone
+            phone: phone || null,
           }),
         });
 
@@ -206,12 +185,11 @@ export function SuppliersView() {
         );
         toast.success("Supplier updated");
       } else {
-        // POST /api/suppliers
         const res = await fetch("/api/suppliers", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            code: code || undefined, // let server autogen if empty
+            code: code || undefined,
             name,
             email,
             phone: phone || null,
@@ -236,10 +214,88 @@ export function SuppliersView() {
     }
   };
 
-  const handleBack = () => setIsSheetOpen(false);
+  // Columns for StandardDataTable
+  const columns: ColumnDef<Supplier>[] = useMemo(
+    () => [
+      {
+        accessorKey: "code",
+        header: "Code",
+        cell: ({ row }) => <span className="font-medium">{row.original.code}</span>,
+      },
+      { accessorKey: "name", header: "Name" },
+      { accessorKey: "email", header: "Email" },
+      {
+        accessorKey: "phone",
+        header: "Phone",
+        cell: ({ row }) => row.original.phone || "-",
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const supplier = row.original;
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuItem onClick={() => openEdit(supplier)}>
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Edit
+                  </DropdownMenuItem>
+
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <DropdownMenuItem
+                        onSelect={(e) => e.preventDefault()}
+                        className="text-red-600 focus:text-red-600"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete
+                      </DropdownMenuItem>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete supplier?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This action cannot be undone. The supplier “{supplier.name}” will be permanently removed.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-red-600 hover:bg-red-700"
+                          onClick={() => deleteSupplier(supplier.id)}
+                        >
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
+  const table = useReactTable({
+    data: paginatedSuppliers,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      {/* Page header + Create */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Suppliers</h1>
         <Sheet
@@ -346,165 +402,91 @@ export function SuppliersView() {
         </Sheet>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Supplier Management</CardTitle>
-          <div className="flex items-center gap-4">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
-              <Input
-                placeholder="Search suppliers..."
-                value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="pl-10"
-              />
+      {/* Header row + search */}
+      <div className="space-y-2">
+        <h2 className="text-lg font-semibold">Supplier Management</h2>
+        <div className="flex items-center gap-4">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
+            <Input
+              placeholder="Search suppliers..."
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="pl-10"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Standardized table */}
+      {loading ? (
+        <StandardDataTable
+          table={table}
+          columns={columns}
+          isLoading
+          skeletonRows={itemsPerPage}
+          emptyMessage="Loading suppliers…"
+        />
+      ) : error ? (
+        <div className="py-10 text-center text-sm text-red-600">{error}</div>
+      ) : (
+        <>
+          <StandardDataTable
+            table={table}
+            columns={columns}
+            isLoading={false}
+            skeletonRows={itemsPerPage}
+            emptyMessage="No suppliers found."
+          />
+
+          {/* Pagination */}
+          <div className="flex items-center justify-between space-x-2 py-4">
+            <div className="text-sm text-muted-foreground">
+              Showing {startIndex + 1} to{" "}
+              {Math.min(startIndex + itemsPerPage, filteredSuppliers.length)} of{" "}
+              {filteredSuppliers.length} suppliers
+            </div>
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                disabled={currentPage === 1}
+              >
+                Previous
+              </Button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(
+                  (page) => (
+                    <Button
+                      key={page}
+                      variant={currentPage === page ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setCurrentPage(page)}
+                      className="w-8 h-8 p-0"
+                    >
+                      {page}
+                    </Button>
+                  )
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setCurrentPage((p) => Math.min(p + 1, totalPages))
+                }
+                disabled={currentPage === totalPages}
+              >
+                Next
+              </Button>
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">
-              Loading suppliers…
-            </div>
-          ) : error ? (
-            <div className="py-10 text-center text-sm text-red-600">
-              {error}
-            </div>
-          ) : (
-            <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Code</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Phone</TableHead>
-                    <TableHead className="text-right w-24">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-
-                <TableBody>
-                  {paginatedSuppliers.map((supplier) => (
-                    <TableRow key={supplier.id}>
-                      <TableCell className="font-medium">
-                        {supplier.code}
-                      </TableCell>
-                      <TableCell>{supplier.name}</TableCell>
-                      <TableCell>{supplier.email}</TableCell>
-                      <TableCell>{supplier.phone || "-"}</TableCell>
-
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                            >
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuItem
-                              onClick={() => openEdit(supplier)}
-                            >
-                              <Pencil className="mr-2 h-4 w-4" />
-                              Edit
-                            </DropdownMenuItem>
-
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <DropdownMenuItem
-                                  onSelect={(e) => e.preventDefault()} // prevent menu from closing early on macOS
-                                  className="text-red-600 focus:text-red-600"
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>
-                                    Delete supplier?
-                                  </AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    This action cannot be undone. The supplier “
-                                    {supplier.name}” will be permanently
-                                    removed.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    className="bg-red-600 hover:bg-red-700"
-                                    onClick={() => deleteSupplier(supplier.id)}
-                                  >
-                                    Delete
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-
-              {/* Pagination */}
-              <div className="flex items-center justify-between space-x-2 py-4">
-                <div className="text-sm text-muted-foreground">
-                  Showing {startIndex + 1} to{" "}
-                  {Math.min(
-                    startIndex + itemsPerPage,
-                    filteredSuppliers.length
-                  )}{" "}
-                  of {filteredSuppliers.length} suppliers
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-                    disabled={currentPage === 1}
-                  >
-                    Previous
-                  </Button>
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(
-                      (page) => (
-                        <Button
-                          key={page}
-                          variant={currentPage === page ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setCurrentPage(page)}
-                          className="w-8 h-8 p-0"
-                        >
-                          {page}
-                        </Button>
-                      )
-                    )}
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setCurrentPage((p) => Math.min(p + 1, totalPages))
-                    }
-                    disabled={currentPage === totalPages}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+        </>
+      )}
     </div>
   );
 }

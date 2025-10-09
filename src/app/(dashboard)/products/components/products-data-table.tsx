@@ -17,7 +17,6 @@ import {
   type SortingState,
   type VisibilityState,
   type RowSelectionState,
-  flexRender,
   getCoreRowModel,
   getFilteredRowModel,
   getSortedRowModel,
@@ -37,14 +36,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Select,
   SelectContent,
@@ -70,6 +61,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { Attribute } from "@/types/product";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 /* ------------------------------------------------------------ */
 /*  Product type definition for the table                       */
@@ -263,7 +255,7 @@ export function ProductsDataTable({
         setCategoryMap(map);
         setCategoryOptions(categories);
       })
-      .catch(() => {});
+      .catch(() => { });
 
     fetch("/api/product-attributes?page=1&pageSize=1000", {
       headers: {
@@ -272,7 +264,7 @@ export function ProductsDataTable({
     })
       .then((r) => r.json())
       .then(({ attributes }) => setAttributeOptions(attributes))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   /* ---------------------------------------------------------- */
@@ -422,7 +414,9 @@ export function ProductsDataTable({
           </Button>
         ),
         sortingFn: "alphanumeric",
-        cell: ({ row }) => <div className="font-medium">{row.original.title}</div>,
+        cell: ({ row }) => (
+          <div className="font-medium">{row.original.title}</div>
+        ),
       },
       {
         accessorKey: "sku",
@@ -928,64 +922,14 @@ export function ProductsDataTable({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Table */}
-      <div className="rounded-md border overflow-x-auto">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((hg) => (
-              <TableRow key={hg.id}>
-                {hg.headers.map((h) => (
-                  <TableHead key={h.id}>
-                    {h.isPlaceholder
-                      ? null
-                      : flexRender(h.column.columnDef.header, h.getContext())}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 5 }).map((_, r) => (
-                <TableRow key={r}>
-                  {Array.from({
-                    length: (columns as ColumnDef<Product>[]).length,
-                  }).map((_, c) => (
-                    <TableCell key={c}>
-                      <Skeleton className="h-6 w-full" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : table.getRowModel().rows?.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow
-                  key={row.id}
-                  data-state={row.getIsSelected() && "selected"}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext()
-                      )}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={(columns as ColumnDef<Product>[]).length}
-                  className="h-24 text-center"
-                >
-                  No products found.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Table (standardized) */}
+      <StandardDataTable<Product>
+        table={table}
+        columns={columns}
+        isLoading={isLoading}
+        emptyMessage="No products found."
+        skeletonRows={5}
+      />
 
       {/* Pagination */}
       <div className="flex items-center justify-between space-x-2 py-4">

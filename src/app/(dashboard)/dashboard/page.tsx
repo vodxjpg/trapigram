@@ -8,7 +8,7 @@ import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useEffect } from "react";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
-import { IconTrendingDown, IconTrendingUp } from "@tabler/icons-react";
+import { IconTrendingUp } from "@tabler/icons-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -50,6 +50,7 @@ import {
   subMonths,
   subYears,
 } from "date-fns";
+import OnboardingDialog from "@/components/dashboard/onboarding-dialog"; // ← NEW
 
 export const description = "An interactive area chart";
 
@@ -405,6 +406,9 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-1 flex-col">
+      {/* Onboarding modal (visibility currently local; wire your own conditions later) */}
+      <OnboardingDialog />
+
       <div className="@container/main flex flex-1 flex-col gap-2">
         <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
           {/* Header card with range selector */}

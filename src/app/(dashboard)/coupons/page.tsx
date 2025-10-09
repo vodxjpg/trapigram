@@ -1,29 +1,29 @@
 // src/app/(dashboard)/coupons/page.tsx         ← adjust path if different
 "use client";
 
-import { useEffect }                   from "react";
-import { useRouter }                   from "next/navigation";
-import { Suspense }                    from "react";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Suspense } from "react";
 
-import { authClient }                  from "@/lib/auth-client";
-import { useHasPermission }            from "@/hooks/use-has-permission";
-import { useHeaderTitle }              from "@/context/HeaderTitleContext";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
-import { CouponsTable }                from "./coupons-table";
+import { CouponsTable } from "./coupons-table";
 
 /* ------------------------------------------------------------------ */
 
 export default function CouponsPage() {
   const { setHeaderTitle } = useHeaderTitle();
-  const router             = useRouter();
+  const router = useRouter();
 
   /* ── active-organisation → permission hook ─────────────────────── */
-  const { data: activeOrg }   = authClient.useActiveOrganization();
-  const organizationId        = activeOrg?.id ?? null;
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
 
   const {
     hasPermission: canViewCoupons,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { coupon: ["view"] });
 
   /* ── set header title once ─────────────────────────────────────── */

@@ -6,6 +6,7 @@ import React, {
   useEffect,
   startTransition,
   useRef,
+  useMemo,
   DragEvent,
 } from "react";
 import {
@@ -20,14 +21,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,6 +41,14 @@ import {
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { TermDrawer } from "./term-drawer";
+
+/* NEW: TanStack + standardized data table */
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 type Term = { id: string; name: string; slug: string };
 
@@ -164,10 +165,14 @@ export function TermTable({ attributeId }: { attributeId: string }) {
   };
 
   /* ── Filtering & selection helpers ────────────────────── */
-  const filtered = terms.filter(
-    (t) =>
-      t.name.toLowerCase().includes(debounced.toLowerCase()) ||
-      t.slug.toLowerCase().includes(debounced.toLowerCase())
+  const filtered = useMemo(
+    () =>
+      terms.filter(
+        (t) =>
+          t.name.toLowerCase().includes(debounced.toLowerCase()) ||
+          t.slug.toLowerCase().includes(debounced.toLowerCase())
+      ),
+    [terms, debounced]
   );
   const selectedCount = Object.values(rowSelection).filter(Boolean).length;
   const allSelected = filtered.length > 0 && selectedCount === filtered.length;
@@ -260,6 +265,99 @@ export function TermTable({ attributeId }: { attributeId: string }) {
     if (file) processFile(file);
   };
   const handleDragOver = (e: DragEvent) => e.preventDefault();
+
+  /* ── Columns for standardized table ───────────────────── */
+  const columns: ColumnDef<Term>[] = useMemo(
+    () => [
+      {
+        id: "select",
+        header: () => (
+          <div className="w-[40px] text-center">
+            <Checkbox
+              checked={allSelected}
+              aria-checked={someSelected ? "mixed" : allSelected}
+              onCheckedChange={(v) => {
+                const sel: Record<string, boolean> = {};
+                if (v) filtered.forEach((t) => (sel[t.id] = true));
+                setRowSelection(sel);
+              }}
+            />
+          </div>
+        ),
+        cell: ({ row }) => {
+          const term = row.original;
+          const isChecked = !!rowSelection[term.id];
+          return (
+            <div className="text-center">
+              <Checkbox
+                checked={isChecked}
+                onCheckedChange={(v) =>
+                  setRowSelection((s) => ({
+                    ...s,
+                    [term.id]: !!v,
+                  }))
+                }
+              />
+            </div>
+          );
+        },
+        enableSorting: false,
+      },
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+      },
+      {
+        accessorKey: "slug",
+        header: "Slug",
+        cell: ({ row }) => (
+          <span className="font-mono text-muted-foreground">{row.original.slug}</span>
+        ),
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const term = row.original;
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <MoreVertical className="h-4 w-4" />
+                    <span className="sr-only">Open menu</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuItem onClick={() => handleEdit(term)}>
+                    <Edit className="mr-2 h-4 w-4" />
+                    Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-red-600 focus:text-red-600"
+                    onClick={() => confirmDeleteOne(term.id)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+        enableSorting: false,
+      },
+    ],
+    [allSelected, someSelected, filtered, rowSelection]
+  );
+
+  /* ── TanStack table instance ──────────────────────────── */
+  const table = useReactTable({
+    data: filtered,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   /* ── UI ───────────────────────────────────────────────── */
   return (
@@ -385,93 +483,14 @@ export function TermTable({ attributeId }: { attributeId: string }) {
         </Button>
       )}
 
-      {/* Table */}
-      <div className="rounded-md border overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[40px] text-center">
-                <Checkbox
-                  checked={allSelected}
-                  aria-checked={someSelected ? "mixed" : allSelected}
-                  onCheckedChange={(v) => {
-                    const sel: Record<string, boolean> = {};
-                    if (v)
-                      filtered.forEach((t) => {
-                        sel[t.id] = true;
-                      });
-                    setRowSelection(sel);
-                  }}
-                />
-              </TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Slug</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">
-                  Loading...
-                </TableCell>
-              </TableRow>
-            ) : filtered.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">
-                  No terms found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              filtered.map((term) => {
-                const isChecked = !!rowSelection[term.id];
-                return (
-                  <TableRow key={term.id}>
-                    <TableCell className="text-center">
-                      <Checkbox
-                        checked={isChecked}
-                        onCheckedChange={(v) =>
-                          setRowSelection((s) => ({
-                            ...s,
-                            [term.id]: !!v,
-                          }))
-                        }
-                      />
-                    </TableCell>
-                    <TableCell className="font-medium">{term.name}</TableCell>
-                    <TableCell className="font-mono text-muted-foreground">
-                      {term.slug}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreVertical className="h-4 w-4" />
-                            <span className="sr-only">Open menu</span>
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
-                          <DropdownMenuItem onClick={() => handleEdit(term)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-red-600 focus:text-red-600"
-                            onClick={() => confirmDeleteOne(term.id)}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized Table */}
+      <StandardDataTable<Term>
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        emptyMessage="No terms found."
+        skeletonRows={5}
+      />
 
       {/* Bulk-delete dialog (also used for single delete) */}
       <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>

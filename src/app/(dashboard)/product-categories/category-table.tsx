@@ -1,8 +1,8 @@
 // File: src/app/(dashboard)/products/categories/category-tabl.tsx
 "use client";
 
-import React, { useState, useEffect, startTransition, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import React, { useState, useEffect, startTransition, useRef, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import {
   ChevronLeft,
@@ -23,14 +23,6 @@ import { useHasPermission } from "@/hooks/use-has-permission";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -43,7 +35,6 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -69,6 +60,14 @@ import { CategoryDrawer } from "./category-drawer";
 import { getInitials } from "@/lib/utils";
 import { toast } from "sonner";
 
+/* TanStack table + standardized renderer */
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
+
 type Category = {
   id: string;
   name: string;
@@ -83,7 +82,6 @@ type Category = {
 
 export function CategoryTable() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
 
@@ -135,7 +133,7 @@ export function CategoryTable() {
         children: c.children ?? [],
         parentName: c.parentId
           ? data.categories.find((x: Category) => x.id === c.parentId)?.name ||
-            "Unknown"
+          "Unknown"
           : "",
       }));
       safeCats.sort((a, b) => {
@@ -157,6 +155,7 @@ export function CategoryTable() {
 
   useEffect(() => {
     fetchCategories();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, debounced]);
 
   /* ── single-delete ──────────────────────────────────────────── */
@@ -285,15 +284,152 @@ export function CategoryTable() {
   };
 
   const permsLoading = loadMutate || loadDelete;
-  if (permsLoading) return <div className="p-6">Loading permissions…</div>;
+  // IMPORTANT: Do NOT early-return here; we must keep hook order identical every render.
 
   const selectedCount = Object.values(rowSelection).filter(Boolean).length;
   const allSelected =
     categories.length > 0 && selectedCount === categories.length;
   const someSelected = selectedCount > 0 && selectedCount < categories.length;
 
+  /* -------------------- Columns for StandardDataTable -------------------- */
+  const columns: ColumnDef<Category>[] = useMemo(
+    () => [
+      {
+        id: "select",
+        header: () => (
+          <div className="w-[40px]">
+            <Checkbox
+              checked={allSelected}
+              aria-checked={someSelected ? "mixed" : allSelected}
+              onCheckedChange={(v) => {
+                const newSel: Record<string, boolean> = {};
+                if (v) categories.forEach((c) => (newSel[c.id] = true));
+                setRowSelection(newSel);
+              }}
+            />
+          </div>
+        ),
+        cell: ({ row }) => {
+          const cat = row.original;
+          const isChecked = !!rowSelection[cat.id];
+          return (
+            <div className="text-center">
+              <Checkbox
+                checked={isChecked}
+                onCheckedChange={(v) => {
+                  setRowSelection((sel) => ({
+                    ...sel,
+                    [cat.id]: !!v,
+                  }));
+                }}
+              />
+            </div>
+          );
+        },
+        enableSorting: false,
+      },
+      {
+        id: "image",
+        header: () => <span className="w-[80px] inline-block">Image</span>,
+        cell: ({ row }) => {
+          const cat = row.original;
+          return (
+            <div className="flex items-center">
+              {cat.image ? (
+                <Image
+                  src={cat.image}
+                  alt={cat.name}
+                  width={40}
+                  height={40}
+                  className="rounded-full object-cover"
+                />
+              ) : (
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+                  {getInitials(cat.name)}
+                </div>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+      },
+      {
+        accessorKey: "slug",
+        header: "Slug",
+        cell: ({ row }) => row.original.slug,
+      },
+      {
+        id: "products",
+        header: "Products",
+        cell: ({ row }) => (
+          <Badge variant="outline">{row.original._count?.products ?? 0}</Badge>
+        ),
+      },
+      {
+        id: "parent",
+        header: "Parent",
+        cell: ({ row }) => row.original.parentName || "None",
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const cat = row.original;
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                    <span className="sr-only">Open menu</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canMutate && (
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setEditingCategory(cat);
+                        setDrawerOpen(true);
+                      }}
+                    >
+                      <Edit className="mr-2 h-4 w-4" /> Edit
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && (
+                    <DropdownMenuItem
+                      onClick={() => setDeleteTarget(cat)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" /> Delete
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+        enableSorting: false,
+      },
+    ],
+    [allSelected, someSelected, categories, rowSelection, canMutate, canDelete]
+  );
+
+  /* -------------------- TanStack table instance -------------------- */
+  const table = useReactTable({
+    data: categories, // server-paginated dataset already filtered/sorted for display
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   return (
     <div className="space-y-4">
+      {/* permissions loading message (no early return to keep hook order stable) */}
+      {permsLoading && <div className="p-6">Loading permissions…</div>}
+
       {/* hidden file input */}
       <Input
         ref={fileInputRef}
@@ -346,11 +482,10 @@ export function CategoryTable() {
             </div>
             {importMessage && (
               <p
-                className={`mt-4 text-center whitespace-pre-line font-medium ${
-                  importMessage.startsWith("✅")
+                className={`mt-4 text-center whitespace-pre-line font-medium ${importMessage.startsWith("✅")
                     ? "text-green-600"
                     : "text-red-600"
-                }`}
+                  }`}
               >
                 {importMessage}
               </p>
@@ -433,119 +568,14 @@ export function CategoryTable() {
         </div>
       )}
 
-      {/* table */}
-      <div className="rounded-md border overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[40px]">
-                <Checkbox
-                  checked={allSelected}
-                  aria-checked={someSelected ? "mixed" : allSelected}
-                  onCheckedChange={(v) => {
-                    const newSel: Record<string, boolean> = {};
-                    if (v) categories.forEach((c) => (newSel[c.id] = true));
-                    setRowSelection(newSel);
-                  }}
-                />
-              </TableHead>
-              <TableHead className="w-[80px]">Image</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Slug</TableHead>
-              <TableHead>Products</TableHead>
-              <TableHead>Parent</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : categories.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
-                  No categories found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              categories.map((cat) => {
-                const isChecked = !!rowSelection[cat.id];
-                return (
-                  <TableRow key={cat.id}>
-                    <TableCell className="text-center">
-                      <Checkbox
-                        checked={isChecked}
-                        onCheckedChange={(v) => {
-                          setRowSelection((sel) => ({
-                            ...sel,
-                            [cat.id]: !!v,
-                          }));
-                        }}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      {cat.image ? (
-                        <Image
-                          src={cat.image}
-                          alt={cat.name}
-                          width={40}
-                          height={40}
-                          className="rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                          {getInitials(cat.name)}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-medium">{cat.name}</TableCell>
-                    <TableCell>{cat.slug}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">
-                        {cat._count?.products ?? 0}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{cat.parentName || "None"}</TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                            <span className="sr-only">Open menu</span>
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {canMutate && (
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setEditingCategory(cat);
-                                setDrawerOpen(true);
-                              }}
-                            >
-                              <Edit className="mr-2 h-4 w-4" /> Edit
-                            </DropdownMenuItem>
-                          )}
-                          {canDelete && (
-                            <DropdownMenuItem
-                              onClick={() => setDeleteTarget(cat)}
-                              className="text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" /> Delete
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* standardized table */}
+      <StandardDataTable<Category>
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        emptyMessage="No categories found."
+        skeletonRows={5}
+      />
 
       {/* pagination controls */}
       <div className="flex items-center justify-between">

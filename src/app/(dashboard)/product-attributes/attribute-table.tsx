@@ -6,6 +6,7 @@ import React, {
   useEffect,
   startTransition,
   useRef,
+  useMemo,
   DragEvent,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -27,14 +28,6 @@ import { useDebounce } from "@/hooks/use-debounce";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -54,8 +47,15 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-
 import { AttributeDrawer } from "./attribute-drawer";
+
+/* NEW: TanStack + standardized table */
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 type Attribute = {
   id: string;
@@ -129,7 +129,7 @@ export function AttributeTable() {
       return;
     }
     fetchAttributes();
-  }, [permLoading, canView]);
+  }, [permLoading, canView, router]);
 
   // CRUD handlers
   const handleDelete = async (id: string) => {
@@ -187,17 +187,19 @@ export function AttributeTable() {
   };
 
   // Filtered view
-  const filtered = attributes.filter(
-    (a) =>
-      a.name.toLowerCase().includes(debounced.toLowerCase()) ||
-      a.slug.toLowerCase().includes(debounced.toLowerCase())
+  const filtered = useMemo(
+    () =>
+      attributes.filter(
+        (a) =>
+          a.name.toLowerCase().includes(debounced.toLowerCase()) ||
+          a.slug.toLowerCase().includes(debounced.toLowerCase())
+      ),
+    [attributes, debounced]
   );
 
   const selectedCount = Object.values(rowSelection).filter(Boolean).length;
   const allSelected = filtered.length > 0 && selectedCount === filtered.length;
   const someSelected = selectedCount > 0 && selectedCount < filtered.length;
-
-  if (permLoading || !canView) return null;
 
   // Export handler
   const handleExport = async () => {
@@ -284,8 +286,124 @@ export function AttributeTable() {
   };
   const handleDragOver = (e: DragEvent) => e.preventDefault();
 
+  /* -------------------- Columns for StandardDataTable -------------------- */
+  const columns: ColumnDef<Attribute>[] = useMemo(
+    () => [
+      {
+        id: "select",
+        header: () => (
+          <div className="w-[40px] text-center">
+            <Checkbox
+              checked={allSelected}
+              aria-checked={someSelected ? "mixed" : allSelected}
+              onCheckedChange={(v) => {
+                if (v) {
+                  const sel: Record<string, boolean> = {};
+                  filtered.forEach((a) => (sel[a.id] = true));
+                  setRowSelection(sel);
+                } else {
+                  setRowSelection({});
+                }
+              }}
+            />
+          </div>
+        ),
+        cell: ({ row }) => {
+          const attr = row.original;
+          const isChecked = !!rowSelection[attr.id];
+          return (
+            <div className="text-center">
+              <Checkbox
+                checked={isChecked}
+                onCheckedChange={(v) =>
+                  setRowSelection((sel) => ({
+                    ...sel,
+                    [attr.id]: !!v,
+                  }))
+                }
+              />
+            </div>
+          );
+        },
+        enableSorting: false,
+      },
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => (
+          <span
+            className="font-medium cursor-pointer"
+            onClick={() =>
+              router.push(`/product-attributes/${row.original.id}/terms`)
+            }
+          >
+            {row.original.name}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "slug",
+        header: "Slug",
+        cell: ({ row }) => row.original.slug,
+      },
+      {
+        id: "terms",
+        header: "Terms",
+        cell: ({ row }) => (
+          <Badge variant="outline">{row.original._count?.terms ?? 0}</Badge>
+        ),
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const attr = row.original;
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canUpdate && (
+                    <DropdownMenuItem onClick={() => openEdit(attr)}>
+                      <Edit className="mr-2 h-4 w-4" /> Edit
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && canUpdate && <DropdownMenuSeparator />}
+                  {canDelete && (
+                    <DropdownMenuItem
+                      onClick={() => handleDelete(attr.id)}
+                      className="text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" /> Delete
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+        enableSorting: false,
+      },
+    ],
+    [allSelected, someSelected, filtered, rowSelection, canUpdate, canDelete, router]
+  );
+
+  /* -------------------- TanStack table instance -------------------- */
+  const table = useReactTable({
+    data: filtered, // using your filtered view for display and selection logic
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   return (
     <div className="space-y-4">
+      {/* permissions loading (keep hooks order stable; no early return) */}
+      {permLoading && <div className="p-6">Loading permissions…</div>}
+
       {/* hidden file input */}
       <Input
         ref={fileInputRef}
@@ -338,11 +456,10 @@ export function AttributeTable() {
             </div>
             {importMessage && (
               <p
-                className={`mt-4 text-center whitespace-pre-line font-medium ${
-                  importMessage.startsWith("✅")
-                    ? "text-green-600"
-                    : "text-red-600"
-                }`}
+                className={`mt-4 text-center whitespace-pre-line font-medium ${importMessage.startsWith("✅")
+                  ? "text-green-600"
+                  : "text-red-600"
+                  }`}
               >
                 {importMessage}
               </p>
@@ -397,10 +514,7 @@ export function AttributeTable() {
                 <Download className="mr-2 h-4 w-4" />
                 Export
               </Button>
-              <Button
-                onClick={openCreate}
-                disabled={isImporting || isExporting}
-              >
+              <Button onClick={openCreate} disabled={isImporting || isExporting}>
                 <Plus className="mr-2 h-4 w-4" /> Add Attribute
               </Button>
             </>
@@ -417,105 +531,14 @@ export function AttributeTable() {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[40px] text-center">
-                <Checkbox
-                  checked={allSelected}
-                  aria-checked={someSelected ? "mixed" : allSelected}
-                  onCheckedChange={(v) => {
-                    if (v) {
-                      const sel: Record<string, boolean> = {};
-                      filtered.forEach((a) => (sel[a.id] = true));
-                      setRowSelection(sel);
-                    } else {
-                      setRowSelection({});
-                    }
-                  }}
-                />
-              </TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Slug</TableHead>
-              <TableHead>Terms</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : filtered.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
-                  No attributes found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              filtered.map((attr) => {
-                const isChecked = !!rowSelection[attr.id];
-                return (
-                  <TableRow key={attr.id}>
-                    <TableCell className="text-center">
-                      <Checkbox
-                        checked={isChecked}
-                        onCheckedChange={(v) =>
-                          setRowSelection((sel) => ({
-                            ...sel,
-                            [attr.id]: !!v,
-                          }))
-                        }
-                      />
-                    </TableCell>
-                    <TableCell
-                      className="font-medium cursor-pointer"
-                      onClick={() =>
-                        router.push(`/product-attributes/${attr.id}/terms`)
-                      }
-                    >
-                      {attr.name}
-                    </TableCell>
-                    <TableCell>{attr.slug}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{attr._count?.terms ?? 0}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {canUpdate && (
-                            <DropdownMenuItem onClick={() => openEdit(attr)}>
-                              <Edit className="mr-2 h-4 w-4" /> Edit
-                            </DropdownMenuItem>
-                          )}
-                          {canDelete && canUpdate && <DropdownMenuSeparator />}
-                          {canDelete && (
-                            <DropdownMenuItem
-                              onClick={() => handleDelete(attr.id)}
-                              className="text-destructive"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" /> Delete
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized Table */}
+      <StandardDataTable<Attribute>
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        emptyMessage="No attributes found."
+        skeletonRows={5}
+      />
 
       {/* Bulk-delete confirmation */}
       {canDelete && (
