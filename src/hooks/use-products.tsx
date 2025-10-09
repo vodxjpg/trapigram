@@ -50,17 +50,16 @@ export function useProducts({
 
   const { data, error, mutate } = useSWR<{
     products: Product[]
+    productsFlat: Product[],
     pagination: { totalPages: number }
   }>(
     `/api/products?${params.toString()}`,
     fetcher,
     { revalidateOnFocus: false }
   )
-
-  console.log(data)
-
   return {
     products: data?.products || [],
+    productsFlat: data?.productsFlat || [],
     isLoading: !data && !error,
     totalPages: data?.pagination?.totalPages ?? 1,
     mutate,

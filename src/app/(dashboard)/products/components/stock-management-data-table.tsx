@@ -162,7 +162,7 @@ export function StockManagementDataTable() {
   }, [attributeFilter]);
 
   // 4) Data — IMPORTANT: only filter when a term is chosen
-  const { products, isLoading, totalPages, mutate } = useProducts({
+  const { productsFlat: products, isLoading, totalPages, mutate } = useProducts({
     page,
     pageSize,
     search: debouncedSearch,
@@ -507,7 +507,6 @@ function StockDrawer({
           quantity,
         }))
     );
-    console.log(warehouseStock);
     try {
       await fetch(`/api/products/${product.id}`, {
         method: "PATCH",
