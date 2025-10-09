@@ -492,17 +492,21 @@ export async function sendNotification(params: SendNotificationParams) {
     }
   }
 
-  /* — TELEGRAM — */
+    /* — TELEGRAM — */
   if (channels.includes("telegram")) {
-    // Only post to admin groups on admin-only triggers AND when we actually want admin fanout.
-    // DM the client only when we actually want user fanout.
-    const wantAdminGroups =
-      !isAutomation && effectiveTrigger === "admin_only" && finalAdminFanout;
-    const wantClientDM = finalUserFanout;
+    const isTicket = type === "ticket_created" || type === "ticket_replied";
+
+    // For tickets: always target support groups (admin groups); for others follow trigger rules.
+    const wantAdminGroups = isTicket
+      ? true
+      : (!isAutomation && effectiveTrigger === "admin_only" && finalAdminFanout);
+
+    const wantClientDM = finalUserFanout; // unchanged
 
     const bodyAdminOut = wantAdminGroups ? bodyAdminGeneric : "";
-    const bodyUserOut = wantClientDM ? bodyUserGeneric : "";
+    const bodyUserOut  = wantClientDM   ? bodyUserGeneric  : "";
     console.log("[notify] TELEGRAM fanout", {
+      isTicket,
       wantAdminGroups,
       wantClientDM,
       hasAdminTpl,
@@ -521,7 +525,7 @@ export async function sendNotification(params: SendNotificationParams) {
       ticketId,
     });
     console.log("[notify] TELEGRAM done");
-  }
+  }>
 }
 
 /* ───────── in-app & webhook helpers (unchanged) ───────── */
@@ -613,14 +617,20 @@ async function dispatchTelegram(opts: {
     .where("organizationId", "=", organizationId)
     .execute();
 
+    // helper: treat [] or ["*"] as global; otherwise match exact country
+  const includeByCountry = (arr: unknown): boolean => {
+    const a: string[] = Array.isArray(arr)
+      ? (arr as string[])
+      : JSON.parse((arr as string) || "[]");
+    if (!country) return true;
+    if (a.length === 0) return true;
+    if (a.includes("*")) return true;
+    return a.includes(country);
+  };
+
   const orderGroupIds = groupRows
-    .filter((g) => {
-      const arr: string[] = Array.isArray(g.countries)
-        ? (g.countries as unknown as string[])
-        : JSON.parse(g.countries || "[]");
-      return country ? arr.includes(country) : true;
-    })
-    .map((g) => g.groupId);
+  .filter((g) => includeByCountry(g.countries))
+  .map((g) => g.groupId);
 
   /* 2️⃣ NEW – ticket-support groups (same filter) */
   let ticketGroupIds: string[] = [];
@@ -632,19 +642,18 @@ async function dispatchTelegram(opts: {
       .execute();
 
     ticketGroupIds = supRows
-      .filter((g) => {
-        const arr: string[] = Array.isArray(g.countries)
-          ? (g.countries as unknown as string[])
-          : JSON.parse(g.countries || "[]");
-        return country ? arr.includes(country) : true;
-      })
-      .map((g) => g.groupId);
+    .filter((g) => includeByCountry(g.countries))
+    .map((g) => g.groupId);
   }
 
   const targets: { chatId: string; text: string; markup?: string }[] = [];
   const seenChatIds = new Set<string>(); // de-dupe across everything
   const ticketSet = new Set(ticketGroupIds); // for selective Reply button
-  const uniqueGroupIds = Array.from(new Set([...orderGroupIds, ...ticketGroupIds]));
+    // For tickets, only post to *ticket* support groups; for others use order groups.
+  const isTicket = type === "ticket_created" || type === "ticket_replied";
+  const uniqueGroupIds = Array.from(
+    new Set(isTicket ? ticketGroupIds : [...orderGroupIds, ...ticketGroupIds]),
+  );
   console.log("[telegram] targets discovery", {
     hasBodyAdmin: Boolean(bodyAdmin && bodyAdmin.trim().length),
     hasBodyUser: Boolean(bodyUser && bodyUser.trim().length),
