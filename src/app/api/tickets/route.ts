@@ -205,7 +205,7 @@ export async function POST(req: NextRequest) {
         ticket_content: "",
         // optionally: ticket_key: String(ticketKey)
       },
-      channels: ["email", "in_app"],
+      channels: ["email", "in_app", "telegram"],
       trigger: "admin_only",           // ← makes this an admin/team notification
       clientId: inserted.clientId,
       ticketId: ticketId,
