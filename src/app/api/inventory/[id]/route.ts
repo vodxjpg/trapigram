@@ -34,14 +34,49 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         const inventory = result.rows[0];
         const inventoryId = inventory.id
 
-        const countProductQuery = `SELECT ic.country, ic."expectedQuantity", ic."countedQuantity", ic."variationId", ic."discrepancyReason", ic."isCounted", p.title, p.sku, p.id
+        const countProductQuery = `SELECT
+            ic.country,
+            ic."expectedQuantity",
+            ic."countedQuantity",
+            ic."variationId",
+            ic."discrepancyReason",
+            ic."isCounted",
+
+            -- id becomes the variation id if present; always keep the base product id
+            COALESCE(ic."variationId", p.id)       AS id,
+            p.id                                    AS "productId",
+
+            -- title: product title for simple, or "Product - AttrName Term / AttrName Term" for variations
+            CASE
+                WHEN ic."variationId" IS NOT NULL THEN
+                CONCAT_WS(' - ',
+                    p.title,
+                    (
+                    SELECT string_agg(pa.name || ' ' || pat.name, ' / ' ORDER BY pa.name)
+                    FROM jsonb_each_text(COALESCE(pv.attributes, '{}'::jsonb)) kv(attributeId, termId)
+                    JOIN "productAttributes"      pa ON pa.id  = kv.attributeId
+                    JOIN "productAttributeTerms" pat ON pat.id = kv.termId
+                    )
+                )
+                ELSE
+                p.title
+            END                                      AS title,
+
+            -- sku: from variation if present, otherwise product
+            COALESCE(pv.sku, p.sku)                  AS sku
+
             FROM "inventoryCountItems" ic
-            JOIN products p ON ic."productId" = p."id"
-            WHERE ic."inventoryCountId" = '${inventoryId}'`
-        const countProductResult = await pool.query(countProductQuery)
+            JOIN products p
+            ON p.id = ic."productId"
+            LEFT JOIN "productVariations" pv
+            ON pv.id = ic."variationId"
+            WHERE ic."inventoryCountId" = $1
+            ORDER BY p.title, sku;
+            `
+        const countProductResult = await pool.query(countProductQuery, [inventoryId])
         const countProduct = countProductResult.rows
 
-        for (const product of countProduct) {
+        /* for (const product of countProduct) {
             if (product.variationId !== null) {
                 const variationQuery = `SELECT sku FROM "productVariations" WHERE id = '${product.variationId}'`
                 const variationResult = await pool.query(variationQuery)
@@ -49,7 +84,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
                 product.sku = result.sku
             }
-        }
+        } */
         return NextResponse.json({ inventory, countProduct }, { status: 201 });
     } catch (error: any) {
         console.error("[GET /api/inventory/[id]] error:", error);

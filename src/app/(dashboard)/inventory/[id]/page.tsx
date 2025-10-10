@@ -5,16 +5,9 @@ import { useCallback } from "react";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useRouter } from "next/navigation";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   Table,
   TableBody,
@@ -51,18 +44,16 @@ type InventoryData = {
   isCounted: boolean;
 };
 
-/**
- * Product record for UI and API
- */
+// change the type
 interface Product {
-  id: string; // composite row key
-  productId: string; // actual backend ID
+  id: string;                // composite row key for the table
+  productId: string;         // ✅ ALWAYS base product id (from API "productId")
   name: string;
   sku: string;
   expectedQuantity: number;
   countedQuantity: number | null;
-  country: string; // important
-  variationId: string;
+  country: string;
+  variationId: string | null;  // ✅ can be null
   isCounted: boolean;
   discrepancyReason: string;
 }
@@ -76,11 +67,24 @@ const saveProductCount = async (
   countedQuantity: number,
   discrepancyReason?: string
 ) => {
-  const { id: _rowKey, ...rest } = product;
-  const payload: Record<string, any> = { ...rest, countedQuantity };
-  if (discrepancyReason) {
-    payload.discrepancyReason = discrepancyReason;
+  const payload: {
+    productId: string;
+    country: string;
+    countedQuantity: number;
+    variationId?: string | null;
+    discrepancyReason?: string;
+  } = {
+    productId: product.productId,     // ✅ base product id
+    country: product.country,
+    countedQuantity,
+  };
+
+  // include only if present
+  if (product.variationId) payload.variationId = product.variationId;
+  if (discrepancyReason && discrepancyReason.trim()) {
+    payload.discrepancyReason = discrepancyReason.trim();
   }
+
   return fetch(`/api/inventory/${inventoryId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -166,20 +170,21 @@ export default function InventoryDetailPage() {
       const response = await fetch(`/api/inventory/${id}`);
       if (!response.ok) throw new Error("Inventory not found");
       const data = await response.json();
+      console.log(data)
       const { inventory, countProduct } = data;
       console.log(inventory);
       setInventory(inventory);
 
-      // when mapping API products → UI products
+      // when mapping API → UI
       const parsedProducts: Product[] = countProduct.map((p: any) => ({
-        id: `${p.id}:${p.variationId ?? "no-var"}:${p.country}`, // ← stable key
-        productId: p.id,
+        id: `${p.id}:${p.variationId ?? "no-var"}:${p.country}`, // row key only
+        productId: p.productId,             // ✅ use API "productId", not "id"
         name: p.title,
         sku: p.sku,
         expectedQuantity: p.expectedQuantity,
         countedQuantity: p.countedQuantity,
         country: p.country,
-        variationId: p.variationId,
+        variationId: p.variationId ?? null, // ✅ nullable
         isCounted: p.isCounted,
         discrepancyReason: p.discrepancyReason ?? "",
       }));
@@ -215,11 +220,11 @@ export default function InventoryDetailPage() {
       const next = prev.map((p) =>
         p.id === rowId
           ? {
-              ...p,
-              countedQuantity: qty,
-              isCounted: true,
-              discrepancyReason: reason ?? p.discrepancyReason,
-            }
+            ...p,
+            countedQuantity: qty,
+            isCounted: true,
+            discrepancyReason: reason ?? p.discrepancyReason,
+          }
           : p
       );
 
@@ -647,11 +652,10 @@ export default function InventoryDetailPage() {
         <Button
           onClick={() => inventory?.id && completeInventory(inventory.id)}
           disabled={disableContinue}
-          className={`px-6 ${
-            disableContinue
-              ? "bg-gray-200 text-gray-500 cursor-not-allowed hover:bg-gray-200"
-              : ""
-          }`}
+          className={`px-6 ${disableContinue
+            ? "bg-gray-200 text-gray-500 cursor-not-allowed hover:bg-gray-200"
+            : ""
+            }`}
         >
           Continue
         </Button>
