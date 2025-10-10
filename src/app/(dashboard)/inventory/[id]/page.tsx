@@ -177,15 +177,17 @@ export default function InventoryDetailPage() {
 
       // when mapping API → UI
       const parsedProducts: Product[] = countProduct.map((p: any) => ({
-        id: `${p.id}:${p.variationId ?? "no-var"}:${p.country}`, // row key only
-        productId: p.productId,             // ✅ use API "productId", not "id"
+        id: `${p.id}:${p.variationId ?? "no-var"}:${p.country}`,
+        productId: p.productId,
         name: p.title,
         sku: p.sku,
-        expectedQuantity: p.expectedQuantity,
-        countedQuantity: p.countedQuantity,
+        expectedQuantity: Number(p.expectedQuantity ?? 0),          // ✅ force number
+        countedQuantity: p.countedQuantity != null
+          ? Number(p.countedQuantity)                                // ✅ force number
+          : null,
         country: p.country,
-        variationId: p.variationId ?? null, // ✅ nullable
-        isCounted: p.isCounted,
+        variationId: p.variationId ?? null,
+        isCounted: Boolean(p.isCounted),
         discrepancyReason: p.discrepancyReason ?? "",
       }));
       setProducts(parsedProducts);
@@ -285,31 +287,27 @@ export default function InventoryDetailPage() {
     const raw = countedValues[rowId];
     if (!product || raw == null) return;
 
-    const numeric = Number(raw);
-    if (!Number.isFinite(numeric) || numeric < 0) return; // basic guard
+    const numeric = Number(String(raw).trim());                  // ✅ number
+    const expected = Number(product.expectedQuantity ?? 0);       // ✅ number
 
-    // If quantities differ, open the modal (keep your existing flow)
-    if (numeric !== product.expectedQuantity) {
+    if (!Number.isFinite(numeric) || numeric < 0) return;
+
+    // ✅ numeric-only comparison
+    if (numeric !== expected) {
       setPendingProductId(rowId);
       setShowDiscrepancyModal(true);
       return;
     }
 
-    // Optimistic UI update first
     applyLocalSave(rowId, numeric);
-
-    // Send to server in the background (disable the row while saving)
     setSaving(rowId, true);
     try {
       await saveProductCount(id!, { ...product }, numeric);
-    } catch (e) {
-      // If it failed, you can roll back or just inform the user.
-      // Minimal: show a toast and refetch once (optional).
-      console.error(e);
     } finally {
       setSaving(rowId, false);
     }
   };
+
 
   // ─── Function to complete inventory ───
   async function completeInventory(inventoryId: string) {
@@ -402,11 +400,14 @@ export default function InventoryDetailPage() {
                     </span>
                   ) : (
                     <Input
+                      type="number"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      min={0}
+                      step={1}
                       placeholder="0"
-                      value={countedValues[product.id] || ""}
-                      onChange={(e) =>
-                        handleCountedChange(product.id, e.target.value)
-                      }
+                      value={countedValues[product.id] ?? ""}                       // don’t coerce to falsy
+                      onChange={(e) => handleCountedChange(product.id, e.target.value)}
                       className="w-20"
                       disabled={!canUpdate || !!savingRows[product.id]}
                     />
@@ -425,7 +426,8 @@ export default function InventoryDetailPage() {
                       size="sm"
                       onClick={() => handleSave(product.id)}
                       disabled={
-                        !countedValues[product.id] ||
+                        countedValues[product.id] === undefined ||                 // ✅ allow "0"
+                        countedValues[product.id] === "" ||
                         !canUpdate ||
                         !!savingRows[product.id]
                       }
