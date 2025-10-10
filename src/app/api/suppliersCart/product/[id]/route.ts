@@ -13,14 +13,22 @@ export async function GET(
     console.log("GET /api/suppliersCart/product/:id")
     try {
         const { id } = await params;
+        const { searchParams } = new URL(req.url);
+        const variationId = searchParams.get("variationId");
 
         /* 1. Load cart + client */
         const cartRes = await pool.query(`SELECT * FROM "supplierCartProducts" WHERE "productId"=$1`, [id]);
         const result = cartRes.rows
-
-        const stockQuery = `SELECT cost FROM products WHERE id = $1`
-        const stockResult = await pool.query(stockQuery, [id])
-        const stock = stockResult.rows[0]
+        let stock = {}
+        if (typeof variationId === "string") {
+            const stockQuery = `SELECT cost FROM "productVariations" WHERE id = $1`
+            const stockResult = await pool.query(stockQuery, [variationId])
+            stock = stockResult.rows[0]
+        } else {
+            const stockQuery = `SELECT cost FROM products WHERE id = $1`
+            const stockResult = await pool.query(stockQuery, [id])
+            stock = stockResult.rows[0]
+        }
 
         return NextResponse.json({ result, stock }, { status: 200 });
     } catch (error: any) {
