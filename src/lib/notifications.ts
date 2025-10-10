@@ -103,6 +103,68 @@ const pickTemplate = (
   );
 };
 
+const makeRawSub = (
+  type: NotificationType,
+  tplSubject: string | null | undefined,
+  fallback?: string,
+) =>
+  !tplSubject && !fallback
+    ? type.replace(/_/g, " ")
+    : (tplSubject || fallback || "").trim();
+
+/**
+ * Render a single notification using the same templates the dispatcher uses,
+ * without sending anything. Useful for bots to fetch Telegram-ready text.
+ */
+export async function renderNotification(args: {
+  organizationId: string;
+  type: NotificationType;
+  channel: NotificationChannel;             // e.g. "telegram"
+  trigger?: string | null;                  // e.g. "admin_only" | "user_only"
+  variables?: Record<string, string>;
+  subject?: string;
+  country?: string | null;                  // pass to select country-scoped template
+  role?: "admin" | "user";                  // optional hard override
+}): Promise<{ message: string; subject?: string }> {
+  const {
+    organizationId,
+    type,
+    channel,
+    trigger = null,
+    variables = {},
+    subject,
+    country = null,
+    role,
+  } = args;
+
+  // 1) Load templates exactly like sendNotification does
+  const templates = await db
+    .selectFrom("notificationTemplates")
+    .select(["role", "subject", "message", "countries"])
+    .where("organizationId", "=", organizationId)
+    .where("type", "=", type)
+    .execute();
+
+  // 2) Decide which role’s template we want
+  const effectiveRole: "admin" | "user" =
+    role ?? (trigger === "admin_only" ? "admin" : "user");
+
+  const tpl = pickTemplate(effectiveRole, country, templates);
+
+  // 3) Build subject/body and apply variables
+  const rawSubject = makeRawSub(type, tpl?.subject ?? null, subject);
+  const compiledSubject = applyVars(rawSubject, variables);
+  const compiledHtml = applyVars(tpl?.message || "", variables);
+
+  // 4) Channel-specific formatting (Telegram expects Telegram-safe HTML here)
+  const message =
+    channel === "telegram" ? toTelegramHtml(compiledHtml) : compiledHtml;
+
+  return { message, subject: compiledSubject };
+}
+
+
+
 /* ───────────────── main dispatcher ───────────────── */
 export async function sendNotification(params: SendNotificationParams) {
   const {
@@ -661,6 +723,8 @@ async function dispatchWebhook(opts: {
     ),
   );
 }
+
+
 
 async function dispatchTelegram(opts: {
   organizationId: string;
