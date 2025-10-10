@@ -170,9 +170,7 @@ export default function InventoryDetailPage() {
       const response = await fetch(`/api/inventory/${id}`);
       if (!response.ok) throw new Error("Inventory not found");
       const data = await response.json();
-      console.log(data)
       const { inventory, countProduct } = data;
-      console.log(inventory);
       setInventory(inventory);
 
       // when mapping API → UI

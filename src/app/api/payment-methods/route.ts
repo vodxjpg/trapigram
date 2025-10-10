@@ -18,7 +18,9 @@ const paymentCreateSchema = z.object({
 
 /* =========================================================
    GET /api/payment-methods
-   query params: page, pageSize, search
+   query params: page, pageSize, search, active
+   - active=true  -> only return active methods
+   - active absent -> return all methods
    ========================================================= */
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
@@ -37,10 +39,20 @@ export async function GET(req: NextRequest) {
   const pageSize = Math.min(100, Number(searchParams.get("pageSize")) || 10);
   const search = (searchParams.get("search") || "").trim();
 
+  // optional filter: only active methods when active=true
+  const activeParam = searchParams.get("active");
+  const filterActive = activeParam === "true";
+
   // count
   let countSql = `SELECT COUNT(*) FROM "paymentMethods" WHERE "tenantId" = $1`;
   const countVals: any[] = [tenantId];
+
+  if (filterActive) {
+    countSql += ` AND active = TRUE`;
+  }
+
   if (search) {
+    // NOTE: $2 is safe here because we didn't add any bound param for 'active'
     countSql += `
       AND (
         name ILIKE $2
@@ -63,7 +75,13 @@ export async function GET(req: NextRequest) {
     WHERE "tenantId" = $1
   `;
   const dataVals: any[] = [tenantId];
+
+  if (filterActive) {
+    dataSql += ` AND active = TRUE`;
+  }
+
   if (search) {
+    // NOTE: $2 is safe here for the same reason as above
     dataSql += `
       AND (
         name ILIKE $2
@@ -75,6 +93,7 @@ export async function GET(req: NextRequest) {
     `;
     dataVals.push(`%${search}%`);
   }
+
   dataSql += ` ORDER BY "createdAt" DESC LIMIT $${dataVals.length + 1} OFFSET $${dataVals.length + 2}`;
   dataVals.push(pageSize, (page - 1) * pageSize);
 

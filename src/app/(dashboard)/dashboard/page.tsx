@@ -1,9 +1,11 @@
+// src/app/(dashboard)/page.tsx
 "use client";
 
 import * as React from "react";
 import { driver } from "driver.js";
 import "driver.js/dist/driver.css";
-
+import OnboardingDialog, { type StepKey } from "@/components/dashboard/onboarding-dialog";
+import { OnboardingReminder, useOnboardingStatus, ONBOARDING_REFRESH_EVENT } from "@/components/dashboard/onboarding-reminder";
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useEffect } from "react";
@@ -50,7 +52,6 @@ import {
   subMonths,
   subYears,
 } from "date-fns";
-import OnboardingDialog from "@/components/dashboard/onboarding-dialog"; // ← NEW
 
 export const description = "An interactive area chart";
 
@@ -180,6 +181,53 @@ export default function DashboardPage() {
   const [chartData, setChartData] = React.useState<
     { date: string; total: number; revenue: number }[]
   >([]);
+
+  const { loading: obLoading, status: obStatus, remaining: obRemaining, refresh: obRefresh } = useOnboardingStatus();
+  const [onboardOpen, setOnboardOpen] = React.useState(false);
+  const [startAtKey, setStartAtKey] = React.useState<StepKey | null>(null);
+  const [firstRunHandled, setFirstRunHandled] = React.useState(false);
+
+  React.useEffect(() => {
+    const handler = () => obRefresh();
+    window.addEventListener(ONBOARDING_REFRESH_EVENT, handler);
+    return () => window.removeEventListener(ONBOARDING_REFRESH_EVENT, handler);
+  }, [obRefresh]);
+
+  // open ONCE automatically (first visit) if not all 5 are done
+  React.useEffect(() => {
+    if (firstRunHandled || obLoading) return;
+
+    const allDone =
+      obStatus.hasPayment &&
+      obStatus.hasCompany &&
+      obStatus.hasMethod &&
+      obStatus.hasCategory &&
+      obStatus.hasAttribute;
+
+    const seen = typeof window !== "undefined" ? localStorage.getItem("onboardingSeenOnce") : "true";
+
+    if (!seen && !allDone) {
+      const firstIncomplete =
+        (!obStatus.hasPayment && "payment-method") ||
+        (!obStatus.hasCompany && "shipping-company") ||
+        (!obStatus.hasMethod && "shipping-method") ||
+        (!obStatus.hasCategory && "product-category") ||
+        (!obStatus.hasAttribute && "product-attribute") ||
+        ("products-team" as StepKey);
+
+      setStartAtKey(firstIncomplete);
+      setOnboardOpen(true);
+      try { localStorage.setItem("onboardingSeenOnce", "true"); } catch { }
+    }
+
+    setFirstRunHandled(true);
+  }, [firstRunHandled, obLoading, obStatus]);
+
+  // helper when clicking an item in the checklist reminder
+  const handleOpenStep = (key: StepKey) => {
+    setStartAtKey(key);
+    setOnboardOpen(true);
+  };
 
   // Convert preset to from/to params for API
   const getFromToParams = (): { from: string; to: string } => {
@@ -406,8 +454,20 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-1 flex-col">
-      {/* Onboarding modal (visibility currently local; wire your own conditions later) */}
-      <OnboardingDialog />
+      {/* Reminder bar – shown only when there are steps left */}
+      {!obLoading && obRemaining > 0 && (
+        <OnboardingReminder
+          onOpenStep={(k) => handleOpenStep(k)}
+          className="mt-4"
+        />
+      )}
+
+      {/* Controlled onboarding modal */}
+      <OnboardingDialog
+        open={onboardOpen}
+        onOpenChange={setOnboardOpen}
+        startAtKey={startAtKey}
+      />
 
       <div className="@container/main flex flex-1 flex-col gap-2">
         <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">

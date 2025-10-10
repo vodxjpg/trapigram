@@ -18,6 +18,9 @@ import countriesLib from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 import { getCountries } from "libphonenumber-js";
 import ReactCountryFlag from "react-country-flag";
+import { slugify } from "@/lib/utils";
+
+const ONBOARDING_REFRESH_EVENT = "onboarding:refresh";
 
 /** Register the countries locale (same as your forms) */
 countriesLib.registerLocale(enLocale);
@@ -30,15 +33,35 @@ const allCountries = getCountries().map((code) => ({
 
 type CountryOption = { value: string; label: string };
 
-export default function OnboardingDialog() {
-    // ---- Wizard steps ----
+// at the top, add this export so the dashboard/reminder can address steps
+export type StepKey =
+    | "payment-method"
+    | "shipping-company"
+    | "shipping-method"
+    | "product-category"
+    | "product-attribute"
+    | "attribute-term"
+    | "products-team";
+
+export default function OnboardingDialog({
+    open,
+    onOpenChange,
+    startAtKey,
+}: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    startAtKey?: StepKey | null;
+}) {
+    // Keep the last step (welcome) always last. Insert new steps before it.
+    const coreSteps = [
+        { id: 1, key: "payment-method", title: "Create your payment method" },
+        { id: 2, key: "shipping-company", title: "Create your shipping company" },
+        { id: 3, key: "shipping-method", title: "Create your shipping method" },
+        { id: 4, key: "product-category", title: "Create your first product category" },
+        { id: 5, key: "product-attribute", title: "Create your first product attribute" }, // <— NEW step
+    ];
     const steps = React.useMemo(
-        () => [
-            { id: 1, key: "shipping-company", title: "Create your shipping company" },
-            { id: 2, key: "shipping-method", title: "Create your shipping method" },
-            { id: 3, key: "payment-method", title: "Create your payment method" },
-            { id: 4, key: "products-team", title: "Welcome! You’re ready to start" },
-        ],
+        () => [...coreSteps, { id: 999, key: "products-team", title: "Welcome! You’re ready to start" }],
         []
     );
     const [stepIndex, setStepIndex] = React.useState<number>(0);
@@ -47,31 +70,44 @@ export default function OnboardingDialog() {
     const isLast = stepIndex === totalSteps - 1;
     const progressValue = ((stepIndex + 1) / totalSteps) * 100;
 
-    // ---- Open state is decided after initial server checks ----
-    const [open, setOpen] = React.useState<boolean>(false);
+    // ---- Open state is decided after initial server checks ----    
     const [initialized, setInitialized] = React.useState<boolean>(false);
 
-    const goNext = () => {
-        if (isLast) {
-            // Finalize onboarding
-            try {
-                localStorage.setItem("onboardingComplete", "true");
-            } catch {
-                // ignore storage errors
-            }
-            setOpen(false);
-            return;
-        }
-        setStepIndex((i) => Math.min(i + 1, totalSteps - 1));
-    };
-
-    const goBack = () => {
-        setStepIndex((i) => Math.max(i - 1, 0));
-    };
-
-    /** ---------- Shared: Organization countries (used by step 1 & 2) ---------- */
+    /** ---------- Shared: Organization countries (used by shipping steps) ---------- */
     const [countryOptions, setCountryOptions] = React.useState<CountryOption[]>([]);
     const [loadingOrgCountries, setLoadingOrgCountries] = React.useState<boolean>(true);
+
+    // when startAtKey changes while opening, jump to that step
+    React.useEffect(() => {
+        if (!open || !startAtKey) return;
+        const idx = steps.findIndex((s) => s.key === startAtKey);
+        if (idx >= 0) setStepIndex(idx);
+    }, [open, startAtKey, steps]);
+
+    // Consider the step "empty" when the user hasn't typed anything meaningful.
+    // This lets Next act as "Skip" if all relevant inputs are blank.
+    const isPaymentFormEmpty = () =>
+        pmName.trim() === "" &&
+        pmApiKey.trim() === "" &&
+        pmSecretKey.trim() === "" &&
+        pmDescription.trim() === "";
+
+    const isCompanyFormEmpty = () =>
+        companyName.trim() === "" && selectedCompanyCountries.length === 0;
+
+    const isMethodFormEmpty = () =>
+        methodTitle.trim() === "" &&
+        methodDescription.trim() === "" &&
+        methodCountries.length === 0 &&
+        minOrderCost.trim() === "" &&
+        maxOrderCost.trim() === "" &&
+        (shipmentCost.trim() === "" || shipmentCost.trim() === "0");
+
+    const isCategoryFormEmpty = () =>
+        catName.trim() === "" && catSlug.trim() === "";
+
+    const isAttributeFormEmpty = () => attrName.trim() === "" && attrSlug.trim() === "";
+
 
     React.useEffect(() => {
         let cancelled = false;
@@ -112,7 +148,91 @@ export default function OnboardingDialog() {
         };
     }, []);
 
-    /** ---------- Step 1 state & effects (Shipping company) ---------- */
+    /** ---------- Step 1 (Payment method) ---------- */
+    const [checkingExistingPayments, setCheckingExistingPayments] = React.useState<boolean>(true);
+    const [hasAnyPaymentMethod, setHasAnyPaymentMethod] = React.useState<boolean>(false);
+    const [savingPayment, setSavingPayment] = React.useState<boolean>(false);
+
+    const [pmName, setPmName] = React.useState<string>("");
+    const [pmActive, setPmActive] = React.useState<boolean>(true);
+    const [pmApiKey, setPmApiKey] = React.useState<string>("");
+    const [pmSecretKey, setPmSecretKey] = React.useState<string>("");
+    const [pmDescription, setPmDescription] = React.useState<string>("");
+
+    React.useEffect(() => {
+        // Only consider ACTIVE payment methods
+        let cancelled = false;
+        (async () => {
+            try {
+                setCheckingExistingPayments(true);
+                const res = await fetch("/api/payment-methods?active=true", { method: "GET" });
+                if (!res.ok) throw new Error("Failed to check payment methods");
+                const data = await res.json();
+                const { methods } = data;
+                if (!cancelled) {
+                    const exists = Array.isArray(methods) ? methods.length > 0 : !!methods?.length;
+                    setHasAnyPaymentMethod(exists);
+                }
+            } catch (err: any) {
+                console.error(err);
+                toast.error(err?.message || "Could not verify existing payment methods");
+            } finally {
+                if (!cancelled) setCheckingExistingPayments(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const paymentDisabled = hasAnyPaymentMethod || checkingExistingPayments || savingPayment;
+
+    const savePaymentIfNeeded = async (): Promise<boolean> => {
+        if (paymentDisabled) return true; // already satisfied
+        if (!pmName.trim()) {
+            toast.error("Name is required");
+            return false;
+        }
+
+        try {
+            setSavingPayment(true);
+            const payload: Record<string, any> = {
+                name: pmName.trim(),
+                active: pmActive,
+                apiKey: pmApiKey.trim() || null,
+                secretKey: pmSecretKey.trim() || null,
+                description: pmDescription.trim() || null,
+            };
+
+            const res = await fetch("/api/payment-methods", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+
+            if (!res.ok) {
+                let errMsg = "Failed to save";
+                try {
+                    const j = await res.json();
+                    errMsg = j?.error || errMsg;
+                } catch { /* ignore */ }
+                throw new Error(errMsg);
+            }
+
+            toast.success("Payment method created successfully");
+            window.dispatchEvent(new Event(ONBOARDING_REFRESH_EVENT));
+            setHasAnyPaymentMethod(true);
+            setHasAnyPaymentMethod(true);
+            return true;
+        } catch (e: any) {
+            toast.error(e?.message || "Failed to save");
+            return false;
+        } finally {
+            setSavingPayment(false);
+        }
+    };
+
+    /** ---------- Step 2 (Shipping company) ---------- */
     const [companyName, setCompanyName] = React.useState<string>("");
     const [selectedCompanyCountries, setSelectedCompanyCountries] = React.useState<string[]>([]);
     const [checkingExistingCompanies, setCheckingExistingCompanies] = React.useState<boolean>(true);
@@ -120,7 +240,6 @@ export default function OnboardingDialog() {
     const [savingCompany, setSavingCompany] = React.useState<boolean>(false);
 
     React.useEffect(() => {
-        // Check if at least one shipping company exists
         let cancelled = false;
         (async () => {
             try {
@@ -147,22 +266,21 @@ export default function OnboardingDialog() {
 
     const companyDisabled = hasAnyCompany || checkingExistingCompanies || savingCompany;
 
-    const handleSaveShippingCompany = async () => {
-        if (companyDisabled) return;
-
+    const saveCompanyIfNeeded = async (): Promise<boolean> => {
+        if (companyDisabled) return true;
         const trimmedName = companyName.trim();
         if (!trimmedName) {
             toast.error("Name is required");
-            return;
+            return false;
         }
         if (selectedCompanyCountries.length === 0) {
             toast.error("At least one country is required");
-            return;
+            return false;
         }
         const invalid = selectedCompanyCountries.find((c) => c.length !== 2);
         if (invalid) {
             toast.error(`Invalid country code: "${invalid}". Use alpha-2 codes like ES, FR, PT.`);
-            return;
+            return false;
         }
 
         try {
@@ -181,22 +299,23 @@ export default function OnboardingDialog() {
                 try {
                     const err = await res.json();
                     errMsg = err?.error || errMsg;
-                } catch {
-                    // ignore
-                }
+                } catch { /* ignore */ }
                 throw new Error(errMsg);
             }
             toast.success("Shipping company created successfully");
-            setHasAnyCompany(true); // lock fields after successful creation
+            window.dispatchEvent(new Event(ONBOARDING_REFRESH_EVENT));
+            setHasAnyPaymentMethod(true);
+            setHasAnyCompany(true);
+            return true;
         } catch (err: any) {
-            console.error(err);
             toast.error(err?.message || "Could not save shipping company");
+            return false;
         } finally {
             setSavingCompany(false);
         }
     };
 
-    /** ---------- Step 2 state & effects (Shipping method) ---------- */
+    /** ---------- Step 3 (Shipping method) ---------- */
     const [checkingExistingMethods, setCheckingExistingMethods] = React.useState<boolean>(true);
     const [hasAnyMethod, setHasAnyMethod] = React.useState<boolean>(false);
     const [savingMethod, setSavingMethod] = React.useState<boolean>(false);
@@ -204,13 +323,11 @@ export default function OnboardingDialog() {
     const [methodTitle, setMethodTitle] = React.useState<string>("");
     const [methodDescription, setMethodDescription] = React.useState<string>("");
     const [methodCountries, setMethodCountries] = React.useState<string[]>([]);
-    // Single cost group (no plus/minus in onboarding step)
     const [minOrderCost, setMinOrderCost] = React.useState<string>("");
     const [maxOrderCost, setMaxOrderCost] = React.useState<string>("");
     const [shipmentCost, setShipmentCost] = React.useState<string>("0");
 
     React.useEffect(() => {
-        // Check if at least one shipping method exists
         let cancelled = false;
         (async () => {
             try {
@@ -237,49 +354,48 @@ export default function OnboardingDialog() {
 
     const methodDisabled = hasAnyMethod || checkingExistingMethods || savingMethod;
 
-    const handleSaveShippingMethod = async () => {
-        if (methodDisabled) return;
+    const saveMethodIfNeeded = async (): Promise<boolean> => {
+        if (methodDisabled) return true;
 
         const title = methodTitle.trim();
         const description = methodDescription.trim();
         if (!title) {
             toast.error("Title is required");
-            return;
+            return false;
         }
         if (!description) {
             toast.error("Description is required");
-            return;
+            return false;
         }
         if (methodCountries.length === 0) {
             toast.error("Select at least one country");
-            return;
+            return false;
         }
         const invalid = methodCountries.find((c) => c.length !== 2);
         if (invalid) {
             toast.error(`Invalid country code: "${invalid}". Use alpha-2 codes like ES, FR, PT.`);
-            return;
+            return false;
         }
 
-        // Numbers validation (mirroring your schema intent)
         const minVal = Number(minOrderCost);
         const maxVal = Number(maxOrderCost);
         const shipVal = Number(shipmentCost);
 
         if (Number.isNaN(minVal) || minVal < 0) {
             toast.error("Minimum order cost must be a number ≥ 0");
-            return;
+            return false;
         }
         if (Number.isNaN(maxVal) || maxVal < 0) {
             toast.error("Maximum order cost must be a number ≥ 0");
-            return;
+            return false;
         }
         if (!(minVal < maxVal)) {
             toast.error("Minimum order cost must be less than maximum order cost");
-            return;
+            return false;
         }
         if (Number.isNaN(shipVal) || shipVal < 0) {
             toast.error("Shipment cost must be a number ≥ 0");
-            return;
+            return false;
         }
 
         try {
@@ -288,7 +404,6 @@ export default function OnboardingDialog() {
                 title,
                 description,
                 countries: JSON.stringify(methodCountries),
-                // costs as JSON string of an array with one cost group
                 costs: JSON.stringify([{ minOrderCost: minVal, maxOrderCost: maxVal, shipmentCost: shipVal }]),
             };
             const res = await fetch("/api/shipments", {
@@ -301,164 +416,337 @@ export default function OnboardingDialog() {
                 try {
                     const err = await res.json();
                     errMsg = err?.error || errMsg;
-                } catch {
-                }
+                } catch { /* ignore */ }
                 throw new Error(errMsg);
             }
             toast.success("Shipping method created successfully");
-            setHasAnyMethod(true); // lock fields after successful creation
+            window.dispatchEvent(new Event(ONBOARDING_REFRESH_EVENT));
+            setHasAnyPaymentMethod(true);
+            setHasAnyMethod(true);
+            return true;
         } catch (err: any) {
-            console.error(err);
             toast.error(err?.message || "Could not save shipping method");
+            return false;
         } finally {
             setSavingMethod(false);
         }
     };
 
-    /** ---------- Step 3 state & effects (Payment method) ---------- */
-    const [checkingExistingPayments, setCheckingExistingPayments] = React.useState<boolean>(true);
-    const [hasAnyPaymentMethod, setHasAnyPaymentMethod] = React.useState<boolean>(false);
-    const [savingPayment, setSavingPayment] = React.useState<boolean>(false);
+    /** ---------- Step 4 (Product category: name + slug with availability check) ---------- */
+    const [checkingExistingCategories, setCheckingExistingCategories] = React.useState<boolean>(true);
+    const [hasAnyCategory, setHasAnyCategory] = React.useState<boolean>(false);
+    const [savingCategory, setSavingCategory] = React.useState<boolean>(false);
 
-    const [pmName, setPmName] = React.useState<string>("");
-    const [pmActive, setPmActive] = React.useState<boolean>(true);
-    const [pmApiKey, setPmApiKey] = React.useState<string>("");
-    const [pmSecretKey, setPmSecretKey] = React.useState<string>("");
-    const [pmDescription, setPmDescription] = React.useState<string>("");
+    const [catName, setCatName] = React.useState<string>("");
+    const [catSlug, setCatSlug] = React.useState<string>("");
+    const [slugChecking, setSlugChecking] = React.useState<boolean>(false);
+    const [slugExists, setSlugExists] = React.useState<boolean>(false);
+    const [slugTouched, setSlugTouched] = React.useState<boolean>(false);
 
+    // check existing categories (disable inputs if any exist)
     React.useEffect(() => {
-        // Check if at least one payment method exists
         let cancelled = false;
         (async () => {
             try {
-                setCheckingExistingPayments(true);
-                const res = await fetch("/api/payment-methods", { method: "GET" });
-                if (!res.ok) throw new Error("Failed to check payment methods");
+                setCheckingExistingCategories(true);
+                const res = await fetch("/api/product-categories?pageSize=1", { credentials: "include" });
+                if (!res.ok) throw new Error("Failed to fetch categories");
                 const data = await res.json();
-                const { methods } = data;
-                if (!cancelled) {
-                    const exists = Array.isArray(methods) ? methods.length > 0 : !!methods?.length;
-                    setHasAnyPaymentMethod(exists);
-                }
+                const exists = Array.isArray(data?.categories) && data.categories.length > 0;
+                if (!cancelled) setHasAnyCategory(exists);
             } catch (err: any) {
                 console.error(err);
-                toast.error(err?.message || "Could not verify existing payment methods");
+                toast.error(err?.message || "Could not verify existing categories");
             } finally {
-                if (!cancelled) setCheckingExistingPayments(false);
+                if (!cancelled) setCheckingExistingCategories(false);
             }
         })();
-        return () => {
-            cancelled = true;
-        };
+        return () => { cancelled = true; };
     }, []);
 
-    const paymentDisabled = hasAnyPaymentMethod || checkingExistingPayments || savingPayment;
+    const categoryDisabled = hasAnyCategory || checkingExistingCategories || savingCategory;
 
-    const handleSavePaymentMethod = async () => {
-        if (paymentDisabled) return;
-
-        if (!pmName.trim()) {
-            toast.error("Name is required");
+    const checkSlugExists = React.useCallback(async (raw: string, currentId?: string | null) => {
+        const slug = slugify(raw);
+        if (!slug) {
+            setSlugExists(false);
             return;
         }
-
+        setSlugChecking(true);
         try {
-            setSavingPayment(true);
-            const payload: Record<string, any> = {
-                name: pmName.trim(),
-                active: pmActive,
-                apiKey: pmApiKey.trim() || null,
-                secretKey: pmSecretKey.trim() || null,
-                description: pmDescription.trim() || null,
-                // instructions intentionally omitted in onboarding step
-            };
-
-            const res = await fetch("/api/payment-methods", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-            });
-
-            if (!res.ok) {
-                let errMsg = "Failed to save";
-                try {
-                    const j = await res.json();
-                    errMsg = j?.error || errMsg;
-                } catch {
-                    // ignore parse error
-                }
-                throw new Error(errMsg);
-            }
-
-            toast.success("Payment method created successfully");
-            setHasAnyPaymentMethod(true); // lock fields after successful creation
-        } catch (e: any) {
-            toast.error(e?.message || "Failed to save");
+            const url = new URL("/api/product-categories/check-slug", window.location.origin);
+            url.searchParams.append("slug", slug);
+            if (currentId) url.searchParams.append("categoryId", currentId);
+            const response = await fetch(url.toString(), { credentials: "include" });
+            if (!response.ok) throw new Error("Failed to check slug");
+            const data = await response.json();
+            setSlugExists(Boolean(data?.exists));
+        } catch (error) {
+            console.error("Error checking slug:", error);
+            toast.error("Failed to check slug availability");
+            setSlugExists(false);
         } finally {
-            setSavingPayment(false);
+            setSlugChecking(false);
+        }
+    }, []);
+
+    const onCategoryNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const name = e.target.value;
+        setCatName(name);
+        if (!slugTouched) {
+            const generated = slugify(name);
+            setCatSlug(generated);
+            void checkSlugExists(generated);
         }
     };
 
+    const onCategorySlugChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setSlugTouched(true);
+        const formatted = slugify(e.target.value);
+        setCatSlug(formatted);
+        void checkSlugExists(formatted);
+    };
+
+    const saveCategoryIfNeeded = async (): Promise<boolean> => {
+        if (categoryDisabled) return true;
+        if (!catName.trim()) {
+            toast.error("Name is required");
+            return false;
+        }
+        if (!catSlug.trim()) {
+            toast.error("Slug is required");
+            return false;
+        }
+        if (slugExists) {
+            toast.error("This slug already exists. Please choose another one.");
+            return false;
+        }
+
+        try {
+            setSavingCategory(true);
+            const res = await fetch("/api/product-categories", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ name: catName.trim(), slug: catSlug.trim() }),
+            });
+            if (!res.ok) {
+                let msg = "Failed to save category";
+                try {
+                    const j = await res.json();
+                    msg = j?.error || msg;
+                } catch { /* ignore */ }
+                throw new Error(msg);
+            }
+            toast.success("Category created successfully");
+            window.dispatchEvent(new Event(ONBOARDING_REFRESH_EVENT));
+            setHasAnyPaymentMethod(true);
+            setHasAnyCategory(true);
+            return true;
+        } catch (err: any) {
+            toast.error(err?.message || "Failed to save category");
+            return false;
+        } finally {
+            setSavingCategory(false);
+        }
+    };
+
+    // ---------- Step: Product attribute (name + slug with availability check) ----------
+    const [checkingExistingAttributes, setCheckingExistingAttributes] = React.useState<boolean>(true);
+    const [hasAnyAttribute, setHasAnyAttribute] = React.useState<boolean>(false);
+    const [savingAttribute, setSavingAttribute] = React.useState<boolean>(false);
+
+    const [attrName, setAttrName] = React.useState<string>("");
+    const [attrSlug, setAttrSlug] = React.useState<string>("");
+    const [attrSlugChecking, setAttrSlugChecking] = React.useState<boolean>(false);
+    const [attrSlugExists, setAttrSlugExists] = React.useState<boolean>(false);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                setCheckingExistingAttributes(true);
+                const res = await fetch("/api/product-attributes?pageSize=1", { credentials: "include" });
+                if (!res.ok) throw new Error("Failed to fetch attributes");
+                const data = await res.json();
+                const exists = Array.isArray(data?.attributes) && data.attributes.length > 0;
+                if (!cancelled) setHasAnyAttribute(exists);
+            } catch (err: any) {
+                console.error(err);
+                toast.error(err?.message || "Could not verify existing attributes");
+            } finally {
+                if (!cancelled) setCheckingExistingAttributes(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    const attributeDisabled = hasAnyAttribute || checkingExistingAttributes || savingAttribute;
+
+    const checkAttrSlugExists = React.useCallback(async (raw: string) => {
+        const slug = slugify(raw);
+        if (!slug) { setAttrSlugExists(false); return; }
+        setAttrSlugChecking(true);
+        try {
+            const url = new URL("/api/product-attributes/check-slug", window.location.origin);
+            url.searchParams.append("slug", slug);
+            const response = await fetch(url.toString(), { credentials: "include" });
+            if (!response.ok) throw new Error("Failed to check slug");
+            const data = await response.json();
+            setAttrSlugExists(Boolean(data?.exists));
+        } catch (error) {
+            console.error("Error checking slug:", error);
+            toast.error("Failed to check slug availability");
+            setAttrSlugExists(false);
+        } finally {
+            setAttrSlugChecking(false);
+        }
+    }, []);
+
+    const onAttributeNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const name = e.target.value;
+        setAttrName(name);
+        const generated = slugify(name);
+        setAttrSlug(generated);
+        void checkAttrSlugExists(generated);
+    };
+
+    const onAttributeSlugChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const formatted = slugify(e.target.value);
+        setAttrSlug(formatted);
+        void checkAttrSlugExists(formatted);
+    };
+
+    const saveAttributeIfNeeded = async (): Promise<boolean> => {
+        if (attributeDisabled) return true;
+        if (!attrName.trim()) { toast.error("Name is required"); return false; }
+        if (!attrSlug.trim()) { toast.error("Slug is required"); return false; }
+        if (attrSlugExists) { toast.error("This slug already exists. Please choose another one."); return false; }
+
+        try {
+            setSavingAttribute(true);
+            const res = await fetch("/api/product-attributes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ name: attrName.trim(), slug: attrSlug.trim() }),
+            });
+            if (!res.ok) {
+                let msg = "Failed to save attribute";
+                try { const j = await res.json(); msg = j?.error || msg; } catch { }
+                throw new Error(msg);
+            }
+            toast.success("Attribute created successfully");
+            window.dispatchEvent(new Event(ONBOARDING_REFRESH_EVENT));
+            setHasAnyPaymentMethod(true);
+            setHasAnyAttribute(true);
+            return true;
+        } catch (err: any) {
+            toast.error(err?.message || "Failed to save attribute");
+            return false;
+        } finally {
+            setSavingAttribute(false);
+        }
+    };
+
+
     /** ---------- Completion control & initial step/open logic ---------- */
 
-    // When any of the three flags change, if all are true we mark completion; inside the wizard we show step 4 once.
+    // Mark complete when ALL creation steps are satisfied; if open, jump to the last (welcome) step once.
     React.useEffect(() => {
-        const allDone = hasAnyCompany && hasAnyMethod && hasAnyPaymentMethod;
-        if (allDone) {
-            try {
-                localStorage.setItem("onboardingComplete", "true");
-            } catch {
-                // ignore
-            }
-            // If the wizard is already open (user just finished the last missing item),
-            // move to the welcome step so they see the CTA once.
-            if (open) {
-                setStepIndex(3);
-            }
-        }
-    }, [hasAnyCompany, hasAnyMethod, hasAnyPaymentMethod, open]);
+        const allDone =
+            hasAnyPaymentMethod &&
+            hasAnyCompany &&
+            hasAnyMethod &&
+            hasAnyCategory &&
+            hasAnyAttribute;
 
-    // After all three checks finish the very first time, decide whether to open and where to start.
+        if (allDone) {
+            try { localStorage.setItem("onboardingComplete", "true"); } catch { }
+            window.dispatchEvent(new Event(ONBOARDING_REFRESH_EVENT));
+            onOpenChange(false);
+            if (open) setStepIndex(steps.length - 1); // move to final welcome step dynamically
+        }
+    }, [hasAnyPaymentMethod, hasAnyCompany, hasAnyMethod, hasAnyCategory, hasAnyAttribute, open, steps.length]);
+
+    // Decide whether to open and which step to start from (first incomplete in order)
     React.useEffect(() => {
         if (initialized) return;
         const checksDone =
-            !checkingExistingCompanies && !checkingExistingMethods && !checkingExistingPayments;
+            !checkingExistingPayments &&
+            !checkingExistingCompanies &&
+            !checkingExistingMethods &&
+            !checkingExistingCategories &&
+            !checkingExistingAttributes;
 
         if (!checksDone) return;
 
-        const anyMissing =
-            !hasAnyCompany || !hasAnyMethod || !hasAnyPaymentMethod;
-        const allDone = !anyMissing;
+        const firstIncompleteIndex =
+            !hasAnyPaymentMethod ? steps.findIndex(s => s.key === "payment-method") :
+                !hasAnyCompany ? steps.findIndex(s => s.key === "shipping-company") :
+                    !hasAnyMethod ? steps.findIndex(s => s.key === "shipping-method") :
+                        !hasAnyCategory ? steps.findIndex(s => s.key === "product-category") :
+                            !hasAnyAttribute ? steps.findIndex(s => s.key === "product-attribute") :
+                                -1;
 
-        // Persist "complete" state if all done
-        if (allDone) {
-            try {
-                localStorage.setItem("onboardingComplete", "true");
-            } catch {
-                // ignore
-            }
+        if (firstIncompleteIndex === -1) {
+            try { localStorage.setItem("onboardingComplete", "true"); } catch { }
+            window.dispatchEvent(new Event(ONBOARDING_REFRESH_EVENT));
+            onOpenChange(false);
+            setInitialized(true);
+            return;
         }
 
-        // If any are missing, open at the first incomplete step. Otherwise, keep closed.
-        if (anyMissing) {
-            if (!hasAnyCompany) setStepIndex(0);
-            else if (!hasAnyMethod) setStepIndex(1);
-            else if (!hasAnyPaymentMethod) setStepIndex(2);
-            setOpen(true);
-        } else {
-            setOpen(false);
-        }
-
+        setStepIndex(firstIncompleteIndex);
+        onOpenChange(false);
         setInitialized(true);
     }, [
+        initialized,
+        steps,
+        checkingExistingPayments,
         checkingExistingCompanies,
         checkingExistingMethods,
-        checkingExistingPayments,
+        checkingExistingCategories,
+        checkingExistingAttributes,
+        hasAnyPaymentMethod,
         hasAnyCompany,
         hasAnyMethod,
-        hasAnyPaymentMethod,
-        initialized,
+        hasAnyCategory,
+        hasAnyAttribute,
     ]);
+
+
+    /** ---------- Navigation: Next performs creation when needed (no extra Save buttons) ---------- */
+    const goBack = () => setStepIndex((i) => Math.max(i - 1, 0));
+
+    const goNext = async () => {
+        const currentKey = steps[stepIndex]?.key;
+
+        let ok = true;
+        if (currentKey === "payment-method") {
+            if (!paymentDisabled && !isPaymentFormEmpty()) ok = await savePaymentIfNeeded();
+        } else if (currentKey === "shipping-company") {
+            if (!companyDisabled && !isCompanyFormEmpty()) ok = await saveCompanyIfNeeded();
+        } else if (currentKey === "shipping-method") {
+            if (!methodDisabled && !isMethodFormEmpty()) ok = await saveMethodIfNeeded();
+        } else if (currentKey === "product-category") {
+            if (!categoryDisabled && !isCategoryFormEmpty()) ok = await saveCategoryIfNeeded();
+        } else if (currentKey === "product-attribute") {
+            if (!attributeDisabled && !isAttributeFormEmpty()) ok = await saveAttributeIfNeeded();
+        }
+
+        if (!ok) return;
+
+        const atLast = stepIndex === steps.length - 1;
+        if (atLast) {
+            try { localStorage.setItem("onboardingComplete", "true"); } catch { }
+            window.dispatchEvent(new Event(ONBOARDING_REFRESH_EVENT));
+            onOpenChange(false);
+        } else {
+            setStepIndex((i) => Math.min(i + 1, steps.length - 1));
+        }
+    };
+
 
     /** ---------- Render ---------- */
     const current = steps[stepIndex];
@@ -466,6 +754,75 @@ export default function OnboardingDialog() {
     /** Step content block placed ABOVE the progress bar */
     const renderStepContentAboveProgress = () => {
         switch (current.key) {
+            case "payment-method":
+                return (
+                    <div className="space-y-4">
+                        <p className="text-sm text-muted-foreground">
+                            Create your payment method. If one already exists (active), fields will be disabled.
+                        </p>
+
+                        {/* Name */}
+                        <div className="flex flex-col space-y-2">
+                            <Label htmlFor="pm-name">Name *</Label>
+                            <Input
+                                id="pm-name"
+                                placeholder="Payment name"
+                                value={pmName}
+                                onChange={(e) => setPmName(e.target.value)}
+                                disabled={paymentDisabled}
+                            />
+                        </div>
+
+                        {/* Active */}
+                        <div className="flex items-center gap-3">
+                            <Switch
+                                id="pm-active"
+                                checked={pmActive}
+                                onCheckedChange={setPmActive}
+                                disabled={paymentDisabled}
+                            />
+                            <span className="text-sm">{pmActive ? "Active" : "Inactive"}</span>
+                        </div>
+
+                        {/* API key & Secret key */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="flex flex-col space-y-2">
+                                <Label htmlFor="pm-api">API key</Label>
+                                <Input
+                                    id="pm-api"
+                                    placeholder="Optional"
+                                    value={pmApiKey}
+                                    onChange={(e) => setPmApiKey(e.target.value)}
+                                    disabled={paymentDisabled}
+                                />
+                            </div>
+                            <div className="flex flex-col space-y-2">
+                                <Label htmlFor="pm-secret">Secret key</Label>
+                                <Input
+                                    id="pm-secret"
+                                    placeholder="Optional"
+                                    value={pmSecretKey}
+                                    onChange={(e) => setPmSecretKey(e.target.value)}
+                                    disabled={paymentDisabled}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Description */}
+                        <div className="flex flex-col space-y-2">
+                            <Label htmlFor="pm-description">Description</Label>
+                            <Textarea
+                                id="pm-description"
+                                placeholder="Short text for admins (optional)"
+                                value={pmDescription}
+                                onChange={(e) => setPmDescription(e.target.value)}
+                                className="min-h-[80px]"
+                                disabled={paymentDisabled}
+                            />
+                        </div>
+                    </div>
+                );
+
             case "shipping-company":
                 return (
                     <div className="space-y-4">
@@ -518,12 +875,6 @@ export default function OnboardingDialog() {
                                     Use ISO 3166-1 alpha-2 codes (two letters).
                                 </p>
                             </div>
-                        </div>
-
-                        <div className="flex justify-end">
-                            <Button type="button" onClick={handleSaveShippingCompany} disabled={companyDisabled}>
-                                {savingCompany ? "Saving..." : "Save"}
-                            </Button>
                         </div>
                     </div>
                 );
@@ -631,95 +982,112 @@ export default function OnboardingDialog() {
                                 />
                             </div>
                         </div>
-
-                        <div className="flex justify-end">
-                            <Button type="button" onClick={handleSaveShippingMethod} disabled={methodDisabled}>
-                                {savingMethod ? "Saving..." : "Save"}
-                            </Button>
-                        </div>
                     </div>
                 );
 
-            case "payment-method":
+            case "product-category":
                 return (
                     <div className="space-y-4">
                         <p className="text-sm text-muted-foreground">
-                            Create your payment method. If one already exists, fields will be disabled.
+                            Create your first product category. If one already exists, fields will be disabled.
                         </p>
 
-                        {/* Name */}
-                        <div className="flex flex-col space-y-2">
-                            <Label htmlFor="pm-name">Name *</Label>
-                            <Input
-                                id="pm-name"
-                                placeholder="Payment name"
-                                value={pmName}
-                                onChange={(e) => setPmName(e.target.value)}
-                                disabled={paymentDisabled}
-                            />
-                        </div>
-
-                        {/* Active */}
-                        <div className="flex items-center gap-3">
-                            <Switch
-                                id="pm-active"
-                                checked={pmActive}
-                                onCheckedChange={setPmActive}
-                                disabled={paymentDisabled}
-                            />
-                            <span className="text-sm">{pmActive ? "Active" : "Inactive"}</span>
-                        </div>
-
-                        {/* API key & Secret key */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* Name */}
                             <div className="flex flex-col space-y-2">
-                                <Label htmlFor="pm-api">API key</Label>
+                                <Label htmlFor="cat-name">Name *</Label>
                                 <Input
-                                    id="pm-api"
-                                    placeholder="Optional"
-                                    value={pmApiKey}
-                                    onChange={(e) => setPmApiKey(e.target.value)}
-                                    disabled={paymentDisabled}
+                                    id="cat-name"
+                                    placeholder="Category name"
+                                    value={catName}
+                                    onChange={onCategoryNameChange}
+                                    disabled={categoryDisabled}
                                 />
                             </div>
+
+                            {/* Slug (with availability check) */}
                             <div className="flex flex-col space-y-2">
-                                <Label htmlFor="pm-secret">Secret key</Label>
-                                <Input
-                                    id="pm-secret"
-                                    placeholder="Optional"
-                                    value={pmSecretKey}
-                                    onChange={(e) => setPmSecretKey(e.target.value)}
-                                    disabled={paymentDisabled}
-                                />
+                                <Label htmlFor="cat-slug">Slug *</Label>
+                                <div className="relative">
+                                    <Input
+                                        id="cat-slug"
+                                        placeholder="category-slug"
+                                        value={catSlug}
+                                        onChange={onCategorySlugChange}
+                                        disabled={categoryDisabled}
+                                    />
+                                    {slugChecking && (
+                                        <span className="absolute right-3 top-[9px] text-xs text-muted-foreground">
+                                            Checking…
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="text-xs">
+                                    {slugChecking
+                                        ? "Checking availability…"
+                                        : slugExists
+                                            ? <span className="text-destructive">This slug already exists.</span>
+                                            : (catSlug ? <span className="text-green-600">This slug is available.</span> : "The URL-friendly identifier for this category.")}
+                                </p>
                             </div>
-                        </div>
-
-                        {/* Description */}
-                        <div className="flex flex-col space-y-2">
-                            <Label htmlFor="pm-description">Description</Label>
-                            <Textarea
-                                id="pm-description"
-                                placeholder="Short text for admins (optional)"
-                                value={pmDescription}
-                                onChange={(e) => setPmDescription(e.target.value)}
-                                className="min-h-[80px]"
-                                disabled={paymentDisabled}
-                            />
-                        </div>
-
-                        {/* Save */}
-                        <div className="flex justify-end">
-                            <Button type="button" onClick={handleSavePaymentMethod} disabled={paymentDisabled}>
-                                {savingPayment ? "Saving..." : "Save"}
-                            </Button>
                         </div>
                     </div>
                 );
+            case "product-attribute":
+                return (
+                    <div className="space-y-4">
+                        <p className="text-sm text-muted-foreground">
+                            Create your first product attribute. If one already exists, fields will be disabled.
+                        </p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* Name */}
+                            <div className="flex flex-col space-y-2">
+                                <Label htmlFor="attr-name">Name *</Label>
+                                <Input
+                                    id="attr-name"
+                                    placeholder="e.g., Brand"
+                                    value={attrName}
+                                    onChange={onAttributeNameChange}
+                                    disabled={attributeDisabled}
+                                />
+                            </div>
+
+                            {/* Slug with availability check */}
+                            <div className="flex flex-col space-y-2">
+                                <Label htmlFor="attr-slug">Slug *</Label>
+                                <div className="relative">
+                                    <Input
+                                        id="attr-slug"
+                                        placeholder="e.g., brand"
+                                        value={attrSlug}
+                                        onChange={onAttributeSlugChange}
+                                        disabled={attributeDisabled}
+                                    />
+                                    {attrSlugChecking && (
+                                        <span className="absolute right-3 top-[9px] text-xs text-muted-foreground">Checking…</span>
+                                    )}
+                                </div>
+                                <p className="text-xs">
+                                    {attrSlugChecking
+                                        ? "Checking availability…"
+                                        : attrSlugExists
+                                            ? <span className="text-destructive">This slug already exists.</span>
+                                            : (attrSlug ? <span className="text-green-600">This slug is available.</span> : "The URL-friendly identifier.")}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                );
+
 
             case "products-team":
                 return (
                     <div className="space-y-4">
-                        <h3 className="text-lg font-semibold">You’re all set. Create your first product to start selling.</h3>
+                        <h3 className="text-lg font-semibold">Welcome to your workspace 🎉</h3>
+                        <p className="text-sm text-muted-foreground">
+                            You’re all set. Create your first product to start selling.
+                        </p>
                         <div className="flex justify-end">
                             <Button asChild>
                                 <Link href="/products/new">Start creating a product</Link>
@@ -734,7 +1102,7 @@ export default function OnboardingDialog() {
     };
 
     return (
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent
                 className="sm:max-w-2xl"
                 aria-describedby="onboarding-dialog-description"
@@ -746,7 +1114,7 @@ export default function OnboardingDialog() {
                     </DialogDescription>
                 </DialogHeader>
 
-                {/* ABOVE the progress bar: inputs + Save */}
+                {/* ABOVE the progress bar: inputs only (no Save buttons) */}
                 <div className="flex flex-col gap-4 py-2">
                     {renderStepContentAboveProgress()}
                 </div>
