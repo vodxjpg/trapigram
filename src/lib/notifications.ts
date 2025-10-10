@@ -155,10 +155,20 @@ export async function renderNotification(args: {
   const rawSubject = makeRawSub(type, tpl?.subject ?? null, subject);
   const compiledSubject = applyVars(rawSubject, variables);
   const compiledHtml = applyVars(tpl?.message || "", variables);
-
   // 4) Channel-specific formatting (Telegram expects Telegram-safe HTML here)
-  const message =
+  let message =
     channel === "telegram" ? toTelegramHtml(compiledHtml) : compiledHtml;
+
+  // Fallback if template missing/empty:
+  if (!message.trim()) {
+    if (type === "ticket_created" || type === "ticket_replied") {
+      const tnum = variables?.ticket_number ?? variables?.ticket_id ?? "";
+      const title = variables?.ticket_title ?? "";
+      const content = variables?.ticket_content ?? "";
+      const fb = `📨 <b>Ticket #${tnum}</b>${title ? `\n${title}` : ""}${content ? `\n\n${content}` : ""}`;
+      message = channel === "telegram" ? toTelegramHtml(fb) : fb;
+    }
+  }
 
   return { message, subject: compiledSubject };
 }
