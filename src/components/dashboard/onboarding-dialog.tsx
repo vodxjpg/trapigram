@@ -59,6 +59,7 @@ export default function OnboardingDialog({
         { id: 3, key: "shipping-method", title: "Create your shipping method" },
         { id: 4, key: "product-category", title: "Create your first product category" },
         { id: 5, key: "product-attribute", title: "Create your first product attribute" }, // <— NEW step
+        { id: 6, key: "attribute-term", title: "Create your first term" },
     ];
     const steps = React.useMemo(
         () => [...coreSteps, { id: 999, key: "products-team", title: "Welcome! You’re ready to start" }],
@@ -107,6 +108,47 @@ export default function OnboardingDialog({
         catName.trim() === "" && catSlug.trim() === "";
 
     const isAttributeFormEmpty = () => attrName.trim() === "" && attrSlug.trim() === "";
+    const isTermFormEmpty = () => termName.trim() === "" && termSlug.trim() === "";
+
+    // Create term only if an attribute exists & user entered something
+    const saveTermIfNeeded = async (): Promise<boolean> => {
+        if (savingTerm) return false;
+        // If there are no attributes, we can't create a term — treat as skipped.
+        if (attrOptions.length === 0 || !selectedAttrId) return true;
+        // Allow skip if blank
+        if (isTermFormEmpty()) return true;
+
+        if (!termName.trim()) { toast.error("Name is required"); return false; }
+        if (!termSlug.trim()) { toast.error("Slug is required"); return false; }
+        if (termSlugExists) { toast.error("This slug already exists"); return false; }
+
+        try {
+            setSavingTerm(true);
+            const resp = await fetch(`/api/product-attributes/${selectedAttrId}/terms`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ name: termName.trim(), slug: termSlug.trim() }),
+            });
+            if (!resp.ok) {
+                let msg = "Failed to save term";
+                try { const j = await resp.json(); msg = j?.error || msg; } catch { }
+                throw new Error(msg);
+            }
+            toast.success("Term created");
+            // optional: clear inputs
+            setTermName(""); setTermSlug("");
+            // ping reminder/banner
+            window.dispatchEvent(new Event("onboarding:refresh"));
+            return true;
+        } catch (e: any) {
+            console.error(e);
+            toast.error(e?.message || "Failed to save term");
+            return false;
+        } finally {
+            setSavingTerm(false);
+        }
+    };
 
 
     React.useEffect(() => {
@@ -649,6 +691,101 @@ export default function OnboardingDialog({
         }
     };
 
+    // ---------- Step: Attribute Term (depends on attributes) ----------
+    const [attrOptions, setAttrOptions] = React.useState<{ id: string; name: string }[]>([]);
+    const [loadingAttrOptions, setLoadingAttrOptions] = React.useState<boolean>(true);
+    const [selectedAttrId, setSelectedAttrId] = React.useState<string>("");
+
+    const [termName, setTermName] = React.useState<string>("");
+    const [termSlug, setTermSlug] = React.useState<string>("");
+    const [termSlugChecking, setTermSlugChecking] = React.useState<boolean>(false);
+    const [termSlugExists, setTermSlugExists] = React.useState<boolean>(false);
+    const [savingTerm, setSavingTerm] = React.useState<boolean>(false)
+    const [checkingExistingTerms, setCheckingExistingTerms] = React.useState<boolean>(true);
+    const [hasAnyTerm, setHasAnyTerm] = React.useState<boolean>(false);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                setCheckingExistingTerms(true);
+                // Need attributes to look for terms
+                const aRes = await fetch("/api/product-attributes?pageSize=100", { credentials: "include" });
+                if (!aRes.ok) throw new Error("Failed to load attributes");
+                const aJson = await aRes.json();
+                const attrs: Array<{ id: string }> = Array.isArray(aJson?.attributes) ? aJson.attributes : [];
+
+                let found = false;
+                // Check the first few attributes for at least one term
+                for (let i = 0; i < Math.min(attrs.length, 25); i++) {
+                    const id = attrs[i].id;
+                    try {
+                        const tRes = await fetch(`/api/product-attributes/${id}/terms?pageSize=1`, { credentials: "include" });
+                        if (!tRes.ok) continue;
+                        const tJson = await tRes.json();
+                        const any = Array.isArray(tJson?.terms) ? tJson.terms.length > 0 : !!tJson?.terms?.length;
+                        if (any) { found = true; break; }
+                    } catch { /* ignore */ }
+                }
+                if (!cancelled) setHasAnyTerm(found);
+            } catch (e) {
+                if (!cancelled) setHasAnyTerm(false);
+            } finally {
+                if (!cancelled) setCheckingExistingTerms(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+
+    // Load attributes list for the dropdown (uses same endpoint you already have)
+    React.useEffect(() => {
+        let cancelled = false;
+        if (!open) return;
+
+        (async () => {
+            try {
+                setLoadingAttrOptions(true);
+                const res = await fetch("/api/product-attributes?pageSize=100", { credentials: "include" });
+                if (!res.ok) throw new Error("Failed to fetch attributes");
+                const data = await res.json();
+                const items = Array.isArray(data?.attributes) ? data.attributes : [];
+                if (cancelled) return;
+                setAttrOptions(items.map((a: any) => ({ id: a.id, name: a.name })));
+                // preselect first if none is selected
+                if (!selectedAttrId && items.length > 0) setSelectedAttrId(items[0].id);
+            } catch (e: any) {
+                console.error(e);
+                toast.error(e?.message || "Could not load attributes");
+            } finally {
+                if (!cancelled) setLoadingAttrOptions(false);
+            }
+        })();
+
+        return () => { cancelled = true; };
+    }, [open, hasAnyAttribute]); // re-run when an attribute is created
+
+    const checkTermSlugExists = React.useCallback(async (raw: string) => {
+        const slug = slugify(raw);
+        if (!slug || !selectedAttrId) { setTermSlugExists(false); return; }
+        setTermSlugChecking(true);
+        try {
+            const url = new URL(`/api/product-attributes/${selectedAttrId}/terms/check-slug`, window.location.origin);
+            url.searchParams.append("slug", slug);
+            const resp = await fetch(url.toString(), { credentials: "include" });
+            if (!resp.ok) throw new Error("Failed to check slug");
+            const data = await resp.json();
+            setTermSlugExists(Boolean(data?.exists));
+        } catch (err) {
+            console.error(err);
+            toast.error("Failed to check term slug availability");
+            setTermSlugExists(false);
+        } finally {
+            setTermSlugChecking(false);
+        }
+    }, [selectedAttrId]);
+
+
 
     /** ---------- Completion control & initial step/open logic ---------- */
 
@@ -659,7 +796,8 @@ export default function OnboardingDialog({
             hasAnyCompany &&
             hasAnyMethod &&
             hasAnyCategory &&
-            hasAnyAttribute;
+            hasAnyAttribute &&
+            hasAnyTerm;
 
         if (allDone) {
             try { localStorage.setItem("onboardingComplete", "true"); } catch { }
@@ -677,7 +815,8 @@ export default function OnboardingDialog({
             !checkingExistingCompanies &&
             !checkingExistingMethods &&
             !checkingExistingCategories &&
-            !checkingExistingAttributes;
+            !checkingExistingAttributes &&
+            !checkingExistingTerms; // ← add this;
 
         if (!checksDone) return;
 
@@ -687,7 +826,8 @@ export default function OnboardingDialog({
                     !hasAnyMethod ? steps.findIndex(s => s.key === "shipping-method") :
                         !hasAnyCategory ? steps.findIndex(s => s.key === "product-category") :
                             !hasAnyAttribute ? steps.findIndex(s => s.key === "product-attribute") :
-                                -1;
+                                !hasAnyTerm ? steps.findIndex(s => s.key === "attribute-term") : // ← add this
+                                    -1;
 
         if (firstIncompleteIndex === -1) {
             try { localStorage.setItem("onboardingComplete", "true"); } catch { }
@@ -698,7 +838,7 @@ export default function OnboardingDialog({
         }
 
         setStepIndex(firstIncompleteIndex);
-        onOpenChange(false);
+        onOpenChange(true);
         setInitialized(true);
     }, [
         initialized,
@@ -733,6 +873,8 @@ export default function OnboardingDialog({
             if (!categoryDisabled && !isCategoryFormEmpty()) ok = await saveCategoryIfNeeded();
         } else if (currentKey === "product-attribute") {
             if (!attributeDisabled && !isAttributeFormEmpty()) ok = await saveAttributeIfNeeded();
+        } else if (currentKey === "attribute-term") { // 🔽 NEW
+            ok = await saveTermIfNeeded();
         }
 
         if (!ok) return;
@@ -740,12 +882,13 @@ export default function OnboardingDialog({
         const atLast = stepIndex === steps.length - 1;
         if (atLast) {
             try { localStorage.setItem("onboardingComplete", "true"); } catch { }
-            window.dispatchEvent(new Event(ONBOARDING_REFRESH_EVENT));
+            window.dispatchEvent(new Event("onboarding:refresh"));
             onOpenChange(false);
         } else {
             setStepIndex((i) => Math.min(i + 1, steps.length - 1));
         }
     };
+
 
 
     /** ---------- Render ---------- */
@@ -1074,6 +1217,86 @@ export default function OnboardingDialog({
                                         : attrSlugExists
                                             ? <span className="text-destructive">This slug already exists.</span>
                                             : (attrSlug ? <span className="text-green-600">This slug is available.</span> : "The URL-friendly identifier.")}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                );
+
+            case "attribute-term":
+                return (
+                    <div className="space-y-4">
+                        <p className="text-sm text-muted-foreground">
+                            Create a term for an attribute. You must have at least one attribute created first.
+                        </p>
+
+                        {/* Row 1: Attribute dropdown */}
+                        <div className="flex flex-col space-y-2">
+                            <Label htmlFor="term-attribute">Attribute *</Label>
+                            <select
+                                id="term-attribute"
+                                className="h-9 rounded-md border bg-background px-3 text-sm"
+                                value={selectedAttrId}
+                                onChange={(e) => setSelectedAttrId(e.target.value)}
+                                disabled={loadingAttrOptions || attrOptions.length === 0}
+                            >
+                                {attrOptions.length === 0 ? (
+                                    <option value="">No attributes available — create one first</option>
+                                ) : (
+                                    attrOptions.map((a) => (
+                                        <option key={a.id} value={a.id}>{a.name}</option>
+                                    ))
+                                )}
+                            </select>
+                            {attrOptions.length === 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                    Create an attribute in the previous step, then return here to add a term.
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Row 2: Name & Slug */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="flex flex-col space-y-2">
+                                <Label htmlFor="term-name">Name *</Label>
+                                <Input
+                                    id="term-name"
+                                    placeholder="e.g., Nike"
+                                    value={termName}
+                                    onChange={(e) => {
+                                        const v = e.target.value;
+                                        setTermName(v);
+                                        const s = slugify(v);
+                                        setTermSlug(s);
+                                        void checkTermSlugExists(s);
+                                    }}
+                                    disabled={attrOptions.length === 0}
+                                />
+                            </div>
+                            <div className="flex flex-col space-y-2">
+                                <Label htmlFor="term-slug">Slug *</Label>
+                                <div className="relative">
+                                    <Input
+                                        id="term-slug"
+                                        placeholder="e.g., nike"
+                                        value={termSlug}
+                                        onChange={(e) => {
+                                            const s = slugify(e.target.value);
+                                            setTermSlug(s);
+                                            void checkTermSlugExists(s);
+                                        }}
+                                        disabled={attrOptions.length === 0}
+                                    />
+                                    {termSlugChecking && (
+                                        <span className="absolute right-3 top-[9px] text-xs text-muted-foreground">Checking…</span>
+                                    )}
+                                </div>
+                                <p className="text-xs">
+                                    {termSlugChecking
+                                        ? "Checking availability…"
+                                        : termSlugExists
+                                            ? <span className="text-destructive">This slug already exists.</span>
+                                            : (termSlug ? <span className="text-green-600">This slug is available.</span> : "The URL-friendly identifier.")}
                                 </p>
                             </div>
                         </div>

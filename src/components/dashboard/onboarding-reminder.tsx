@@ -14,13 +14,16 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-// These are the 5 REQUIRED items for completion (terms are optional, welcome stays last)
+export const ONBOARDING_REFRESH_EVENT = "onboarding:refresh";
+
+// Now includes the term step key
 export type RequiredStepKey =
     | "payment-method"
     | "shipping-company"
     | "shipping-method"
     | "product-category"
-    | "product-attribute";
+    | "product-attribute"
+    | "attribute-term";
 
 type Status = {
     hasPayment: boolean;
@@ -28,9 +31,8 @@ type Status = {
     hasMethod: boolean;
     hasCategory: boolean;
     hasAttribute: boolean;
+    hasTerm: boolean; // NEW
 };
-
-export const ONBOARDING_REFRESH_EVENT = "onboarding:refresh";
 
 export function useOnboardingStatus() {
     const [loading, setLoading] = React.useState(true);
@@ -40,15 +42,14 @@ export function useOnboardingStatus() {
         hasMethod: false,
         hasCategory: false,
         hasAttribute: false,
+        hasTerm: false,
     });
 
     const refresh = React.useCallback(async () => {
         setLoading(true);
         try {
             // Payments – only active=true
-            const payRes = await fetch("/api/payment-methods?active=true", {
-                method: "GET",
-            });
+            const payRes = await fetch("/api/payment-methods?active=true", { method: "GET" });
             if (!payRes.ok) throw new Error("Failed to load payments");
             const pay = await payRes.json();
 
@@ -67,19 +68,48 @@ export function useOnboardingStatus() {
             if (!catRes.ok) throw new Error("Failed to load categories");
             const cat = await catRes.json();
 
-            const attrRes = await fetch("/api/product-attributes?pageSize=1", {
+            const attrRes = await fetch("/api/product-attributes?pageSize=100", {
                 method: "GET",
                 credentials: "include",
             });
             if (!attrRes.ok) throw new Error("Failed to load attributes");
             const attr = await attrRes.json();
 
+            const hasAttribute =
+                Array.isArray(attr?.attributes) ? attr.attributes.length > 0 : !!attr?.attributes?.length;
+
+            // Determine if ANY term exists across attributes
+            let hasTerm = false;
+            if (hasAttribute) {
+                const attrs: Array<{ id: string }> = attr.attributes;
+                // Check terms for each attribute until we find one (cap to avoid excessive calls)
+                const cap = Math.min(attrs.length, 25);
+                for (let i = 0; i < cap; i++) {
+                    const a = attrs[i];
+                    try {
+                        const tRes = await fetch(`/api/product-attributes/${a.id}/terms?pageSize=1`, {
+                            method: "GET",
+                            credentials: "include",
+                        });
+                        if (!tRes.ok) continue;
+                        const t = await tRes.json();
+                        if (Array.isArray(t?.terms) ? t.terms.length > 0 : !!t?.terms?.length) {
+                            hasTerm = true;
+                            break;
+                        }
+                    } catch {
+                        // ignore individual term fetch errors
+                    }
+                }
+            }
+
             setStatus({
                 hasPayment: Array.isArray(pay?.methods) ? pay.methods.length > 0 : !!pay?.methods?.length,
                 hasCompany: Array.isArray(comp?.companies) ? comp.companies.length > 0 : !!comp?.companies?.length,
                 hasMethod: Array.isArray(ship?.shipments) ? ship.shipments.length > 0 : !!ship?.shipments?.length,
                 hasCategory: Array.isArray(cat?.categories) ? cat.categories.length > 0 : !!cat?.categories?.length,
-                hasAttribute: Array.isArray(attr?.attributes) ? attr.attributes.length > 0 : !!attr?.attributes?.length,
+                hasAttribute,
+                hasTerm, // set from loop above
             });
         } catch (e: any) {
             console.error(e);
@@ -98,11 +128,13 @@ export function useOnboardingStatus() {
         Number(status.hasCompany) +
         Number(status.hasMethod) +
         Number(status.hasCategory) +
-        Number(status.hasAttribute);
+        Number(status.hasAttribute) +
+        Number(status.hasTerm);
 
-    const remaining = 5 - completedCount;
+    const totalRequired = 6; // now counting the term step
+    const remaining = totalRequired - completedCount;
 
-    return { loading, status, completedCount, remaining, refresh };
+    return { loading, status, completedCount, remaining, refresh, totalRequired };
 }
 
 type ReminderProps = {
@@ -111,12 +143,9 @@ type ReminderProps = {
 };
 
 export function OnboardingReminder({ onOpenStep, className }: ReminderProps) {
-    // 🔽 change this line to also grab `refresh`
-    const { loading, status, remaining, refresh } = useOnboardingStatus();
-
+    const { loading, status, remaining, refresh, totalRequired } = useOnboardingStatus();
     const [open, setOpen] = React.useState(false);
 
-    // 🔽 add this effect anywhere inside the component
     React.useEffect(() => {
         const handler = () => refresh();
         window.addEventListener(ONBOARDING_REFRESH_EVENT, handler);
@@ -124,7 +153,6 @@ export function OnboardingReminder({ onOpenStep, className }: ReminderProps) {
     }, [refresh]);
 
     if (loading) return null;
-    // Hide button when everything is done
     if (remaining <= 0) return null;
 
     const items: { key: RequiredStepKey; title: string; done: boolean }[] = [
@@ -133,6 +161,8 @@ export function OnboardingReminder({ onOpenStep, className }: ReminderProps) {
         { key: "shipping-method", title: "Create a shipping method", done: status.hasMethod },
         { key: "product-category", title: "Create a product category", done: status.hasCategory },
         { key: "product-attribute", title: "Create a product attribute", done: status.hasAttribute },
+        // NEW checklist item
+        { key: "attribute-term", title: "Create a term for an attribute", done: status.hasTerm },
     ];
 
     return (
@@ -142,7 +172,8 @@ export function OnboardingReminder({ onOpenStep, className }: ReminderProps) {
                     <div className="flex items-center gap-2">
                         <CircleAlert className="h-4 w-4 text-primary" />
                         <p className="text-sm">
-                            Finish setup — <span className="font-medium">{remaining}</span> {remaining === 1 ? "step" : "steps"} left
+                            Finish setup — <span className="font-medium">{remaining}</span>{" "}
+                            {remaining === 1 ? "step" : "steps"} left
                         </p>
                     </div>
                     <Button size="sm" onClick={() => setOpen(true)}>Open checklist</Button>
@@ -154,7 +185,7 @@ export function OnboardingReminder({ onOpenStep, className }: ReminderProps) {
                     <DialogHeader>
                         <DialogTitle>You're off to a great start</DialogTitle>
                         <DialogDescription>
-                            {5 - remaining}/5 completed
+                            {totalRequired - remaining}/{totalRequired} completed
                         </DialogDescription>
                     </DialogHeader>
 
