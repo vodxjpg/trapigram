@@ -1,15 +1,12 @@
 // lib/wp.ts
 import 'server-only';
 
-const RAW_WP_URL = process.env.WORDPRESS_URL;
-if (!RAW_WP_URL) {
-  throw new Error('Missing WORDPRESS_URL env (e.g. https://cms.trapyfy.com or https://cms.trapyfy.com/blog)');
-}
-
-// Keep protocol AND any sub-path (don’t collapse to origin)
-const NORMALIZED_WP_URL = (RAW_WP_URL.startsWith('http') ? RAW_WP_URL : `https://${RAW_WP_URL}`).replace(/\/+$/, '');
-const WP_BASE = NORMALIZED_WP_URL;
+const WP_URL = process.env.WORDPRESS_URL!;
 const REVALIDATE_SECONDS = Number(process.env.WP_DEFAULT_REVALIDATE ?? 300);
+
+if (!WP_URL) {
+  throw new Error('Missing WORDPRESS_URL in env');
+}
 
 type WpRawPost = {
   id: number;
@@ -56,11 +53,8 @@ function mapPost(raw: WpRawPost): Post {
 }
 
 async function wpFetch<T>(path: string, init?: RequestInit): Promise<{ data: T; headers: Headers }> {
-  // Join against full base (origin + optional sub-path). Use RELATIVE path.
-  const rel = path.replace(/^\/+/, '');
-  const url = new URL(rel, WP_BASE + '/').toString();
-
-  const res = await fetch(url, {
+  const res = await fetch(`${WP_URL}${path}`, {
+    // cache with ISR behavior; Next will revalidate in the background
     next: { revalidate: REVALIDATE_SECONDS },
     ...init,
     headers: {
@@ -83,39 +77,32 @@ export async function getPosts(page = 1, perPage = 10): Promise<{
 }> {
   const query = new URLSearchParams({
     _embed: '1',
-    per_page: String(Math.min(20, Math.max(1, perPage))),
+    per_page: String(Math.min(20, Math.max(1, perPage))), // WP caps at 100; keep modest
     page: String(Math.max(1, page)),
     orderby: 'date',
     order: 'desc',
   });
-  const { data, headers } = await wpFetch<WpRawPost[]>(`wp-json/wp/v2/posts?${query.toString()}`);
+  const { data, headers } = await wpFetch<WpRawPost[]>(`/wp-json/wp/v2/posts?${query.toString()}`);
   const total = Number(headers.get('X-WP-Total') ?? '0');
   const totalPages = Number(headers.get('X-WP-TotalPages') ?? '0');
   return { posts: data.map(mapPost), total, totalPages };
 }
 
 export async function getPostBySlug(slug: string): Promise<Post | null> {
-  const { data } = await wpFetch<WpRawPost[]>(
-    `wp-json/wp/v2/posts?_embed=1&slug=${encodeURIComponent(slug)}`
-  );
+  const query = new URLSearchParams({ _embed: '1', slug });
+  const { data } = await wpFetch<WpRawPost[]>(`/wp-json/wp/v2/posts?${query.toString()}`);
   if (!data.length) return null;
   return mapPost(data[0]);
 }
 
+/**
+ * For sitemap: fetch up to `limit` latest posts.
+ * (If you need >100, fetch additional pages—easy to extend.)
+ */
 export async function getLatestPosts(limit = 50): Promise<Post[]> {
   const perPage = Math.min(100, Math.max(1, limit));
   const { data } = await wpFetch<WpRawPost[]>(
-    `wp-json/wp/v2/posts?_embed=1&per_page=${perPage}&page=1&orderby=date&order=desc`
+    `/wp-json/wp/v2/posts?_embed=1&per_page=${perPage}&page=1&orderby=date&order=desc`
   );
   return data.map(mapPost);
-}
-
-/** SAFE variant for sitemap: never throws, returns [] on any failure (404, network, etc.) */
-export async function getLatestPostsSafe(limit = 50): Promise<Post[]> {
-  try {
-    return await getLatestPosts(limit);
-  } catch (err) {
-    console.error('getLatestPostsSafe(): ignoring WP error for sitemap:', err);
-    return [];
-  }
 }

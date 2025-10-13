@@ -3,7 +3,7 @@ import type { MetadataRoute } from 'next';
 import { getLatestPosts } from '@/lib/wp';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.trapyfy.com';
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://example.com';
 
   const staticRoutes: MetadataRoute.Sitemap = [
     { url: `${baseUrl}/`, lastModified: new Date() },
