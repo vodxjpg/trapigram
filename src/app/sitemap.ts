@@ -8,7 +8,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticRoutes: MetadataRoute.Sitemap = [
     { url: `${baseUrl}/`, lastModified: new Date() },
     { url: `${baseUrl}/blog`, lastModified: new Date() },
-    // add other static routes here
+    // add other static routes here as u want
   ];
 
   const posts = await getLatestPosts(50);

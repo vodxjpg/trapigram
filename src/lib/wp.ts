@@ -97,7 +97,7 @@ export async function getPostBySlug(slug: string): Promise<Post | null> {
 
 /**
  * For sitemap: fetch up to `limit` latest posts.
- * (If you need >100, fetch additional pages—easy to extend.)
+ * (If you need >100, fetch additional pages—easy to extend..)
  */
 export async function getLatestPosts(limit = 50): Promise<Post[]> {
   const perPage = Math.min(100, Math.max(1, limit));
