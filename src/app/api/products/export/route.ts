@@ -92,13 +92,13 @@ async function buildExportRows(products: any[]) {
             const costObj = result.cost ?? {};
 
             newProduct.regularPrice = Object.entries(regularPriceObj)
-                .map(([country, amount]) => `${country}:${amount}`)
+                .map(([country, amount]) => `${country}:${amount ? amount : 0}`)
                 .join(", ");
             newProduct.salePrice = Object.entries(salePriceObj)
-                .map(([country, amount]) => `${country}:${amount}`)
+                .map(([country, amount]) => `${country}:${amount ? amount : 0}`)
                 .join(", ");
             newProduct.cost = Object.entries(costObj)
-                .map(([country, amount]) => `${country}:${amount}`)
+                .map(([country, amount]) => `${country}:${amount ? amount : 0}`)
                 .join(", ");
 
             const attributesQuery = `SELECT
@@ -231,13 +231,13 @@ async function buildExportRows(products: any[]) {
             const costObj = vart.cost ?? {};
 
             newVariation.regularPrice = Object.entries(regularPriceObj)
-                .map(([country, amount]) => `${country}:${amount}`)
+                .map(([country, amount]) => `${country}:${amount ? amount : 0}`)
                 .join(", ");
             newVariation.salePrice = Object.entries(salePriceObj)
-                .map(([country, amount]) => `${country}:${amount}`)
+                .map(([country, amount]) => `${country}:${amount ? amount : 0}`)
                 .join(", ");
             newVariation.cost = Object.entries(costObj)
-                .map(([country, amount]) => `${country}:${amount}`)
+                .map(([country, amount]) => `${country}:${amount ? amount : 0}`)
                 .join(", ");
 
             const attributeId = Object.keys(vart.attributes)[0]
