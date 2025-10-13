@@ -59,98 +59,224 @@ async function fetchListPage(
 /** Build the flat list consumed by XLSX from the list of products */
 async function buildExportRows(products: any[]) {
     const newProductList: any[] = [];
-
+    //console.log(products)
     for (const prt of products) {
-        const newProduct: any = {};
-        newProduct.id = prt.id;
-        newProduct.sku = prt.sku;
-        newProduct.title = prt.title;
-        newProduct.published = prt.status === "published" ? 1 : 0;
-        newProduct.parent = "";
 
-        const categories: string[] = [];
-        for (const cat of prt.categories || []) {
-            const catQuery = `SELECT slug FROM "productCategories" WHERE id='${cat}'`;
-            const catResult = await pool.query(catQuery);
-            const result = catResult.rows[0];
-            if (result?.slug) categories.push(result.slug);
+        if (prt.productType === "simple") {
+            const newProduct: any = {};
+            newProduct.id = prt.id;
+            newProduct.sku = prt.sku;
+            newProduct.title = prt.title;
+            newProduct.published = prt.status === "published" ? 1 : 0;
+            newProduct.parent = "";
+
+            const categories: string[] = [];
+            for (const cat of prt.categories || []) {
+                const catQuery = `SELECT slug FROM "productCategories" WHERE id='${cat}'`;
+                const catResult = await pool.query(catQuery);
+                const result = catResult.rows[0];
+                if (result?.slug) categories.push(result.slug);
+            }
+            newProduct.categories = categories.join(", ");
+            newProduct.productType = prt.productType;
+            newProduct.description = prt.description;
+            newProduct.allowBackorders = prt.allowBackorders === true ? 1 : 0;
+            newProduct.manageStock = prt.manageStock === true ? 1 : 0;
+
+            const productQuery = `SELECT "regularPrice", "salePrice", cost FROM products WHERE id='${prt.id}'`;
+            const productResult = await pool.query(productQuery);
+            const result = productResult.rows[0];
+
+            const regularPriceObj = result.regularPrice ?? {};
+            const salePriceObj = result.salePrice ?? {};
+            const costObj = result.cost ?? {};
+
+            newProduct.regularPrice = Object.entries(regularPriceObj)
+                .map(([country, amount]) => `${country}:${amount}`)
+                .join(", ");
+            newProduct.salePrice = Object.entries(salePriceObj)
+                .map(([country, amount]) => `${country}:${amount}`)
+                .join(", ");
+            newProduct.cost = Object.entries(costObj)
+                .map(([country, amount]) => `${country}:${amount}`)
+                .join(", ");
+
+            const attributesQuery = `SELECT
+                    pav."productId",
+                    pa."slug"  AS "attributeSlug",
+                    pat."slug" AS "termSlug"
+                FROM "productAttributeValues" pav
+                JOIN "productAttributes"      pa  ON pav."attributeId" = pa."id"
+                JOIN "productAttributeTerms"  pat ON pav."termId"       = pat."id"
+                WHERE pav."productId" = '${prt.id}'`;
+            const attributesResult = await pool.query(attributesQuery);
+            const resultAttr = attributesResult.rows;
+
+            const map = resultAttr.reduce((acc: Record<string, { productId: string; attributeSlug: string; termSlugs: string[] }>, { productId, attributeSlug, termSlug }: any) => {
+                const key = `${productId}|${attributeSlug}`;
+                if (!acc[key]) acc[key] = { productId, attributeSlug, termSlugs: [] };
+                acc[key].termSlugs.push(termSlug);
+                return acc;
+            }, {});
+            const groupedAttr = Object.values(map).map(({ productId, attributeSlug, termSlugs }) => ({
+                productId,
+                attributeSlug,
+                termSlug: termSlugs.join(", "),
+            }));
+
+            for (let i = 0; i < groupedAttr.length; i++) {
+                newProduct[`attributeSlug${i + 1}`] = groupedAttr[i].attributeSlug;
+                newProduct[`attributeValues${i + 1}`] = groupedAttr[i].termSlug;
+                newProduct[`attributeVariation${i + 1}`] = "";
+            }
+
+            const warehouseQuery = `SELECT "productId", "warehouseId", country, quantity FROM "warehouseStock" WHERE "productId"='${prt.id}' AND "variationId" IS NULL`;
+            const warehouseResult = await pool.query(warehouseQuery);
+            const resultWarehouse = warehouseResult.rows;
+
+            const groups = resultWarehouse.reduce<Record<string, Grouped>>((acc, { warehouseId, country, quantity }: any) => {
+                if (!acc[warehouseId]) acc[warehouseId] = { warehouseId, stockMap: {} };
+                acc[warehouseId].stockMap[country] = quantity;
+                return acc;
+            }, {});
+            const groupedWarehouses = Object.values(groups).map(({ warehouseId, stockMap }) => {
+                const countries = Object.keys(stockMap).join(", ");
+                const stock = Object.values(stockMap).join(", ");
+                return { warehouseId, countries, stock };
+            });
+
+            for (const w of groupedWarehouses) {
+                const productCopy = { ...newProduct };
+                productCopy.warehouseId = w.warehouseId;
+                productCopy.countries = w.countries;
+                productCopy.stock = w.stock;
+                newProductList.push(productCopy);
+            }
+            if (groupedWarehouses.length === 0) newProductList.push({ ...newProduct });
+
+        } else {
+
+            const newProduct: any = {};
+            newProduct.id = prt.id;
+            newProduct.sku = prt.sku;
+            newProduct.title = prt.title;
+            newProduct.productType = prt.productType
+            newProduct.published = prt.status === "published" ? 1 : 0;
+            newProduct.description = prt.description;
+
+            const categories: string[] = [];
+            for (const cat of prt.categories || []) {
+                const catQuery = `SELECT slug FROM "productCategories" WHERE id='${cat}'`;
+                const catResult = await pool.query(catQuery);
+                const result = catResult.rows[0];
+                if (result?.slug) categories.push(result.slug);
+            }
+
+            newProduct.categories = categories.join(", ");
+            newProduct.allowBackorders = prt.allowBackorders === true ? 1 : 0;
+            newProduct.manageStock = prt.manageStock === true ? 1 : 0;
+
+            const attributesQuery = `SELECT
+                    pav."productId",
+                    pa."slug"  AS "attributeSlug",
+                    pat."slug" AS "termSlug"
+                FROM "productAttributeValues" pav
+                JOIN "productAttributes"      pa  ON pav."attributeId" = pa."id"
+                JOIN "productAttributeTerms"  pat ON pav."termId"       = pat."id"
+                WHERE pav."productId" = '${prt.id}'`;
+            const attributesResult = await pool.query(attributesQuery);
+            const resultAttr = attributesResult.rows;
+
+            const map = resultAttr.reduce((acc: Record<string, { productId: string; attributeSlug: string; termSlugs: string[] }>, { productId, attributeSlug, termSlug }: any) => {
+                const key = `${productId}|${attributeSlug}`;
+                if (!acc[key]) acc[key] = { productId, attributeSlug, termSlugs: [] };
+                acc[key].termSlugs.push(termSlug);
+                return acc;
+            }, {});
+            const groupedAttr = Object.values(map).map(({ productId, attributeSlug, termSlugs }) => ({
+                productId,
+                attributeSlug,
+                termSlug: termSlugs.join(", "),
+            }));
+
+            for (let i = 0; i < groupedAttr.length; i++) {
+                newProduct[`attributeSlug${i + 1}`] = groupedAttr[i].attributeSlug;
+                newProduct[`attributeValues${i + 1}`] = groupedAttr[i].termSlug;
+                newProduct[`attributeVariation${i + 1}`] = "";
+            }
+
+            newProductList.push({ ...newProduct })
+
+
         }
-        newProduct.categories = categories.join(", ");
+        const variations = prt.variations
 
-        const productQuery = `SELECT "productType", description, "allowBackorders", "manageStock", "regularPrice", "salePrice", cost FROM products WHERE id='${prt.id}'`;
-        const productResult = await pool.query(productQuery);
-        const result = productResult.rows[0];
-        newProduct.productType = result.productType;
-        newProduct.description = result.description;
-        newProduct.allowBackorders = result.allowBackorders === true ? 1 : 0;
-        newProduct.manageStock = result.manageStock === true ? 1 : 0;
+        for (const vart of variations || []) {
 
-        const regularPriceObj = result.regularPrice ?? {};
-        const salePriceObj = result.salePrice ?? {};
-        const costObj = result.cost ?? {};
+            const newVariation: any = {};
 
-        newProduct.regularPrice = Object.entries(regularPriceObj)
-            .map(([country, amount]) => `${country}:${amount}`)
-            .join(", ");
-        newProduct.salePrice = Object.entries(salePriceObj)
-            .map(([country, amount]) => `${country}:${amount}`)
-            .join(", ");
-        newProduct.cost = Object.entries(costObj)
-            .map(([country, amount]) => `${country}:${amount}`)
-            .join(", ");
+            newVariation.sku = vart.sku
+            newVariation.productType = "variation"
+            newVariation.parent = prt.id
 
-        const attributesQuery = `SELECT
-        pav."productId",
-        pa."slug"  AS "attributeSlug",
-        pat."slug" AS "termSlug"
-      FROM "productAttributeValues" pav
-      JOIN "productAttributes"      pa  ON pav."attributeId" = pa."id"
-      JOIN "productAttributeTerms"  pat ON pav."termId"       = pat."id"
-      WHERE pav."productId" = '${prt.id}'`;
-        const attributesResult = await pool.query(attributesQuery);
-        const resultAttr = attributesResult.rows;
+            const newPrices = Object.entries(vart.prices).reduce((acc, [country, types]) => {
+                for (const [type, value] of Object.entries(types)) {
+                    (acc[type] ??= {})[country] = value;
+                }
+                return acc;
+            }, {} as Record<string, Record<string, number>>);
 
-        const map = resultAttr.reduce((acc: Record<string, { productId: string; attributeSlug: string; termSlugs: string[] }>, { productId, attributeSlug, termSlug }: any) => {
-            const key = `${productId}|${attributeSlug}`;
-            if (!acc[key]) acc[key] = { productId, attributeSlug, termSlugs: [] };
-            acc[key].termSlugs.push(termSlug);
-            return acc;
-        }, {});
-        const groupedAttr = Object.values(map).map(({ productId, attributeSlug, termSlugs }) => ({
-            productId,
-            attributeSlug,
-            termSlug: termSlugs.join(", "),
-        }));
+            const regularPriceObj = newPrices.regular ?? {};
+            const salePriceObj = newPrices.sale ?? {};
+            const costObj = vart.cost ?? {};
 
-        for (let i = 0; i < groupedAttr.length; i++) {
-            newProduct[`attributeSlug${i + 1}`] = groupedAttr[i].attributeSlug;
-            newProduct[`attributeValues${i + 1}`] = groupedAttr[i].termSlug;
-            newProduct[`attributeVariation${i + 1}`] = "";
+            newVariation.regularPrice = Object.entries(regularPriceObj)
+                .map(([country, amount]) => `${country}:${amount}`)
+                .join(", ");
+            newVariation.salePrice = Object.entries(salePriceObj)
+                .map(([country, amount]) => `${country}:${amount}`)
+                .join(", ");
+            newVariation.cost = Object.entries(costObj)
+                .map(([country, amount]) => `${country}:${amount}`)
+                .join(", ");
+
+            const attributeId = Object.keys(vart.attributes)[0]
+            const termId = vart.attributes[attributeId]
+
+            const attQuery = `SELECT slug FROM "productAttributes" WHERE id='${attributeId}'`
+            const attResult = await pool.query(attQuery)
+            newVariation.attributeSlug1 = attResult.rows[0].slug
+
+            const terQuery = `SELECT slug FROM "productAttributeTerms" WHERE id='${termId}'`
+            const terResult = await pool.query(terQuery)
+            newVariation.attributeValues1 = terResult.rows[0].slug
+
+            const warehouseQuery = `SELECT "productId", "warehouseId", country, quantity FROM "warehouseStock" WHERE "productId"='${prt.id}' AND "variationId" = '${vart.id}'`;
+            const warehouseResult = await pool.query(warehouseQuery);
+            const resultWarehouse = warehouseResult.rows;
+
+            const groups = resultWarehouse.reduce<Record<string, Grouped>>((acc, { warehouseId, country, quantity }: any) => {
+                if (!acc[warehouseId]) acc[warehouseId] = { warehouseId, stockMap: {} };
+                acc[warehouseId].stockMap[country] = quantity;
+                return acc;
+            }, {});
+            const groupedWarehouses = Object.values(groups).map(({ warehouseId, stockMap }) => {
+                const countries = Object.keys(stockMap).join(", ");
+                const stock = Object.values(stockMap).join(", ");
+                return { warehouseId, countries, stock };
+            });
+
+            for (const w of groupedWarehouses) {
+                const productCopy = { ...newVariation };
+                productCopy.warehouseId = w.warehouseId;
+                productCopy.countries = w.countries;
+                productCopy.stock = w.stock;
+                newProductList.push(productCopy);
+            }
+
+            if (groupedWarehouses.length === 0) newProductList.push({ ...newVariation });
+
         }
-
-        const warehouseQuery = `SELECT "productId", "warehouseId", country, quantity FROM "warehouseStock" WHERE "productId"='${prt.id}' AND "variationId" IS NULL`;
-        const warehouseResult = await pool.query(warehouseQuery);
-        const resultWarehouse = warehouseResult.rows;
-
-        const groups = resultWarehouse.reduce<Record<string, Grouped>>((acc, { warehouseId, country, quantity }: any) => {
-            if (!acc[warehouseId]) acc[warehouseId] = { warehouseId, stockMap: {} };
-            acc[warehouseId].stockMap[country] = quantity;
-            return acc;
-        }, {});
-        const groupedWarehouses = Object.values(groups).map(({ warehouseId, stockMap }) => {
-            const countries = Object.keys(stockMap).join(", ");
-            const stock = Object.values(stockMap).join(", ");
-            return { warehouseId, countries, stock };
-        });
-
-        for (const w of groupedWarehouses) {
-            const productCopy = { ...newProduct };
-            productCopy.warehouseId = w.warehouseId;
-            productCopy.countries = w.countries;
-            productCopy.stock = w.stock;
-            newProductList.push(productCopy);
-        }
-        if (groupedWarehouses.length === 0) newProductList.push({ ...newProduct });
     }
 
     const worksheetData = newProductList.map((p: any) => ({
