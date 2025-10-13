@@ -1,16 +1,11 @@
 // lib/wp.ts
 import 'server-only';
 
-/**
- * Normalize WORDPRESS_URL:
- * - add https:// if missing
- * - preserve any sub-path (e.g. https://cms.trapyfy.com/blog)
- * - strip trailing slashes (avoids //wp-json/...)
- */
 const RAW = process.env.WORDPRESS_URL;
 if (!RAW) throw new Error('Missing WORDPRESS_URL (e.g. https://cms.trapyfy.com)');
-const WP_BASE = (RAW.startsWith('http') ? RAW : `https://${RAW}`).replace(/\/+$/, '');
 
+// Keep protocol and any sub-path (e.g. https://cms.trapyfy.com/blog)
+const WP_BASE = (RAW.startsWith('http') ? RAW : `https://${RAW}`).replace(/\/+$/, '');
 const REVALIDATE_SECONDS = Number(process.env.WP_DEFAULT_REVALIDATE ?? 300);
 
 type WpRawPost = {
@@ -55,14 +50,14 @@ function mapPost(raw: WpRawPost): Post {
   };
 }
 
-/** Join against FULL base (origin + optional sub-path). Always pass a relative path. */
-function wpJoin(relPath: string): string {
-  const rel = relPath.replace(/^\/+/, ''); // no leading slash so sub-path is preserved
-  return `${WP_BASE}/${rel}`;
-}
+async function wpFetch<T>(
+  relPath: string,
+  init?: RequestInit
+): Promise<{ data: T; headers: Headers }> {
+  // RELATIVE join (no leading slash) so sub-path bases are preserved
+  const rel = relPath.replace(/^\/+/, '');
+  const url = new URL(rel, WP_BASE + '/').toString();
 
-async function wpFetch<T>(relPath: string, init?: RequestInit): Promise<{ data: T; headers: Headers }> {
-  const url = wpJoin(relPath);
   const res = await fetch(url, {
     next: { revalidate: REVALIDATE_SECONDS },
     ...init,
@@ -109,7 +104,7 @@ export async function getPostBySlug(slug: string): Promise<Post | null> {
   return mapPost(data[0]);
 }
 
-/** Latest posts (for lists/sitemap). */
+/** For sitemap: fetch up to `limit` latest posts. */
 export async function getLatestPosts(limit = 50): Promise<Post[]> {
   const perPage = Math.min(100, Math.max(1, limit));
   const { data } = await wpFetch<WpRawPost[]>(
@@ -118,7 +113,7 @@ export async function getLatestPosts(limit = 50): Promise<Post[]> {
   return data.map(mapPost);
 }
 
-/** Safe variant (never throws). Useful for sitemap so builds don’t fail. */
+/** Safe variant for sitemap: never throws, returns [] on any error. */
 export async function getLatestPostsSafe(limit = 50): Promise<Post[]> {
   try {
     return await getLatestPosts(limit);
@@ -126,4 +121,53 @@ export async function getLatestPostsSafe(limit = 50): Promise<Post[]> {
     console.error('getLatestPostsSafe(): ignoring WP error in sitemap', err);
     return [];
   }
+}
+
+/* ----------------------- Rank Math (Headless) ------------------------ */
+/**
+ * Rank Math exposes an endpoint that returns the full <head> HTML
+ * (title, meta description, JSON-LD, etc.) for a given URL when
+ * “Headless CMS Support” is enabled.
+ *   GET {WP_BASE}/wp-json/rankmath/v1/getHead?url={absolute-url}
+ * Docs: https://rankmath.com/kb/headless-cms-support/
+ */
+export async function getRankMathHeadForSlug(slug: string): Promise<string | null> {
+  const site = (process.env.NEXT_PUBLIC_SITE_URL || '').replace(/\/+$/, '');
+  if (!site) return null;
+  const targetUrl = `${site}/blog/${encodeURIComponent(slug)}`;
+  try {
+    const { data } = await wpFetch<{ success: boolean; head?: string }>(
+      `wp-json/rankmath/v1/getHead?url=${encodeURIComponent(targetUrl)}`,
+      { headers: { Accept: 'application/json' } }
+    );
+    return data?.head || null;
+  } catch (e) {
+    console.error('Rank Math getHead failed:', e);
+    return null;
+  }
+}
+
+/** Extracts <title>, <meta name="description">, and JSON-LD scripts from Rank Math head HTML. */
+export function parseRankMathHead(headHtml: string | null): {
+  title?: string;
+  description?: string;
+  jsonLd: string[]; // raw JSON strings
+} {
+  if (!headHtml) return { jsonLd: [] };
+  const titleMatch = headHtml.match(/<title>([\s\S]*?)<\/title>/i);
+  const descMatch = headHtml.match(
+    /<meta\s+name=["']description["']\s+content=["']([^"']*)["'][^>]*>/i
+  );
+  const jsonLd: string[] = [];
+  const scriptRegex = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = scriptRegex.exec(headHtml)) !== null) {
+    const raw = m[1].trim();
+    if (raw) jsonLd.push(raw);
+  }
+  return {
+    title: titleMatch?.[1]?.trim(),
+    description: descMatch?.[1]?.trim(),
+    jsonLd,
+  };
 }

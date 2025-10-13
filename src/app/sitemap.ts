@@ -3,20 +3,22 @@ import type { MetadataRoute } from 'next';
 import { getLatestPostsSafe } from '@/lib/wp';
 
 /**
- * Sitemap must include ONLY:
+ * Sitemap must only include:
  *   • "/" (landing)
- *   • "/blog/:slug" (posts)
- * Note: XML `<loc>` entries are the URLs crawlers use; there are no <a> tags in XML sitemaps.
+ *   • "/blog/:slug" (each post)
+ * Note: XML sitemaps don't support "clickable" <a> links—<loc> is the URL.
+ * Browsers often make them clickable automatically.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || 'https://www.trapyfy.com').replace(/\/+$/, '');
+  const baseUrl =
+    (process.env.NEXT_PUBLIC_SITE_URL || 'https://www.trapyfy.com').replace(/\/+$/, '');
 
-  // 1) landing page
+  // Always include just the landing page
   const entries: MetadataRoute.Sitemap = [
     { url: `${baseUrl}/`, lastModified: new Date() },
   ];
 
-  // 2) blog posts (safe fetch – never throws)
+  // Add blog posts (safe – never throws)
   const posts = await getLatestPostsSafe(200);
   for (const p of posts) {
     entries.push({
