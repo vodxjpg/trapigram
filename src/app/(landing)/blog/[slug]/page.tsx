@@ -1,33 +1,55 @@
 // app/blog/[slug]/page.tsx
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import { getPostBySlug } from '@/lib/wp';
+import {
+  getPostBySlug,
+  getRankMathHeadForSlug,
+  parseRankMathHead,
+} from '@/lib/wp';
 
 type Props = { params: { slug: string } };
 
-export const dynamic = 'force-static'; // we rely on ISR from fetch
+export const dynamic = 'force-static'; // use ISR via fetch() revalidate
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const post = await getPostBySlug(params.slug);
+  const [post, headHtml] = await Promise.all([
+    getPostBySlug(params.slug),
+    getRankMathHeadForSlug(params.slug),
+  ]);
   if (!post) return {};
-  const plainTitle = stripHtml(post.title);
-  const description = summarize(stripHtml(post.excerptHtml || plainTitle));
+
+  const parsed = parseRankMathHead(headHtml);
+  const title = parsed.title ?? stripHtml(post.title);
+  const description = parsed.description ?? summarize(stripHtml(post.excerptHtml || post.title));
+
   return {
-    title: `${plainTitle} | Blog`,
+    title,
     description,
     alternates: { canonical: `/blog/${post.slug}` },
     openGraph: {
-      title: plainTitle,
+      title,
       description,
       type: 'article',
       publishedTime: post.date,
+      images: post.featuredImageUrl ? [{ url: post.featuredImageUrl }] : undefined,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: post.featuredImageUrl ? [post.featuredImageUrl] : undefined,
     },
   };
 }
 
 export default async function PostPage({ params }: Props) {
-  const post = await getPostBySlug(params.slug);
+  const [post, headHtml] = await Promise.all([
+    getPostBySlug(params.slug),
+    getRankMathHeadForSlug(params.slug),
+  ]);
   if (!post) notFound();
+
+  const parsed = parseRankMathHead(headHtml);
 
   return (
     <article className="mx-auto max-w-3xl px-4 py-10">
@@ -38,7 +60,6 @@ export default async function PostPage({ params }: Props) {
           {post.authorName ? ` · ${post.authorName}` : ''}
         </p>
         {post.featuredImageUrl && (
-          // Use <img> to avoid remotePatterns config; switch to <Image> later if you prefer
           <img
             src={post.featuredImageUrl}
             alt=""
@@ -48,9 +69,17 @@ export default async function PostPage({ params }: Props) {
         )}
       </header>
 
+      {/* Inject Rank Math JSON-LD schema (safe to be in body) */}
+      {parsed.jsonLd.map((json, i) => (
+        <script
+          key={i}
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: json }}
+        />
+      ))}
+
       <div
         className="prose"
-        // Consider sanitizing in production if your WP isn't fully trusted
         dangerouslySetInnerHTML={{ __html: post.contentHtml }}
       />
     </article>
@@ -60,7 +89,6 @@ export default async function PostPage({ params }: Props) {
 function stripHtml(input: string): string {
   return input.replace(/<[^>]*>/g, '');
 }
-
 function summarize(text: string, max = 160): string {
   if (text.length <= max) return text;
   return text.slice(0, max - 1).trimEnd() + '…';

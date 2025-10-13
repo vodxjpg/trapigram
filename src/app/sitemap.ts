@@ -1,21 +1,31 @@
 // app/sitemap.ts
 import type { MetadataRoute } from 'next';
-import { getLatestPosts } from '@/lib/wp';
+import { getLatestPostsSafe } from '@/lib/wp';
 
+/**
+ * Sitemap must only include:
+ *   • "/" (landing)
+ *   • "/blog/:slug" (each post)
+ * Note: XML sitemaps don't support "clickable" <a> links—<loc> is the URL.
+ * Browsers often make them clickable automatically.
+ */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://example.com';
+  const baseUrl =
+    (process.env.NEXT_PUBLIC_SITE_URL || 'https://www.trapyfy.com').replace(/\/+$/, '');
 
-  const staticRoutes: MetadataRoute.Sitemap = [
+  // Always include just the landing page
+  const entries: MetadataRoute.Sitemap = [
     { url: `${baseUrl}/`, lastModified: new Date() },
-    { url: `${baseUrl}/blog`, lastModified: new Date() },
-    // add other static routes here
   ];
 
-  const posts = await getLatestPosts(50);
-  const postRoutes: MetadataRoute.Sitemap = posts.map((p) => ({
-    url: `${baseUrl}/blog/${p.slug}`,
-    lastModified: new Date(p.date),
-  }));
+  // Add blog posts (safe – never throws)
+  const posts = await getLatestPostsSafe(200);
+  for (const p of posts) {
+    entries.push({
+      url: `${baseUrl}/blog/${p.slug}`,
+      lastModified: new Date(p.date),
+    });
+  }
 
-  return [...staticRoutes, ...postRoutes];
+  return entries;
 }
