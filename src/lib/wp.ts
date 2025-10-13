@@ -1,12 +1,17 @@
 // lib/wp.ts
 import 'server-only';
 
+/**
+ * Robust WordPress base:
+ * - Adds https:// if protocol is missing
+ * - Preserves any sub-path (e.g. https://cms.example.com/blog)
+ * - Strips trailing slash
+ */
 const RAW = process.env.WORDPRESS_URL;
-if (!RAW) throw new Error('Missing WORDPRESS_URL (e.g. https://cms.trapyfy.com)');
-
-// Keep protocol and any sub-path (e.g. https://cms.trapyfy.com/blog)
+if (!RAW) throw new Error('Missing WORDPRESS_URL (e.g. https://cms.trapyfy.com or https://cms.trapyfy.com/blog)');
 const WP_BASE = (RAW.startsWith('http') ? RAW : `https://${RAW}`).replace(/\/+$/, '');
 const REVALIDATE_SECONDS = Number(process.env.WP_DEFAULT_REVALIDATE ?? 300);
+const DEBUG_WP = process.env.DEBUG_WP === '1';
 
 type WpRawPost = {
   id: number;
@@ -50,14 +55,15 @@ function mapPost(raw: WpRawPost): Post {
   };
 }
 
-async function wpFetch<T>(
-  relPath: string,
-  init?: RequestInit
-): Promise<{ data: T; headers: Headers }> {
-  // RELATIVE join (no leading slash) so sub-path bases are preserved
-  const rel = relPath.replace(/^\/+/, '');
-  const url = new URL(rel, WP_BASE + '/').toString();
+/** Join against the FULL base (origin + optional sub-path) safely. Always pass a relative path. */
+function wpJoin(relPath: string): string {
+  const rel = relPath.replace(/^\/+/, '');        // no leading slash so sub-path is preserved
+  return `${WP_BASE}/${rel}`;
+}
 
+async function wpFetch<T>(relPath: string, init?: RequestInit): Promise<{ data: T; headers: Headers; url: string }> {
+  const url = wpJoin(relPath);
+  DEBUG_WP && console.log('[WP] GET', url);
   const res = await fetch(url, {
     next: { revalidate: REVALIDATE_SECONDS },
     ...init,
@@ -68,10 +74,11 @@ async function wpFetch<T>(
   });
   if (!res.ok) {
     const text = await res.text();
+    DEBUG_WP && console.error('[WP] ERROR', res.status, url, text.slice(0, 300));
     throw new Error(`WP fetch failed ${res.status}: ${text}`);
   }
   const data = (await res.json()) as T;
-  return { data, headers: res.headers };
+  return { data, headers: res.headers, url };
 }
 
 /* ---------------------------- Posts (REST) ---------------------------- */
@@ -104,7 +111,7 @@ export async function getPostBySlug(slug: string): Promise<Post | null> {
   return mapPost(data[0]);
 }
 
-/** For sitemap: fetch up to `limit` latest posts. */
+/** For sitemap/blog lists: fetch up to `limit` latest posts. */
 export async function getLatestPosts(limit = 50): Promise<Post[]> {
   const perPage = Math.min(100, Math.max(1, limit));
   const { data } = await wpFetch<WpRawPost[]>(
@@ -113,61 +120,12 @@ export async function getLatestPosts(limit = 50): Promise<Post[]> {
   return data.map(mapPost);
 }
 
-/** Safe variant for sitemap: never throws, returns [] on any error. */
+/** Safe variant (never throws) – useful for sitemap so builds don’t fail. */
 export async function getLatestPostsSafe(limit = 50): Promise<Post[]> {
   try {
     return await getLatestPosts(limit);
   } catch (err) {
-    console.error('getLatestPostsSafe(): ignoring WP error in sitemap', err);
+    console.error('getLatestPostsSafe(): ignoring WP error', err);
     return [];
   }
-}
-
-/* ----------------------- Rank Math (Headless) ------------------------ */
-/**
- * Rank Math exposes an endpoint that returns the full <head> HTML
- * (title, meta description, JSON-LD, etc.) for a given URL when
- * “Headless CMS Support” is enabled.
- *   GET {WP_BASE}/wp-json/rankmath/v1/getHead?url={absolute-url}
- * Docs: https://rankmath.com/kb/headless-cms-support/
- */
-export async function getRankMathHeadForSlug(slug: string): Promise<string | null> {
-  const site = (process.env.NEXT_PUBLIC_SITE_URL || '').replace(/\/+$/, '');
-  if (!site) return null;
-  const targetUrl = `${site}/blog/${encodeURIComponent(slug)}`;
-  try {
-    const { data } = await wpFetch<{ success: boolean; head?: string }>(
-      `wp-json/rankmath/v1/getHead?url=${encodeURIComponent(targetUrl)}`,
-      { headers: { Accept: 'application/json' } }
-    );
-    return data?.head || null;
-  } catch (e) {
-    console.error('Rank Math getHead failed:', e);
-    return null;
-  }
-}
-
-/** Extracts <title>, <meta name="description">, and JSON-LD scripts from Rank Math head HTML. */
-export function parseRankMathHead(headHtml: string | null): {
-  title?: string;
-  description?: string;
-  jsonLd: string[]; // raw JSON strings
-} {
-  if (!headHtml) return { jsonLd: [] };
-  const titleMatch = headHtml.match(/<title>([\s\S]*?)<\/title>/i);
-  const descMatch = headHtml.match(
-    /<meta\s+name=["']description["']\s+content=["']([^"']*)["'][^>]*>/i
-  );
-  const jsonLd: string[] = [];
-  const scriptRegex = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = scriptRegex.exec(headHtml)) !== null) {
-    const raw = m[1].trim();
-    if (raw) jsonLd.push(raw);
-  }
-  return {
-    title: titleMatch?.[1]?.trim(),
-    description: descMatch?.[1]?.trim(),
-    jsonLd,
-  };
 }
