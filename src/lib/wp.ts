@@ -1,12 +1,18 @@
 // lib/wp.ts
 import 'server-only';
 
-const WP_URL = process.env.WORDPRESS_URL!;
-const REVALIDATE_SECONDS = Number(process.env.WP_DEFAULT_REVALIDATE ?? 300);
-
-if (!WP_URL) {
-  throw new Error('Missing WORDPRESS_URL in env');
+const RAW_WP_URL = process.env.WORDPRESS_URL;
+if (!RAW_WP_URL) {
+  throw new Error('Missing WORDPRESS_URL env (e.g. https://cms.trapyfy.com)');
 }
+
+// Always ensure protocol and strip any path to keep an origin-only base
+const NORMALIZED_WP = RAW_WP_URL.startsWith('http')
+  ? RAW_WP_URL
+  : `https://${RAW_WP_URL}`;
+const WP_ORIGIN = new URL(NORMALIZED_WP).origin;
+
+const REVALIDATE_SECONDS = Number(process.env.WP_DEFAULT_REVALIDATE ?? 300);
 
 type WpRawPost = {
   id: number;
@@ -53,8 +59,9 @@ function mapPost(raw: WpRawPost): Post {
 }
 
 async function wpFetch<T>(path: string, init?: RequestInit): Promise<{ data: T; headers: Headers }> {
-  const res = await fetch(`${WP_URL}${path}`, {
-    // cache with ISR behavior; Next will revalidate in the background
+  // Accept both absolute paths ("/wp-json/...") and relative ones
+  const url = new URL(path, WP_ORIGIN).toString();
+  const res = await fetch(url, {
     next: { revalidate: REVALIDATE_SECONDS },
     ...init,
     headers: {
@@ -77,7 +84,7 @@ export async function getPosts(page = 1, perPage = 10): Promise<{
 }> {
   const query = new URLSearchParams({
     _embed: '1',
-    per_page: String(Math.min(20, Math.max(1, perPage))), // WP caps at 100; keep modest
+    per_page: String(Math.min(20, Math.max(1, perPage))),
     page: String(Math.max(1, page)),
     orderby: 'date',
     order: 'desc',
@@ -89,16 +96,11 @@ export async function getPosts(page = 1, perPage = 10): Promise<{
 }
 
 export async function getPostBySlug(slug: string): Promise<Post | null> {
-  const query = new URLSearchParams({ _embed: '1', slug });
-  const { data } = await wpFetch<WpRawPost[]>(`/wp-json/wp/v2/posts?${query.toString()}`);
+  const { data } = await wpFetch<WpRawPost[]>(`/wp-json/wp/v2/posts?_embed=1&slug=${encodeURIComponent(slug)}`);
   if (!data.length) return null;
   return mapPost(data[0]);
 }
 
-/**
- * For sitemap: fetch up to `limit` latest posts.
- * (If you need >100, fetch additional pages—easy to extend.)
- */
 export async function getLatestPosts(limit = 50): Promise<Post[]> {
   const perPage = Math.min(100, Math.max(1, limit));
   const { data } = await wpFetch<WpRawPost[]>(
