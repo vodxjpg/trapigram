@@ -36,28 +36,34 @@ function applyCorsHeaders(res: Response, origin: string) {
   res.headers.set("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
   res.headers.set("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
   res.headers.set("Vary", "Origin");
-  applySecurityHeaders(res);
+  applySecurityHeaders(res);                     // piggy-back security headers
 }
 
-/* Resolve caller IP */
-function clientIp(req: NextRequest): string {
-  const cf = req.headers.get("cf-connecting-ip");
-  if (cf) return cf;
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  return (req as any).ip ?? "";
-}
+/* Resolve caller IP:
+   • Cloudflare → CF-Connecting-IP
+   • Vercel / others → x-forwarded-for first element
+   • Fallback to req.ip  */
+   function clientIp(req: NextRequest): string {
+    const cf = req.headers.get("cf-connecting-ip");
+    if (cf) return cf;
+    const xff = req.headers.get("x-forwarded-for");
+    if (xff) return xff.split(",")[0].trim();
+    return (req as any).ip ?? "";
+  }
+  
 
 /*──────────────────── Middleware ────────────────────*/
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  /* 1️⃣ CORS + rate-limit for /api/* */
+  /*────────────────────────────────────────
+    1️⃣  CORS + rate-limit for /api/*
+  ────────────────────────────────────────*/
   if (pathname.startsWith("/api/")) {
     const origin      = req.headers.get("origin") ?? "";
     const allowOrigin = ALLOWED_ORIGINS.has(origin) ? origin : "";
 
-    // Pre-flight
+    /* Pre-flight */
     if (req.method === "OPTIONS") {
       const res = new Response(null, { status: 204 });
       applyCorsHeaders(res, allowOrigin);
@@ -65,9 +71,9 @@ export async function middleware(req: NextRequest) {
       return res;
     }
 
-    // Rate-limit
+    /* Rate-limit */
     try {
-      await enforceRateLimit(req, clientIp(req));
+      await enforceRateLimit(req, clientIp(req));   // pass resolved IP
     } catch (rateRes: any) {
       if (rateRes instanceof Response) {
         applyCorsHeaders(rateRes, allowOrigin);
@@ -76,26 +82,26 @@ export async function middleware(req: NextRequest) {
       throw rateRes;
     }
 
-    // Real request
+    /* Real request */
     const res = NextResponse.next();
     applyCorsHeaders(res, allowOrigin);
     return res;
   }
 
-  /* 2️⃣ Auth & public-page logic */
+  /*────────────────────────────────────────
+    2️⃣  Auth & public-page logic
+  ────────────────────────────────────────*/
   const lower = pathname.toLowerCase();
   const PUBLIC = [
-    "/", "/sitemap.xml",
-    "/blog/",              // <-- make every /blog/* public
-    "/login", "/sign-up", "/forgot-password", "/verify-email",
-    "/check-email", "/accept-invitation/", "/impor-products/", "/import-products",
+    "/", "/robots.txt", "/sitemap.xml", "/blog", "/blog/", "/login", "/sign-up", "/forgot-password", "/verify-email",
+    "/check-email", "/accept-invitation/", "/impor-products/", "/import-products"
   ];
-  const isPublic = PUBLIC.some((p) =>
-    p === "/" ? lower === "/" : p.endsWith("/") ? lower.startsWith(p) : lower === p
+  const isPublic = PUBLIC.some(p =>
+    p === "/" ? lower === "/" : p.endsWith("/") ? lower.startsWith(p) : lower === p,
   );
   if (isPublic) return NextResponse.next();
 
-  // /reset-password must carry ?token=
+  /* /reset-password must carry ?token= */
   if (lower === "/reset-password") {
     if (!req.nextUrl.searchParams.get("token")) {
       return NextResponse.redirect(new URL("/forgot-password", req.url));
@@ -103,12 +109,12 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Session required
+  /* Session required */
   if (!getSessionCookie(req)) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  // Central policy check
+  /* Central policy check */
   const checkUrl = new URL("/api/auth/check-status", req.url);
   checkUrl.searchParams.set("originalPath", pathname);
 
@@ -118,7 +124,7 @@ export async function middleware(req: NextRequest) {
     credentials: "include",
   });
 
-  // network / DB hiccup → allow
+  /* network / DB hiccup → allow */
   if (!policyRes.ok) return NextResponse.next();
 
   const { redirect } = await policyRes.json();
