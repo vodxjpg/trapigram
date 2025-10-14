@@ -4,15 +4,14 @@ import type { Metadata } from "next";
 import {
   getPostBySlug,
   getRankMathHeadForWpUrl, // prefer WP permalink
-  getRankMathHeadForSlug,  // fallback to frontend URL
+  getRankMathHeadForSlug,  // fallback (frontend URL)
   parseRankMathHead,
 } from "@/lib/wp";
 import Toc from "./toc";
 
 type Props = { params: { slug: string } };
 
-export const dynamic = "force-static";
-export const revalidate = Number(process.env.RANKMATH_REVALIDATE ?? 60); // keep meta fresh
+export const dynamic = "force-static"; // keep ISR via fetch caches
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const post = await getPostBySlug(params.slug);
@@ -36,9 +35,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description,
       type: "article",
       publishedTime: post.date,
-      images: post.featuredImageUrl
-        ? [{ url: post.featuredImageUrl }]
-        : undefined,
+      images: post.featuredImageUrl ? [{ url: post.featuredImageUrl }] : undefined,
     },
     twitter: {
       card: "summary_large_image",
@@ -58,7 +55,6 @@ export default async function PostPage({ params }: Props) {
     (await getRankMathHeadForSlug(params.slug));
   const parsed = parseRankMathHead(headHtml);
 
-  // inject ids into h2/h3 and collect ToC
   const enhanced = buildTocAndHtml(post.contentHtml);
 
   return (
@@ -98,25 +94,18 @@ export default async function PostPage({ params }: Props) {
         )}
       </header>
 
-      {/* Rank Math JSON-LD in body is fine */}
+      {/* Inject Rank Math JSON-LD */}
       {parsed.jsonLd.map((json, i) => (
-        <script
-          key={i}
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: json }}
-        />
+        <script key={i} type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />
       ))}
 
       <div className="mt-10 grid gap-10 lg:grid-cols-[minmax(0,1fr)_320px]">
-        {/* Main content (styled by globals.css .article-body rules) */}
         <main
           id="main-content"
           className="article-body max-w-none"
           itemProp="articleBody"
           dangerouslySetInnerHTML={{ __html: enhanced.html }}
         />
-
-        {/* Sticky ToC */}
         <aside className="hidden lg:block">
           <Toc items={enhanced.toc} />
         </aside>
@@ -125,7 +114,7 @@ export default async function PostPage({ params }: Props) {
   );
 }
 
-/* ───────────────────── TOC builder (server) ───────────────────── */
+/* TOC builder + utils (unchanged) */
 type TocItem = { id: string; text: string; level: 2 | 3 };
 
 function buildTocAndHtml(html: string): { html: string; toc: TocItem[] } {
@@ -135,12 +124,8 @@ function buildTocAndHtml(html: string): { html: string; toc: TocItem[] } {
 
   const transformed = html.replace(headingRe, (m, levelStr, rawAttrs, inner) => {
     const level = Number(levelStr) as 2 | 3;
-
-    // keep existing id if present
     const idMatch = rawAttrs.match(/\sid=["']([^"']+)["']/i);
     let id = idMatch?.[1];
-
-    // text for slug + ToC
     const text = stripHtml(inner).trim();
 
     if (!id) {
@@ -159,7 +144,6 @@ function buildTocAndHtml(html: string): { html: string; toc: TocItem[] } {
   return { html: transformed, toc };
 }
 
-/* ───────────────────── Utils ───────────────────── */
 function stripHtml(input: string): string {
   return input.replace(/<[^>]*>/g, "");
 }
