@@ -194,28 +194,70 @@ export async function getRankMathHeadForSlug(slug: string): Promise<string | nul
   }
 }
 
-/** Extract <title>, <meta name="description">, and JSON-LD scripts from Rank Math head HTML. */
+/** Extract title, description, and JSON-LD from Rank Math head HTML.
+ * Falls back to og:/twitter: metas and finally JSON-LD graph.
+ */
 export function parseRankMathHead(headHtml: string | null): {
   title?: string;
   description?: string;
-  jsonLd: string[]; // raw JSON strings
+  jsonLd: string[];
 } {
   if (!headHtml) return { jsonLd: [] };
-  const titleMatch = headHtml.match(/<title>([\s\S]*?)<\/title>/i);
-  const descMatch = headHtml.match(
-    /<meta\s+name=["']description["']\s+content=["']([^"']*)["'][^>]*>/i
-  );
+
+  const getMeta = (nameOrProp: string, attr: "name" | "property" = "name") => {
+    // Match either order of attributes: attr then content, or content then attr
+    const re = new RegExp(
+      `<meta\\s+[^>]*${attr}=["']${nameOrProp}["'][^>]*content=["']([^"']*)["'][^>]*>|` +
+        `<meta\\s+[^>]*content=["']([^"']*)["'][^>]*${attr}=["']${nameOrProp}["'][^>]*>`,
+      "i"
+    );
+    const m = headHtml.match(re);
+    return (m?.[1] || m?.[2] || "").trim() || undefined;
+  };
+
+  // Primary: <title>, Fallbacks: og:title → twitter:title → JSON-LD
+  let title =
+    headHtml.match(/<title>([\s\S]*?)<\/title>/i)?.[1]?.trim() ||
+    getMeta("og:title", "property") ||
+    getMeta("twitter:title", "name");
+
+  // Primary: <meta name="description">, Fallbacks: og:description → twitter:description → JSON-LD
+  let description =
+    getMeta("description", "name") ||
+    getMeta("og:description", "property") ||
+    getMeta("twitter:description", "name");
+
+  // Collect JSON-LD (raw strings)
   const jsonLd: string[] = [];
   const scriptRegex =
     /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = scriptRegex.exec(headHtml)) !== null) {
-    const raw = m[1].trim();
+  let sm: RegExpExecArray | null;
+  while ((sm = scriptRegex.exec(headHtml)) !== null) {
+    const raw = sm[1].trim();
     if (raw) jsonLd.push(raw);
   }
-  return {
-    title: titleMatch?.[1]?.trim(),
-    description: descMatch?.[1]?.trim(),
-    jsonLd,
-  };
+
+  // Final fallback: try to read headline/name/description from JSON-LD graph
+  if ((!title || !description) && jsonLd.length) {
+    for (const raw of jsonLd) {
+      try {
+        const node = JSON.parse(raw);
+        const objs: any[] = Array.isArray(node)
+          ? node
+          : node["@graph"]
+          ? node["@graph"]
+          : [node];
+
+        for (const o of objs) {
+          if (!title && (o?.headline || o?.name)) title = (o.headline || o.name).toString();
+          if (!description && o?.description) description = String(o.description);
+        }
+      } catch {
+        /* ignore malformed JSON-LD */
+      }
+      if (title && description) break;
+    }
+  }
+
+  return { title, description, jsonLd };
 }

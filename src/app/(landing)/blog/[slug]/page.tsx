@@ -12,7 +12,7 @@ import Toc from "./toc";
 type Props = { params: { slug: string } };
 
 export const dynamic = "force-static";
-
+export const revalidate = Number(process.env.RANKMATH_REVALIDATE ?? 60);
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const post = await getPostBySlug(params.slug);
   if (!post) return {};
