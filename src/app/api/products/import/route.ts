@@ -126,7 +126,7 @@ export async function POST(req: Request) {
                 const productIdResult = await pgPool.query(productIdQuery)
                 const productId = productIdResult.rows[0].id
 
-                const findQuery = `SELECT * FROM "productVariations" WHERE "productId" = '${productId}'`
+                const findQuery = `SELECT * FROM "productVariations" WHERE "productId" = '${productId}' AND sku='${product.sku}'`
                 const result = await pgPool.query(findQuery);
                 res = result
             } else {
