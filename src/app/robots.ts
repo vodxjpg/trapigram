@@ -1,30 +1,52 @@
-// /home/zodx/Desktop/trapigram/src/app/robots.ts
+// app/robots.ts
 import type { MetadataRoute } from 'next';
 
+function getBaseUrl(): string {
+  const explicit = process.env.NEXT_PUBLIC_SITE_URL;
+  if (explicit) return explicit.replace(/\/+$/, '');
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return 'http://localhost:3000';
+}
+
 /**
- * Robots policy:
- * - Disallow everything, then explicitly allow:
- *    • "/" (homepage only)
- *    • "/contact-us"
- *    • "/about-us"
- *    • "/blog" (and all descendants)
+ * Robots are per-host. This file controls robots for www.trapyfy.com (your Next.js site).
+ * It allows ONLY:
+ *   • "/"
+ *   • "/blog"
+ *   • "/blog/*"
+ * Everything else is disallowed.
  *
- * Notes:
- * - Using "Allow: /$" restricts to exactly the root path.
- * - Keep this file PURE-STATIC (no imports/env) to avoid runtime build issues.
- * - If you want a sitemap, add the absolute URL once you have it.
+ * In non-production (Preview/Dev) we still disallow everything as a safety net.
  */
 export default function robots(): MetadataRoute.Robots {
+  const baseUrl = getBaseUrl();
+  const isProd =
+    process.env.VERCEL_ENV === 'production' || process.env.NODE_ENV === 'production';
+
+  if (!isProd) {
+    // Disallow all on non-prod deployments
+    return {
+      rules: { userAgent: '*', disallow: '/' },
+      sitemap: `${baseUrl}/sitemap.xml`,
+      host: baseUrl,
+    };
+  }
+
+  // Production: default Disallow all, then explicitly Allow only home + blog
   return {
     rules: [
       {
         userAgent: '*',
-        disallow: ['/'],
-        allow: ['/$', '/contact-us', '/about-us', '/blog'],
+        disallow: '/',                       // deny everything by default
+        allow: [
+          '/$',                              // ONLY the exact landing page "/"
+          '/blog$',                          // the "/blog" index (no trailing slash)
+          '/blog/',                          // "/blog/" and deeper
+          '/blog/*',                         // any descendants under /blog/
+        ],
       },
     ],
-    // Example (uncomment and set your absolute URL if desired):
-    sitemap: 'https://www.trapyfy.com/sitemap.xml',
-    host: 'https://www.trapyfy.com',
+    sitemap: `${baseUrl}/sitemap.xml`,
+    host: baseUrl,
   };
 }
