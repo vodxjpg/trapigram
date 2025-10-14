@@ -19,7 +19,7 @@ function getBaseUrl(): string {
  * In non-production (Preview/Dev) we still disallow everything as a safety net.
  */
 export default function robots(): MetadataRoute.Robots {
-  const baseUrl = getBaseUrl();
+  const baseUrl = 'https://www.trapyfy.com'
   const isProd =
     process.env.VERCEL_ENV === 'production' || process.env.NODE_ENV === 'production';
 
