@@ -20,6 +20,7 @@ type WpRawPost = {
   id: number;
   slug: string;
   date: string;
+  link: string; // (WP permalink, e.g. https://cms.trapyfy.com/2025/10/my-post/)
   title: { rendered: string };
   excerpt: { rendered: string };
   content: { rendered: string };
@@ -35,8 +36,8 @@ export type Post = {
   contentHtml: string;
   featuredImageUrl?: string;
   authorName?: string;
+  wpUrl: string; // ← add this to carry the WordPress permalink
 };
-
 function pickFeaturedImage(raw: WpRawPost): string | undefined {
   const media = raw?._embedded?.["wp:featuredmedia"]?.[0];
   return media?.source_url || media?.media_details?.sizes?.large?.source_url || undefined;
@@ -55,9 +56,9 @@ function mapPost(raw: WpRawPost): Post {
     contentHtml: raw.content?.rendered ?? "",
     featuredImageUrl: pickFeaturedImage(raw),
     authorName: pickAuthorName(raw),
+    wpUrl: raw.link, // ← map it
   };
 }
-
 /** Join against FULL base (origin + optional sub-path). Always pass a relative path. */
 function wpJoin(relPath: string): string {
   const rel = relPath.replace(/^\/+/, ""); // preserve sub-path
@@ -142,6 +143,21 @@ export async function getLatestPostsSafe(limit = 50): Promise<Post[]> {
  *   GET /wp-json/rankmath/v1/getHead?objectID={id}&context=post
  * This reliably returns the post's meta title, description, and JSON-LD.
  */
+
+export async function getRankMathHeadForWpUrl(wpUrl: string): Promise<string | null> {
+  try {
+    const { data } = await wpFetch<{ success: boolean; head?: string }>(
+      `wp-json/rankmath/v1/getHead?url=${encodeURIComponent(wpUrl)}`,
+      { headers: { Accept: "application/json" } },
+      RANKMATH_REVALIDATE
+    );
+    return data?.head || null;
+  } catch (e) {
+    console.error("Rank Math getHead (wpUrl) failed:", e);
+    return null;
+  }
+}
+
 export async function getRankMathHeadByObjectId(
   objectId: number,
   context: "post" | "page" | "term" | "user" = "post"
@@ -173,7 +189,7 @@ export async function getRankMathHeadForSlug(slug: string): Promise<string | nul
     );
     return data?.head || null;
   } catch (e) {
-    console.error("Rank Math getHead by url failed:", e);
+    console.error("Rank Math getHead by url (slug) failed:", e);
     return null;
   }
 }

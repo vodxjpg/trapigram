@@ -3,23 +3,22 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import {
   getPostBySlug,
-  getRankMathHeadByObjectId,   // <-- use object ID
-  getRankMathHeadForSlug,      // <-- fallback
+  getRankMathHeadForWpUrl,  // ← use WP permalink first
+  getRankMathHeadForSlug,   // ← fallback
   parseRankMathHead,
 } from "@/lib/wp";
 import Toc from "./toc";
 
 type Props = { params: { slug: string } };
 
-export const dynamic = "force-static"; // ISR via fetch revalidate
+export const dynamic = "force-static";
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const post = await getPostBySlug(params.slug);
   if (!post) return {};
 
-  // Prefer objectID, fallback to slug URL if needed
   const headHtml =
-    (await getRankMathHeadByObjectId(post.id, "post")) ??
+    (await getRankMathHeadForWpUrl(post.wpUrl)) ??
     (await getRankMathHeadForSlug(params.slug));
 
   const parsed = parseRankMathHead(headHtml);
@@ -52,19 +51,14 @@ export default async function PostPage({ params }: Props) {
   if (!post) notFound();
 
   const headHtml =
-    (await getRankMathHeadByObjectId(post.id, "post")) ??
+    (await getRankMathHeadForWpUrl(post.wpUrl)) ??
     (await getRankMathHeadForSlug(params.slug));
   const parsed = parseRankMathHead(headHtml);
 
-  // Enhance the HTML: add ids to h2/h3 and extract a TOC
   const enhanced = buildTocAndHtml(post.contentHtml);
 
   return (
-    <article
-      className="mx-auto max-w-6xl px-4 py-10"
-      itemScope
-      itemType="https://schema.org/Article"
-    >
+    <article className="mx-auto max-w-6xl px-4 py-10" itemScope itemType="https://schema.org/Article">
       <header className="mx-auto max-w-3xl">
         <h1 className="text-3xl font-bold" itemProp="headline">
           {stripHtml(post.title)}
@@ -82,16 +76,9 @@ export default async function PostPage({ params }: Props) {
             </>
           ) : null}
         </p>
-
         {post.featuredImageUrl && (
           <figure className="mt-6">
-            <img
-              src={post.featuredImageUrl}
-              alt=""
-              className="w-full rounded-lg"
-              loading="lazy"
-              itemProp="image"
-            />
+            <img src={post.featuredImageUrl} alt="" className="w-full rounded-lg" loading="lazy" itemProp="image" />
           </figure>
         )}
       </header>
@@ -101,6 +88,7 @@ export default async function PostPage({ params }: Props) {
       ))}
 
       <div className="mt-10 grid gap-10 lg:grid-cols-[minmax(0,1fr)_320px]">
+        {/* Main content — use your CSS utilities */}
         <main
           id="main-content"
           className="article-body max-w-none"
