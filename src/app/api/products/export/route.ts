@@ -304,19 +304,14 @@ async function buildExportRows(products: any[]) {
         stock: p.stock,
         attributeSlug1: p.attributeSlug1 || "",
         attributeValues1: p.attributeValues1 || "",
-        attributeVariation1: p.attributeVariation1 || "",
         attributeSlug2: p.attributeSlug2 || "",
         attributeValues2: p.attributeValues2 || "",
-        attributeVariation2: p.attributeVariation2 || "",
         attributeSlug3: p.attributeSlug3 || "",
         attributeValues3: p.attributeValues3 || "",
-        attributeVariation3: p.attributeVariation3 || "",
         attributeSlug4: p.attributeSlug4 || "",
         attributeValues4: p.attributeValues4 || "",
-        attributeVariation4: p.attributeVariation4 || "",
         attributeSlug5: p.attributeSlug5 || "",
         attributeValues5: p.attributeValues5 || "",
-        attributeVariation5: p.attributeVariation5 || "",
     }));
 
     const ws = XLSX.utils.json_to_sheet(worksheetData);
