@@ -3,8 +3,8 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import {
   getPostBySlug,
-  getRankMathHeadForWpUrl,  // ← use WP permalink first
-  getRankMathHeadForSlug,   // ← fallback
+  getRankMathHeadForWpUrl, // prefer WP permalink
+  getRankMathHeadForSlug,  // fallback to frontend URL
   parseRankMathHead,
 } from "@/lib/wp";
 import Toc from "./toc";
@@ -12,7 +12,8 @@ import Toc from "./toc";
 type Props = { params: { slug: string } };
 
 export const dynamic = "force-static";
-export const revalidate = Number(process.env.RANKMATH_REVALIDATE ?? 60);
+export const revalidate = Number(process.env.RANKMATH_REVALIDATE ?? 60); // keep meta fresh
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const post = await getPostBySlug(params.slug);
   if (!post) return {};
@@ -35,7 +36,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description,
       type: "article",
       publishedTime: post.date,
-      images: post.featuredImageUrl ? [{ url: post.featuredImageUrl }] : undefined,
+      images: post.featuredImageUrl
+        ? [{ url: post.featuredImageUrl }]
+        : undefined,
     },
     twitter: {
       card: "summary_large_image",
@@ -55,10 +58,15 @@ export default async function PostPage({ params }: Props) {
     (await getRankMathHeadForSlug(params.slug));
   const parsed = parseRankMathHead(headHtml);
 
+  // inject ids into h2/h3 and collect ToC
   const enhanced = buildTocAndHtml(post.contentHtml);
 
   return (
-    <article className="mx-auto max-w-6xl px-4 py-10" itemScope itemType="https://schema.org/Article">
+    <article
+      className="mx-auto max-w-6xl px-4 py-10"
+      itemScope
+      itemType="https://schema.org/Article"
+    >
       <header className="mx-auto max-w-3xl">
         <h1 className="text-3xl font-bold" itemProp="headline">
           {stripHtml(post.title)}
@@ -76,25 +84,39 @@ export default async function PostPage({ params }: Props) {
             </>
           ) : null}
         </p>
+
         {post.featuredImageUrl && (
           <figure className="mt-6">
-            <img src={post.featuredImageUrl} alt="" className="w-full rounded-lg" loading="lazy" itemProp="image" />
+            <img
+              src={post.featuredImageUrl}
+              alt=""
+              className="w-full rounded-lg"
+              loading="lazy"
+              itemProp="image"
+            />
           </figure>
         )}
       </header>
 
+      {/* Rank Math JSON-LD in body is fine */}
       {parsed.jsonLd.map((json, i) => (
-        <script key={i} type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />
+        <script
+          key={i}
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: json }}
+        />
       ))}
 
       <div className="mt-10 grid gap-10 lg:grid-cols-[minmax(0,1fr)_320px]">
-        {/* Main content — use your CSS utilities */}
+        {/* Main content (styled by globals.css .article-body rules) */}
         <main
           id="main-content"
           className="article-body max-w-none"
           itemProp="articleBody"
           dangerouslySetInnerHTML={{ __html: enhanced.html }}
         />
+
+        {/* Sticky ToC */}
         <aside className="hidden lg:block">
           <Toc items={enhanced.toc} />
         </aside>
@@ -103,27 +125,22 @@ export default async function PostPage({ params }: Props) {
   );
 }
 
-/* ───────────────────── TOC builder (server) ─────────────────────
-   - Finds <h2>/<h3>, injects stable IDs (if missing), returns TOC items.
-   - Keeps it dependency-free with light parsing for headings only.
------------------------------------------------------------------- */
-
+/* ───────────────────── TOC builder (server) ───────────────────── */
 type TocItem = { id: string; text: string; level: 2 | 3 };
 
 function buildTocAndHtml(html: string): { html: string; toc: TocItem[] } {
   const toc: TocItem[] = [];
-  const used = new Map<string, number>(); // to uniquify duplicate slugs
-
+  const used = new Map<string, number>();
   const headingRe = /<h([23])([^>]*)>([\s\S]*?)<\/h\1>/gi;
 
   const transformed = html.replace(headingRe, (m, levelStr, rawAttrs, inner) => {
     const level = Number(levelStr) as 2 | 3;
 
-    // If there's already an id, keep it
+    // keep existing id if present
     const idMatch = rawAttrs.match(/\sid=["']([^"']+)["']/i);
     let id = idMatch?.[1];
 
-    // Extract plain text for slug and TOC text
+    // text for slug + ToC
     const text = stripHtml(inner).trim();
 
     if (!id) {
@@ -131,15 +148,11 @@ function buildTocAndHtml(html: string): { html: string; toc: TocItem[] } {
       const count = used.get(base) ?? 0;
       used.set(base, count + 1);
       id = count === 0 ? base : `${base}-${count + 1}`;
-      // add id to attrs
       rawAttrs = (rawAttrs || "").trim();
       rawAttrs = rawAttrs ? ` id="${id}" ${rawAttrs}` : ` id="${id}"`;
     }
 
-    // Collect TOC
     if (text) toc.push({ id, text, level });
-
-    // Return the heading with id and the original content
     return `<h${level}${rawAttrs}>${inner}</h${level}>`;
   });
 
@@ -147,7 +160,6 @@ function buildTocAndHtml(html: string): { html: string; toc: TocItem[] } {
 }
 
 /* ───────────────────── Utils ───────────────────── */
-
 function stripHtml(input: string): string {
   return input.replace(/<[^>]*>/g, "");
 }
@@ -159,7 +171,7 @@ function slugify(text: string): string {
   return text
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "") // accents
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9\s-]/g, "")
     .trim()
     .replace(/\s+/g, "-")

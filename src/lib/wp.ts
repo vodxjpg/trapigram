@@ -20,7 +20,7 @@ type WpRawPost = {
   id: number;
   slug: string;
   date: string;
-  link: string; // (WP permalink, e.g. https://cms.trapyfy.com/2025/10/my-post/)
+  link: string; // WP permalink (e.g. https://cms.trapyfy.com/2025/10/my-post/)
   title: { rendered: string };
   excerpt: { rendered: string };
   content: { rendered: string };
@@ -36,8 +36,9 @@ export type Post = {
   contentHtml: string;
   featuredImageUrl?: string;
   authorName?: string;
-  wpUrl: string; // ← add this to carry the WordPress permalink
+  wpUrl: string; // carry the WP permalink
 };
+
 function pickFeaturedImage(raw: WpRawPost): string | undefined {
   const media = raw?._embedded?.["wp:featuredmedia"]?.[0];
   return media?.source_url || media?.media_details?.sizes?.large?.source_url || undefined;
@@ -56,12 +57,13 @@ function mapPost(raw: WpRawPost): Post {
     contentHtml: raw.content?.rendered ?? "",
     featuredImageUrl: pickFeaturedImage(raw),
     authorName: pickAuthorName(raw),
-    wpUrl: raw.link, // ← map it
+    wpUrl: raw.link, // map permalink
   };
 }
+
 /** Join against FULL base (origin + optional sub-path). Always pass a relative path. */
 function wpJoin(relPath: string): string {
-  const rel = relPath.replace(/^\/+/, ""); // preserve sub-path
+  const rel = relPath.replace(/^\/+/, "");
   return `${WP_BASE}/${rel}`;
 }
 
@@ -138,12 +140,8 @@ export async function getLatestPostsSafe(limit = 50): Promise<Post[]> {
 }
 
 /* ----------------------- Rank Math (Headless) ------------------------ */
-/**
- * Prefer OBJECT-BASED endpoint so Rank Math doesn't need to guess from your Next URL:
- *   GET /wp-json/rankmath/v1/getHead?objectID={id}&context=post
- * This reliably returns the post's meta title, description, and JSON-LD.
- */
 
+/** Use WP permalink directly (works with Headless CMS enabled). */
 export async function getRankMathHeadForWpUrl(wpUrl: string): Promise<string | null> {
   try {
     const { data } = await wpFetch<{ success: boolean; head?: string }>(
@@ -158,26 +156,7 @@ export async function getRankMathHeadForWpUrl(wpUrl: string): Promise<string | n
   }
 }
 
-export async function getRankMathHeadByObjectId(
-  objectId: number,
-  context: "post" | "page" | "term" | "user" = "post"
-): Promise<string | null> {
-  try {
-    const { data } = await wpFetch<{ success: boolean; head?: string }>(
-      `wp-json/rankmath/v1/getHead?objectID=${objectId}&context=${context}`,
-      { headers: { Accept: "application/json" } },
-      RANKMATH_REVALIDATE
-    );
-    return data?.head || null;
-  } catch (e) {
-    console.error("Rank Math getHead by objectID failed:", e);
-    return null;
-  }
-}
-
-/**
- * URL-based fallback (works if Rank Math is configured to recognize your frontend URLs).
- */
+/** URL-based fallback (only if Rank Math recognizes your frontend URLs). */
 export async function getRankMathHeadForSlug(slug: string): Promise<string | null> {
   const site = (process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/+$/, "");
   if (!site) return null;
@@ -205,7 +184,6 @@ export function parseRankMathHead(headHtml: string | null): {
   if (!headHtml) return { jsonLd: [] };
 
   const getMeta = (nameOrProp: string, attr: "name" | "property" = "name") => {
-    // Match either order of attributes: attr then content, or content then attr
     const re = new RegExp(
       `<meta\\s+[^>]*${attr}=["']${nameOrProp}["'][^>]*content=["']([^"']*)["'][^>]*>|` +
         `<meta\\s+[^>]*content=["']([^"']*)["'][^>]*${attr}=["']${nameOrProp}["'][^>]*>`,
@@ -215,19 +193,19 @@ export function parseRankMathHead(headHtml: string | null): {
     return (m?.[1] || m?.[2] || "").trim() || undefined;
   };
 
-  // Primary: <title>, Fallbacks: og:title → twitter:title → JSON-LD
+  // Title fallback order
   let title =
     headHtml.match(/<title>([\s\S]*?)<\/title>/i)?.[1]?.trim() ||
     getMeta("og:title", "property") ||
     getMeta("twitter:title", "name");
 
-  // Primary: <meta name="description">, Fallbacks: og:description → twitter:description → JSON-LD
+  // Description fallback order
   let description =
     getMeta("description", "name") ||
     getMeta("og:description", "property") ||
     getMeta("twitter:description", "name");
 
-  // Collect JSON-LD (raw strings)
+  // Collect JSON-LD
   const jsonLd: string[] = [];
   const scriptRegex =
     /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
@@ -237,7 +215,7 @@ export function parseRankMathHead(headHtml: string | null): {
     if (raw) jsonLd.push(raw);
   }
 
-  // Final fallback: try to read headline/name/description from JSON-LD graph
+  // Final fallback: read headline/name/description from JSON-LD graph
   if ((!title || !description) && jsonLd.length) {
     for (const raw of jsonLd) {
       try {
