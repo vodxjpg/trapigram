@@ -39,6 +39,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@react-pdf/renderer": "^4.3.0",
     "@tabler/icons-react": "^3.31.0",
+    "@tailwindcss/typography": "^0.5.19",
     "@tanstack/react-table": "^8.21.2",
     "@types/jsonwebtoken": "^9.0.10",
     "@upstash/redis": "^1.35.1",

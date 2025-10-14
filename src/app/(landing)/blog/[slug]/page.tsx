@@ -111,11 +111,17 @@ export default async function PostPage({ params }: Props) {
         {/* Main content */}
         <main
           id="main-content"
-          className="prose prose-neutral max-w-none dark:prose-invert"
+          className="
+            prose prose-neutral max-w-none dark:prose-invert
+            prose-headings:font-semibold prose-headings:tracking-tight prose-headings:scroll-mt-24
+            prose-h2:text-2xl md:prose-h2:text-3xl prose-h2:mt-10 prose-h2:mb-4
+            prose-h3:text-xl md:prose-h3:text-2xl prose-h3:mt-8 prose-h3:mb-3
+            prose-p:my-4 prose-li:my-1
+          "
           itemProp="articleBody"
-          // enhanced.html already has h2/h3 ids injected
           dangerouslySetInnerHTML={{ __html: enhanced.html }}
         />
+
 
         {/* Sidebar Table of Contents */}
         <aside className="hidden lg:block">
