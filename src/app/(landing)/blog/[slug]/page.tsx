@@ -1,23 +1,26 @@
-// app/blog/[slug]/page.tsx
+// app/(landing)/blog/[slug]/page.tsx
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import {
   getPostBySlug,
-  getRankMathHeadForSlug,
+  getRankMathHeadByObjectId,   // <-- use object ID
+  getRankMathHeadForSlug,      // <-- fallback
   parseRankMathHead,
 } from "@/lib/wp";
-import Toc from "./toc"; // client TOC
+import Toc from "./toc";
 
 type Props = { params: { slug: string } };
 
 export const dynamic = "force-static"; // ISR via fetch revalidate
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const [post, headHtml] = await Promise.all([
-    getPostBySlug(params.slug),
-    getRankMathHeadForSlug(params.slug),
-  ]);
+  const post = await getPostBySlug(params.slug);
   if (!post) return {};
+
+  // Prefer objectID, fallback to slug URL if needed
+  const headHtml =
+    (await getRankMathHeadByObjectId(post.id, "post")) ??
+    (await getRankMathHeadForSlug(params.slug));
 
   const parsed = parseRankMathHead(headHtml);
   const title = parsed.title ?? stripHtml(post.title);
@@ -33,9 +36,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description,
       type: "article",
       publishedTime: post.date,
-      images: post.featuredImageUrl
-        ? [{ url: post.featuredImageUrl }]
-        : undefined,
+      images: post.featuredImageUrl ? [{ url: post.featuredImageUrl }] : undefined,
     },
     twitter: {
       card: "summary_large_image",
@@ -47,19 +48,18 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function PostPage({ params }: Props) {
-  const [post, headHtml] = await Promise.all([
-    getPostBySlug(params.slug),
-    getRankMathHeadForSlug(params.slug),
-  ]);
+  const post = await getPostBySlug(params.slug);
   if (!post) notFound();
 
+  const headHtml =
+    (await getRankMathHeadByObjectId(post.id, "post")) ??
+    (await getRankMathHeadForSlug(params.slug));
   const parsed = parseRankMathHead(headHtml);
 
   // Enhance the HTML: add ids to h2/h3 and extract a TOC
   const enhanced = buildTocAndHtml(post.contentHtml);
 
   return (
-    // Microdata is optional since Rank Math injects JSON-LD, but harmless:
     <article
       className="mx-auto max-w-6xl px-4 py-10"
       itemScope
@@ -70,7 +70,6 @@ export default async function PostPage({ params }: Props) {
           {stripHtml(post.title)}
         </h1>
         <p className="mt-2 text-sm text-gray-600">
-          {/* NOTE: correct semantic tag is <time>, not <date> */}
           <time dateTime={new Date(post.date).toISOString()} itemProp="datePublished">
             {formatDate(post.date)}
           </time>
@@ -97,33 +96,17 @@ export default async function PostPage({ params }: Props) {
         )}
       </header>
 
-      {/* Inject Rank Math JSON-LD schema (safe to be in body) */}
       {parsed.jsonLd.map((json, i) => (
-        <script
-          key={i}
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: json }}
-        />
+        <script key={i} type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />
       ))}
 
-      {/* Layout: content + sticky ToC */}
       <div className="mt-10 grid gap-10 lg:grid-cols-[minmax(0,1fr)_320px]">
-        {/* Main content */}
         <main
           id="main-content"
-          className="
-            prose prose-neutral max-w-none dark:prose-invert
-            prose-headings:font-semibold prose-headings:tracking-tight prose-headings:scroll-mt-24
-            prose-h2:text-2xl md:prose-h2:text-3xl prose-h2:mt-10 prose-h2:mb-4
-            prose-h3:text-xl md:prose-h3:text-2xl prose-h3:mt-8 prose-h3:mb-3
-            prose-p:my-4 prose-li:my-1
-          "
+          className="article-body max-w-none"
           itemProp="articleBody"
           dangerouslySetInnerHTML={{ __html: enhanced.html }}
         />
-
-
-        {/* Sidebar Table of Contents */}
         <aside className="hidden lg:block">
           <Toc items={enhanced.toc} />
         </aside>
