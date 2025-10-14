@@ -13,7 +13,7 @@ const WP_BASE = (RAW.startsWith("http") ? RAW : `https://${RAW}`).replace(/\/+$/
 
 /** General revalidate (ISR) used by WP REST fetches */
 const REVALIDATE_SECONDS = Number(process.env.WP_DEFAULT_REVALIDATE ?? 300);
-/** Shorter cache just for Rank Math head so SEO changes reflect quickly */
+/** Short cache for Rank Math head so SEO changes reflect quickly */
 const RANKMATH_REVALIDATE = Number(process.env.RANKMATH_REVALIDATE ?? 60);
 
 type WpRawPost = {
@@ -57,7 +57,7 @@ function mapPost(raw: WpRawPost): Post {
     contentHtml: raw.content?.rendered ?? "",
     featuredImageUrl: pickFeaturedImage(raw),
     authorName: pickAuthorName(raw),
-    wpUrl: raw.link, // map permalink
+    wpUrl: raw.link,
   };
 }
 
@@ -173,39 +173,108 @@ export async function getRankMathHeadForSlug(slug: string): Promise<string | nul
   }
 }
 
-/** Extract title, description, and JSON-LD from Rank Math head HTML.
- * Falls back to og:/twitter: metas and finally JSON-LD graph.
- */
-export function parseRankMathHead(headHtml: string | null): {
+/* -------------------- Rank Math head: parsing -------------------- */
+
+export type ParsedRankMathHead = {
   title?: string;
   description?: string;
-  jsonLd: string[];
-} {
+  robots?: string;
+  canonical?: string;
+  og?: {
+    title?: string;
+    description?: string;
+    url?: string;
+    type?: string;
+    siteName?: string;
+    updatedTime?: string;
+    publishedTime?: string;
+    modifiedTime?: string;
+    section?: string;
+    image?: {
+      url?: string;
+      secureUrl?: string;
+      width?: number;
+      height?: number;
+      alt?: string;
+      type?: string;
+    };
+  };
+  twitter?: {
+    card?: string;
+    title?: string;
+    description?: string;
+    image?: string;
+  };
+  jsonLd: string[]; // raw JSON-LD strings
+};
+
+/** Extracts title/description/robots/canonical + OG/Twitter + JSON-LD */
+export function parseRankMathHead(headHtml: string | null): ParsedRankMathHead {
   if (!headHtml) return { jsonLd: [] };
 
   const getMeta = (nameOrProp: string, attr: "name" | "property" = "name") => {
+    // supports either attribute order
     const re = new RegExp(
       `<meta\\s+[^>]*${attr}=["']${nameOrProp}["'][^>]*content=["']([^"']*)["'][^>]*>|` +
-        `<meta\\s+[^>]*content=["']([^"']*)["'][^>]*${attr}=["']${nameOrProp}["'][^>]*>`,
+      `<meta\\s+[^>]*content=["']([^"']*)["'][^>]*${attr}=["']${nameOrProp}["'][^>]*>`,
       "i"
     );
     const m = headHtml.match(re);
     return (m?.[1] || m?.[2] || "").trim() || undefined;
   };
+  const getLink = (relValue: string) => {
+    const re = new RegExp(
+      `<link\\s+[^>]*rel=["']${relValue}["'][^>]*href=["']([^"']*)["'][^>]*>`,
+      "i"
+    );
+    return headHtml.match(re)?.[1]?.trim();
+  };
 
-  // Title fallback order
+  // Basics
   let title =
     headHtml.match(/<title>([\s\S]*?)<\/title>/i)?.[1]?.trim() ||
     getMeta("og:title", "property") ||
     getMeta("twitter:title", "name");
 
-  // Description fallback order
   let description =
     getMeta("description", "name") ||
     getMeta("og:description", "property") ||
     getMeta("twitter:description", "name");
 
-  // Collect JSON-LD
+  const robots = getMeta("robots", "name");
+  const canonical = getLink("canonical");
+
+  // OG
+  const ogImage = {
+    url: getMeta("og:image", "property"),
+    secureUrl: getMeta("og:image:secure_url", "property"),
+    width: Number(getMeta("og:image:width", "property") || 0) || undefined,
+    height: Number(getMeta("og:image:height", "property") || 0) || undefined,
+    alt: getMeta("og:image:alt", "property"),
+    type: getMeta("og:image:type", "property"),
+  };
+  const og = {
+    title: getMeta("og:title", "property"),
+    description: getMeta("og:description", "property"),
+    url: getMeta("og:url", "property"),
+    type: getMeta("og:type", "property"),
+    siteName: getMeta("og:site_name", "property"),
+    updatedTime: getMeta("og:updated_time", "property"),
+    publishedTime: getMeta("article:published_time", "property"),
+    modifiedTime: getMeta("article:modified_time", "property"),
+    section: getMeta("article:section", "property"),
+    image: ogImage.url ? ogImage : undefined,
+  };
+
+  // Twitter
+  const twitter = {
+    card: getMeta("twitter:card", "name"),
+    title: getMeta("twitter:title", "name"),
+    description: getMeta("twitter:description", "name"),
+    image: getMeta("twitter:image", "name"),
+  };
+
+  // JSON-LD
   const jsonLd: string[] = [];
   const scriptRegex =
     /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
@@ -215,7 +284,7 @@ export function parseRankMathHead(headHtml: string | null): {
     if (raw) jsonLd.push(raw);
   }
 
-  // Final fallback: read headline/name/description from JSON-LD graph
+  // Fallback to JSON-LD for title/description if still missing
   if ((!title || !description) && jsonLd.length) {
     for (const raw of jsonLd) {
       try {
@@ -237,5 +306,5 @@ export function parseRankMathHead(headHtml: string | null): {
     }
   }
 
-  return { title, description, jsonLd };
+  return { title, description, robots, canonical, og, twitter, jsonLd };
 }

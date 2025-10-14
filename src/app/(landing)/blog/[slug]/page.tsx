@@ -3,46 +3,71 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import {
   getPostBySlug,
-  getRankMathHeadForWpUrl, // prefer WP permalink
-  getRankMathHeadForSlug,  // fallback (frontend URL)
+  getRankMathHeadForWpUrl,
+  getRankMathHeadForSlug,
   parseRankMathHead,
 } from "@/lib/wp";
 import Toc from "./toc";
 
 type Props = { params: { slug: string } };
 
-export const dynamic = "force-static"; // keep ISR via fetch caches
+export const dynamic = "force-static"; // ISR via fetch caching
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const post = await getPostBySlug(params.slug);
   if (!post) return {};
+
+  const site = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.trapyfy.com").replace(/\/+$/, "");
+  const canonicalFrontend = `${site}/blog/${post.slug}`;
 
   const headHtml =
     (await getRankMathHeadForWpUrl(post.wpUrl)) ??
     (await getRankMathHeadForSlug(params.slug));
 
   const parsed = parseRankMathHead(headHtml);
+
   const title = parsed.title ?? stripHtml(post.title);
   const description =
     parsed.description ?? summarize(stripHtml(post.excerptHtml || post.title));
 
+  // Prefer RM og image if present, else featured image
+  const ogImageUrl = parsed.og?.image?.url || post.featuredImageUrl;
+  const ogImages = ogImageUrl
+    ? [
+        {
+          url: ogImageUrl,
+          width: parsed.og?.image?.width,
+          height: parsed.og?.image?.height,
+          alt: parsed.og?.image?.alt,
+        },
+      ]
+    : undefined;
+
+  // Build "other" metas to include robots exactly as Rank Math provided
+  const other: Record<string, string> = {};
+  if (parsed.robots) other["robots"] = parsed.robots;
+
   return {
     title,
     description,
-    alternates: { canonical: `/blog/${post.slug}` },
+    alternates: { canonical: canonicalFrontend }, // keep canonical on the frontend domain
     openGraph: {
-      title,
-      description,
-      type: "article",
-      publishedTime: post.date,
-      images: post.featuredImageUrl ? [{ url: post.featuredImageUrl }] : undefined,
+      title: parsed.og?.title || title,
+      description: parsed.og?.description || description,
+      url: canonicalFrontend,
+      type: parsed.og?.type || "article",
+      siteName: parsed.og?.siteName,
+      publishedTime: parsed.og?.publishedTime || post.date,
+      modifiedTime: parsed.og?.modifiedTime,
+      images: ogImages,
     },
     twitter: {
-      card: "summary_large_image",
-      title,
-      description,
-      images: post.featuredImageUrl ? [post.featuredImageUrl] : undefined,
+      card: (parsed.twitter?.card as any) || "summary_large_image",
+      title: parsed.twitter?.title || title,
+      description: parsed.twitter?.description || description,
+      images: ogImageUrl ? [ogImageUrl] : undefined,
     },
+    other,
   };
 }
 
@@ -55,6 +80,7 @@ export default async function PostPage({ params }: Props) {
     (await getRankMathHeadForSlug(params.slug));
   const parsed = parseRankMathHead(headHtml);
 
+  // add ids to h2/h3 and collect ToC
   const enhanced = buildTocAndHtml(post.contentHtml);
 
   return (
@@ -94,7 +120,7 @@ export default async function PostPage({ params }: Props) {
         )}
       </header>
 
-      {/* Inject Rank Math JSON-LD */}
+      {/* Inject ALL Rank Math JSON-LD schemas */}
       {parsed.jsonLd.map((json, i) => (
         <script key={i} type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />
       ))}
@@ -114,7 +140,7 @@ export default async function PostPage({ params }: Props) {
   );
 }
 
-/* TOC builder + utils (unchanged) */
+/* ───────────────────── TOC builder + utils ───────────────────── */
 type TocItem = { id: string; text: string; level: 2 | 3 };
 
 function buildTocAndHtml(html: string): { html: string; toc: TocItem[] } {
