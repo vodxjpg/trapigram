@@ -1,59 +1,47 @@
 import { getLatestPostsSafe } from "@/lib/wp";
 
-// Rebuild the sitemap every 10 minutes (literal number required)
-export const revalidate = 600;
+export const revalidate = 600; // 10m
 
-function escapeXml(s: string) {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+function esc(s: string) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+          .replace(/"/g,"&quot;").replace(/'/g,"&apos;");
 }
 
 export async function GET() {
-  const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.trapyfy.com")
-    .replace(/\/+$/, "");
+  const base = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.trapyfy.com").replace(/\/+$/,"");
 
-  const items: { loc: string; lastmod?: string }[] = [];
+  const rows: string[] = [];
+  rows.push(
+`<url>
+  <loc>${esc(`${base}/`)}</loc>
+  <lastmod>${new Date().toISOString()}</lastmod>
+</url>`
+  );
+  rows.push(
+`<url>
+  <loc>${esc(`${base}/blog`)}</loc>
+  <lastmod>${new Date().toISOString()}</lastmod>
+</url>`
+  );
 
-  // Landing
-  items.push({ loc: `${baseUrl}/`, lastmod: new Date().toISOString() });
-
-  // Blog index (optional — include if you want)
-  items.push({ loc: `${baseUrl}/blog`, lastmod: new Date().toISOString() });
-
-  // Posts
   const posts = await getLatestPostsSafe(200);
   for (const p of posts) {
-    items.push({
-      loc: `${baseUrl}/blog/${p.slug}`,
-      lastmod: new Date(p.date).toISOString(),
-    });
-  }
-
-  const urlsXml = items
-    .map(
-      (u) =>
-        `<url>
-  <loc>${escapeXml(u.loc)}</loc>${
-    u.lastmod ? `\n  <lastmod>${escapeXml(u.lastmod)}</lastmod>` : ""
-  }
+    rows.push(
+`<url>
+  <loc>${esc(`${base}/blog/${p.slug}`)}</loc>
+  <lastmod>${esc(new Date(p.date).toISOString())}</lastmod>
 </url>`
-    )
-    .join("\n");
+    );
+  }
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urlsXml}
+${rows.join("\n")}
 </urlset>`;
-
   return new Response(xml, {
     headers: {
       "Content-Type": "application/xml; charset=utf-8",
-      // Cache at the edge; stale-while-revalidate is friendly for crawlers
       "Cache-Control": "public, s-maxage=600, stale-while-revalidate=86400",
     },
   });
