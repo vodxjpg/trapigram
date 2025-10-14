@@ -59,7 +59,6 @@ async function fetchListPage(
 /** Build the flat list consumed by XLSX from the list of products */
 async function buildExportRows(products: any[]) {
     const newProductList: any[] = [];
-    //console.log(products)
     for (const prt of products) {
 
         if (prt.productType === "simple") {
@@ -206,18 +205,22 @@ async function buildExportRows(products: any[]) {
             }
 
             newProductList.push({ ...newProduct })
-
-
         }
         const variations = prt.variations
 
         for (const vart of variations || []) {
+            console.log(vart)
 
             const newVariation: any = {};
 
             newVariation.sku = vart.sku
             newVariation.productType = "variation"
-            newVariation.parent = prt.id
+
+            const getSku = `SELECT sku FROM "productVariations" WHERE id = '${vart.id}'`
+            const skuResult = await pool.query(getSku)
+            const sku = skuResult.rows[0].sku
+
+            newVariation.parent = sku
 
             const newPrices = Object.entries(vart.prices).reduce((acc, [country, types]) => {
                 for (const [type, value] of Object.entries(types)) {
