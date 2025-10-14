@@ -216,7 +216,10 @@ async function buildExportRows(products: any[]) {
             newVariation.sku = vart.sku
             newVariation.productType = "variation"
 
-            const getSku = `SELECT sku FROM "productVariations" WHERE id = '${vart.id}'`
+            const getSku = `SELECT p.sku
+                FROM "productVariations" pv
+                JOIN products p ON p.id = pv."productId"
+                WHERE pv.id = '${vart.id}'`
             const skuResult = await pool.query(getSku)
             const sku = skuResult.rows[0].sku
 
