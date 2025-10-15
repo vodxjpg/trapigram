@@ -9,7 +9,6 @@ import { CheckoutDialog } from "./checkout-dialog"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { StoreRegisterSelector } from "./store-register-selector"
-import { Button } from "@/components/ui/button"
 import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 
 type Category = { id: string; name: string }
@@ -68,6 +67,38 @@ export function POSInterface() {
     const r = localStorage.getItem(LS_KEYS.OUTLET)
     if (s) setStoreId(s)
     if (r) setOutletId(r)
+  }, [])
+
+  // Try restoring a previously selected customer by id
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const id = localStorage.getItem(LS_KEYS.CLIENT)
+    if (!id) return
+    let ignore = false
+    ;(async () => {
+      try {
+        // Prefer a direct endpoint if available
+        const res = await fetch(`/api/clients/${id}`)
+        if (ignore) return
+        if (res.ok) {
+          const j = await res.json()
+          const c = j.client ?? j // tolerate either shape
+          if (c?.id) {
+            setSelectedCustomer({
+              id: c.id,
+              name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.username || "Customer",
+              email: c.email ?? null,
+              phone: c.phoneNumber ?? null,
+            })
+            return
+          }
+        }
+        // Fallback: ensure Walk-in below will run
+      } catch {
+        // ignore, we’ll fall back to Walk-in
+      }
+    })()
+    return () => { ignore = true }
   }, [])
 
   // First-run: require store→outlet selection
@@ -134,7 +165,7 @@ export function POSInterface() {
     return () => { ignore = true }
   }, [debouncedSearch])
 
-  // DEFAULT: ensure Walk-in selected/created
+  // DEFAULT: ensure Walk-in exists & selected
   useEffect(() => {
     let ignore = false
     const ensureWalkIn = async () => {
@@ -160,13 +191,23 @@ export function POSInterface() {
           }
         }
         if (!picked) {
-          // create a dedicated walk-in with stable username
+          // create a dedicated walk-in with required lastName
           const r = await fetch("/api/clients", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username: `walkin-${Date.now()}`, firstName: "Walk-in" }),
+            body: JSON.stringify({
+              username: `walkin-${Date.now()}`,
+              firstName: "Walk-in",
+              lastName: "Customer",      // ✅ satisfies NOT NULL
+              email: null,
+              phoneNumber: null,
+              country: null,
+            }),
           })
-          if (!r.ok) throw new Error("Failed to create walk-in client.")
+          if (!r.ok) {
+            const e = await r.json().catch(() => ({}))
+            throw new Error(e?.error || "Failed to create walk-in client.")
+          }
           const c = await r.json()
           picked = { id: c.id, name: "Walk-in", email: null, phone: null }
         }
@@ -181,7 +222,7 @@ export function POSInterface() {
     ensureWalkIn()
     return () => { ignore = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [selectedCustomer])
 
   const filteredProducts = useMemo(() => {
     const q = debouncedSearch.toLowerCase()
@@ -368,7 +409,6 @@ export function POSInterface() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Switch outlet/shop anytime */}
             <StoreRegisterSelector
               storeId={storeId}
               outletId={outletId}
@@ -399,7 +439,7 @@ export function POSInterface() {
             <ProductGrid products={filteredProducts} onAddToCart={addToCart} />
           </div>
 
-          {/* Cart Section */}
+        {/* Cart Section */}
           <Cart
             lines={lines}
             onInc={inc}

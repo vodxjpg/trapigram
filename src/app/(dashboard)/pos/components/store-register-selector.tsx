@@ -1,4 +1,3 @@
-// src/app/(dashboard)/pos/components/store-register-selector.tsx
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
@@ -20,7 +19,7 @@ import {
 import { Building2, MonitorDot, Store } from "lucide-react"
 
 type Store = { id: string; name: string }
-type Outlet = { id: string; name: string; storeId: string }
+type Outlet = { id: string; name: string; storeId: string; active?: boolean }
 
 type Props = {
   storeId: string | null
@@ -74,13 +73,14 @@ export function StoreRegisterSelector({
         const res = await fetch(`/api/pos/registers?storeId=${encodeURIComponent(selStore)}`)
         const json = await res.json()
 
-        // Map to { id, name, storeId } and hide inactive registers
+        // Map and hide inactive; tolerate `name` or legacy `label`
         const mapped: Outlet[] = (json.registers || [])
-          .filter((r: any) => r.active !== false) // safety: default treat missing as active
+          .filter((r: any) => r.active !== false)
           .map((x: any) => ({
             id: x.id,
-            name: x.name, // 👈 use `name` (NOT `label`)
+            name: x.name ?? x.label ?? "Register",
             storeId: x.storeId,
+            active: x.active,
           }))
 
         if (!ignore) setOutlets(mapped)
@@ -93,7 +93,6 @@ export function StoreRegisterSelector({
     }
   }, [selStore])
 
-  // Only show outlets for the selected store
   const outletsForStore = useMemo(
     () => outlets.filter((r) => r.storeId === selStore),
     [outlets, selStore]
@@ -114,8 +113,11 @@ export function StoreRegisterSelector({
 
   const currentStoreName =
     stores.find((s) => s.id === storeId)?.name || "Select store"
+  // Show name for the selected outlet (prefer the currently loaded store’s outlets)
   const currentOutletName =
-    outlets.find((r) => r.id === outletId)?.name || "Select outlet"
+    outletsForStore.find((r) => r.id === outletId)?.name ||
+    outlets.find((r) => r.id === outletId)?.name ||
+    "Select outlet"
 
   const canSave = Boolean(selStore && selOutlet)
 
@@ -123,10 +125,7 @@ export function StoreRegisterSelector({
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        if (forceOpen && o === false && !(selStore && selOutlet)) {
-          // Block closing until both are selected
-          return
-        }
+        if (forceOpen && o === false && !(selStore && selOutlet)) return
         setOpen(o)
       }}
     >

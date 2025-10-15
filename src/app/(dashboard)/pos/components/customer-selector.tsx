@@ -106,7 +106,8 @@ export function CustomerSelector({ selectedCustomer, onSelectCustomer }: Custome
       const body = {
         username: newCustomer.username,
         firstName: newCustomer.firstName,
-        lastName: newCustomer.lastName || null,
+        // ✅ DB requires lastName NOT NULL; default if blank
+        lastName: newCustomer.lastName?.trim() ? newCustomer.lastName : "Customer",
         email: newCustomer.email || null,
         phoneNumber: newCustomer.phoneNumber || null,
         country: newCustomer.country || null,
@@ -152,7 +153,7 @@ export function CustomerSelector({ selectedCustomer, onSelectCustomer }: Custome
       const body = {
         username: `walkin-${Date.now()}`,
         firstName: "Walk-in",
-        lastName: null,
+        lastName: "Customer",  // ✅ satisfy NOT NULL
         email: null,
         phoneNumber: null,
         country: null,
