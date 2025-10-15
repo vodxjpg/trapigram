@@ -1,3 +1,4 @@
+// src/app/(dashboard)/pos/components/checkout-dialog.tsx
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
@@ -6,16 +7,21 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card } from "@/components/ui/card"
-import { CreditCard, Banknote, Check } from "lucide-react"
+import { Check } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import {
+  AlertDialog, AlertDialogAction, AlertDialogContent,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
+} from "@/components/ui/alert-dialog"
 
-type PaymentMethod = "card" | "cash"
-
-type Payment = {
-  method: PaymentMethod
-  amount: number
+type PaymentMethodRow = {
+  id: string
+  name: string
+  description?: string | null
+  instructions?: string | null
 }
+
+type Payment = { methodId: string; amount: number }
 
 type CheckoutDialogProps = {
   open: boolean
@@ -27,26 +33,32 @@ type CheckoutDialogProps = {
   onComplete: (orderId: string) => void
 }
 
-export function CheckoutDialog({
-  open,
-  onOpenChange,
-  totalEstimate,
-  cartId,
-  clientId,
-  registerId,
-  onComplete,
-}: CheckoutDialogProps) {
+export function CheckoutDialog(props: CheckoutDialogProps) {
+  const { open, onOpenChange, totalEstimate, cartId, clientId, registerId, onComplete } = props
+
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([])
+  const [currentMethodId, setCurrentMethodId] = useState<string | null>(null)
+
   const [payments, setPayments] = useState<Payment[]>([])
-  const [currentMethod, setCurrentMethod] = useState<PaymentMethod>("card")
   const [currentAmount, setCurrentAmount] = useState("")
   const [cashReceived, setCashReceived] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const totalPaid = useMemo(() => payments.reduce((sum, p) => sum + p.amount, 0), [payments])
+  const totalPaid = useMemo(() => payments.reduce((s, p) => s + p.amount, 0), [payments])
   const remaining = Math.max(0, totalEstimate - totalPaid)
-  const change = currentMethod === "cash" && cashReceived ? Math.max(0, Number.parseFloat(cashReceived) - (Number.parseFloat(currentAmount || "0"))) : 0
 
+  // Heuristic: show cash-received UI if selected method name contains "cash"
+  const currentIsCash = useMemo(() => {
+    const m = paymentMethods.find(pm => pm.id === currentMethodId)
+    return (m?.name || "").toLowerCase().includes("cash")
+  }, [paymentMethods, currentMethodId])
+
+  const change = currentIsCash && cashReceived
+    ? Math.max(0, Number.parseFloat(cashReceived) - (Number.parseFloat(currentAmount || "0")))
+    : 0
+
+  // Reset on close
   useEffect(() => {
     if (!open) {
       setPayments([])
@@ -54,13 +66,40 @@ export function CheckoutDialog({
       setCashReceived("")
       setBusy(false)
       setError(null)
+      // keep payment methods cached
     }
   }, [open])
 
+  // Load active payment methods from server when dialog opens
+  useEffect(() => {
+    if (!open || !cartId) return
+    let ignore = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/pos/checkout?cartId=${encodeURIComponent(cartId)}`)
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}))
+          throw new Error(e?.error || "Failed to load payment methods")
+        }
+        const j = await res.json()
+        const methods: PaymentMethodRow[] = j.paymentMethods || []
+        if (!ignore) {
+          setPaymentMethods(methods)
+          if (!currentMethodId && methods[0]) setCurrentMethodId(methods[0].id)
+        }
+      } catch (e: any) {
+        if (!ignore) setError(e?.message || "Failed to load payment methods")
+      }
+    })()
+    return () => { ignore = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, cartId])
+
   const handleAddPayment = () => {
     const amount = Number.parseFloat(currentAmount)
+    if (!currentMethodId) return
     if (Number.isFinite(amount) && amount > 0 && amount <= remaining) {
-      setPayments(prev => [...prev, { method: currentMethod, amount }])
+      setPayments(prev => [...prev, { methodId: currentMethodId, amount }])
       setCurrentAmount("")
       setCashReceived("")
     }
@@ -69,7 +108,7 @@ export function CheckoutDialog({
   const handleQuickAmount = (fraction: number) => {
     const v = Math.max(0, remaining * fraction)
     setCurrentAmount(v.toFixed(2))
-    if (currentMethod === "cash") setCashReceived(v.toFixed(2))
+    if (currentIsCash) setCashReceived(v.toFixed(2))
   }
 
   const submitCheckout = async () => {
@@ -78,24 +117,14 @@ export function CheckoutDialog({
       return
     }
     if (remaining > 0) return
+
     try {
       setBusy(true)
       const idem = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
-      const payload = {
-        cartId,
-        clientId,
-        registerId,
-        payments: payments.map(p => ({
-          methodId: p.method,  // "cash" | "card"
-          amount: p.amount,
-        })),
-      }
+      const payload = { cartId, payments }
       const res = await fetch("/api/pos/checkout", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": idem,
-        },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
         body: JSON.stringify(payload),
       })
       if (!res.ok) {
@@ -123,7 +152,7 @@ export function CheckoutDialog({
           </DialogHeader>
 
           <div className="space-y-6">
-            {/* Payment Summary */}
+            {/* Totals */}
             <div className="space-y-2">
               <div className="flex justify-between text-lg">
                 <span className="font-medium">Estimated Total</span>
@@ -143,52 +172,31 @@ export function CheckoutDialog({
               )}
             </div>
 
-            {/* Existing Payments */}
-            {payments.length > 0 && (
-              <div className="space-y-2">
-                <div className="space-y-2">
-                  {payments.map((p, idx) => (
-                    <Card key={idx} className="p-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          {p.method === "card" ? <CreditCard className="h-4 w-4" /> : <Banknote className="h-4 w-4" />}
-                          <span className="capitalize">{p.method}</span>
-                        </div>
-                        <span className="font-medium">${p.amount.toFixed(2)}</span>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
+            {/* Active payment methods */}
+            <div className="space-y-2">
+              <Label>Payment Method</Label>
+              <div className="grid grid-cols-2 gap-3">
+                {paymentMethods.map((m) => (
+                  <Card
+                    key={m.id}
+                    className={cn(
+                      "p-4 cursor-pointer transition-all hover:border-primary",
+                      currentMethodId === m.id && "border-primary bg-primary/5"
+                    )}
+                    onClick={() => setCurrentMethodId(m.id)}
+                  >
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="font-medium">{m.name}</span>
+                      {m.description && <span className="text-xs text-muted-foreground">{m.description}</span>}
+                    </div>
+                  </Card>
+                ))}
               </div>
-            )}
+            </div>
 
+            {/* Amount */}
             {remaining > 0 && (
               <>
-                {/* Method */}
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-3">
-                    <Card
-                      className={cn("p-4 cursor-pointer transition-all hover:border-primary", currentMethod === "card" && "border-primary bg-primary/5")}
-                      onClick={() => setCurrentMethod("card")}
-                    >
-                      <div className="flex flex-col items-center gap-2">
-                        <CreditCard className="h-6 w-6" />
-                        <span className="font-medium">Card</span>
-                      </div>
-                    </Card>
-                    <Card
-                      className={cn("p-4 cursor-pointer transition-all hover:border-primary", currentMethod === "cash" && "border-primary bg-primary/5")}
-                      onClick={() => setCurrentMethod("cash")}
-                    >
-                      <div className="flex flex-col items-center gap-2">
-                        <Banknote className="h-6 w-6" />
-                        <span className="font-medium">Cash</span>
-                      </div>
-                    </Card>
-                  </div>
-                </div>
-
-                {/* Amount */}
                 <div className="space-y-2">
                   <Label>Amount</Label>
                   <Input
@@ -208,8 +216,8 @@ export function CheckoutDialog({
                   </div>
                 </div>
 
-                {/* Cash Specific */}
-                {currentMethod === "cash" && (
+                {/* Cash-only helper */}
+                {currentIsCash && (
                   <div className="space-y-2">
                     <Label>Cash Received</Label>
                     <Input
@@ -228,14 +236,27 @@ export function CheckoutDialog({
                   </div>
                 )}
 
-                <Button
-                  className="w-full"
-                  onClick={handleAddPayment}
-                  disabled={!currentAmount || Number.parseFloat(currentAmount) <= 0}
-                >
+                <Button className="w-full" onClick={handleAddPayment} disabled={!currentAmount || !currentMethodId || Number.parseFloat(currentAmount) <= 0}>
                   Add Payment
                 </Button>
               </>
+            )}
+
+            {/* List payments */}
+            {payments.length > 0 && (
+              <div className="space-y-2">
+                {payments.map((p, idx) => {
+                  const methodName = paymentMethods.find(pm => pm.id === p.methodId)?.name ?? p.methodId
+                  return (
+                    <Card key={idx} className="p-3">
+                      <div className="flex items-center justify-between">
+                        <span>{methodName}</span>
+                        <span className="font-medium">${p.amount.toFixed(2)}</span>
+                      </div>
+                    </Card>
+                  )
+                })}
+              </div>
             )}
 
             {/* Actions */}

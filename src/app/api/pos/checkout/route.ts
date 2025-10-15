@@ -57,10 +57,15 @@ async function activePaymentMethods(tenantId: string) {
 /* -------- schemas -------- */
 const CheckoutCreateSchema = z.object({
   cartId: z.string().min(1),
-  paymentMethodId: z.string().min(1),
+  payments: z.array(
+    z.object({
+      methodId: z.string().min(1),
+      amount: z.number().positive(),
+    })
+  ).min(1, "At least one payment is required"),
 });
 
-/* GET: return summary + ACTIVE payment methods */
+/* GET: summary + ACTIVE payment methods */
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -84,47 +89,60 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ summary, paymentMethods: methods }, { status: 200 });
 }
 
-/* POST: create order for POS cart */
+/* POST: create order for POS cart (supports split payments) */
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
   const { tenantId, organizationId } = ctx as { tenantId: string | null; organizationId: string };
   try {
-    const { cartId, paymentMethodId } = CheckoutCreateSchema.parse(await req.json());
+    const { cartId, payments } = CheckoutCreateSchema.parse(await req.json());
     if (!tenantId) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
     const summary = await loadCartSummary(cartId);
     if (!summary) return NextResponse.json({ error: "Cart not found" }, { status: 404 });
     if (!summary.status) return NextResponse.json({ error: "Cart is not active" }, { status: 400 });
 
-    // ✅ Enforce "pos-" prefix for checkout
+    // ✅ Enforce "pos-" prefix
     if (typeof summary.channel !== "string" || !summary.channel.toLowerCase().startsWith("pos-")) {
       return NextResponse.json({ error: "Only POS carts can be checked out here" }, { status: 400 });
     }
 
-    // Validate payment method is ACTIVE for this tenant
-    const { rows: pmRows } = await pool.query(
-      `SELECT id, name, active FROM "paymentMethods" WHERE id = $1 AND "tenantId" = $2`,
-      [paymentMethodId, tenantId]
-    );
-    const pm = pmRows[0];
-    if (!pm || pm.active !== true) {
-      return NextResponse.json({ error: "Invalid or inactive payment method" }, { status: 400 });
+    // Load ACTIVE methods for tenant → map by id
+    const methods = await activePaymentMethods(tenantId);
+    if (!methods.length) {
+      return NextResponse.json({ error: "No active payment methods configured" }, { status: 400 });
+    }
+    const activeIds = new Set(methods.map((m: any) => m.id));
+
+    // Validate all payments use active methods
+    for (const p of payments) {
+      if (!activeIds.has(p.methodId)) {
+        return NextResponse.json({ error: `Inactive/invalid payment method: ${p.methodId}` }, { status: 400 });
+      }
     }
 
+    // Totals
     const shippingTotal = 0;
     const discountTotal = 0;
     const subtotal = summary.subtotal;
     const totalAmount = subtotal + shippingTotal - discountTotal;
 
+    // Require sum(payments) ≈ total
+    const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+    const epsilon = 0.01; // allow 1 cent rounding
+    if (Math.abs(paid - totalAmount) > epsilon) {
+      return NextResponse.json(
+        { error: `Paid amount ${paid.toFixed(2)} does not match total ${totalAmount.toFixed(2)}` },
+        { status: 400 }
+      );
+    }
+
     const orderId = uuidv4();
     const orderKey = "pos-" + crypto.randomBytes(6).toString("hex");
 
-    const { rows: cartRow } = await pool.query(
-      `SELECT "couponCode" FROM carts WHERE id = $1`,
-      [cartId]
-    );
+    // Pull current cart coupon (if any)
+    const { rows: cartRow } = await pool.query(`SELECT "couponCode" FROM carts WHERE id = $1`, [cartId]);
     const couponCode: string | null = cartRow[0]?.couponCode ?? null;
 
     const insertSql = `
@@ -145,35 +163,51 @@ export async function POST(req: NextRequest) {
         NOW(),NOW(),$18,$19
       )
       RETURNING *`;
+
+    // Store the first method id for compatibility (split support later if needed)
+    const primaryMethodId = payments[0].methodId;
+
     const vals = [
       orderId,
       summary.clientId,
       summary.cartId,
       summary.country,
       "paid",
-      pm.id,
+      primaryMethodId,
       orderKey,
       summary.cartUpdatedHash,
       shippingTotal,
       discountTotal,
       totalAmount,
       couponCode,
-      "-",
+      "-",              // POS: no shipping
       new Date(),
       new Date(),
       new Date(),
       null,
       organizationId,
-      summary.channel, // ✅ keep the exact pos-... channel on the order
+      summary.channel,  // keep "pos-..." channel
     ];
 
     const tx = await pool.connect();
     try {
       await tx.query("BEGIN");
+
       const { rows: orderRows } = await tx.query(insertSql, vals);
       const order = orderRows[0];
 
+      // (Optional) If you have an "orderPayments" table, insert the breakdown here.
+      // for (const p of payments) {
+      //   await tx.query(
+      //     `INSERT INTO "orderPayments"(id,"orderId","paymentMethodId",amount,"createdAt","updatedAt")
+      //       VALUES (gen_random_uuid(),$1,$2,$3,NOW(),NOW())`,
+      //     [orderId, p.methodId, p.amount]
+      //   );
+      // }
+
+      // Close cart
       await tx.query(`UPDATE carts SET status = FALSE, "updatedAt" = NOW() WHERE id = $1`, [cartId]);
+
       await tx.query("COMMIT");
       return NextResponse.json({ order }, { status: 201 });
     } catch (e) {
