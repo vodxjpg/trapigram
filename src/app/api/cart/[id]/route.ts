@@ -41,27 +41,37 @@ export async function GET(
   try {
     const { id } = await params;
 
-    /* 1. Load cart + client */
+    /* 1) Load cart + client */
     const cartRes = await pool.query(`SELECT * FROM carts WHERE id=$1`, [id]);
-    if (!cartRes.rowCount)
+    if (!cartRes.rowCount) {
       return NextResponse.json({ error: "Cart not found" }, { status: 404 });
+    }
     const cart = cartRes.rows[0];
+
+    // Keep existing behavior: clear coupon on read
     await pool.query(`UPDATE carts SET "couponCode" = NULL WHERE id = $1`, [id]);
 
     const clientRes = await pool.query(
       `SELECT country,"levelId" FROM clients WHERE id=$1`,
       [cart.clientId]
     );
-    const client = clientRes.rows[0];
+    const client = clientRes.rows[0] || { country: null, levelId: null };
 
-    /* 2. Re-price if the client’s country changed (kept intact) */
-    if (cart.country !== client.country) {
+    const clientCountry: string | null = client.country ?? null;
+    const clientLevelId: string = (client.levelId ?? "default") as string;
+
+    /* 2) Re-price only if the client's country is non-null AND different.
+          This preserves web behavior and avoids setting carts.country = NULL for POS walk-ins. */
+    if (clientCountry && cart.country !== clientCountry) {
       const tx = await pool.connect();
       try {
         const removedItems: { productId: string; reason: string }[] = [];
         await tx.query("BEGIN");
-        await tx.query(`UPDATE carts SET country=$1 WHERE id=$2`, [client.country, id]);
 
+        // Update cart country to the client's (non-null) country
+        await tx.query(`UPDATE carts SET country=$1 WHERE id=$2`, [clientCountry, id]);
+
+        // Reprice all lines for the new country/level
         const { rows: lines } = await tx.query<{
           id: string;
           productId: string;
@@ -84,8 +94,8 @@ export async function GET(
             const { price } = await resolveUnitPrice(
               line.productId,
               vId,
-              client.country,
-              client.levelId
+              clientCountry,      // safe: non-null here
+              clientLevelId
             );
 
             await tx.query(
@@ -95,6 +105,7 @@ export async function GET(
               [price, line.id]
             );
           } catch (err: any) {
+            // Preserve existing behavior for missing money price
             if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
               await tx.query(`DELETE FROM "cartProducts" WHERE id = $1`, [line.id]);
               removedItems.push({ productId: line.productId, reason: err.message });
@@ -105,8 +116,7 @@ export async function GET(
         }
 
         await tx.query("COMMIT");
-        // NOTE: We keep the original structure/variables. If you want to surface removedItems
-        // to the caller, you can wire this up to your state layer; not changing existing behavior here.
+        // Note: existing code didn’t actually surface removedItems; we keep API unchanged below.
         (tx as any).removedItems = removedItems;
       } catch (e) {
         await tx.query("ROLLBACK");
@@ -116,8 +126,7 @@ export async function GET(
       }
     }
 
-    /* 3. Assemble normal + affiliate products with variation attributes */
-    // LEFT JOIN productVariations to pick up attributes for variation lines
+    /* 3) Assemble normal + affiliate products with variation attributes */
     const prodQ = `
       SELECT
         p.id,
@@ -204,9 +213,7 @@ export async function GET(
       let finalTitle = l.title;
 
       if (l.variationId && attrs && Object.keys(attrs).length) {
-        // Compose readable label like "Color RED, Size XL"
-        const pairs = Object.entries(attrs);
-        const variantLabel = pairs
+        const variantLabel = Object.entries(attrs)
           .map(([attributeId, termId]) => {
             const aName = ATTR_NAME[attributeId] ?? attributeId;
             const tName = TERM_NAME[String(termId)] ?? String(termId);
@@ -225,11 +232,10 @@ export async function GET(
       };
     });
 
-    // Keep removedItems behavior consistent with existing code (not wired to tx context here)
-    const removedItems =
-      (await pool as any).removedItems as { productId: string; reason: string }[] || [];
+    // Keep removedItems key for API compatibility (not wired in original code)
+    const removedItems: { productId: string; reason: string }[] = [];
 
-    /* 4. Return both legacy and new keys (unchanged shape, enriched title) */
+    /* 4) Response: unchanged shape */
     return NextResponse.json(
       {
         resultCartProducts: lines,
