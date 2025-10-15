@@ -9,18 +9,39 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
-  AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { MoreHorizontal, Pencil, Plus, Trash2, Search } from "lucide-react";
 import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+
+/* --- Country selector deps (same pattern as Coupons) -------------------- */
+import Select from "react-select";
+import ReactCountryFlag from "react-country-flag";
+import countriesLib from "i18n-iso-countries";
+import enLocale from "i18n-iso-countries/langs/en.json";
+countriesLib.registerLocale(enLocale);
+/* ----------------------------------------------------------------------- */
 
 type Store = {
   id: string;
@@ -48,13 +69,22 @@ export default function StoresPage() {
   const [editing, setEditing] = React.useState<Store | null>(null);
   const [formName, setFormName] = React.useState("");
   const [formAddress, setFormAddress] = React.useState({
-    street: "", city: "", state: "", zip: "", country: "",
+    street: "",
+    city: "",
+    state: "",
+    zip: "",
+    country: "",
   });
   const [saving, setSaving] = React.useState(false);
 
   // delete confirm
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [deleteIds, setDeleteIds] = React.useState<string[]>([]);
+
+  // org countries for selector
+  const [countryOptions, setCountryOptions] = React.useState<
+    { value: string; label: string }[]
+  >([]);
 
   const load = React.useCallback(async () => {
     setIsLoading(true);
@@ -70,98 +100,134 @@ export default function StoresPage() {
     }
   }, []);
 
-  React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => {
+    load();
+  }, [load]);
+
+  // fetch org sell-to countries (same endpoint used by Coupons)
+  React.useEffect(() => {
+    fetch("/api/organizations/countries", {
+      headers: {
+        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+      },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch organization countries");
+        return res.json();
+      })
+      .then((data) => {
+        const list: string[] = Array.isArray(data.countries)
+          ? data.countries
+          : JSON.parse(data.countries || "[]");
+        setCountryOptions(
+          list.map((code) => ({
+            value: code,
+            label: countriesLib.getName(code, "en") || code,
+          }))
+        );
+      })
+      .catch((err) => toast.error(err.message || "Failed to load countries"));
+  }, []);
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter(
-      (s) => s.name.toLowerCase().includes(q) ||
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
         formatAddress(s.address).toLowerCase().includes(q)
     );
   }, [rows, query]);
 
-  const columns = React.useMemo<ColumnDef<Store>[]>(() => [
-    {
-      id: "select",
-      header: ({ table }) => (
-        <Checkbox
-          checked={table.getIsAllRowsSelected()}
-          onCheckedChange={(v) => table.toggleAllRowsSelected(!!v)}
-          aria-label="Select all"
-        />
-      ),
-      cell: ({ row }) => (
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(v) => row.toggleSelected(!!v)}
-          aria-label="Select row"
-        />
-      ),
-      size: 30,
-    },
-    {
-      accessorKey: "name",
-      header: "Store",
-      cell: ({ row }) => {
-        const s = row.original;
-        return (
-          <Link href={`/stores/${s.id}`} className="font-medium text-primary hover:underline">
-            {s.name}
-          </Link>
-        );
+  const columns = React.useMemo<ColumnDef<Store>[]>(
+    () => [
+      {
+        id: "select",
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllRowsSelected()}
+            onCheckedChange={(v) => table.toggleAllRowsSelected(!!v)}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(v) => row.toggleSelected(!!v)}
+            aria-label="Select row"
+          />
+        ),
+        size: 30,
       },
-    },
-    {
-      id: "address",
-      header: "Address",
-      cell: ({ row }) => (
-        <span className="text-muted-foreground">{formatAddress(row.original.address)}</span>
-      ),
-    },
-    {
-      accessorKey: "createdAt",
-      header: "Created",
-      cell: ({ row }) => (
-        <span className="text-muted-foreground">
-          {new Date(row.original.createdAt).toLocaleDateString()}
-        </span>
-      ),
-      size: 110,
-    },
-    {
-      id: "actions",
-      header: "",
-      size: 40,
-      cell: ({ row }) => {
-        const s = row.original;
-        return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem className="gap-2" onClick={() => openEdit(s)}>
-                <Pencil className="h-4 w-4" /> Edit
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className="gap-2 text-destructive focus:text-destructive"
-                onClick={() => {
-                  setDeleteIds([s.id]);
-                  setConfirmOpen(true);
-                }}
-              >
-                <Trash2 className="h-4 w-4" /> Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        );
+      {
+        accessorKey: "name",
+        header: "Store",
+        cell: ({ row }) => {
+          const s = row.original;
+          return (
+            <Link
+              href={`/stores/${s.id}`}
+              className="font-medium text-primary hover:underline"
+            >
+              {s.name}
+            </Link>
+          );
+        },
       },
-    },
-  ], []);
+      {
+        id: "address",
+        header: "Address",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {formatAddress(row.original.address)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "createdAt",
+        header: "Created",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {new Date(row.original.createdAt).toLocaleDateString()}
+          </span>
+        ),
+        size: 110,
+      },
+      {
+        id: "actions",
+        header: "",
+        size: 40,
+        cell: ({ row }) => {
+          const s = row.original;
+          return (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem className="gap-2" onClick={() => openEdit(s)}>
+                  <Pencil className="h-4 w-4" /> Edit
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="gap-2 text-destructive focus:text-destructive"
+                  onClick={() => {
+                    setDeleteIds([s.id]);
+                    setConfirmOpen(true);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" /> Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          );
+        },
+      },
+    ],
+    []
+  );
 
   const table = useReactTable({
     data: filtered,
@@ -201,7 +267,7 @@ export default function StoresPage() {
           city: formAddress.city || undefined,
           state: formAddress.state || undefined,
           zip: formAddress.zip || undefined,
-          country: formAddress.country || undefined,
+          country: formAddress.country || undefined, // ISO-2 from selector
         },
       };
       if (!payload.name) throw new Error("Name is required.");
@@ -219,7 +285,8 @@ export default function StoresPage() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Idempotency-Key": crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+            "Idempotency-Key":
+              (crypto as any).randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
           },
           body: JSON.stringify(payload),
         });
@@ -249,7 +316,10 @@ export default function StoresPage() {
       ? deleteIds
       : table.getSelectedRowModel().rows.map((r) => r.original.id);
 
-    if (!ids.length) { setConfirmOpen(false); return; }
+    if (!ids.length) {
+      setConfirmOpen(false);
+      return;
+    }
 
     try {
       await deleteIdsNow(ids);
@@ -277,7 +347,9 @@ export default function StoresPage() {
               variant="destructive"
               className="gap-2"
               onClick={() => {
-                setDeleteIds(table.getSelectedRowModel().rows.map((r) => r.original.id));
+                setDeleteIds(
+                  table.getSelectedRowModel().rows.map((r) => r.original.id)
+                );
                 setConfirmOpen(true);
               }}
             >
@@ -317,6 +389,7 @@ export default function StoresPage() {
           <DialogHeader>
             <DialogTitle>{editing ? "Edit store" : "Add store"}</DialogTitle>
           </DialogHeader>
+
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-2 sm:col-span-2">
@@ -327,38 +400,85 @@ export default function StoresPage() {
                   placeholder="Downtown Shop"
                 />
               </div>
+
               <div className="space-y-2">
                 <Label>Street</Label>
-                <Input value={formAddress.street}
-                       onChange={(e) => setFormAddress({ ...formAddress, street: e.target.value })}
-                       placeholder="123 Main St" />
+                <Input
+                  value={formAddress.street}
+                  onChange={(e) =>
+                    setFormAddress({ ...formAddress, street: e.target.value })
+                  }
+                  placeholder="123 Main St"
+                />
               </div>
+
               <div className="space-y-2">
                 <Label>City</Label>
-                <Input value={formAddress.city}
-                       onChange={(e) => setFormAddress({ ...formAddress, city: e.target.value })}
-                       placeholder="Springfield" />
+                <Input
+                  value={formAddress.city}
+                  onChange={(e) =>
+                    setFormAddress({ ...formAddress, city: e.target.value })
+                  }
+                  placeholder="Springfield"
+                />
               </div>
+
               <div className="space-y-2">
                 <Label>State</Label>
-                <Input value={formAddress.state}
-                       onChange={(e) => setFormAddress({ ...formAddress, state: e.target.value })}
-                       placeholder="CA" />
+                <Input
+                  value={formAddress.state}
+                  onChange={(e) =>
+                    setFormAddress({ ...formAddress, state: e.target.value })
+                  }
+                  placeholder="CA"
+                />
               </div>
+
               <div className="space-y-2">
                 <Label>ZIP</Label>
-                <Input value={formAddress.zip}
-                       onChange={(e) => setFormAddress({ ...formAddress, zip: e.target.value })}
-                       placeholder="90210" />
+                <Input
+                  value={formAddress.zip}
+                  onChange={(e) =>
+                    setFormAddress({ ...formAddress, zip: e.target.value })
+                  }
+                  placeholder="90210"
+                />
               </div>
+
+              {/* Country: restricted to org sell-to countries */}
               <div className="space-y-2">
                 <Label>Country</Label>
-                <Input value={formAddress.country}
-                       onChange={(e) => setFormAddress({ ...formAddress, country: e.target.value })}
-                       placeholder="US" />
+                <Select
+                  options={countryOptions}
+                  placeholder="Select country"
+                  isClearable
+                  value={
+                    formAddress.country
+                      ? countryOptions.find(
+                          (o) => o.value === formAddress.country
+                        ) || null
+                      : null
+                  }
+                  onChange={(opt) =>
+                    setFormAddress({
+                      ...formAddress,
+                      country: opt ? (opt as any).value : "",
+                    })
+                  }
+                  formatOptionLabel={(o: any) => (
+                    <div className="flex items-center gap-2">
+                      <ReactCountryFlag countryCode={o.value} svg style={{ width: 18 }} />
+                      <span>{o.label}</span>
+                    </div>
+                  )}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Only countries your organization sells to.
+                </p>
               </div>
             </div>
           </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>
               Cancel
