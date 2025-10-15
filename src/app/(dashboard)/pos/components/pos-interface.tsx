@@ -9,7 +9,14 @@ import { CheckoutDialog } from "./checkout-dialog"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { StoreRegisterSelector } from "./store-register-selector"
-import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog"
 
 type Category = { id: string; name: string }
 
@@ -45,6 +52,10 @@ export function POSInterface() {
   const [storeId, setStoreId] = useState<string | null>(null)
   const [outletId, setOutletId] = useState<string | null>(null)
 
+  // store/org meta used to resolve country for carts
+  const [storeCountry, setStoreCountry] = useState<string | null>(null)
+  const [orgCountries, setOrgCountries] = useState<string[]>([])
+
   // catalog
   const [categories, setCategories] = useState<Category[]>([])
   const [products, setProducts] = useState<GridProduct[]>([])
@@ -69,6 +80,44 @@ export function POSInterface() {
     if (r) setOutletId(r)
   }, [])
 
+  // fetch org allowed countries (for fallback)
+  useEffect(() => {
+    let ignore = false
+    ;(async () => {
+      try {
+        const res = await fetch("/api/organizations/countries", {
+          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
+        })
+        if (!res.ok) return
+        const j = await res.json()
+        const list: string[] = Array.isArray(j.countries)
+          ? j.countries
+          : JSON.parse(j.countries || "[]")
+        if (!ignore) setOrgCountries(list)
+      } catch {/* ignore */}
+    })()
+    return () => { ignore = true }
+  }, [])
+
+  // load store meta when store changes (to get address.country)
+  useEffect(() => {
+    if (!storeId) {
+      setStoreCountry(null)
+      return
+    }
+    let ignore = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/pos/stores/${storeId}`)
+        if (!res.ok) return
+        const j = await res.json()
+        const c = j.store?.address?.country ?? null
+        if (!ignore) setStoreCountry(c || null)
+      } catch {/* ignore */}
+    })()
+    return () => { ignore = true }
+  }, [storeId])
+
   // Try restoring a previously selected customer by id
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -77,12 +126,11 @@ export function POSInterface() {
     let ignore = false
     ;(async () => {
       try {
-        // Prefer a direct endpoint if available
         const res = await fetch(`/api/clients/${id}`)
         if (ignore) return
         if (res.ok) {
           const j = await res.json()
-          const c = j.client ?? j // tolerate either shape
+          const c = j.client ?? j
           if (c?.id) {
             setSelectedCustomer({
               id: c.id,
@@ -93,10 +141,7 @@ export function POSInterface() {
             return
           }
         }
-        // Fallback: ensure Walk-in below will run
-      } catch {
-        // ignore, we’ll fall back to Walk-in
-      }
+      } catch {/* ignore */}
     })()
     return () => { ignore = true }
   }, [])
@@ -198,7 +243,7 @@ export function POSInterface() {
             body: JSON.stringify({
               username: `walkin-${Date.now()}`,
               firstName: "Walk-in",
-              lastName: "Customer",      // ✅ satisfies NOT NULL
+              lastName: "Customer",      // DB requires NOT NULL
               email: null,
               phoneNumber: null,
               country: null,
@@ -235,15 +280,28 @@ export function POSInterface() {
 
   const subtotalEstimate = useMemo(() => lines.reduce((s, l) => s + l.subtotal, 0), [lines])
 
+  const resolveCartCountry = () =>
+    storeCountry || orgCountries[0] || "US"
+
   const ensureCart = async (clientId: string) => {
     if (cartId || creatingCartRef.current) return cartId
+    if (!storeId || !outletId) {
+      setError("Please select a store and outlet before adding items.")
+      return null
+    }
     creatingCartRef.current = true
     try {
       const idem = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+      const body = {
+        clientId,
+        country: resolveCartCountry(),   // ✅ prevent NOT NULL violation
+        storeId,
+        registerId: outletId,
+      }
       const res = await fetch("/api/pos/cart", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
-        body: JSON.stringify({ clientId }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) {
         const e = await res.json().catch(() => ({}))
@@ -439,7 +497,7 @@ export function POSInterface() {
             <ProductGrid products={filteredProducts} onAddToCart={addToCart} />
           </div>
 
-        {/* Cart Section */}
+          {/* Cart Section */}
           <Cart
             lines={lines}
             onInc={inc}
