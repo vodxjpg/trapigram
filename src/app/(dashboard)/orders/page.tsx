@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import Link from "next/link";
 import { type DateRange } from "react-day-picker";
 import { useRouter } from "next/navigation";
 import { useHasPermission } from "@/hooks/use-has-permission";
@@ -347,14 +348,20 @@ export default function OrdersPage() {
       {
         accessorKey: "orderKey",
         header: "Order #",
-        cell: ({ row }) =>
+                cell: ({ row }) =>
           canViewDetail ? (
-            <Button
-              variant="link"
-              className="p-0 h-auto font-medium"
-              onClick={() => router.push(`/orders/${row.original.id}`)}
-            >
-              {row.original.orderKey}
+            <Button variant="link" className="p-0 h-auto font-medium" asChild>
+              <Link
+                href={`/orders/${row.original.id}`}
+                prefetch={false}
+                onClick={(e) => {
+                  // Avoid row-level handlers (selection/expansion) from interfering
+                  e.stopPropagation();
+                }}
+                aria-label={`Open order ${row.original.orderKey}`}
+              >
+                {row.original.orderKey}
+              </Link>
             </Button>
           ) : (
             <span className="font-medium text-muted-foreground cursor-not-allowed">
