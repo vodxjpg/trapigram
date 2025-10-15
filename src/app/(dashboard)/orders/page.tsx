@@ -101,33 +101,7 @@ type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
 type ShippingCompany = { id: string; name: string };
 
 /* currency helpers */
-const EUROZONE = new Set([
-  "AT",
-  "BE",
-  "CY",
-  "DE",
-  "EE",
-  "ES",
-  "FI",
-  "FR",
-  "GR",
-  "IE",
-  "IT",
-  "LT",
-  "LU",
-  "LV",
-  "MT",
-  "NL",
-  "PT",
-  "SI",
-  "SK",
-  "AD",
-  "MC",
-  "SM",
-  "VA",
-  "ME",
-  "XK",
-]);
+const EUROZONE = new Set(["AT", "BE", "CY", "DE", "EE", "ES", "FI", "FR", "GR", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PT", "SI", "SK", "AD", "MC", "SM", "VA", "ME", "XK"]);
 const STERLING = new Set(["GB", "UK", "GG", "JE", "IM"]);
 const USD_ZONES = new Set(["US", "PR", "GU", "AS", "MP", "VI"]);
 const COUNTRY_ALIAS: Record<string, string> = {
@@ -142,8 +116,7 @@ const COUNTRY_ALIAS: Record<string, string> = {
   UNITEDSTATESOFAMERICA: "US",
 };
 type SupportedCcy = "EUR" | "GBP" | "USD";
-const norm = (s?: string) =>
-  (s ?? "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+const norm = (s?: string) => (s ?? "").trim().toUpperCase().replace(/[^A-Z]/g, "");
 const currencyForCountry = (country?: string): SupportedCcy => {
   if (!country) return "USD";
   const raw = norm(country);
@@ -154,28 +127,18 @@ const currencyForCountry = (country?: string): SupportedCcy => {
   return "USD";
 };
 export const formatMoneyByCountry = (amount: number, country?: string) =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currencyForCountry(country),
-  }).format(amount);
+  new Intl.NumberFormat("en-US", { style: "currency", currency: currencyForCountry(country) }).format(amount);
 
 const getStatusColor = (s: OrderStatus) => {
   switch (s) {
-    case "open":
-      return "bg-blue-500";
-    case "pending_payment":
-      return "bg-yellow-500";
-    case "paid":
-      return "bg-green-500";
+    case "open": return "bg-blue-500";
+    case "pending_payment": return "bg-yellow-500";
+    case "paid": return "bg-green-500";
     case "cancelled":
-    case "refunded":
-      return "bg-red-500";
-    case "underpaid":
-      return "bg-orange-500";
-    case "completed":
-      return "bg-purple-500";
-    default:
-      return "bg-gray-500";
+    case "refunded": return "bg-red-500";
+    case "underpaid": return "bg-orange-500";
+    case "completed": return "bg-purple-500";
+    default: return "bg-gray-500";
   }
 };
 const formatDate = (d: string) => format(new Date(d), "MMM dd, yyyy");
@@ -190,23 +153,12 @@ export default function OrdersPage() {
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
 
-  const { hasPermission: canViewDetail } = useHasPermission(organizationId, {
-    order: ["view"],
-  });
-  const { hasPermission: canViewPricing } = useHasPermission(organizationId, {
-    order: ["view_pricing"],
-  });
-  const { hasPermission: canUpdate } = useHasPermission(organizationId, {
-    order: ["update"],
-  });
-  const { hasPermission: canUpdateTracking } = useHasPermission(
-    organizationId,
-    { order: ["update_tracking"] },
-  );
-  const {
-    hasPermission: canUpdateStatus,
-    isLoading: permissionsLoading,
-  } = useHasPermission(organizationId, { order: ["update_status"] });
+  const { hasPermission: canViewDetail } = useHasPermission(organizationId, { order: ["view"] });
+  const { hasPermission: canViewPricing } = useHasPermission(organizationId, { order: ["view_pricing"] });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, { order: ["update"] });
+  const { hasPermission: canUpdateTracking } = useHasPermission(organizationId, { order: ["update_tracking"] });
+  const { hasPermission: canUpdateStatus, isLoading: permissionsLoading } =
+    useHasPermission(organizationId, { order: ["update_status"] });
 
   /* data + ui state */
   const [orders, setOrders] = useState<Order[]>([]);
@@ -224,9 +176,7 @@ export default function OrdersPage() {
   const itemsPerPage = 10;
 
   /* shipping */
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
-    [],
-  );
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
   const [shippingLoading, setShippingLoading] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState<string>();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -260,7 +210,7 @@ export default function OrdersPage() {
           String(o.orderKey).toLowerCase().includes(q) ||
           (o.email ?? "").toLowerCase().includes(q) ||
           `${o.firstName} ${o.lastName}`.toLowerCase().includes(q) ||
-          (o.username ?? "").toLowerCase().includes(q),
+          (o.username ?? "").toLowerCase().includes(q)
       );
     }
 
@@ -284,10 +234,7 @@ export default function OrdersPage() {
       } else if (dateFilter === "custom" && dateRange?.from) {
         const from = startOfDay(dateRange.from);
         const to = dateRange.to ? endOfDay(dateRange.to) : endOfDay(now);
-        result = result.filter(
-          (o) =>
-            created(o.createdAt) >= from && created(o.createdAt) <= to,
-        );
+        result = result.filter((o) => created(o.createdAt) >= from && created(o.createdAt) <= to);
       }
     }
 
@@ -302,7 +249,7 @@ export default function OrdersPage() {
   const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
   const paginatedOrders = filteredOrders.slice(
     (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage,
+    currentPage * itemsPerPage
   );
 
   const handleDateFilterChange = (opt: DateFilterOption) => {
@@ -311,42 +258,34 @@ export default function OrdersPage() {
   };
 
   /* actions */
-  const handleStatusChange = useCallback(
-    async (orderId: string, newStatus: OrderStatus) => {
-      try {
-        const res = await fetch(`/api/order/${orderId}/change-status`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: newStatus }),
-        });
-        const payload = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(payload?.error || "Failed to update status");
+  const handleStatusChange = useCallback(async (orderId: string, newStatus: OrderStatus) => {
+    try {
+      const res = await fetch(`/api/order/${orderId}/change-status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || "Failed to update status");
 
-        setOrders((prev) =>
-          prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)),
-        );
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
 
-        if (Array.isArray(payload?.warnings)) {
-          payload.warnings.forEach((msg: string) => msg && toast.warning(msg));
-        }
-      } catch (err: any) {
-        console.error(err);
-        toast.error(err?.message || "Error updating order status");
+      if (Array.isArray(payload?.warnings)) {
+        payload.warnings.forEach((msg: string) => msg && toast.warning(msg));
       }
-    },
-    [],
-  );
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.message || "Error updating order status");
+    }
+  }, []);
 
-  const handleTracking = useCallback(
-    (orderId: string) => {
-      const order = orders.find((o) => o.id === orderId);
-      if (!order) return;
-      setSelectedOrderId(orderId);
-      setDraftTracking(order.trackingNumber ?? "");
-      setDialogOpen(true);
-    },
-    [orders],
-  );
+  const handleTracking = useCallback((orderId: string) => {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return;
+    setSelectedOrderId(orderId);
+    setDraftTracking(order.trackingNumber ?? "");
+    setDialogOpen(true);
+  }, [orders]);
 
   /* fetch shipping companies on dialog open */
   useEffect(() => {
@@ -355,9 +294,7 @@ export default function OrdersPage() {
       setShippingLoading(true);
       try {
         const res = await fetch("/api/shipping-companies", {
-          headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
-          },
+          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
         });
         if (!res.ok) throw new Error("Failed to fetch shipping companies");
         const { shippingMethods } = await res.json();
@@ -384,29 +321,18 @@ export default function OrdersPage() {
     const company = shippingCompanies.find((c) => c.id === selectedCompany);
     if (!company) return;
     try {
-      const res = await fetch(
-        `/api/order/${selectedOrderId}/tracking-number`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            trackingNumber: draftTracking,
-            shippingCompany: company.name,
-          }),
-        },
-      );
+      const res = await fetch(`/api/order/${selectedOrderId}/tracking-number`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackingNumber: draftTracking, shippingCompany: company.name }),
+      });
       if (!res.ok) throw new Error("Failed to save tracking number");
       setOrders((prev) =>
         prev.map((o) =>
           o.id === selectedOrderId
-            ? {
-                ...o,
-                trackingNumber: draftTracking,
-                shippingCompany: company.name,
-                status: "completed",
-              }
-            : o,
-        ),
+            ? { ...o, trackingNumber: draftTracking, shippingCompany: company.name, status: "completed" }
+            : o
+        )
       );
       toast.success("Tracking number saved");
       setDialogOpen(false);
@@ -419,16 +345,21 @@ export default function OrdersPage() {
   /* -------------------- Columns for StandardDataTable -------------------- */
   const columns: ColumnDef<Order>[] = useMemo(() => {
     const base: ColumnDef<Order>[] = [
-      {
+     {
         accessorKey: "orderKey",
         header: "Order #",
         cell: ({ row }) =>
           canViewDetail ? (
-            <Button variant="link" className="p-0 h-auto font-medium" asChild>
+            <Button
+              variant="link"
+              className="p-0 h-auto font-medium"
+              asChild
+            >
               <Link
                 href={`/orders/${row.original.id}`}
+                prefetch={false}
                 onClick={(e) => {
-                  // Avoid row-level handlers (selection/expansion) from interfering
+                  // protect against any row-level handlers in the table component
                   e.stopPropagation();
                 }}
                 aria-label={`Open order ${row.original.orderKey}`}
@@ -465,36 +396,18 @@ export default function OrdersPage() {
               onValueChange={(v) => handleStatusChange(o.id, v as OrderStatus)}
             >
               <SelectTrigger className="w-auto flex justify-center">
-                <Badge className={getStatusColor(o.status)}>
-                  {statusLabel(o.status)}
-                </Badge>
+                <Badge className={getStatusColor(o.status)}>{statusLabel(o.status)}</Badge>
               </SelectTrigger>
               <SelectContent>
-                {(
-                  [
-                    "open",
-                    "underpaid",
-                    "pending_payment",
-                    "paid",
-                    "completed",
-                    "cancelled",
-                    "refunded",
-                  ] as OrderStatus[]
-                ).map((s) => (
-                  <SelectItem
-                    key={s}
-                    value={s}
-                    className="w-auto flex justify-left"
-                  >
+                {(["open", "underpaid", "pending_payment", "paid", "completed", "cancelled", "refunded"] as OrderStatus[]).map((s) => (
+                  <SelectItem key={s} value={s} className="w-auto flex justify-left">
                     <Badge className={getStatusColor(s)}>{statusLabel(s)}</Badge>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           ) : (
-            <Badge className={getStatusColor(o.status)}>
-              {statusLabel(o.status)}
-            </Badge>
+            <Badge className={getStatusColor(o.status)}>{statusLabel(o.status)}</Badge>
           );
         },
       },
@@ -509,8 +422,7 @@ export default function OrdersPage() {
       base.push({
         id: "total",
         header: "Total",
-        cell: ({ row }) =>
-          formatMoneyByCountry(row.original.total, row.original.country),
+        cell: ({ row }) => formatMoneyByCountry(row.original.total, row.original.country),
       });
     }
 
@@ -518,10 +430,7 @@ export default function OrdersPage() {
       {
         accessorKey: "shippingCompany",
         header: "Shipping Company",
-        cell: ({ row }) =>
-          row.original.shippingCompany ?? (
-            <span className="text-muted-foreground">—</span>
-          ),
+        cell: ({ row }) => row.original.shippingCompany ?? <span className="text-muted-foreground">—</span>,
       },
       {
         accessorKey: "trackingNumber",
@@ -550,9 +459,7 @@ export default function OrdersPage() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {canEdit ? (
-                    <DropdownMenuItem
-                      onClick={() => router.push(`/orders/${o.id}/edit`)}
-                    >
+                    <DropdownMenuItem onClick={() => router.push(`/orders/${o.id}/edit`)}>
                       <Edit className="mr-2 h-4 w-4" />
                       Edit
                     </DropdownMenuItem>
@@ -572,8 +479,7 @@ export default function OrdersPage() {
                           </div>
                         </TooltipTrigger>
                         <TooltipContent side="left">
-                          Order must be{" "}
-                          <span className="font-semibold">Open</span> to edit.
+                          Order must be <span className="font-semibold">Open</span> to edit.
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -581,11 +487,7 @@ export default function OrdersPage() {
                   {canUpdateTracking && (
                     <DropdownMenuItem onClick={() => handleTracking(o.id)}>
                       <Truck className="mr-2 h-4 w-4" />
-                      <span>
-                        {o.trackingNumber
-                          ? "Update tracking number"
-                          : "Set tracking number"}
-                      </span>
+                      <span>{o.trackingNumber ? "Update tracking number" : "Set tracking number"}</span>
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
@@ -593,20 +495,11 @@ export default function OrdersPage() {
             </div>
           );
         },
-      },
+      }
     );
 
     return base;
-  }, [
-    canViewDetail,
-    canViewPricing,
-    canUpdate,
-    canUpdateStatus,
-    canUpdateTracking,
-    handleStatusChange,
-    handleTracking,
-    router,
-  ]);
+  }, [canViewDetail, canViewPricing, canUpdate, canUpdateStatus, canUpdateTracking, handleStatusChange, handleTracking, router]);
 
   /* TanStack instance — feed the paginated slice to keep your current paging */
   const table = useReactTable({
@@ -616,17 +509,14 @@ export default function OrdersPage() {
   });
 
   /* render guards for permission only; let table show loading/empty states */
-  if (permissionsLoading)
-    return <div className="container mx-auto py-8 px-4">Loading permissions…</div>;
+  if (permissionsLoading) return <div className="container mx-auto py-8 px-4">Loading permissions…</div>;
 
   return (
     <div className="container mx-auto py-8 px-4 space-y-6">
       {/* Page title */}
       <div>
         <h1 className="text-3xl font-bold">Orders</h1>
-        <p className="text-muted-foreground mt-1">
-          Manage and track all customer orders
-        </p>
+        <p className="text-muted-foreground mt-1">Manage and track all customer orders</p>
       </div>
 
       {/* Filters (no Card) */}
@@ -660,10 +550,7 @@ export default function OrdersPage() {
         </Select>
 
         {/* Date preset */}
-        <Select
-          value={dateFilter}
-          onValueChange={(v) => handleDateFilterChange(v as DateFilterOption)}
-        >
+        <Select value={dateFilter} onValueChange={(v) => handleDateFilterChange(v as DateFilterOption)}>
           <SelectTrigger>
             <SelectValue placeholder="Filter by date" />
           </SelectTrigger>
@@ -680,16 +567,12 @@ export default function OrdersPage() {
         {dateFilter === "custom" && (
           <Popover>
             <PopoverTrigger asChild>
-              <Button
-                variant="outline"
-                className="justify-start text-left font-normal"
-              >
+              <Button variant="outline" className="justify-start text-left font-normal">
                 <CalendarIcon className="mr-2 h-4 w-4" />
                 {dateRange?.from ? (
                   dateRange.to ? (
                     <>
-                      {format(dateRange.from, "LLL dd, y")} -{" "}
-                      {format(dateRange.to, "LLL dd, y")}
+                      {format(dateRange.from, "LLL dd, y")} - {format(dateRange.to, "LLL dd, y")}
                     </>
                   ) : (
                     format(dateRange.from, "LLL dd, y")
@@ -700,12 +583,7 @@ export default function OrdersPage() {
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
-              <Calendar
-                mode="range"
-                selected={dateRange}
-                onSelect={(range) => setDateRange(range)}
-                initialFocus
-              />
+              <Calendar mode="range" selected={dateRange} onSelect={(range) => setDateRange(range)} initialFocus />
             </PopoverContent>
           </Popover>
         )}
@@ -716,9 +594,7 @@ export default function OrdersPage() {
         table={table}
         columns={columns}
         isLoading={loading}
-        emptyMessage={
-          error ? `Error: ${error}` : "No orders found matching your filters"
-        }
+        emptyMessage={error ? `Error: ${error}` : "No orders found matching your filters"}
         skeletonRows={8}
       />
 
@@ -727,10 +603,8 @@ export default function OrdersPage() {
         <div className="text-sm text-muted-foreground">
           Showing{" "}
           <strong>
-            {filteredOrders.length === 0
-              ? 0
-              : (currentPage - 1) * itemsPerPage + 1}{" "}
-            to {Math.min(currentPage * itemsPerPage, filteredOrders.length)}
+            {filteredOrders.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{" "}
+            {Math.min(currentPage * itemsPerPage, filteredOrders.length)}
           </strong>{" "}
           of <strong>{filteredOrders.length}</strong> orders
         </div>
@@ -760,21 +634,13 @@ export default function OrdersPage() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>
-                {orders.find((o) => o.id === selectedOrderId)?.trackingNumber
-                  ? "Update Tracking Number"
-                  : "Set Tracking Number"}
+                {orders.find((o) => o.id === selectedOrderId)?.trackingNumber ? "Update Tracking Number" : "Set Tracking Number"}
               </DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4">
-              <Select
-                value={selectedCompany}
-                onValueChange={setSelectedCompany}
-                disabled={shippingLoading}
-              >
+              <Select value={selectedCompany} onValueChange={setSelectedCompany} disabled={shippingLoading}>
                 <SelectTrigger>
-                  <SelectValue
-                    placeholder={shippingLoading ? "Loading…" : "Select company"}
-                  />
+                  <SelectValue placeholder={shippingLoading ? "Loading…" : "Select company"} />
                 </SelectTrigger>
                 <SelectContent>
                   {shippingCompanies.map((c) => (
