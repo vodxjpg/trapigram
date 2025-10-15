@@ -5,6 +5,7 @@ import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 
+/** DB-backed idempotency (unchanged) */
 async function withIdempotency(
   req: NextRequest,
   exec: () => Promise<{ status: number; body: any }>
@@ -56,12 +57,13 @@ async function withIdempotency(
   }
 }
 
+/* ─────────────────────────────────────────────────────────── */
+
 const CreateSchema = z.object({
   clientId: z.string().min(1).optional(),
   country: z.string().length(2).optional(),
-  // accepted but not stored (schema lacks columns) – useful later for analytics
-  storeId: z.string().optional(),
-  registerId: z.string().optional(),
+  storeId: z.string().optional(),     // used to compose channel
+  registerId: z.string().optional(),  // used to compose channel
 });
 
 export async function POST(req: NextRequest) {
@@ -73,14 +75,15 @@ export async function POST(req: NextRequest) {
       const { organizationId } = ctx;
       const input = CreateSchema.parse(await req.json());
 
-      // 1) resolve client (must already exist; UI creates/chooses Walk-in)
+      /* 1) Resolve client (UI should have created/selected Walk-in already) */
       let clientId = input.clientId ?? null;
       if (!clientId) {
         const { rows } = await pool.query(
-          `SELECT id FROM clients
+          `SELECT id
+             FROM clients
             WHERE "organizationId"=$1
               AND (COALESCE("isWalkIn",false)=true OR LOWER("firstName")='walk-in')
-           ORDER BY "createdAt" ASC
+         ORDER BY "createdAt" ASC
             LIMIT 1`,
           [organizationId]
         );
@@ -88,17 +91,47 @@ export async function POST(req: NextRequest) {
         clientId = rows[0].id;
       }
 
-      // 2) reuse ACTIVE POS cart only (do not touch web carts)
-      const { rows: active } = await pool.query(
-        `SELECT * FROM carts
-          WHERE "clientId"=$1 AND "organizationId"=$2 AND status=true AND channel='pos'
-          ORDER BY "createdAt" DESC
+      /* 2) Compose a POS channel value that starts with "pos-" */
+      // If store/register provided -> "pos-<storeId>-<registerId>"
+      // else a generic "pos-" (still passes startsWith check on checkout)
+      let channelVal = "pos-";
+      if (input.storeId || input.registerId) {
+        const s = input.storeId ?? "na";
+        const r = input.registerId ?? "na";
+        channelVal = `pos-${s}-${r}`;
+      }
+
+      /* 3) Try to reuse an ACTIVE cart for this exact channel first */
+      if (channelVal !== "pos-") {
+        const { rows: exact } = await pool.query(
+          `SELECT *
+             FROM carts
+            WHERE "clientId"=$1
+              AND "organizationId"=$2
+              AND status=true
+              AND channel=$3
+         ORDER BY "createdAt" DESC
+            LIMIT 1`,
+          [clientId, organizationId, channelVal]
+        );
+        if (exact.length) return { status: 201, body: { newCart: exact[0], reused: true } };
+      }
+
+      /* 4) Fallback: reuse any active POS cart (channel LIKE 'pos-%') */
+      const { rows: anyPos } = await pool.query(
+        `SELECT *
+           FROM carts
+          WHERE "clientId"=$1
+            AND "organizationId"=$2
+            AND status=true
+            AND channel ILIKE 'pos-%'
+       ORDER BY "createdAt" DESC
           LIMIT 1`,
         [clientId, organizationId]
       );
-      if (active.length) return { status: 201, body: { newCart: active[0], reused: true } };
+      if (anyPos.length) return { status: 201, body: { newCart: anyPos[0], reused: true } };
 
-      // 3) resolve non-null country (payload -> org -> 'US')
+      /* 5) Resolve non-null country (payload → org settings → 'US') */
       const country = await (async () => {
         if (input.country && input.country.length === 2) return input.country.toUpperCase();
         const { rows: org } = await pool.query(
@@ -121,46 +154,50 @@ export async function POST(req: NextRequest) {
               first = m?.defaultCountry || m?.country || null;
             } catch {}
           }
-          if (first && first.length === 2) return first.toUpperCase();
+          if (first && typeof first === "string" && first.length === 2) return first.toUpperCase();
         }
         return "US";
       })();
 
-      // 4) shipping method for POS must be '-' (FK). Require it to exist.
-      const dash = await pool.query(
-        `SELECT id FROM "shippingMethods" WHERE id='-' AND ("organizationId"=$1 OR "organizationId" IS NULL) LIMIT 1`,
+      /* 6) POS shipping method must be '-' (FK must exist) */
+      const sm = await pool.query(
+        `SELECT id FROM "shippingMethods"
+          WHERE id='-'
+            AND ("organizationId"=$1 OR "organizationId" IS NULL)
+          LIMIT 1`,
         [organizationId]
       );
-      if (!dash.rowCount) {
+      if (!sm.rowCount) {
         return {
           status: 400,
-          body: { error: "POS requires a shipping method with id '-' (create one called e.g. 'POS — No Shipping')." },
+          body: { error: "POS requires a shipping method with id '-' (e.g. 'POS — No Shipping')." },
         };
       }
-      const shippingMethodId = dash.rows[0].id; // '-'
+      const shippingMethodId = sm.rows[0].id; // '-'
 
-      // 5) create cart
+      /* 7) Create the cart */
       const cartId = uuidv4();
       const emptyHash = "e3b0c44298fc1c149afbf4c8996fb924";
-      const { rows: created } = await pool.query(
-        `INSERT INTO carts (
-           id,"clientId",country,"couponCode","shippingMethod",
-           "cartHash","cartUpdatedHash",status,"createdAt","updatedAt",
-           "organizationId",channel
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,true,NOW(),NOW(),$8,$9)
-         RETURNING *`,
-        [
-          cartId,
-          clientId,
-          country,
-          null,
-          shippingMethodId,            // '-'
-          emptyHash,
-          emptyHash,
-          organizationId,
-          "pos",                       // keep constraint happy
-        ]
-      );
+      const insertSql = `
+        INSERT INTO carts (
+          id,"clientId",country,"couponCode","shippingMethod",
+          "cartHash","cartUpdatedHash",status,"createdAt","updatedAt",
+          "organizationId",channel
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,true,NOW(),NOW(),$8,$9)
+        RETURNING *`;
+      const vals = [
+        cartId,
+        clientId,
+        country,
+        null,                 // couponCode
+        shippingMethodId,     // '-'
+        emptyHash,
+        emptyHash,
+        organizationId,
+        channelVal,           // ✅ "pos-..." (or "pos-")
+      ];
+      const { rows: created } = await pool.query(insertSql, vals);
 
       return { status: 201, body: { newCart: created[0], reused: false } };
     } catch (err: any) {
