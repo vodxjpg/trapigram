@@ -1,31 +1,31 @@
 // src/app/(dashboard)/announcements/page.tsx
 "use client";
 
-import { useEffect }                 from "react";
-import { useRouter }                 from "next/navigation";
-import { Suspense }                  from "react";
-import { Plus }                      from "lucide-react";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Suspense } from "react";
+import { Plus } from "lucide-react";
 
-import { AnnouncementsTable }        from "./announcements-table";
-import { useHeaderTitle }            from "@/context/HeaderTitleContext";
-import { Button }                    from "@/components/ui/button";
-import { authClient }                from "@/lib/auth-client";
-import { useHasPermission }          from "@/hooks/use-has-permission";
+import { AnnouncementsTable } from "./announcements-table";
+import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { Button } from "@/components/ui/button";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 /* -------------------------------------------------------------------------- */
 
 export default function AnnouncementsPage() {
-  const router          = useRouter();
+  const router = useRouter();
   const { setHeaderTitle } = useHeaderTitle();
 
   /* active org → id for permission check */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
   /* permissions */
   const {
     hasPermission: canView,
-    isLoading:     viewLoading,
+    isLoading: viewLoading,
   } = useHasPermission(organizationId, { announcements: ["view"] });
 
   const { hasPermission: canCreate } = useHasPermission(
@@ -50,7 +50,7 @@ export default function AnnouncementsPage() {
 
   /* page */
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex items-center justify-between sm:flex-wrap">
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-bold tracking-tight">Announcements</h1>

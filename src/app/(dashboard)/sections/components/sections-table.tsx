@@ -1,7 +1,7 @@
 // src/app/(dashboard)/sections/components/sections-table.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
@@ -9,18 +9,10 @@ import {
   ChevronsLeft,
   ChevronsRight,
   MoreVertical,
-  Plus,
   Trash2,
   Edit,
 } from "lucide-react";
-import {
-  Table,
-  TableHead,
-  TableHeader,
-  TableRow,
-  TableBody,
-  TableCell,
-} from "@/components/ui/table";
+
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -43,6 +35,14 @@ import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
+/* NEW: TanStack + standardized table */
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
+
 type Section = {
   id: string;
   name: string;
@@ -56,9 +56,7 @@ type Node = Section & { children: Node[] };
 const buildTree = (list: Section[]): Node[] => {
   const map = new Map<string, Node>();
   const roots: Node[] = [];
-  list.forEach((s) =>
-    map.set(s.id, { ...s, children: [] }),
-  );
+  list.forEach((s) => map.set(s.id, { ...s, children: [] }));
   list.forEach((s) => {
     const node = map.get(s.id)!;
     if (s.parentSectionId) {
@@ -66,11 +64,16 @@ const buildTree = (list: Section[]): Node[] => {
     } else roots.push(node);
   });
   const sort = (arr: Node[]) =>
-    arr.sort((a, b) => a.title.localeCompare(b.title)).forEach((n) => sort(n.children));
+    arr
+      .sort((a, b) => a.title.localeCompare(b.title))
+      .forEach((n) => sort(n.children));
   sort(roots);
   return roots;
 };
-const flatten = (nodes: Node[], depth = 0): Array<Section & { depth: number }> => {
+const flatten = (
+  nodes: Node[],
+  depth = 0
+): Array<Section & { depth: number }> => {
   const out: Array<Section & { depth: number }> = [];
   nodes.forEach((n) => {
     out.push({ ...n, depth });
@@ -84,18 +87,24 @@ export function SectionsTable() {
 
   // ── permissions via useHasPermission
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const orgId               = activeOrg?.id ?? null;
-  const { hasPermission: canView,    isLoading: viewLoading   } = useHasPermission(orgId, { sections: ["view"] });
-  const { hasPermission: canCreate,  isLoading: createLoading } = useHasPermission(orgId, { sections: ["create"] });
-  const { hasPermission: canUpdate,  isLoading: updateLoading } = useHasPermission(orgId, { sections: ["update"] });
-  const { hasPermission: canDelete,  isLoading: deleteLoading } = useHasPermission(orgId, { sections: ["delete"] });
+  const orgId = activeOrg?.id ?? null;
+  const { hasPermission: canView, isLoading: viewLoading } = useHasPermission(
+    orgId,
+    { sections: ["view"] }
+  );
+  const { hasPermission: canCreate, isLoading: createLoading } =
+    useHasPermission(orgId, { sections: ["create"] });
+  const { hasPermission: canUpdate, isLoading: updateLoading } =
+    useHasPermission(orgId, { sections: ["update"] });
+  const { hasPermission: canDelete, isLoading: deleteLoading } =
+    useHasPermission(orgId, { sections: ["delete"] });
 
   // ── state hooks (always called)
-  const [rows, setRows]           = useState<Array<Section & { depth: number }>>([]);
-  const [loading, setLoading]     = useState(true);
-  const [toDelete, setToDelete]   = useState<Section | null>(null);
-  const pageSizeOptions           = [10, 20, 50];
-  const [pageSize, setPageSize]   = useState(10);
+  const [rows, setRows] = useState<Array<Section & { depth: number }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [toDelete, setToDelete] = useState<Section | null>(null);
+  const pageSizeOptions = [10, 20, 50];
+  const [pageSize, setPageSize] = useState(10);
   const [pageIndex, setPageIndex] = useState(0);
 
   // ── data fetching (always callable)
@@ -135,8 +144,8 @@ export function SectionsTable() {
     return null;
   }
 
-  const paged    = rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const paged = rows.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
 
   const confirmDelete = async () => {
     if (!toDelete) return;
@@ -154,6 +163,81 @@ export function SectionsTable() {
     }
   };
 
+  /* ── columns for StandardDataTable ─────────────────────────────── */
+  const columns = useMemo<ColumnDef<Section & { depth: number }>[]>(() => {
+    return [
+      {
+        accessorKey: "title",
+        header: "Title",
+        cell: ({ row }) => (
+          <div style={{ paddingLeft: `${row.original.depth * 1.5}rem` }}>
+            {row.original.title}
+          </div>
+        ),
+      },
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => row.original.name,
+      },
+      {
+        accessorKey: "updatedAt",
+        header: "Updated",
+        cell: ({ row }) =>
+          new Date(row.original.updatedAt).toLocaleString(undefined, {
+            dateStyle: "short",
+            timeStyle: "short",
+          }),
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const s = row.original;
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canUpdate && (
+                    <DropdownMenuItem
+                      onClick={() => router.push(`/sections/${s.id}`)}
+                    >
+                      <Edit className="mr-2 h-4 w-4" />
+                      Edit
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => setToDelete(s)}
+                        className="text-destructive"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ];
+  }, [canUpdate, canDelete, router]);
+
+  const table = useReactTable({
+    data: paged, // feed only the current page
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   return (
     <div className="space-y-4">
       {/* header */}
@@ -161,80 +245,13 @@ export function SectionsTable() {
         <h1 className="text-2xl font-semibold">Sections</h1>
       </div>
 
-      {/* table */}
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Title</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Updated</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">
-                  No sections yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              paged.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell>
-                    <div style={{ paddingLeft: `${s.depth * 1.5}rem` }}>
-                      {s.title}
-                    </div>
-                  </TableCell>
-                  <TableCell>{s.name}</TableCell>
-                  <TableCell>
-                    {new Date(s.updatedAt).toLocaleString(undefined, {
-                      dateStyle: "short",
-                      timeStyle: "short",
-                    })}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canUpdate && (
-                          <DropdownMenuItem onClick={() => router.push(`/sections/${s.id}`)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                        )}
-                        {canDelete && (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={() => setToDelete(s)}
-                              className="text-destructive"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized table */}
+      <StandardDataTable<Section & { depth: number }>
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        emptyMessage="No sections yet."
+      />
 
       {/* pagination */}
       <div className="flex items-center justify-between">
@@ -290,7 +307,10 @@ export function SectionsTable() {
       </div>
 
       {/* delete dialog */}
-      <AlertDialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
+      <AlertDialog
+        open={!!toDelete}
+        onOpenChange={(o) => !o && setToDelete(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete section?</AlertDialogTitle>

@@ -1,14 +1,14 @@
 // src/app/(dashboard)/product-attributes/page.tsx
 "use client";
 
-import { useEffect }              from "react";
-import { Suspense }               from "react";
+import { useEffect } from "react";
+import { Suspense } from "react";
 
-import { authClient }             from "@/lib/auth-client";
-import { useHasPermission }       from "@/hooks/use-has-permission";
-import { useHeaderTitle }         from "@/context/HeaderTitleContext";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
-import { AttributeTable }         from "./attribute-table";
+import { AttributeTable } from "./attribute-table";
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                         */
@@ -17,12 +17,12 @@ export default function ProductAttributesPage() {
   const { setHeaderTitle } = useHeaderTitle();
 
   /* ── active organisation → permission hook ─────────────────────── */
-  const { data: activeOrg }       = authClient.useActiveOrganization();
-  const organizationId            = activeOrg?.id ?? null;
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
 
   const {
     hasPermission: canView,       // true | false
-    isLoading:     permLoading,   // while resolving
+    isLoading: permLoading,   // while resolving
   } = useHasPermission(organizationId, { productAttributes: ["view"] });
 
   /* set page title in global header */
@@ -41,7 +41,7 @@ export default function ProductAttributesPage() {
 
   /* ── page UI ────────────────────────────────────────────────────── */
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-bold tracking-tight">Attributes</h1>
         <p className="text-muted-foreground">

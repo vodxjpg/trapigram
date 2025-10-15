@@ -21,15 +21,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,8 +44,15 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
-
 import { toast } from "sonner";
+
+/* NEW: TanStack + standardized renderer */
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -119,7 +117,10 @@ export function DiscountRulesTable() {
 
   // client cache (id -> Client) so we can show "First Last (username)"
   const [clientsById, setClientsById] = useState<Record<string, Client>>({});
-  const secretHeader = useMemo(() => ({ "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" }), []);
+  const secretHeader = useMemo(
+    () => ({ "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" }),
+    []
+  );
 
   /* ── redirect if no view ───────────────────────────────────────── */
   useEffect(() => {
@@ -137,14 +138,13 @@ export function DiscountRulesTable() {
         search: debounced,
       });
       const res = await fetch(`/api/tier-pricing?${qs.toString()}`);
-      console.log(res)
       if (!res.ok) throw new Error();
       const {
         tierPricings,
         totalPages: tp = 1,
         currentPage,
       } = await res.json();
-      setRules(tierPricings);
+      setRules(tierPricings ?? []);
       setTotalPages(tp);
       if (currentPage) setPage(currentPage);
     } catch {
@@ -198,7 +198,7 @@ export function DiscountRulesTable() {
       const missing = uniq.filter((id) => !clientsById[id]);
       if (missing.length === 0) return;
 
-      // 1) try batch in chunks (e.g., 50)
+      // 1) try batch in chunks
       const chunkSize = 50;
       for (let i = 0; i < missing.length; i += chunkSize) {
         const chunk = missing.slice(i, i + chunkSize);
@@ -234,7 +234,7 @@ export function DiscountRulesTable() {
                 setClientsById((prev) => ({ ...prev, [c.id]: c }));
               }
             }
-          } catch { /* ignore */ }
+          } catch { }
         })
       );
     };
@@ -251,7 +251,6 @@ export function DiscountRulesTable() {
     if (missing.length === 0) return;
 
     (async () => {
-      // fetch in small parallel batches
       const chunkSize = 10;
       const chunks: string[][] = [];
       for (let i = 0; i < missing.length; i += chunkSize) {
@@ -264,16 +263,12 @@ export function DiscountRulesTable() {
         await Promise.all(
           chunk.map(async (id) => {
             try {
-              // Use search endpoint to find by id (backend should match id/username/email)
               const url = `/api/clients?search=${encodeURIComponent(id)}&page=1&pageSize=5`;
               const res = await fetch(url, { headers: secretHeader });
               if (!res.ok) return;
               const data = await res.json();
-              const list: Client[] = Array.isArray(data.clients)
-                ? data.clients
-                : [];
+              const list: Client[] = Array.isArray(data.clients) ? data.clients : [];
 
-              // Prefer exact ID match; otherwise first item if search returns it.
               const exact = list.find((c) => c.id === id);
               if (exact) {
                 foundMap[id] = exact;
@@ -281,7 +276,7 @@ export function DiscountRulesTable() {
                 foundMap[id] = list[0];
               }
             } catch {
-              // ignore a single failure; continue filling others
+              // ignore a single failure
             }
           })
         );
@@ -337,7 +332,6 @@ export function DiscountRulesTable() {
 
   const clientLabelById = (id: string) => {
     const c = clientsById[id];
-    // If not yet resolved, show a neutral placeholder instead of a raw ID
     return c ? formatClient(c) : "Loading…";
   };
 
@@ -364,6 +358,89 @@ export function DiscountRulesTable() {
     );
   };
 
+  /* -------------------- Columns for StandardDataTable -------------------- */
+  const columns: ColumnDef<TierPricing>[] = useMemo(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => row.original.name,
+      },
+      {
+        accessorKey: "active",
+        header: "Active",
+        cell: ({ row }) => (
+          <Switch
+            checked={row.original.active}
+            onCheckedChange={() => toggleActive(row.original)}
+            disabled={!canUpdate}
+          />
+        ),
+      },
+      {
+        id: "countries",
+        header: "Countries",
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {row.original.countries.map((c) => (
+              <Badge key={c} variant="outline">
+                {c}
+              </Badge>
+            ))}
+          </div>
+        ),
+      },
+      {
+        id: "customers",
+        header: "Customers",
+        cell: ({ row }) => renderCustomersChips(getRuleClientIds(row.original)),
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const r = row.original;
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canUpdate && !updateLoading && (
+                    <DropdownMenuItem onClick={() => router.push(`/discount-rules/${r.id}`)}>
+                      <Edit className="mr-2 h-4 w-4" />
+                      Edit
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && !deleteLoading && (
+                    <DropdownMenuItem
+                      className="text-destructive"
+                      onClick={() => setRuleToDelete(r)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    [canUpdate, canDelete, updateLoading, deleteLoading, clientsById]
+  );
+
+  /* -------------------- TanStack table instance -------------------- */
+  const table = useReactTable({
+    data: rules,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   /* ── guards ────────────────────────────────────────────────────── */
   if (viewLoading || !canView) return null;
 
@@ -372,10 +449,7 @@ export function DiscountRulesTable() {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
-        <form
-          onSubmit={handleSearchSubmit}
-          className="flex w-full sm:w-auto gap-2"
-        >
+        <form onSubmit={handleSearchSubmit} className="flex w-full sm:w-auto gap-2">
           <Input
             placeholder="Search rules…"
             className="pl-8 w-full"
@@ -391,90 +465,14 @@ export function DiscountRulesTable() {
         </form>
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Active</TableHead>
-              <TableHead>Countries</TableHead>
-              <TableHead>Customers</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : rules.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
-                  No tier-pricing rules.
-                </TableCell>
-              </TableRow>
-            ) : (
-              rules.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-medium">{r.name}</TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={r.active}
-                      onCheckedChange={() => toggleActive(r)}
-                      disabled={!canUpdate}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {r.countries.map((c) => (
-                        <Badge key={c} variant="outline">
-                          {c}
-                        </Badge>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {renderCustomersChips(getRuleClientIds(r))}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canUpdate && !updateLoading && (
-                          <DropdownMenuItem
-                            onClick={() =>
-                              router.push(`/discount-rules/${r.id}`)
-                            }
-                          >
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                        )}
-                        {canDelete && !deleteLoading && (
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={() => setRuleToDelete(r)}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized Table */}
+      <StandardDataTable<TierPricing>
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        emptyMessage="No tier-pricing rules."
+        skeletonRows={5}
+      />
 
       {/* Pagination */}
       <div className="flex items-center justify-between">

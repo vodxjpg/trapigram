@@ -6,6 +6,7 @@ import {
   useState,
   startTransition,
   type FormEvent,
+  useMemo,
 } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -20,21 +21,13 @@ import {
   Edit,
 } from "lucide-react";
 
-import { useDebounce } from "@/hooks/use-debounce";          // ← NEW
-import { authClient }  from "@/lib/auth-client";
+import { useDebounce } from "@/hooks/use-debounce";
+import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
-import { Badge }       from "@/components/ui/badge";
-import { Button }      from "@/components/ui/button";
-import { Input }       from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -60,6 +53,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 
+/* NEW: TanStack + standardized table */
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
+
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
 /* ------------------------------------------------------------------ */
@@ -77,45 +78,52 @@ type ShippingMethod = {
 export function ShippingMethodsTable() {
   const router = useRouter();
 
-  /* ── active organisation & permissions ─────────────────────────── */
+  /* org & permissions */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
-  const { hasPermission: canView,   isLoading: permLoading } =
-    useHasPermission(organizationId, { shippingMethods: ["view"] });
-  const { hasPermission: canCreate } = useHasPermission(organizationId, { shippingMethods: ["create"] });
-  const { hasPermission: canUpdate } = useHasPermission(organizationId, { shippingMethods: ["update"] });
-  const { hasPermission: canDelete } = useHasPermission(organizationId, { shippingMethods: ["delete"] });
+  const { hasPermission: canView, isLoading: permLoading } = useHasPermission(
+    organizationId,
+    { shippingMethods: ["view"] }
+  );
+  const { hasPermission: canCreate } = useHasPermission(organizationId, {
+    shippingMethods: ["create"],
+  });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, {
+    shippingMethods: ["update"],
+  });
+  const { hasPermission: canDelete } = useHasPermission(organizationId, {
+    shippingMethods: ["delete"],
+  });
 
-  /* ── state ─────────────────────────────────────────────────────── */
-  const [methods,     setMethods    ] = useState<ShippingMethod[]>([]);
-  const [loading,     setLoading    ] = useState(true);
-  const [totalPages,  setTotalPages ] = useState(1);
+  /* state */
+  const [methods, setMethods] = useState<ShippingMethod[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize,    setPageSize   ] = useState(10);
+  const [pageSize, setPageSize] = useState(10);
 
-  /* search + debounce */
   const [query, setQuery] = useState("");
-  const debounced         = useDebounce(query, 300);           // ← NEW
+  const debounced = useDebounce(query, 300);
 
   const [toDelete, setToDelete] = useState<ShippingMethod | null>(null);
 
-  /* ── redirect if no view ───────────────────────────────────────── */
+  /* redirect if no view */
   useEffect(() => {
     if (!permLoading && !canView) router.replace("/shipping-companies");
   }, [permLoading, canView, router]);
 
-  /* ── fetch ─────────────────────────────────────────────────────── */
+  /* fetch */
   const fetchMethods = async () => {
     if (!canView) return;
     setLoading(true);
     try {
       const qs = new URLSearchParams({
-        page:      String(currentPage),
-        pageSize:  String(pageSize),
-        search:    debounced,
+        page: String(currentPage),
+        pageSize: String(pageSize),
+        search: debounced,
       });
-      const res  = await fetch(`/api/shipping-companies?${qs.toString()}`);
+      const res = await fetch(`/api/shipping-companies?${qs.toString()}`);
       if (!res.ok) throw new Error();
       const json = await res.json();
       setMethods(json.shippingMethods);
@@ -128,14 +136,13 @@ export function ShippingMethodsTable() {
     }
   };
 
-  /* initial + whenever deps change */
   useEffect(() => {
     if (permLoading) return;
     fetchMethods();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, debounced, permLoading, canView]);
 
-  /* ── handlers ──────────────────────────────────────────────────── */
+  /* handlers */
   const handleSearchSubmit = (e: FormEvent) => e.preventDefault();
 
   const handleDeleteConfirm = async () => {
@@ -154,18 +161,77 @@ export function ShippingMethodsTable() {
     }
   };
 
-  const handleEdit = (m: ShippingMethod) => router.push(`/shipping-companies/${m.id}`);
-  const handleAdd  = () => router.push("/shipping-companies/new");
+  const handleEdit = (m: ShippingMethod) =>
+    router.push(`/shipping-companies/${m.id}`);
+  const handleAdd = () => router.push("/shipping-companies/new");
 
-  /* ── guards ────────────────────────────────────────────────────── */
   if (permLoading || !canView) return null;
 
-  /* ── JSX ───────────────────────────────────────────────────────── */
+  /* columns for StandardDataTable */
+  const columns = useMemo<ColumnDef<ShippingMethod>[]>(() => {
+    return [
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => row.original.name,
+      },
+      {
+        id: "countries",
+        header: "Countries",
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {row.original.countries.map((c) => (
+              <Badge key={c} variant="outline" className="mr-1">
+                {c}
+              </Badge>
+            ))}
+          </div>
+        ),
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => (
+          <div className="text-right">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {canUpdate && (
+                  <DropdownMenuItem onClick={() => handleEdit(row.original)}>
+                    <Edit className="mr-2 h-4 w-4" /> Edit
+                  </DropdownMenuItem>
+                )}
+                {canDelete && (
+                  <DropdownMenuItem
+                    className="text-destructive"
+                    onClick={() => setToDelete(row.original)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" /> Delete
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ),
+      },
+    ];
+  }, [canUpdate, canDelete]);
+
+  /* TanStack table instance */
+  const table = useReactTable({
+    data: methods,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   return (
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
-        {/* Search */}
         <form onSubmit={handleSearchSubmit} className="flex gap-2 w-full sm:w-auto">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -184,7 +250,6 @@ export function ShippingMethodsTable() {
           <Button type="submit">Search</Button>
         </form>
 
-        {/* Create */}
         {canCreate && (
           <Button onClick={handleAdd}>
             <Plus className="mr-2 h-4 w-4" /> Add Company
@@ -192,70 +257,14 @@ export function ShippingMethodsTable() {
         )}
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Countries</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={3} className="h-24 text-center">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : methods.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={3} className="h-24 text-center">
-                  No shipping companies found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              methods.map((m) => (
-                <TableRow key={m.id}>
-                  <TableCell>{m.name}</TableCell>
-                  <TableCell>
-                    {m.countries.map((c) => (
-                      <Badge key={c} variant="outline" className="mr-1">
-                        {c}
-                      </Badge>
-                    ))}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canUpdate && (
-                          <DropdownMenuItem onClick={() => handleEdit(m)}>
-                            <Edit className="mr-2 h-4 w-4" /> Edit
-                          </DropdownMenuItem>
-                        )}
-                        {canDelete && (
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={() => setToDelete(m)}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized table */}
+      <StandardDataTable<ShippingMethod>
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        emptyMessage="No shipping companies found."
+        skeletonRows={5}
+      />
 
       {/* Pagination */}
       <div className="flex items-center justify-between">

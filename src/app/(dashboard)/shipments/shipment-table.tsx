@@ -6,11 +6,12 @@ import {
   useState,
   startTransition,
   type FormEvent,
+  useMemo,
 } from "react";
 import { useRouter } from "next/navigation";
 
-import { useDebounce } from "@/hooks/use-debounce";          // ← NEW
-import { authClient }  from "@/lib/auth-client";
+import { useDebounce } from "@/hooks/use-debounce";
+import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
 import {
@@ -25,25 +26,42 @@ import {
   Edit,
 } from "lucide-react";
 
-import { Badge }  from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input }  from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader,
-  AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
-  AlertDialogCancel, AlertDialogAction,
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 
 import { toast } from "sonner";
+
+/* NEW: TanStack + standardized table */
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -71,31 +89,42 @@ export function ShipmentsTable() {
 
   /* ── active org & permissions ─────────────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
-  const { hasPermission: canView,   isLoading: permLoading } =
-    useHasPermission(organizationId, { shipping: ["view"] });
-  const { hasPermission: canCreate } = useHasPermission(organizationId, { shipping: ["create"] });
-  const { hasPermission: canUpdate } = useHasPermission(organizationId, { shipping: ["update"] });
-  const { hasPermission: canDelete } = useHasPermission(organizationId, { shipping: ["delete"] });
+  const { hasPermission: canView, isLoading: permLoading } = useHasPermission(
+    organizationId,
+    { shipping: ["view"] }
+  );
+  const { hasPermission: canCreate } = useHasPermission(organizationId, {
+    shipping: ["create"],
+  });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, {
+    shipping: ["update"],
+  });
+  const { hasPermission: canDelete } = useHasPermission(organizationId, {
+    shipping: ["delete"],
+  });
 
   /* ── state ─────────────────────────────────────────────────────── */
-  const [shipments, setShipments]   = useState<Shipment[]>([]);
-  const [loading,   setLoading]     = useState(true);
-  const [totalPages,     setTotalPages]   = useState(1);
-  const [currentPage,    setCurrentPage]  = useState(1);
-  const [pageSize,       setPageSize]     = useState(10);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(1);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   /* search with debounce */
   const [query, setQuery] = useState("");
-  const debounced         = useDebounce(query, 300);          // ← NEW
+  const debounced = useDebounce(query, 300);
 
   /* sorting */
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  const sortColumn: "title" = "title";
+  const toggleSort = () =>
+    setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
 
   /* delete dialog */
-  const [shipmentToDelete, setShipmentToDelete] = useState<Shipment | null>(null);
+  const [shipmentToDelete, setShipmentToDelete] = useState<Shipment | null>(
+    null
+  );
 
   /* ── redirect if no view ───────────────────────────────────────── */
   useEffect(() => {
@@ -108,9 +137,9 @@ export function ShipmentsTable() {
     setLoading(true);
     try {
       const qs = new URLSearchParams({
-        page:      String(currentPage),
-        pageSize:  String(pageSize),
-        search:    debounced,
+        page: String(currentPage),
+        pageSize: String(pageSize),
+        search: debounced,
       });
       const res = await fetch(`/api/shipments?${qs.toString()}`);
       if (!res.ok) throw new Error();
@@ -151,12 +180,121 @@ export function ShipmentsTable() {
   /* ── guards ────────────────────────────────────────────────────── */
   if (permLoading || !canView) return null;
 
-  /* ── derived ----------------------------------------------------- */
-  const sorted = [...shipments].sort((a, b) =>
-    sortDirection === "asc"
-      ? a.title.localeCompare(b.title)
-      : b.title.localeCompare(a.title),
-  );
+  /* ── derived & sorting ------------------------------------------ */
+  const sorted = useMemo(() => {
+    const list = [...shipments];
+    list.sort((a, b) =>
+      sortDirection === "asc"
+        ? a.title.localeCompare(b.title)
+        : b.title.localeCompare(a.title)
+    );
+    return list;
+  }, [shipments, sortDirection]);
+
+  /* ── columns for StandardDataTable ─────────────────────────────── */
+  const columns = useMemo<ColumnDef<Shipment>[]>(() => {
+    return [
+      {
+        accessorKey: "title",
+        header: () => (
+          <button
+            type="button"
+            className="cursor-pointer select-none"
+            onClick={toggleSort}
+            aria-label="Sort by title"
+          >
+            Title {sortDirection === "asc" ? "↑" : "↓"}
+          </button>
+        ),
+        cell: ({ row }) => row.original.title,
+      },
+      {
+        accessorKey: "description",
+        header: "Description",
+        cell: ({ row }) => (
+          <div className="truncate max-w-xs">{row.original.description}</div>
+        ),
+      },
+      {
+        id: "countries",
+        header: "Countries",
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {row.original.countries.map((c) => (
+              <Badge key={c} variant="outline" className="mr-1 mb-1">
+                {c}
+              </Badge>
+            ))}
+          </div>
+        ),
+      },
+      {
+        id: "costs",
+        header: "Costs",
+        cell: ({ row }) => (
+          <div className="space-y-1">
+            {row.original.costs.map((g, i) => (
+              <div key={i} className="text-sm">
+                {g.minOrderCost.toFixed(2)}–{g.maxOrderCost.toFixed(2)} ={" "}
+                {g.shipmentCost.toFixed(2)}
+              </div>
+            ))}
+          </div>
+        ),
+      },
+      {
+        accessorKey: "createdAt",
+        header: "Created",
+        cell: ({ row }) =>
+          new Date(row.original.createdAt).toLocaleDateString(),
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const s = row.original;
+          if (!canUpdate && !canDelete) return null;
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canUpdate && (
+                    <DropdownMenuItem
+                      onClick={() => router.push(`/shipments/${s.id}`)}
+                    >
+                      <Edit className="mr-2 h-4 w-4" />
+                      Edit
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && (
+                    <DropdownMenuItem
+                      className="text-destructive"
+                      onClick={() => setShipmentToDelete(s)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ];
+  }, [canUpdate, canDelete, router, sortDirection]);
+
+  /* ── TanStack table instance ───────────────────────────────────── */
+  const table = useReactTable({
+    data: sorted,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   /* ── JSX ───────────────────────────────────────────────────────── */
   return (
@@ -189,93 +327,14 @@ export function ShipmentsTable() {
         )}
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="cursor-pointer">
-                Title {sortDirection === "asc" ? "↑" : "↓"}
-              </TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Countries</TableHead>
-              <TableHead>Costs</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : sorted.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
-                  No shipments found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              sorted.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell>{s.title}</TableCell>
-                  <TableCell className="truncate max-w-xs">
-                    {s.description}
-                  </TableCell>
-                  <TableCell>
-                    {s.countries.map((c) => (
-                      <Badge key={c} variant="outline" className="mr-1 mb-1">
-                        {c}
-                      </Badge>
-                    ))}
-                  </TableCell>
-                  <TableCell>
-                    {s.costs.map((g, i) => (
-                      <div key={i} className="text-sm mb-1">
-                        {g.minOrderCost.toFixed(2)}–{g.maxOrderCost.toFixed(2)} ={" "}
-                        {g.shipmentCost.toFixed(2)}
-                      </div>
-                    ))}
-                  </TableCell>
-                  <TableCell>
-                    {new Date(s.createdAt).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {(canUpdate || canDelete) && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {canUpdate && (
-                            <DropdownMenuItem onClick={() => router.push(`/shipments/${s.id}`)}>
-                              <Edit className="mr-2 h-4 w-4" />
-                              Edit
-                            </DropdownMenuItem>
-                          )}
-                          {canDelete && (
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onClick={() => setShipmentToDelete(s)}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized table */}
+      <StandardDataTable<Shipment>
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        emptyMessage="No shipments found."
+        skeletonRows={5}
+      />
 
       {/* Pagination */}
       <div className="flex items-center justify-between">

@@ -6,7 +6,6 @@ import {
   useEffect,
   useCallback,
   startTransition,
-  FormEvent,
 } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -19,12 +18,11 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useDebounce } from "@/hooks/use-debounce"; // ← NEW
+import { useDebounce } from "@/hooks/use-debounce";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -33,14 +31,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,6 +49,15 @@ import ReactCountryFlag from "react-country-flag";
 import countriesLib from "i18n-iso-countries";
 import en from "i18n-iso-countries/langs/en.json";
 import { toast } from "sonner";
+
+// ⬇️ TanStack + shared table
+import { useMemo } from "react";
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 countriesLib.registerLocale(en);
 
@@ -99,14 +98,10 @@ export function ClientsTable() {
     orgId,
     { customer: ["view"] }
   );
-  const { hasPermission: canCreate, isLoading: createLoading } =
-    useHasPermission(orgId, { customer: ["create"] });
-  const { hasPermission: canUpdate, isLoading: updateLoading } =
-    useHasPermission(orgId, { customer: ["update"] });
-  const { hasPermission: canDelete, isLoading: deleteLoading } =
-    useHasPermission(orgId, { customer: ["delete"] });
-  const { hasPermission: canPoints, isLoading: pointsLoading } =
-    useHasPermission(orgId, { affiliates: ["points"] });
+  const { hasPermission: canCreate } = useHasPermission(orgId, { customer: ["create"] });
+  const { hasPermission: canUpdate } = useHasPermission(orgId, { customer: ["update"] });
+  const { hasPermission: canDelete } = useHasPermission(orgId, { customer: ["delete"] });
+  const { hasPermission: canPoints } = useHasPermission(orgId, { affiliates: ["points"] });
 
   /* ── state ─────────────────────────────────────────────────────── */
   const [clients, setClients] = useState<Client[]>([]);
@@ -116,7 +111,7 @@ export function ClientsTable() {
   const [totalPages, setTotalPages] = useState(1);
 
   const [search, setSearch] = useState("");
-  const debounced = useDebounce(search, 400); // ← NEW
+  const debounced = useDebounce(search, 400);
 
   const [statsOpen, setStatsOpen] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -195,7 +190,6 @@ export function ClientsTable() {
         quantityPurchased: data.quantityPurchased,
         lastPurchase: data.lastPurchase.createdAt,
       });
-      console.log(statsData);
     } catch (err: any) {
       err.message = "This client doesn't have any stats";
       toast.error(err.message);
@@ -254,8 +248,105 @@ export function ClientsTable() {
     }
   };
 
-  /* ── guard ─────────────────────────────────────────────────────── */
   if (viewLoading || !canView) return null;
+
+  /* ── columns + table ───────────────────────────────────────────── */
+  const columns = useMemo<ColumnDef<Client>[]>(() => [
+    {
+      accessorKey: "username",
+      header: "Username",
+      cell: ({ row }) => (
+        <Link
+          href={`/clients/${row.original.id}/info`}
+          className="font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-ring rounded-sm"
+        >
+          {row.original.username}
+        </Link>
+      ),
+    },
+    {
+      id: "fullName",
+      header: "Name",
+      cell: ({ row }) => `${row.original.firstName} ${row.original.lastName}`,
+    },
+    { accessorKey: "email", header: "Email" },
+    { accessorKey: "phoneNumber", header: "Phone" },
+    {
+      accessorKey: "country",
+      header: "Country",
+      cell: ({ row }) => {
+        const code = row.original.country;
+        if (!code) return <span>-</span>;
+        return (
+          <div className="flex items-center">
+            <ReactCountryFlag
+              countryCode={code}
+              svg
+              style={{ width: "1em", height: "1em", marginRight: 6 }}
+            />
+            {countriesLib.getName(code, "en") ?? code}
+          </div>
+        );
+      },
+    },
+    { accessorKey: "points", header: "Points" },
+    {
+      accessorKey: "referredBy",
+      header: "Ref.",
+      cell: ({ row }) => row.original.referredBy ?? "-",
+    },
+    {
+      id: "stats",
+      header: "Stats",
+      cell: ({ row }) => (
+        <Button variant="ghost" size="icon" onClick={() => openStatsModal(row.original.id)}>
+          <Search className="h-4 w-4" />
+        </Button>
+      ),
+    },
+    {
+      id: "actions",
+      header: "",
+      cell: ({ row }) => {
+        const c = row.original;
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canPoints && (
+                <DropdownMenuItem onClick={() => openAdjustDialog(c)}>
+                  <DollarSign className="mr-2 h-4 w-4" /> Adjust Points
+                </DropdownMenuItem>
+              )}
+              {canUpdate && (
+                <DropdownMenuItem onClick={() => router.push(`/clients/${c.id}`)}>
+                  <Edit className="mr-2 h-4 w-4" /> Edit
+                </DropdownMenuItem>
+              )}
+              {canDelete && (
+                <DropdownMenuItem
+                  onClick={() => deleteClient(c.id)}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" /> Delete
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+    },
+  ], [canPoints, canUpdate, canDelete, openStatsModal, router]);
+
+  const table = useReactTable({
+    data: clients,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   /* ── JSX ───────────────────────────────────────────────────────── */
   return (
@@ -292,203 +383,96 @@ export function ClientsTable() {
         </DialogContent>
       </Dialog>
 
-      {/* Clients table */}
-      <Card className="p-4">
-        {/* toolbar */}
-        <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
-          <div className="relative w-full max-w-sm">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search clients…"
-              className="pl-8"
-              value={search}
-              onChange={(e) =>
-                startTransition(() => {
-                  setSearch(e.target.value);
-                  setPage(1);
-                })
-              }
-            />
-          </div>
-
-          <Select
-            value={pageSize.toString()}
-            onValueChange={(v) =>
+      {/* Toolbar (replaces Card header) */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full max-w-sm">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search clients…"
+            className="pl-8"
+            value={search}
+            onChange={(e) =>
               startTransition(() => {
-                setPageSize(Number(v));
+                setSearch(e.target.value);
                 setPage(1);
               })
             }
+          />
+        </div>
+
+        <Select
+          value={pageSize.toString()}
+          onValueChange={(v) =>
+            startTransition(() => {
+              setPageSize(Number(v));
+              setPage(1);
+            })
+          }
+        >
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Rows" />
+          </SelectTrigger>
+          <SelectContent>
+            {["5", "10", "20", "50"].map((n) => (
+              <SelectItem key={n} value={n}>
+                {n}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Standard data table (no Card wrapper) */}
+      <StandardDataTable
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        skeletonRows={8}
+        emptyMessage="No clients"
+      />
+
+      {/* Pagination */}
+      <div className="flex items-center justify-between mt-4">
+        <span className="text-sm text-muted-foreground">
+          Page {page} of {totalPages}
+        </span>
+        <div className="flex items-center space-x-2">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setPage(1)}
+            disabled={page === 1 || loading}
           >
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="Rows" />
-            </SelectTrigger>
-            <SelectContent>
-              {["5", "10", "20", "50"].map((n) => (
-                <SelectItem key={n} value={n}>
-                  {n}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4 -ml-2" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setPage((p) => p - 1)}
+            disabled={page === 1 || loading}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setPage((p) => p + 1)}
+            disabled={page === totalPages || loading}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setPage(totalPages)}
+            disabled={page === totalPages || loading}
+          >
+            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="h-4 w-4 -ml-2" />
+          </Button>
         </div>
-
-        {/* table */}
-        <div className="rounded-md border overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Username</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>Country</TableHead>
-                <TableHead>Points</TableHead>
-                <TableHead>Ref.</TableHead>
-                <TableHead>Stats</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center">
-                    Loading…
-                  </TableCell>
-                </TableRow>
-              ) : clients.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center">
-                    No clients
-                  </TableCell>
-                </TableRow>
-              ) : (
-                clients.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell>
-                      <Link
-                        href={`/clients/${c.id}/info`}
-                        className="font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-ring rounded-sm"
-                      >
-                        {c.username}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{`${c.firstName} ${c.lastName}`}</TableCell>
-                    <TableCell>{c.email}</TableCell>
-                    <TableCell>{c.phoneNumber}</TableCell>
-                    <TableCell>
-                      {c.country ? (
-                        <div className="flex items-center">
-                          <ReactCountryFlag
-                            countryCode={c.country}
-                            svg
-                            style={{
-                              width: "1em",
-                              height: "1em",
-                              marginRight: 6,
-                            }}
-                          />
-                          {countriesLib.getName(c.country, "en") ?? c.country}
-                        </div>
-                      ) : (
-                        "-"
-                      )}
-                    </TableCell>
-                    <TableCell>{c.points}</TableCell>
-                    <TableCell>{c.referredBy ?? "-"}</TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openStatsModal(c.id)}
-                      >
-                        <Search className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {canPoints && (
-                            <DropdownMenuItem
-                              onClick={() => openAdjustDialog(c)}
-                            >
-                              <DollarSign className="mr-2 h-4 w-4" /> Adjust
-                              Points
-                            </DropdownMenuItem>
-                          )}
-                          {canUpdate && (
-                            <DropdownMenuItem
-                              onClick={() => router.push(`/clients/${c.id}`)}
-                            >
-                              <Edit className="mr-2 h-4 w-4" /> Edit
-                            </DropdownMenuItem>
-                          )}
-                          {canDelete && (
-                            <DropdownMenuItem
-                              onClick={() => deleteClient(c.id)}
-                              className="text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" /> Delete
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-
-        {/* pagination */}
-        <div className="flex items-center justify-between mt-4">
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <div className="flex items-center space-x-2">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setPage(1)}
-              disabled={page === 1 || loading}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              <ChevronLeft className="h-4 w-4 -ml-2" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setPage((p) => p - 1)}
-              disabled={page === 1 || loading}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setPage((p) => p + 1)}
-              disabled={page === totalPages || loading}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setPage(totalPages)}
-              disabled={page === totalPages || loading}
-            >
-              <ChevronRight className="h-4 w-4" />
-              <ChevronRight className="h-4 w-4 -ml-2" />
-            </Button>
-          </div>
-        </div>
-      </Card>
+      </div>
 
       {/* statistics dialog */}
       <Dialog open={statsOpen} onOpenChange={setStatsOpen}>
@@ -517,7 +501,7 @@ export function ClientsTable() {
                 <p className="text-lg font-medium">
                   {typeof statsData.mostPurchased === "string"
                     ? statsData.mostPurchased
-                    : (statsData.mostPurchased?.title ?? "N/A")}
+                    : (statsData.mostPurchased as any)?.title ?? "N/A"}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
                   {statsData.quantityPurchased} units
@@ -528,9 +512,7 @@ export function ClientsTable() {
                   Last Purchase
                 </h3>
                 <p className="text-lg font-medium">
-                  {statsData.lastPurchase
-                    ? formatDate(statsData.lastPurchase)
-                    : "N/A"}
+                  {statsData.lastPurchase ? formatDate(statsData.lastPurchase) : "N/A"}
                 </p>
               </div>
             </div>

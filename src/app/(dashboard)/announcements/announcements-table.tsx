@@ -1,3 +1,4 @@
+// src/app/(dashboard)/announcements/announcements-table.tsx
 "use client";
 
 import React, {
@@ -5,6 +6,7 @@ import React, {
   useEffect,
   startTransition,
   type FormEvent,
+  useMemo,
 } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -21,18 +23,10 @@ import {
   Send as SendIcon,
 } from "lucide-react";
 
-import { useDebounce } from "@/hooks/use-debounce";          // ← NEW
-import { Badge }        from "@/components/ui/badge";
-import { Button }       from "@/components/ui/button";
-import { Input }        from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { useDebounce } from "@/hooks/use-debounce";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,6 +63,14 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 
+// ⬇️ TanStack + Standard table
+import {
+  useReactTable,
+  getCoreRowModel,
+  type ColumnDef,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
+
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
 /* ------------------------------------------------------------------ */
@@ -88,9 +90,9 @@ type Announcement = {
 const fmtLocal = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      })
+      dateStyle: "medium",
+      timeStyle: "short",
+    })
     : "—";
 
 /* ------------------------------------------------------------------ */
@@ -99,25 +101,23 @@ const fmtLocal = (iso: string | null) =>
 export function AnnouncementsTable() {
   const router = useRouter();
 
-  /* ── table state ────────────────────────────────────────────── */
+  // table state
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
-  const [loading,       setLoading      ] = useState(true);
-  const [totalPages,    setTotalPages   ] = useState(1);
-  const [currentPage,   setCurrentPage  ] = useState(1);
-  const [searchQuery,   setSearchQuery  ] = useState("");
-  const debounced                        = useDebounce(searchQuery, 300); // ← NEW
-  const [pageSize,      setPageSize     ] = useState(10);
+  const [loading, setLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(1);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState("");
+  const debounced = useDebounce(searchQuery, 300);
+  const [pageSize, setPageSize] = useState(10);
 
-  /* ── modal / dialog state ───────────────────────────────────── */
+  // modal / dialog state
   const [contentModalOpen, setContentModalOpen] = useState(false);
-  const [modalContent,     setModalContent    ] = useState("");
-  const [toDelete,         setToDelete        ] = useState<Announcement | null>(null);
-  const [toSend,           setToSend          ] = useState<Announcement | null>(null);
+  const [modalContent, setModalContent] = useState("");
+  const [toDelete, setToDelete] = useState<Announcement | null>(null);
+  const [toSend, setToSend] = useState<Announcement | null>(null);
 
-  /* ---------------------------------------------------------------- */
-  /*  Sorting                                                         */
-  /* ---------------------------------------------------------------- */
-  const [sortColumn,    setSortColumn   ] = useState<string>("title");
+  // sorting
+  const [sortColumn, setSortColumn] = useState<string>("title");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   const handleSort = (column: string) => {
@@ -129,30 +129,32 @@ export function AnnouncementsTable() {
     }
   };
 
-  const sortedAnnouncements = [...announcements].sort((a, b) => {
+  const sortedAnnouncements = useMemo(() => {
+    const list = [...announcements];
     if (sortColumn === "title") {
-      return sortDirection === "asc"
-        ? a.title.localeCompare(b.title)
-        : b.title.localeCompare(a.title);
+      list.sort((a, b) =>
+        sortDirection === "asc"
+          ? a.title.localeCompare(b.title)
+          : b.title.localeCompare(a.title)
+      );
     }
-    return 0;
-  });
+    return list;
+  }, [announcements, sortColumn, sortDirection]);
 
-  /* ---------------------------------------------------------------- */
-  /*  Fetch                                                           */
-  /* ---------------------------------------------------------------- */
+  // fetch
   const fetchAnnouncements = async () => {
     setLoading(true);
     try {
       const response = await fetch(
         `/api/announcements?page=${currentPage}&pageSize=${pageSize}&search=${encodeURIComponent(
-          debounced,
+          debounced
         )}`,
         {
           headers: {
-            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+            "x-internal-secret":
+              process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
           },
-        },
+        }
       );
       if (!response.ok) throw new Error("Failed to fetch announcements");
       const data = await response.json();
@@ -172,16 +174,15 @@ export function AnnouncementsTable() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, debounced]);
 
-  /* ---------------------------------------------------------------- */
-  /*  Handlers                                                        */
-  /* ---------------------------------------------------------------- */
+  // actions
   const confirmDelete = async () => {
     if (!toDelete) return;
     try {
       const res = await fetch(`/api/announcements/${toDelete.id}`, {
         method: "DELETE",
         headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+          "x-internal-secret":
+            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
         },
       });
       if (!res.ok) throw new Error("Failed to delete announcement");
@@ -201,7 +202,8 @@ export function AnnouncementsTable() {
       const res = await fetch(`/api/announcements/send/${toSend.id}`, {
         method: "PATCH",
         headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
+          "x-internal-secret":
+            process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "",
         },
       });
       if (!res.ok) throw new Error("Failed to send announcement");
@@ -215,17 +217,126 @@ export function AnnouncementsTable() {
     }
   };
 
+  // columns for StandardDataTable
+  const columns = useMemo<ColumnDef<Announcement>[]>(
+    () => [
+      {
+        accessorKey: "title",
+        header: () => (
+          <button
+            type="button"
+            onClick={() => handleSort("title")}
+            className="cursor-pointer font-medium"
+          >
+            Title{" "}
+            {sortColumn === "title" ? (sortDirection === "asc" ? "↑" : "↓") : ""}
+          </button>
+        ),
+        cell: ({ row }) => <span>{row.original.title}</span>,
+      },
+      {
+        id: "content",
+        header: "Content",
+        cell: ({ row }) => (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setModalContent(row.original.content);
+              setContentModalOpen(true);
+            }}
+          >
+            <ZoomIn className="h-4 w-4" />
+            <span className="sr-only">View Content</span>
+          </Button>
+        ),
+      },
+      {
+        accessorKey: "deliveryDate",
+        header: "Delivery Date",
+        cell: ({ row }) => <span>{fmtLocal(row.original.deliveryDate)}</span>,
+      },
+      {
+        accessorKey: "sent",
+        header: "Sent",
+        cell: ({ row }) =>
+          row.original.sent ? (
+            <Badge variant="default">Yes</Badge>
+          ) : (
+            <Badge variant="destructive">No</Badge>
+          ),
+      },
+      {
+        id: "countries",
+        header: "Countries",
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {row.original.countries.map((c) => (
+              <Badge key={c} variant="outline">
+                {c}
+              </Badge>
+            ))}
+          </div>
+        ),
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const a = row.original;
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setToSend(a)}>
+                    <SendIcon className="mr-2 h-4 w-4" />
+                    Send
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => router.push(`/announcements/${a.id}`)}
+                  >
+                    <Edit className="mr-2 h-4 w-4" />
+                    Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => setToDelete(a)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    [router, sortColumn, sortDirection]
+  );
+
+  const table = useReactTable({
+    data: sortedAnnouncements,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   /* ---------------------------------------------------------------- */
   /*  JSX                                                             */
   /* ---------------------------------------------------------------- */
   return (
     <div className="space-y-4">
-      {/* Header */}
+      {/* Header / Search */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
         <form
           onSubmit={(e: FormEvent) => {
             e.preventDefault();
-            setCurrentPage(1);    // fetch triggered by effect after debounce
+            setCurrentPage(1);
           }}
           className="flex w-full sm:w-auto gap-2"
         >
@@ -249,101 +360,14 @@ export function AnnouncementsTable() {
         </form>
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead
-                className="cursor-pointer"
-                onClick={() => handleSort("title")}
-              >
-                Title {sortColumn === "title" && (sortDirection === "asc" ? "↑" : "↓")}
-              </TableHead>
-              <TableHead>Content</TableHead>
-              <TableHead>Delivery Date</TableHead>
-              <TableHead>Sent</TableHead>
-              <TableHead>Countries</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
-                  Loading...
-                </TableCell>
-              </TableRow>
-            ) : sortedAnnouncements.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
-                  No announcements found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              sortedAnnouncements.map((a) => (
-                <TableRow key={a.id}>
-                  <TableCell>{a.title}</TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        setModalContent(a.content);
-                        setContentModalOpen(true);
-                      }}
-                    >
-                      <ZoomIn className="h-4 w-4" />
-                      <span className="sr-only">View Content</span>
-                    </Button>
-                  </TableCell>
-                  <TableCell>{fmtLocal(a.deliveryDate)}</TableCell>
-                  <TableCell>
-                    {a.sent ? (
-                      <Badge variant="default">Yes</Badge>
-                    ) : (
-                      <Badge variant="destructive">No</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {a.countries.map((c) => (
-                      <Badge key={c} variant="outline" className="mr-1">
-                        {c}
-                      </Badge>
-                    ))}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => setToSend(a)}>
-                          <SendIcon className="mr-2 h-4 w-4" />
-                          Send
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => router.push(`/announcements/${a.id}`)}>
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onClick={() => setToDelete(a)}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Data table (standardized) */}
+      <StandardDataTable
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        skeletonRows={Math.min(pageSize, 10)}
+        emptyMessage="No announcements found."
+      />
 
       {/* Pagination */}
       <div className="flex items-center justify-between">

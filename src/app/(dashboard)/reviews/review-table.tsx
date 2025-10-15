@@ -6,6 +6,7 @@ import React, {
   useEffect,
   startTransition,
   type FormEvent,
+  useMemo,
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -20,17 +21,9 @@ import {
   ChevronsRight,
 } from "lucide-react";
 
-import { useDebounce } from "@/hooks/use-debounce";         // ← NEW
-import { Button }       from "@/components/ui/button";
-import { Input }        from "@/components/ui/input";
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from "@/components/ui/table";
+import { useDebounce } from "@/hooks/use-debounce";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -51,6 +44,13 @@ import { toast } from "sonner";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 
+/* NEW: TanStack + standardized table */
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -69,38 +69,26 @@ type Review = {
 export function ReviewsTable() {
   const router = useRouter();
 
-     // permission to deep-link into orders
-   const { data: activeOrg } = authClient.useActiveOrganization();
-   const organizationId = activeOrg?.id ?? null;
-   const {
-     hasPermission: canViewOrders,
-   } = useHasPermission(organizationId, { order: ["view"] });
+  // permission to deep-link into orders
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const organizationId = activeOrg?.id ?? null;
+  const { hasPermission: canViewOrders } = useHasPermission(organizationId, {
+    order: ["view"],
+  });
 
   /* ── state ─────────────────────────────────────────────────────── */
-  const [reviews,      setReviews     ] = useState<Review[]>([]);
-  const [loading,      setLoading     ] = useState(true);
-  const [totalPages,   setTotalPages  ] = useState(1);
-  const [currentPage,  setCurrentPage ] = useState(1);
-  const [pageSize,     setPageSize    ] = useState(10);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(1);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
-  const [searchQuery,  setSearchQuery ] = useState("");
-  const debounced                       = useDebounce(searchQuery, 300); // ← NEW
+  const [searchQuery, setSearchQuery] = useState("");
+  const debounced = useDebounce(searchQuery, 300);
 
   /* modal */
   const [modalOpen, setModalOpen] = useState(false);
   const [modalText, setModalText] = useState("");
-
-  /* ---------------------------------------------------------------- */
-  /*  Helpers                                                         */
-  /* ---------------------------------------------------------------- */
-  const rateIcon = (rate: Review["rate"]) =>
-    rate === "positive" ? (
-      <ThumbsUp className="h-5 w-5 text-green-600" />
-    ) : rate === "neutral" ? (
-      <Minus className="h-5 w-5 text-gray-600" />
-    ) : (
-      <ThumbsDown className="h-5 w-5 text-red-600" />
-    );
 
   /* ---------------------------------------------------------------- */
   /*  Fetch                                                           */
@@ -131,6 +119,80 @@ export function ReviewsTable() {
     fetchReviews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, debounced]);
+
+  /* ---------------------------------------------------------------- */
+  /*  Columns for StandardDataTable                                   */
+  /* ---------------------------------------------------------------- */
+  const columns = useMemo<ColumnDef<Review>[]>(() => {
+    const rateIcon = (rate: Review["rate"]) =>
+      rate === "positive" ? (
+        <ThumbsUp className="h-5 w-5 text-green-600" />
+      ) : rate === "neutral" ? (
+        <Minus className="h-5 w-5 text-gray-600" />
+      ) : (
+        <ThumbsDown className="h-5 w-5 text-red-600" />
+      );
+
+    return [
+      {
+        accessorKey: "orderId",
+        header: "Order",
+        cell: ({ row }) =>
+          canViewOrders ? (
+            <Link
+              href={`/orders/${row.original.orderId}`}
+              className="font-medium no-underline text-foreground hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-ring rounded-sm"
+            >
+              {row.original.orderId}
+            </Link>
+          ) : (
+            <span className="text-muted-foreground" title="No permission to view orders">
+              {row.original.orderId}
+            </span>
+          ),
+      },
+      {
+        id: "text",
+        header: "Text",
+        cell: ({ row }) => (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setModalText(row.original.text);
+              setModalOpen(true);
+            }}
+            aria-label="View review text"
+          >
+            <Search className="h-5 w-5" />
+          </Button>
+        ),
+      },
+      {
+        accessorKey: "rate",
+        header: "Rate",
+        cell: ({ row }) => rateIcon(row.original.rate),
+      },
+      {
+        accessorKey: "createdAt",
+        header: "Created",
+        cell: ({ row }) =>
+          new Date(row.original.createdAt).toLocaleString(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          }),
+      },
+    ];
+  }, [canViewOrders]);
+
+  /* ---------------------------------------------------------------- */
+  /*  TanStack table instance                                         */
+  /* ---------------------------------------------------------------- */
+  const table = useReactTable({
+    data: reviews,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   /* ---------------------------------------------------------------- */
   /*  JSX                                                             */
@@ -165,73 +227,15 @@ export function ReviewsTable() {
         </form>
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Order</TableHead>
-              <TableHead>Text</TableHead>
-              <TableHead>Rate</TableHead>
-              <TableHead>Created</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : reviews.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center">
-                  No reviews found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              reviews.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>
-                               {canViewOrders ? (
-              <Link
-                href={`/orders/${r.orderId}`}
-                className="text-blue-600 hover:underline"
-              >
-                {r.orderId}
-              </Link>
-            ) : (
-              <span className="text-muted-foreground" title="No permission to view orders">
-                {r.orderId}
-              </span>
-            )}
-
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        setModalText(r.text);
-                        setModalOpen(true);
-                      }}
-                    >
-                      <Search className="h-5 w-5" />
-                    </Button>
-                  </TableCell>
-                  <TableCell>{rateIcon(r.rate)}</TableCell>
-                  <TableCell>
-                    {new Date(r.createdAt).toLocaleString(undefined, {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized Table */}
+      <StandardDataTable<Review>
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        emptyMessage="No reviews found."
+        skeletonRows={5}
+        className="[&_table]:table-fixed [&_table]:w-full [&_th]:w-1/4 [&_td]:w-1/4"
+      />
 
       {/* Pagination */}
       <div className="flex items-center justify-between">

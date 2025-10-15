@@ -301,7 +301,7 @@ export function WarehouseTable() {
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex flex-wrap justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         {/* Search */}
         <form
           onSubmit={(e: FormEvent) => e.preventDefault()}

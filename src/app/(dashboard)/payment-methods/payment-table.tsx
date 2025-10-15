@@ -1,7 +1,7 @@
 // src/app/(dashboard)/payment-methods/payment-table.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -19,19 +19,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger,
   DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   Select,
@@ -47,6 +39,14 @@ import { PaymentMethodDrawer } from "./payment-drawer";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 
+/* NEW: TanStack + standardized table */
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
+
 export interface PaymentMethod {
   id: string;
   name: string;
@@ -55,25 +55,29 @@ export interface PaymentMethod {
   secretKey?: string | null;
   description?: string | null;
   instructions?: string | null;
-  default?: boolean; // internal; used to disable deletion + show badge
+  default?: boolean;
 }
 
 export function PaymentMethodsTable() {
   const router = useRouter();
 
-  // active organization for permission scope
+  // org + permissions
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
 
-  // permissions
-  const {
-    hasPermission: canView,
-    isLoading: permLoading,
-  } = useHasPermission(organizationId, { payment: ["view"] });
-
-  const { hasPermission: canCreate } = useHasPermission(organizationId, { payment: ["create"] });
-  const { hasPermission: canUpdate } = useHasPermission(organizationId, { payment: ["update"] });
-  const { hasPermission: canDelete } = useHasPermission(organizationId, { payment: ["delete"] });
+  const { hasPermission: canView, isLoading: permLoading } = useHasPermission(
+    organizationId,
+    { payment: ["view"] }
+  );
+  const { hasPermission: canCreate } = useHasPermission(organizationId, {
+    payment: ["create"],
+  });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, {
+    payment: ["update"],
+  });
+  const { hasPermission: canDelete } = useHasPermission(organizationId, {
+    payment: ["delete"],
+  });
 
   // state
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -108,7 +112,6 @@ export function PaymentMethodsTable() {
     }
   };
 
-  // effects
   useEffect(() => {
     if (canView) fetchMethods();
   }, [currentPage, pageSize, searchQuery, canView]);
@@ -141,12 +144,16 @@ export function PaymentMethodsTable() {
   const deleteRow = async (pm: PaymentMethod) => {
     if (!canDelete) return;
     if (pm.default) {
-      toast.error("Default payment methods cannot be deleted. You can edit or deactivate them.");
+      toast.error(
+        "Default payment methods cannot be deleted. You can edit or deactivate them."
+      );
       return;
     }
     if (!confirm("Delete this payment method?")) return;
     try {
-      const res = await fetch(`/api/payment-methods/${pm.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/payment-methods/${pm.id}`, {
+        method: "DELETE",
+      });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j?.error || "Failed to delete");
@@ -163,22 +170,112 @@ export function PaymentMethodsTable() {
     setEditing(row);
     setDrawerOpen(true);
   };
-
   const onDrawerClose = (refresh = false) => {
     setDrawerOpen(false);
     setEditing(null);
     if (refresh) fetchMethods();
   };
 
-  const truncate = (s?: string | null, n = 80) => {
-    if (!s) return "";
-    return s.length > n ? s.slice(0, n - 1) + "…" : s;
-  };
+  const truncate = (s?: string | null, n = 80) =>
+    !s ? "" : s.length > n ? s.slice(0, n - 1) + "…" : s;
+
+  /* -------------------- Columns for StandardDataTable -------------------- */
+  const columns = useMemo<ColumnDef<PaymentMethod>[]>(() => {
+    return [
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => {
+          const pm = row.original;
+          return (
+            <div className="flex items-center gap-2">
+              {pm.name}
+              {pm.default && (
+                <Badge variant="secondary" className="ml-1">
+                  Default
+                </Badge>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "description",
+        header: "Description",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground block max-w-[420px]">
+            {truncate(row.original.description)}
+          </span>
+        ),
+      },
+      {
+        id: "active",
+        header: "Active",
+        cell: ({ row }) => (
+          <Switch
+            checked={row.original.active}
+            onCheckedChange={() => toggleActive(row.original)}
+            disabled={!canUpdate}
+          />
+        ),
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right">Actions</div>,
+        cell: ({ row }) => {
+          const pm = row.original;
+          return (
+            <div className="text-right">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canUpdate && (
+                    <DropdownMenuItem onClick={() => openDrawer(pm)}>
+                      <Edit className="mr-2 h-4 w-4" />
+                      Edit
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => deleteRow(pm)}
+                        className={
+                          pm.default
+                            ? "opacity-50"
+                            : "text-destructive focus:text-destructive"
+                        }
+                        disabled={pm.default}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ];
+  }, [canUpdate, canDelete]);
+
+  /* -------------------- TanStack table instance -------------------- */
+  const table = useReactTable({
+    data: methods,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   return (
     <>
       <div className="space-y-6">
-        {/* header row */}
+        {/* Header / Toolbar */}
         <div className="flex flex-col sm:flex-row justify-between gap-4">
           <form
             onSubmit={(e) => {
@@ -199,6 +296,7 @@ export function PaymentMethodsTable() {
             </div>
             <Button type="submit">Search</Button>
           </form>
+
           {canCreate && (
             <Button onClick={() => openDrawer(null)}>
               <Plus className="mr-2 h-4 w-4" />
@@ -207,91 +305,16 @@ export function PaymentMethodsTable() {
           )}
         </div>
 
-        {/* table */}
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Active</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center py-6">
-                    Loading…
-                  </TableCell>
-                </TableRow>
-              ) : methods.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center py-6">
-                    No payment methods.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                methods.map((pm) => (
-                  <TableRow key={pm.id}>
-                    <TableCell className="flex items-center gap-2">
-                      {pm.name}
-                      {pm.default && (
-                        <Badge variant="secondary" className="ml-2">
-                          Default
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="max-w-[420px]">
-                      <span className="text-muted-foreground">
-                        {truncate(pm.description)}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <Switch
-                        checked={pm.active}
-                        onCheckedChange={() => toggleActive(pm)}
-                        disabled={!canUpdate}
-                      />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {canUpdate && (
-                            <DropdownMenuItem onClick={() => openDrawer(pm)}>
-                              <Edit className="mr-2 h-4 w-4" />
-                              Edit
-                            </DropdownMenuItem>
-                          )}
-                          {canDelete && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => deleteRow(pm)}
-                                className={pm.default ? "opacity-50" : "text-destructive focus:text-destructive"}
-                                disabled={pm.default}
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Delete
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        {/* Standardized table */}
+        <StandardDataTable<PaymentMethod>
+          table={table}
+          columns={columns}
+          isLoading={loading}
+          emptyMessage="No payment methods."
+          skeletonRows={5}
+        />
 
-        {/* pagination */}
+        {/* Pagination */}
         <div className="flex items-center justify-between mt-4">
           <div className="text-sm text-muted-foreground">
             Page {currentPage} of {totalPages}

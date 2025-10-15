@@ -19,7 +19,7 @@ export default function ShipmentsPage() {
   /* ── permissions ───────────────────────────────────────────────── */
   const {
     hasPermission: canView,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(orgId, { shipping: ["view"] });
 
   useEffect(() => {
@@ -28,7 +28,7 @@ export default function ShipmentsPage() {
 
   useEffect(() => {
     if (!permLoading && !canView) {
-      router.replace("/dashboard"); 
+      router.replace("/dashboard");
     }
   }, [permLoading, canView, router]);
 
@@ -37,7 +37,7 @@ export default function ShipmentsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-bold tracking-tight">Shipping methods</h1>
         <p className="text-muted-foreground">

@@ -5,5 +5,9 @@ export const metadata = {
 
 import ClientDashboard from "./client-dashboard";
 export default function AffiliatesDashboardPage() {
-  return <ClientDashboard />;
+  return (
+    <div>
+      <ClientDashboard />;
+    </div>
+  )
 }

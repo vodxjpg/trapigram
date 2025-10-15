@@ -19,7 +19,7 @@ export default function WarehousesPage() {
   // check view permission on warehouses
   const {
     hasPermission: canView,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { warehouses: ["view"] });
 
   useEffect(() => {
@@ -39,7 +39,7 @@ export default function WarehousesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-bold tracking-tight">Warehouses</h1>
         <p className="text-muted-foreground">

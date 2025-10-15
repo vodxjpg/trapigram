@@ -25,7 +25,7 @@ export default function DiscountRulesPage() {
   // ── permissions ────────────────────────────────────────────────────────
   const {
     hasPermission: canView,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { tierPricing: ["view"] });
   const { hasPermission: canCreate } = useHasPermission(
     organizationId,
@@ -53,7 +53,7 @@ export default function DiscountRulesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Tier pricing</h1>

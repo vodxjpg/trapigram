@@ -21,7 +21,7 @@ import {
   Search,
   Trash2,
   Edit,
-  Copy,
+  Copy as CopyIcon,
   Upload,
   Download,
   X,
@@ -57,10 +57,9 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
-
 import { toast } from "sonner";
 
-/* NEW: TanStack table + standardized renderer */
+/* TanStack + standardized renderer */
 import {
   type ColumnDef,
   getCoreRowModel,
@@ -120,9 +119,7 @@ export function CouponsTable() {
   const debounced = useDebounce(searchQuery, 300);
   const [pageSize, setPageSize] = useState(10);
 
-  /** Keep existing manual sort behavior:
-   * default by name ASC, toggle only on Usage Limit header click.
-   */
+  /** Manual sort: default by name ASC; toggle "usageLimit" from header */
   const [sortColumn, setSortColumn] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
@@ -147,7 +144,7 @@ export function CouponsTable() {
       );
       if (!res.ok) throw new Error("Failed to fetch coupons");
       const data = await res.json();
-      setCoupons(data.coupons);
+      setCoupons(data.coupons ?? []);
       setTotalPages(data.totalPages || 1);
     } catch (err) {
       console.error(err);
@@ -191,9 +188,7 @@ export function CouponsTable() {
 
   const handleDuplicate = async (id: string) => {
     try {
-      const res = await fetch(`/api/coupons/${id}/duplicate`, {
-        method: "POST",
-      });
+      const res = await fetch(`/api/coupons/${id}/duplicate`, { method: "POST" });
       if (!res.ok) throw new Error("Duplication failed");
       toast.success("Coupon duplicated");
       fetchCoupons();
@@ -265,26 +260,17 @@ export function CouponsTable() {
     const formData = new FormData();
     formData.append("file", file);
     try {
-      const res = await fetch("/api/coupons/import", {
-        method: "POST",
-        body: formData,
-      });
+      const res = await fetch("/api/coupons/import", { method: "POST", body: formData });
       const data = await res.json();
       if (res.status === 207 && data.errors) {
         setImportMessage(`❌ Some rows failed to import`);
-        setImportErrors(
-          data.errors.map((e: any) => `Row ${e.row}: ${e.error}`)
-        );
+        setImportErrors(data.errors.map((e: any) => `Row ${e.row}: ${e.error}`));
       } else if (!res.ok) {
         let error = "";
-        for (const err of data.rowErrors || []) {
-          error += `❌ ${err.error} in row ${err.row}.\n`;
-        }
+        for (const err of data.rowErrors || []) error += `❌ ${err.error} in row ${err.row}.\n`;
         setImportMessage(error || "❌ Import failed");
       } else {
-        setImportMessage(
-          `✅ ${data.successCount} coupon(s) created\n✅ ${data.editCount} updated`
-        );
+        setImportMessage(`✅ ${data.successCount} coupon(s) created\n✅ ${data.editCount} updated`);
         fetchCoupons();
       }
     } catch (err: any) {
@@ -307,21 +293,9 @@ export function CouponsTable() {
   /* -------------------- Columns for StandardDataTable -------------------- */
   const columns: ColumnDef<Coupon>[] = useMemo(
     () => [
-      {
-        accessorKey: "name",
-        header: "Name",
-        cell: ({ row }) => row.original.name,
-      },
-      {
-        accessorKey: "code",
-        header: "Code",
-        cell: ({ row }) => row.original.code,
-      },
-      {
-        accessorKey: "description",
-        header: "Description",
-        cell: ({ row }) => row.original.description,
-      },
+      { accessorKey: "name", header: "Name", cell: ({ row }) => row.original.name },
+      { accessorKey: "code", header: "Code", cell: ({ row }) => row.original.code },
+      { accessorKey: "description", header: "Description", cell: ({ row }) => row.original.description },
       {
         id: "discount",
         header: "Discount",
@@ -330,21 +304,9 @@ export function CouponsTable() {
             ? `${row.original.discountAmount}%`
             : row.original.discountAmount,
       },
-      {
-        accessorKey: "startDate",
-        header: "Start Date",
-        cell: ({ row }) => fmtLocal(row.original.startDate),
-      },
-      {
-        accessorKey: "expirationDate",
-        header: "Expiration Date",
-        cell: ({ row }) => fmtLocal(row.original.expirationDate),
-      },
-      {
-        accessorKey: "limitPerUser",
-        header: "Limit / User",
-        cell: ({ row }) => row.original.limitPerUser,
-      },
+      { accessorKey: "startDate", header: "Start Date", cell: ({ row }) => fmtLocal(row.original.startDate) },
+      { accessorKey: "expirationDate", header: "Expiration Date", cell: ({ row }) => fmtLocal(row.original.expirationDate) },
+      { accessorKey: "limitPerUser", header: "Limit / User", cell: ({ row }) => row.original.limitPerUser },
       {
         accessorKey: "usageLimit",
         header: () => (
@@ -359,21 +321,9 @@ export function CouponsTable() {
         ),
         cell: ({ row }) => row.original.usageLimit,
       },
-      {
-        accessorKey: "usagePerUser",
-        header: "Usage Per User",
-        cell: ({ row }) => row.original.usagePerUser,
-      },
-      {
-        accessorKey: "expendingMinimum",
-        header: "Expending Min",
-        cell: ({ row }) => row.original.expendingMinimum,
-      },
-      {
-        accessorKey: "expendingLimit",
-        header: "Expending Limit",
-        cell: ({ row }) => row.original.expendingLimit,
-      },
+      { accessorKey: "usagePerUser", header: "Usage Per User", cell: ({ row }) => row.original.usagePerUser },
+      { accessorKey: "expendingMinimum", header: "Expending Min", cell: ({ row }) => row.original.expendingMinimum },
+      { accessorKey: "expendingLimit", header: "Expending Limit", cell: ({ row }) => row.original.expendingLimit },
       {
         id: "countries",
         header: "Countries",
@@ -387,16 +337,8 @@ export function CouponsTable() {
           </div>
         ),
       },
-      {
-        accessorKey: "visibility",
-        header: "Visibility",
-        cell: ({ row }) => (row.original.visibility ? "Visible" : "Hidden"),
-      },
-      {
-        accessorKey: "stackable",
-        header: "Stackable",
-        cell: ({ row }) => (row.original.stackable ? "Yes" : "No"),
-      },
+      { accessorKey: "visibility", header: "Visibility", cell: ({ row }) => (row.original.visibility ? "Visible" : "Hidden") },
+      { accessorKey: "stackable", header: "Stackable", cell: ({ row }) => (row.original.stackable ? "Yes" : "No") },
       {
         id: "actions",
         header: () => <div className="text-right">Actions</div>,
@@ -418,7 +360,7 @@ export function CouponsTable() {
                   )}
                   {canUpdate && (
                     <DropdownMenuItem onClick={() => handleDuplicate(c.id)}>
-                      <Copy className="mr-2 h-4 w-4" /> Duplicate
+                      <CopyIcon className="mr-2 h-4 w-4" /> Duplicate
                     </DropdownMenuItem>
                   )}
                   {canDelete && (
@@ -441,7 +383,7 @@ export function CouponsTable() {
 
   /* -------------------- TanStack table instance -------------------- */
   const table = useReactTable({
-    data: sortedCoupons, // keep your manual sorting behavior intact
+    data: sortedCoupons,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
@@ -502,9 +444,7 @@ export function CouponsTable() {
             </div>
             {importMessage && (
               <p
-                className={`mt-4 text-center whitespace-pre-line font-medium ${importMessage.startsWith("✅")
-                  ? "text-green-600"
-                  : "text-red-600"
+                className={`mt-4 text-center whitespace-pre-line font-medium ${importMessage.startsWith("✅") ? "text-green-600" : "text-red-600"
                   }`}
               >
                 {importMessage}
@@ -556,19 +496,11 @@ export function CouponsTable() {
         <div className="flex items-center gap-2">
           {canCreate && (
             <>
-              <Button
-                variant="outline"
-                onClick={openImportModal}
-                disabled={isImporting}
-              >
+              <Button variant="outline" onClick={openImportModal} disabled={isImporting}>
                 <Upload className="mr-2 h-4 w-4" />
                 Import
               </Button>
-              <Button
-                variant="outline"
-                onClick={handleExport}
-                disabled={isExporting}
-              >
+              <Button variant="outline" onClick={handleExport} disabled={isExporting}>
                 <Download className="mr-2 h-4 w-4" />
                 Export
               </Button>
@@ -635,9 +567,7 @@ export function CouponsTable() {
             <Button
               variant="outline"
               size="icon"
-              onClick={() =>
-                setCurrentPage((p) => Math.min(totalPages, p + 1))
-              }
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
               disabled={currentPage === totalPages}
             >
               <ChevronRight className="h-4 w-4" />
@@ -663,15 +593,12 @@ export function CouponsTable() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Coupon?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete “{couponToDelete?.name}”? This
-              action cannot be undone.
+              Are you sure you want to delete “{couponToDelete?.name}”? This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>
-              Delete
-            </AlertDialogAction>
+            <AlertDialogAction onClick={confirmDelete}>Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

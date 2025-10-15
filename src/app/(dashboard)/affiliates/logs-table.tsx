@@ -1,26 +1,12 @@
 // /src/app/(dashboard)/affiliates/logs-table.tsx
 "use client";
 
-import {
-  useEffect,
-  useState,
-  startTransition,
-  useMemo,
-} from "react";
+import { useEffect, useState, startTransition, useMemo } from "react";
 import Link from "next/link";
 import { useDebounce } from "@/hooks/use-debounce";
-import { format, endOfDay } from "date-fns";
+import { endOfDay, format } from "date-fns";
 import { DateRange } from "react-day-picker";
 
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -43,6 +29,10 @@ import {
   Calendar as CalendarIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+
+// ⬇️ TanStack + standardized table
+import { useReactTable, getCoreRowModel, type ColumnDef } from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 /* ───────────── Types ───────────── */
 type Log = {
@@ -84,6 +74,11 @@ export function LogsTable() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [range, setRange] = useState<DateRange | undefined>();
 
+  // optional: mirror UI picker into actual filter
+  useEffect(() => {
+    setDateRange(range);
+  }, [range]);
+
   /* fetch logs */
   const loadLogs = async () => {
     setLoading(true);
@@ -107,7 +102,6 @@ export function LogsTable() {
       });
 
       if (!r.ok) {
-        // try to extract error from body but don't assume shape
         let msg = "Fetch failed";
         try {
           const j = await r.json();
@@ -122,7 +116,7 @@ export function LogsTable() {
       setTotalPages(totalPages ?? 1);
       setPage(currentPage ?? page);
 
-      // derive unique action options from this response (simple UX)
+      // derive unique action options
       const unique = Array.from(new Set(list.map((l) => l.action).filter(Boolean)));
       setActionOptions(unique);
     } catch (e: any) {
@@ -143,20 +137,93 @@ export function LogsTable() {
   const fallbackId = (id: string | null | undefined) =>
     id ? id.slice(0, 8) + "…" : "-";
 
-  const showingFrom = useMemo(() => (page - 1) * pageSize + (logs.length ? 1 : 0), [page, pageSize, logs.length]);
-  const showingTo = useMemo(() => (page - 1) * pageSize + logs.length, [page, pageSize, logs.length]);
+  const showingFrom = useMemo(
+    () => (page - 1) * pageSize + (logs.length ? 1 : 0),
+    [page, pageSize, logs.length]
+  );
+  const showingTo = useMemo(
+    () => (page - 1) * pageSize + logs.length,
+    [page, pageSize, logs.length]
+  );
 
-  const dateLabel = useMemo(() => {
-    if (!dateRange?.from && !dateRange?.to) return "Any date";
-    if (dateRange?.from && !dateRange?.to) return `${format(dateRange.from, "PP")} → …`;
-    if (!dateRange?.from && dateRange?.to) return `… → ${format(dateRange.to, "PP")}`;
-    return `${format(dateRange.from!, "PP")} → ${format(dateRange.to!, "PP")}`;
-  }, [dateRange]);
+  /* columns */
+  const columns = useMemo<ColumnDef<Log>[]>(
+    () => [
+      {
+        id: "id",
+        header: "ID",
+        cell: ({ row }) => (
+          <span className="font-mono text-xs">{row.original.id.slice(0, 8)}…</span>
+        ),
+      },
+      {
+        accessorKey: "createdAt",
+        header: "Date",
+        cell: ({ row }) => (
+          <div className="flex items-center gap-1">
+            <Clock className="h-4 w-4 opacity-70" />
+            {new Date(row.original.createdAt).toLocaleString()}
+          </div>
+        ),
+      },
+      {
+        id: "client",
+        header: "Client",
+        cell: ({ row }) => (
+          <Link href={`/clients/${row.original.clientId}/info`}>
+            {row.original.clientLabel || fallbackId(row.original.clientId)}
+          </Link>
+        ),
+      },
+      {
+        id: "delta",
+        header: "Δ Points",
+        cell: ({ row }) => {
+          const p = row.original.points;
+          return (
+            <span className={p >= 0 ? "text-green-600" : "text-red-600"}>
+              {p > 0 ? "+" : ""}
+              {p}
+            </span>
+          );
+        },
+      },
+      {
+        accessorKey: "action",
+        header: "Action",
+      },
+      {
+        accessorKey: "description",
+        header: "Description",
+        cell: ({ row }) => row.original.description ?? "-",
+      },
+      {
+        id: "sourceClient",
+        header: "Source Client",
+        cell: ({ row }) =>
+          row.original.sourceClientId ? (
+            <Link href={`/clients/${row.original.sourceClientId}/info`}>
+              {row.original.sourceClientLabel ||
+                fallbackId(row.original.sourceClientId)}
+            </Link>
+          ) : (
+            <span>-</span>
+          ),
+      },
+    ],
+    []
+  );
+
+  const table = useReactTable({
+    data: logs,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   /* ───────────── JSX ───────────── */
   return (
-    <Card className="p-4 space-y-4">
-      {/* Toolbar — mirrors product table */}
+    <div className="space-y-4">
+      {/* Toolbar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           {/* Search */}
@@ -226,18 +293,20 @@ export function LogsTable() {
                 <CalendarIcon className="mr-2 h-4 w-4" />
                 {range?.from
                   ? range.to
-                    ? `${format(range.from, "LLL d, y")} - ${format(range.to, "LLL d, y")}`
+                    ? `${format(range.from, "LLL d, y")} - ${format(
+                      range.to,
+                      "LLL d, y"
+                    )}`
                     : format(range.from, "LLL d, y")
                   : "Any date"}
               </Button>
             </PopoverTrigger>
 
-            {/* The important bits: w-auto p-0 and align="start" */}
             <PopoverContent className="w-auto p-0 z-50" align="start" sideOffset={4}>
               <Calendar
                 initialFocus
                 mode="range"
-                numberOfMonths={2}      // shows two months side-by-side
+                numberOfMonths={2}
                 defaultMonth={range?.from}
                 selected={range}
                 onSelect={setRange}
@@ -267,73 +336,16 @@ export function LogsTable() {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>ID</TableHead>
-              <TableHead>Date</TableHead>
-              <TableHead>Client</TableHead>
-              <TableHead>Δ Points</TableHead>
-              <TableHead>Action</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Source Client</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center">
-                  Loading logs…
-                </TableCell>
-              </TableRow>
-            ) : logs.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center">
-                  No logs
-                </TableCell>
-              </TableRow>
-            ) : (
-              logs.map((l) => (
-                <TableRow key={l.id}>
-                  <TableCell className="font-mono text-xs">
-                    {l.id.slice(0, 8)}…
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Clock className="h-4 w-4 opacity-70" />
-                      {new Date(l.createdAt).toLocaleString()}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Link href={`/clients/${l.clientId}/info`}>
-                      {l.clientLabel || fallbackId(l.clientId)}
-                    </Link>
-                  </TableCell>
-                  <TableCell className={l.points >= 0 ? "text-green-600" : "text-red-600"}>
-                    {l.points > 0 ? "+" : ""}
-                    {l.points}
-                  </TableCell>
-                  <TableCell>{l.action}</TableCell>
-                  <TableCell>{l.description ?? "-"}</TableCell>
-                  <TableCell>
-                    {l.sourceClientId ? (
-                      <Link href={`/clients/${l.sourceClientId}/info`}>
-                        {l.sourceClientLabel || fallbackId(l.sourceClientId)}
-                      </Link>
-                    ) : (
-                      "-"
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {/* Standardized data table */}
+      <StandardDataTable
+        table={table}
+        columns={columns}
+        isLoading={loading}
+        skeletonRows={Math.min(pageSize, 10)}
+        emptyMessage="No logs"
+      />
 
-      {/* Pagination (same feel as products) */}
+      {/* Pagination */}
       <div className="flex items-center justify-between space-x-2 py-4">
         <div className="text-sm text-muted-foreground">
           Showing {showingFrom || 0} to {showingTo || 0} of many entries
@@ -357,6 +369,6 @@ export function LogsTable() {
           </Button>
         </div>
       </div>
-    </Card>
+    </div>
   );
 }
