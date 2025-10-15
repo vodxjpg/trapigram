@@ -5,9 +5,11 @@ import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
 const UpdateSchema = z.object({
-  label: z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
   active: z.boolean().optional(),
-  storeId: z.string().optional(), // allow moving a register to a different store
+  storeId: z.string().optional(),          // allow moving a register to a different store
+  walkInClientId: z.string().optional(),   // allow changing default walk-in client
+  receiptFooter: z.string().nullable().optional(),
 });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -38,7 +40,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const input = UpdateSchema.parse(await req.json());
 
-    // If moving to another store, validate it belongs to same org
+    // Validate moves/changes
     if (input.storeId) {
       const { rows: s } = await pool.query(
         `SELECT id FROM stores WHERE id=$1 AND "organizationId"=$2`,
@@ -46,13 +48,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       );
       if (!s.length) return NextResponse.json({ error: "Store not found" }, { status: 404 });
     }
+    if (input.walkInClientId) {
+      const { rows: c } = await pool.query(
+        `SELECT id FROM clients WHERE id=$1 AND "organizationId"=$2`,
+        [input.walkInClientId, organizationId]
+      );
+      if (!c.length) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+    }
 
     const fields: string[] = [];
     const values: any[] = [];
     let idx = 1;
 
-    if (input.label !== undefined) {
-      fields.push(`label=$${idx++}`); values.push(input.label);
+    if (input.name !== undefined) {
+      fields.push(`name=$${idx++}`); values.push(input.name);
     }
     if (input.active !== undefined) {
       fields.push(`active=$${idx++}`); values.push(input.active);
@@ -60,6 +69,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (input.storeId !== undefined) {
       fields.push(`"storeId"=$${idx++}`); values.push(input.storeId);
     }
+    if (input.walkInClientId !== undefined) {
+      fields.push(`"walkInClientId"=$${idx++}`); values.push(input.walkInClientId);
+    }
+    if (input.receiptFooter !== undefined) {
+      fields.push(`"receiptFooter"=$${idx++}`); values.push(input.receiptFooter ?? null);
+    }
+
     if (!fields.length) return NextResponse.json({ ok: true }, { status: 200 });
 
     const sql = `UPDATE registers SET ${fields.join(", ")}, "updatedAt"=NOW()

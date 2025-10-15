@@ -3,50 +3,32 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import {
-  ColumnDef,
-  getCoreRowModel,
-  useReactTable,
-} from "@tanstack/react-table";
+import { ColumnDef, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { StandardDataTable } from "@/components/data-table/data-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { MoreHorizontal, Pencil, Plus, Trash2, ArrowLeft, Search } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
+import Select from "react-select";
 
 type Store = {
   id: string;
   name: string;
   address: Record<string, any> | null;
-  active: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -54,10 +36,20 @@ type Store = {
 type Register = {
   id: string;
   storeId: string;
-  label: string;
+  name: string;
+  walkInClientId: string;
   active: boolean;
+  receiptFooter: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+type Client = {
+  id: string;
+  username?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
 };
 
 export default function StoreRegistersPage() {
@@ -70,10 +62,16 @@ export default function StoreRegistersPage() {
   const [rows, setRows] = React.useState<Register[]>([]);
   const [query, setQuery] = React.useState("");
 
+  // clients for walk-in selector
+  const [clients, setClients] = React.useState<Client[]>([]);
+  const [clientsLoading, setClientsLoading] = React.useState(false);
+
   const [editOpen, setEditOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Register | null>(null);
-  const [formLabel, setFormLabel] = React.useState("");
+  const [formName, setFormName] = React.useState("");
   const [formActive, setFormActive] = React.useState(true);
+  const [formWalkInClientId, setFormWalkInClientId] = React.useState<string>("");
+  const [formReceiptFooter, setFormReceiptFooter] = React.useState<string>("");
   const [saving, setSaving] = React.useState(false);
 
   const [confirmOpen, setConfirmOpen] = React.useState(false);
@@ -101,132 +99,175 @@ export default function StoreRegistersPage() {
     }
   }, [storeId, router]);
 
-  React.useEffect(() => {
-    load();
-  }, [load]);
+  React.useEffect(() => { load(); }, [load]);
+
+  // Load clients for selector (reused by create/edit)
+  const loadClients = React.useCallback(async () => {
+    setClientsLoading(true);
+    try {
+      const res = await fetch(`/api/clients`);
+      if (!res.ok) throw new Error("Failed to load clients");
+      const data = await res.json();
+      const list: Client[] = (data.clients ?? data?.rows ?? []).map((c: any) => ({
+        id: c.id,
+        username: c.username ?? null,
+        firstName: c.firstName ?? null,
+        lastName: c.lastName ?? null,
+        email: c.email ?? null,
+      }));
+      setClients(list);
+      return list;
+    } catch (e: any) {
+      toast.error(e?.message || "Could not load clients");
+      setClients([]);
+      return [];
+    } finally {
+      setClientsLoading(false);
+    }
+  }, []);
+
+  // Try to guess a Walk-in client from list
+  function guessWalkInId(list: Client[]) {
+    const lower = (s?: string | null) => (s || "").toLowerCase();
+    const hit =
+      list.find(c => lower(c.username) === "walk-in" || lower(c.username) === "walkin" || lower(c.username) === "walk_in") ||
+      list.find(c => `${lower(c.firstName)} ${lower(c.lastName)}`.trim() === "walk in");
+    return hit?.id || list[0]?.id || "";
+    }
 
   const filtered = React.useMemo(() => {
-    if (!query.trim()) return rows;
-    const q = query.toLowerCase();
-    return rows.filter((r) => r.label.toLowerCase().includes(q));
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => r.name.toLowerCase().includes(q));
   }, [rows, query]);
+
+  const columns = React.useMemo<ColumnDef<Register>[]>(() => [
+    {
+      id: "select",
+      header: ({ table }) => (
+        <Checkbox
+          checked={table.getIsAllRowsSelected()}
+          onCheckedChange={(v) => table.toggleAllRowsSelected(!!v)}
+          aria-label="Select all"
+        />
+      ),
+      cell: ({ row }) => (
+        <Checkbox
+          checked={row.getIsSelected()}
+          onCheckedChange={(v) => row.toggleSelected(!!v)}
+          aria-label="Select row"
+        />
+      ),
+      size: 30,
+    },
+    {
+      accessorKey: "name",
+      header: "Register",
+      cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    },
+    {
+      accessorKey: "active",
+      header: "Status",
+      size: 100,
+      cell: ({ row }) =>
+        row.original.active ? (
+          <Badge variant="default">Active</Badge>
+        ) : (
+          <Badge variant="secondary" className="bg-muted text-foreground">Inactive</Badge>
+        ),
+    },
+    {
+      accessorKey: "createdAt",
+      header: "Created",
+      size: 110,
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">
+          {new Date(row.original.createdAt).toLocaleDateString()}
+        </span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "",
+      size: 40,
+      cell: ({ row }) => {
+        const r = row.original;
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => openEdit(r)} className="gap-2">
+                <Pencil className="h-4 w-4" />
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="gap-2 text-destructive focus:text-destructive"
+                onClick={() => {
+                  setDeleteIds([r.id]);
+                  setConfirmOpen(true);
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+    },
+  ], []);
 
   const table = useReactTable({
     data: filtered,
-    columns: React.useMemo<ColumnDef<Register>[]>(() => [
-      {
-        id: "select",
-        header: ({ table }) => (
-          <Checkbox
-            checked={table.getIsAllRowsSelected()}
-            onCheckedChange={(v) => table.toggleAllRowsSelected(!!v)}
-            aria-label="Select all"
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={row.getIsSelected()}
-            onCheckedChange={(v) => row.toggleSelected(!!v)}
-            aria-label="Select row"
-          />
-        ),
-        size: 30,
-      },
-      {
-        accessorKey: "label",
-        header: "Register",
-        cell: ({ row }) => <span className="font-medium">{row.original.label}</span>,
-      },
-      {
-        accessorKey: "active",
-        header: "Status",
-        cell: ({ row }) =>
-          row.original.active ? (
-            <Badge variant="default">Active</Badge>
-          ) : (
-            <Badge variant="secondary" className="bg-muted text-foreground">
-              Inactive
-            </Badge>
-          ),
-        size: 90,
-      },
-      {
-        accessorKey: "createdAt",
-        header: "Created",
-        cell: ({ row }) => (
-          <span className="text-muted-foreground">
-            {new Date(row.original.createdAt).toLocaleDateString()}
-          </span>
-        ),
-        size: 110,
-      },
-      {
-        id: "actions",
-        header: "",
-        cell: ({ row }) => {
-          const r = row.original;
-          return (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => openEdit(r)} className="gap-2">
-                  <Pencil className="h-4 w-4" />
-                  Edit
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className={cn("gap-2 text-destructive focus:text-destructive")}
-                  onClick={() => {
-                    setDeleteIds([r.id]);
-                    setConfirmOpen(true);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          );
-        },
-        size: 40,
-      },
-    ], []),
+    columns,
     getCoreRowModel: getCoreRowModel(),
     enableRowSelection: true,
   });
 
   function openCreate() {
     setEditing(null);
-    setFormLabel("");
+    setFormName("");
     setFormActive(true);
+    setFormReceiptFooter("");
     setEditOpen(true);
+    // ensure clients loaded and pick a default walk-in
+    (clients.length ? Promise.resolve(clients) : loadClients()).then((list) => {
+      setFormWalkInClientId(guessWalkInId(list));
+    });
   }
 
   function openEdit(r: Register) {
     setEditing(r);
-    setFormLabel(r.label);
+    setFormName(r.name);
     setFormActive(Boolean(r.active));
+    setFormReceiptFooter(r.receiptFooter ?? "");
     setEditOpen(true);
+    (clients.length ? Promise.resolve(clients) : loadClients()).then(() => {
+      setFormWalkInClientId(r.walkInClientId);
+    });
   }
 
   async function saveRegister() {
     setSaving(true);
-    const payload = {
-      label: formLabel.trim(),
-      active: formActive,
-      storeId, // (ignored by PATCH unless moving)
-    };
     try {
-      if (!payload.label) throw new Error("Label is required.");
+      if (!formName.trim()) throw new Error("Name is required.");
+      if (!formWalkInClientId) throw new Error("Walk-in customer is required.");
+
       if (editing) {
         const res = await fetch(`/api/pos/registers/${editing.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ label: payload.label, active: payload.active }),
+          body: JSON.stringify({
+            name: formName.trim(),
+            active: formActive,
+            walkInClientId: formWalkInClientId,
+            receiptFooter: formReceiptFooter || null,
+          }),
         });
         if (!res.ok) throw new Error("Failed to update register");
         toast.success("Register updated");
@@ -237,7 +278,13 @@ export default function StoreRegistersPage() {
             "Content-Type": "application/json",
             "Idempotency-Key": crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            storeId,
+            name: formName.trim(),
+            walkInClientId: formWalkInClientId,
+            active: formActive,
+            receiptFooter: formReceiptFooter || null,
+          }),
         });
         if (!res.ok) throw new Error("Failed to create register");
         toast.success("Register created");
@@ -251,18 +298,13 @@ export default function StoreRegistersPage() {
     }
   }
 
-  async function hardOrSoftDelete(id: string) {
-    const tryDelete = await fetch(`/api/pos/registers/${id}`, { method: "DELETE" });
-    if (tryDelete.ok) return true;
-    if (tryDelete.status === 405 || tryDelete.status === 404) {
-      const soft = await fetch(`/api/pos/registers/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ active: false }),
-      });
-      return soft.ok;
-    }
-    return tryDelete.ok;
+  async function deleteNow(ids: string[]) {
+    await Promise.all(
+      ids.map(async (id) => {
+        const r = await fetch(`/api/pos/registers/${id}`, { method: "DELETE" });
+        if (!r.ok) throw new Error("Delete failed");
+      })
+    );
   }
 
   async function confirmBulkDelete() {
@@ -276,7 +318,7 @@ export default function StoreRegistersPage() {
       return;
     }
     try {
-      await Promise.all(ids.map((id) => hardOrSoftDelete(id)));
+      await deleteNow(ids);
       toast.success(ids.length > 1 ? "Registers deleted" : "Register deleted");
       setConfirmOpen(false);
       setDeleteIds([]);
@@ -341,7 +383,7 @@ export default function StoreRegistersPage() {
 
       <StandardDataTable
         table={table}
-        columns={table.getAllColumns().map((c) => c.columnDef as any)}
+        columns={columns}
         isLoading={isLoading}
         emptyMessage="No registers for this store."
       />
@@ -352,12 +394,13 @@ export default function StoreRegistersPage() {
           <DialogHeader>
             <DialogTitle>{editing ? "Edit register" : "Add register"}</DialogTitle>
           </DialogHeader>
+
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Label *</Label>
+              <Label>Name *</Label>
               <Input
-                value={formLabel}
-                onChange={(e) => setFormLabel(e.target.value)}
+                value={formName}
+                onChange={(e) => setFormName(e.target.value)}
                 placeholder="Front Counter"
               />
             </div>
@@ -373,12 +416,56 @@ export default function StoreRegistersPage() {
                 <Switch checked={formActive} onCheckedChange={setFormActive} />
               </div>
             </div>
+
+            <div className="space-y-2">
+              <Label>Walk-in customer *</Label>
+              <Select
+                isLoading={clientsLoading}
+                options={clients.map((c) => ({
+                  value: c.id,
+                  label:
+                    (c.firstName || c.lastName)
+                      ? `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim()
+                      : (c.username || c.email || c.id),
+                  subLabel: c.username || c.email,
+                }))}
+                value={
+                  formWalkInClientId
+                    ? {
+                        value: formWalkInClientId,
+                        label:
+                          clients.find((c) => c.id === formWalkInClientId)?.firstName ||
+                          clients.find((c) => c.id === formWalkInClientId)?.username ||
+                          "Selected client",
+                      }
+                    : null
+                }
+                onChange={(opt: any) => setFormWalkInClientId(opt?.value || "")}
+                placeholder="Select a default walk-in customer"
+                noOptionsMessage={() => "No clients"}
+              />
+              <p className="text-xs text-muted-foreground">
+                This client will be preselected in POS as “Walk-in”.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Receipt footer (optional)</Label>
+              <textarea
+                className="w-full rounded-md border bg-background p-2 text-sm outline-none"
+                rows={3}
+                placeholder="Thanks for shopping with us!"
+                value={formReceiptFooter}
+                onChange={(e) => setFormReceiptFooter(e.target.value)}
+              />
+            </div>
           </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>
               Cancel
             </Button>
-            <Button onClick={saveRegister} disabled={saving}>
+            <Button onClick={saveRegister} disabled={saving || clientsLoading}>
               {saving ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
@@ -394,12 +481,14 @@ export default function StoreRegistersPage() {
             </AlertDialogTitle>
           </AlertDialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will remove the register{deleteIds.length > 1 ? "s" : ""} from normal use. If hard delete
-            isn’t available, we’ll deactivate instead.
+            This permanently removes the register{deleteIds.length > 1 ? "s" : ""}.
           </p>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={confirmBulkDelete}>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmBulkDelete}
+            >
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>

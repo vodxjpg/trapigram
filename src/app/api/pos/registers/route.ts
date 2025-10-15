@@ -61,8 +61,10 @@ async function withIdempotency(
 
 const CreateSchema = z.object({
   storeId: z.string().min(1),
-  label: z.string().min(1),
+  name: z.string().min(1),
+  walkInClientId: z.string().min(1),
   active: z.boolean().default(true),
+  receiptFooter: z.string().nullable().optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -108,17 +110,33 @@ export async function POST(req: NextRequest) {
       );
       if (!s.length) return { status: 404, body: { error: "Store not found" } };
 
+      // Validate client ownership
+      const { rows: c } = await pool.query(
+        `SELECT id FROM clients WHERE id=$1 AND "organizationId"=$2`,
+        [input.walkInClientId, organizationId]
+      );
+      if (!c.length) return { status: 404, body: { error: "Client not found" } };
+
       const id = uuidv4();
       const { rows } = await pool.query(
         `INSERT INTO registers
-          (id,"organizationId","storeId",label,active,"createdAt","updatedAt")
-         VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+          (id,"organizationId","storeId",name,"walkInClientId",active,"receiptFooter","createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
          RETURNING *`,
-        [id, organizationId, input.storeId, input.label, input.active]
+        [
+          id,
+          organizationId,
+          input.storeId,
+          input.name,
+          input.walkInClientId,
+          input.active,
+          input.receiptFooter ?? null,
+        ]
       );
       return { status: 201, body: { register: rows[0] } };
     } catch (err: any) {
-      if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };
+      if (err instanceof z.ZodError)
+        return { status: 400, body: { error: err.errors } };
       console.error("[POST /pos/registers]", err);
       return { status: 500, body: { error: err.message ?? "Internal server error" } };
     }
