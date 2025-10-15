@@ -246,7 +246,7 @@ export default function OrderFormVisual({ orderId }: OrderFormWithFetchProps) {
   const router = useRouter();
   const { data: activeOrg } = authClient.useActiveOrganization();
   const merchantId = activeOrg?.id ?? "";
-  const { data: session } = (authClient as any).useSession?.() || {};
+  const { data: session } = authClient.useSession();
   const currentUserId: string | null = session?.user?.id ?? null;
   const canEditNotes = true; // edit page implies update rights already
 

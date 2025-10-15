@@ -207,7 +207,10 @@ export default function OrderView() {
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
 
-  const { data: session } = (authClient as any).useSession?.() || {};
+  // IMPORTANT: never call hooks conditionally. Optional-chaining here
+  // could skip the hook on the first render and run it later, breaking
+  // the Rules of Hooks and freezing the page. Always call it.
+  const { data: session } = authClient.useSession();
   const currentUserId: string | null = session?.user?.id ?? null;
 
   const { hasPermission: canViewOrder, isLoading: permLoading } =
@@ -438,16 +441,16 @@ export default function OrderView() {
 
   const fmtMoney = (n: number) => formatCurrency(n, order.country);
   const fmtPts = (n: number) => `${n} pts`;
+  // Safer, typed status color map (no self-referential keyof)
+  const STATUS_COLORS = {
+    open: "bg-blue-500",
+    paid: "bg-green-500",
+    pending_payment: "bg-yellow-500",
+    cancelled: "bg-red-500",
+    completed: "bg-purple-500",
+  } as const;
   const statusClr = (s: string) =>
-    (
-      {
-        open: "bg-blue-500",
-        paid: "bg-green-500",
-        pending_payment: "bg-yellow-500",
-        cancelled: "bg-red-500",
-        completed: "bg-purple-500",
-      } as const
-    )[s as keyof typeof statusClr] ?? "bg-gray-500";
+    (STATUS_COLORS as Record<string, string>)[s] ?? "bg-gray-500";
   const crypto = parseCrypto(order.orderMeta);
 
   const fmtMsgTime = (d: Date) => format(d, "MMM d, h:mm a");
