@@ -20,16 +20,15 @@ async function loadCartSummary(cartId: string) {
 
   const c = rows[0];
 
-  // Normalize legacy 'pos' → 'pos-' once, so startsWith("pos-") checks pass.
+  // Normalize legacy 'pos' → 'pos-' so startsWith("pos-") checks pass.
   let normalizedChannel: string =
     (typeof c.channel === "string" ? c.channel : "web") || "web";
-
   if (normalizedChannel.toLowerCase() === "pos") {
     try {
       await pool.query(`UPDATE carts SET channel = $1 WHERE id = $2`, ["pos-", cartId]);
       normalizedChannel = "pos-";
     } catch {
-      // best effort; continue even if the update fails
+      // best effort; continue
     }
   }
 
@@ -51,7 +50,7 @@ async function loadCartSummary(cartId: string) {
     country: c.country as string,
     cartUpdatedHash: c.cartUpdatedHash as string,
     status: !!c.status,
-    channel: normalizedChannel, // <- normalized
+    channel: normalizedChannel,
     clientDisplayName,
     levelId: (c.levelId as string | null) ?? "default",
     subtotal: Number(sum[0]?.subtotal ?? 0),
@@ -82,10 +81,7 @@ const CheckoutCreateSchema = z.object({
     .min(1, "At least one payment is required"),
 });
 
-/* =========================================================
-   GET /api/pos/checkout?cartId=...
-   → returns { summary, paymentMethods } for ACTIVE methods
-   ========================================================= */
+/* GET: summary + ACTIVE payment methods */
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -100,7 +96,6 @@ export async function GET(req: NextRequest) {
   const summary = await loadCartSummary(cartId);
   if (!summary) return NextResponse.json({ error: "Cart not found" }, { status: 404 });
 
-  // Only allow POS carts where channel starts with "pos-"
   if (typeof summary.channel !== "string" || !summary.channel.toLowerCase().startsWith("pos-")) {
     return NextResponse.json({ error: "Not a POS cart" }, { status: 400 });
   }
@@ -109,19 +104,12 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ summary, paymentMethods: methods }, { status: 200 });
 }
 
-/* =========================================================
-   POST /api/pos/checkout
-   body: { cartId, payments: [{methodId, amount}, ...] }
-   - validates ACTIVE payment methods
-   - supports split payments
-   - writes order with channel preserved (pos-…)
-   ========================================================= */
+/* POST: create order for POS cart (supports split payments) */
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
   const { tenantId, organizationId } = ctx as { tenantId: string | null; organizationId: string };
-
   try {
     const { cartId, payments } = CheckoutCreateSchema.parse(await req.json());
     if (!tenantId) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
@@ -130,12 +118,10 @@ export async function POST(req: NextRequest) {
     if (!summary) return NextResponse.json({ error: "Cart not found" }, { status: 404 });
     if (!summary.status) return NextResponse.json({ error: "Cart is not active" }, { status: 400 });
 
-    // Enforce "pos-" prefix after normalization
     if (typeof summary.channel !== "string" || !summary.channel.toLowerCase().startsWith("pos-")) {
       return NextResponse.json({ error: "Only POS carts can be checked out here" }, { status: 400 });
     }
 
-    // Validate payment methods belong to tenant and are ACTIVE
     const methods = await activePaymentMethods(tenantId);
     if (!methods.length) {
       return NextResponse.json({ error: "No active payment methods configured" }, { status: 400 });
@@ -143,22 +129,17 @@ export async function POST(req: NextRequest) {
     const activeIds = new Set(methods.map((m: any) => m.id));
     for (const p of payments) {
       if (!activeIds.has(p.methodId)) {
-        return NextResponse.json(
-          { error: `Inactive/invalid payment method: ${p.methodId}` },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: `Inactive/invalid payment method: ${p.methodId}` }, { status: 400 });
       }
     }
 
-    // Totals
     const shippingTotal = 0;
     const discountTotal = 0;
     const subtotal = summary.subtotal;
     const totalAmount = subtotal + shippingTotal - discountTotal;
 
-    // Require sum(payments) ≈ total
     const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
-    const epsilon = 0.01; // allow 1 cent rounding
+    const epsilon = 0.01;
     if (Math.abs(paid - totalAmount) > epsilon) {
       return NextResponse.json(
         { error: `Paid amount ${paid.toFixed(2)} does not match total ${totalAmount.toFixed(2)}` },
@@ -169,21 +150,17 @@ export async function POST(req: NextRequest) {
     const orderId = uuidv4();
     const orderKey = "pos-" + crypto.randomBytes(6).toString("hex");
 
-    // Pull current cart coupon (if any)
-    const { rows: cartRow } = await pool.query(
-      `SELECT "couponCode" FROM carts WHERE id = $1`,
-      [cartId]
-    );
+    const { rows: cartRow } = await pool.query(`SELECT "couponCode" FROM carts WHERE id = $1`, [cartId]);
     const couponCode: string | null = cartRow[0]?.couponCode ?? null;
 
-    // Store the first method id for compatibility (optional: persist split in orderPayments)
+    // Persist the first method id into orders.paymentMethod for compatibility
     const primaryMethodId = payments[0].methodId;
 
     const insertSql = `
       INSERT INTO orders (
         id, "clientId", "cartId", country, status,
         "paymentMethod", "orderKey", "cartHash",
-        "shippinTotal", "discountTotal", "totalAmount",
+        "shippingTotal", "discountTotal", "totalAmount",
         "couponCode", "shippingService",
         "dateCreated", "datePaid", "dateCompleted", "dateCancelled",
         "createdAt", "updatedAt", "organizationId", channel
@@ -211,29 +188,24 @@ export async function POST(req: NextRequest) {
       discountTotal,
       totalAmount,
       couponCode,
-      "-", // POS has no shipping service
-      new Date(),
-      new Date(),
-      new Date(),
-      null,
+      "-",              // POS: no carrier
+      new Date(),       // dateCreated
+      new Date(),       // datePaid
+      new Date(),       // dateCompleted
+      null,             // dateCancelled
       organizationId,
-      summary.channel, // keep exact "pos-..." channel
+      summary.channel,  // keep exact "pos-..." channel
     ];
 
     const tx = await pool.connect();
     try {
       await tx.query("BEGIN");
-
       const { rows: orderRows } = await tx.query(insertSql, vals);
       const order = orderRows[0];
 
-      // Optional: persist split payments in an orderPayments table here.
+      // Optional: insert each split into orderPayments here
 
-      // Close cart
-      await tx.query(
-        `UPDATE carts SET status = FALSE, "updatedAt" = NOW() WHERE id = $1`,
-        [cartId]
-      );
+      await tx.query(`UPDATE carts SET status = FALSE, "updatedAt" = NOW() WHERE id = $1`, [cartId]);
 
       await tx.query("COMMIT");
       return NextResponse.json({ order }, { status: 201 });
@@ -244,9 +216,7 @@ export async function POST(req: NextRequest) {
       tx.release();
     }
   } catch (err: any) {
-    if (err instanceof z.ZodError) {
-      return NextResponse.json({ error: err.errors }, { status: 400 });
-    }
+    if (err instanceof z.ZodError) return NextResponse.json({ error: err.errors }, { status: 400 });
     console.error("[POS POST /pos/checkout] error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
