@@ -43,6 +43,12 @@ export type StepKey =
     | "attribute-term"
     | "products-team";
 
+type PaymentMethod = {
+    id: string;
+    name: string;
+    active: boolean;
+};
+
 export default function OnboardingDialog({
     open,
     onOpenChange,
@@ -54,7 +60,7 @@ export default function OnboardingDialog({
 }) {
     // Keep the last step (welcome) always last. Insert new steps before it.
     const coreSteps = [
-        { id: 1, key: "payment-method", title: "Create your payment method" },
+        { id: 1, key: "payment-method", title: "Activate your payment method" },
         { id: 2, key: "shipping-company", title: "Create your shipping company" },
         { id: 3, key: "shipping-method", title: "Create your shipping method" },
         { id: 4, key: "product-category", title: "Create your first product category" },
@@ -191,43 +197,97 @@ export default function OnboardingDialog({
     }, []);
 
     /** ---------- Step 1 (Payment method) ---------- */
-    const [checkingExistingPayments, setCheckingExistingPayments] = React.useState<boolean>(true);
-    const [hasAnyPaymentMethod, setHasAnyPaymentMethod] = React.useState<boolean>(false);
-    const [savingPayment, setSavingPayment] = React.useState<boolean>(false);
+    // --- Step 1: Payment methods (list + activate) ---
+    const [loadingPayments, setLoadingPayments] = React.useState<boolean>(true);
+    const [paymentMethods, setPaymentMethods] = React.useState<PaymentMethod[]>([]);
+    const [togglingId, setTogglingId] = React.useState<string | null>(null);
 
-    const [pmName, setPmName] = React.useState<string>("");
-    const [pmActive, setPmActive] = React.useState<boolean>(true);
-    const [pmApiKey, setPmApiKey] = React.useState<string>("");
-    const [pmSecretKey, setPmSecretKey] = React.useState<string>("");
-    const [pmDescription, setPmDescription] = React.useState<string>("");
+    // used by the rest of the onboarding logic to know if “payment” is satisfied
+    const hasAnyPaymentMethod = paymentMethods.some((m) => m.active);
+    const checkingExistingPayments = loadingPayments; // keep naming used elsewhere
 
     React.useEffect(() => {
-        // Only consider ACTIVE payment methods
         let cancelled = false;
         (async () => {
             try {
-                setCheckingExistingPayments(true);
-                const res = await fetch("/api/payment-methods?active=true", { method: "GET" });
-                if (!res.ok) throw new Error("Failed to check payment methods");
+                setLoadingPayments(true);
+                // fetch ALL methods (not just active) — your table endpoint already supports this
+                const res = await fetch("/api/payment-methods", { method: "GET" });
+                if (!res.ok) throw new Error("Failed to load payment methods");
                 const data = await res.json();
-                const { methods } = data;
                 if (!cancelled) {
-                    const exists = Array.isArray(methods) ? methods.length > 0 : !!methods?.length;
-                    setHasAnyPaymentMethod(exists);
+                    const list: PaymentMethod[] = Array.isArray(data?.methods)
+                        ? data.methods.map((m: any) => ({ id: m.id, name: m.name, active: !!m.active }))
+                        : [];
+                    setPaymentMethods(list);
                 }
             } catch (err: any) {
                 console.error(err);
-                toast.error(err?.message || "Could not verify existing payment methods");
+                toast.error(err?.message || "Could not load payment methods");
             } finally {
-                if (!cancelled) setCheckingExistingPayments(false);
+                if (!cancelled) setLoadingPayments(false);
             }
         })();
-        return () => {
-            cancelled = true;
-        };
+        return () => { cancelled = true; };
     }, []);
 
-    const paymentDisabled = hasAnyPaymentMethod || checkingExistingPayments || savingPayment;
+    const togglePaymentActive = async (pm: PaymentMethod, nextActive: boolean) => {
+        try {
+            setTogglingId(pm.id);
+
+            // If turning ON, make it the only active one (typical “choose the one you want to use”)
+            let next = paymentMethods.slice();
+            if (nextActive) {
+                // optimistic update: deactivate all, then activate this one
+                next = next.map((m) => ({ ...m, active: m.id === pm.id }));
+                setPaymentMethods(next);
+
+                // first deactivate the ones that were active (fire-and-forget sequentially)
+                const toDeactivate = paymentMethods.filter((m) => m.id !== pm.id && m.active);
+                for (const m of toDeactivate) {
+                    await fetch(`/api/payment-methods/${m.id}/active`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ active: false }),
+                    });
+                }
+                // then activate selected one
+                await fetch(`/api/payment-methods/${pm.id}/active`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ active: true }),
+                });
+            } else {
+                // Turning OFF this one (leaves zero active)
+                setPaymentMethods((prev) =>
+                    prev.map((m) => (m.id === pm.id ? { ...m, active: false } : m))
+                );
+                await fetch(`/api/payment-methods/${pm.id}/active`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ active: false }),
+                });
+            }
+
+            // notify reminder banner to refresh
+            window.dispatchEvent(new Event("onboarding:refresh"));
+        } catch {
+            toast.error("Failed to update payment method");
+            // reload to recover optimistic UI if something failed
+            try {
+                const res = await fetch("/api/payment-methods", { method: "GET" });
+                const data = await res.json();
+                const list: PaymentMethod[] = Array.isArray(data?.methods)
+                    ? data.methods.map((m: any) => ({ id: m.id, name: m.name, active: !!m.active }))
+                    : [];
+                setPaymentMethods(list);
+            } catch { }
+        } finally {
+            setTogglingId(null);
+        }
+    };
+
+    const paymentDisabled = hasAnyPaymentMethod || checkingExistingPayments;
 
     const savePaymentIfNeeded = async (): Promise<boolean> => {
         if (paymentDisabled) return true; // already satisfied
@@ -864,7 +924,11 @@ export default function OnboardingDialog({
 
         let ok = true;
         if (currentKey === "payment-method") {
-            if (!paymentDisabled && !isPaymentFormEmpty()) ok = await savePaymentIfNeeded();
+            if (!hasAnyPaymentMethod) {
+                toast.error("Please activate a payment method to continue");
+                return; // don't advance
+            }
+            ok = true; // nothing to save, we’re already patched on toggle
         } else if (currentKey === "shipping-company") {
             if (!companyDisabled && !isCompanyFormEmpty()) ok = await saveCompanyIfNeeded();
         } else if (currentKey === "shipping-method") {
@@ -873,7 +937,7 @@ export default function OnboardingDialog({
             if (!categoryDisabled && !isCategoryFormEmpty()) ok = await saveCategoryIfNeeded();
         } else if (currentKey === "product-attribute") {
             if (!attributeDisabled && !isAttributeFormEmpty()) ok = await saveAttributeIfNeeded();
-        } else if (currentKey === "attribute-term") { // 🔽 NEW
+        } else if (currentKey === "attribute-term") {
             ok = await saveTermIfNeeded();
         }
 
@@ -889,8 +953,6 @@ export default function OnboardingDialog({
         }
     };
 
-
-
     /** ---------- Render ---------- */
     const current = steps[stepIndex];
 
@@ -901,70 +963,41 @@ export default function OnboardingDialog({
                 return (
                     <div className="space-y-4">
                         <p className="text-sm text-muted-foreground">
-                            Create your payment method. If one already exists (active), fields will be disabled.
+                            Choose which payment method you want to use.
                         </p>
 
-                        {/* Name */}
-                        <div className="flex flex-col space-y-2">
-                            <Label htmlFor="pm-name">Name *</Label>
-                            <Input
-                                id="pm-name"
-                                placeholder="Payment name"
-                                value={pmName}
-                                onChange={(e) => setPmName(e.target.value)}
-                                disabled={paymentDisabled}
-                            />
-                        </div>
-
-                        {/* Active */}
-                        <div className="flex items-center gap-3">
-                            <Switch
-                                id="pm-active"
-                                checked={pmActive}
-                                onCheckedChange={setPmActive}
-                                disabled={paymentDisabled}
-                            />
-                            <span className="text-sm">{pmActive ? "Active" : "Inactive"}</span>
-                        </div>
-
-                        {/* API key & Secret key */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="flex flex-col space-y-2">
-                                <Label htmlFor="pm-api">API key</Label>
-                                <Input
-                                    id="pm-api"
-                                    placeholder="Optional"
-                                    value={pmApiKey}
-                                    onChange={(e) => setPmApiKey(e.target.value)}
-                                    disabled={paymentDisabled}
-                                />
+                        {loadingPayments ? (
+                            <div className="text-sm text-muted-foreground">Loading payment methods…</div>
+                        ) : paymentMethods.length === 0 ? (
+                            <div className="rounded-md border p-3 text-sm">
+                                No payment methods found. Create one in <Link href="/payment-methods" className="underline">Payments</Link>, then return here to activate it.
                             </div>
-                            <div className="flex flex-col space-y-2">
-                                <Label htmlFor="pm-secret">Secret key</Label>
-                                <Input
-                                    id="pm-secret"
-                                    placeholder="Optional"
-                                    value={pmSecretKey}
-                                    onChange={(e) => setPmSecretKey(e.target.value)}
-                                    disabled={paymentDisabled}
-                                />
+                        ) : (
+                            <div className="space-y-2">
+                                {paymentMethods.map((pm) => (
+                                    <div key={pm.id} className="flex items-center justify-between rounded-md border p-3">
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-medium">{pm.name}</span>
+                                        </div>
+                                        <Switch
+                                            checked={pm.active}
+                                            onCheckedChange={(checked) => togglePaymentActive(pm, checked)}
+                                            disabled={togglingId !== null}
+                                            id={`pm-switch-${pm.id}`}
+                                        />
+                                    </div>
+                                ))}
                             </div>
-                        </div>
+                        )}
 
-                        {/* Description */}
-                        <div className="flex flex-col space-y-2">
-                            <Label htmlFor="pm-description">Description</Label>
-                            <Textarea
-                                id="pm-description"
-                                placeholder="Short text for admins (optional)"
-                                value={pmDescription}
-                                onChange={(e) => setPmDescription(e.target.value)}
-                                className="min-h-[80px]"
-                                disabled={paymentDisabled}
-                            />
-                        </div>
+                        {!hasAnyPaymentMethod && !loadingPayments && paymentMethods.length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                                Activate one to continue.
+                            </p>
+                        )}
                     </div>
                 );
+
 
             case "shipping-company":
                 return (
