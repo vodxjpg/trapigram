@@ -2,24 +2,22 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { ProductGrid, type GridProduct } from "./product-grid"
-import { Cart, type CartLine } from "./cart"
+import { Cart } from "./cart"
 import { CategoryNav } from "./category-nav"
 import { CustomerSelector, type Customer } from "./customer-selector"
 import { CheckoutDialog } from "./checkout-dialog"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
 import { StoreRegisterSelector } from "./store-register-selector"
+import { Button } from "@/components/ui/button"
+import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 
 type Category = { id: string; name: string }
 
 const LS_KEYS = {
   STORE: "pos.storeId",
-  REGISTER: "pos.registerId",
-  CART: (registerId: string) => `pos.cartId.${registerId}`,
-  TAX_INCL: "pos.taxInclusive",
+  OUTLET: "pos.outletId",
+  CART: (outletId: string) => `pos.cartId.${outletId}`,
   CLIENT: "pos.clientId",
 }
 
@@ -32,10 +30,21 @@ function useDebounced<T>(value: T, ms = 250) {
   return v
 }
 
+type CartLine = {
+  productId: string
+  variationId: string | null
+  title: string
+  image: string | null
+  sku: string | null
+  quantity: number
+  unitPrice: number
+  subtotal: number
+}
+
 export function POSInterface() {
-  // register / store
+  // store/outlet
   const [storeId, setStoreId] = useState<string | null>(null)
-  const [registerId, setRegisterId] = useState<string | null>(null)
+  const [outletId, setOutletId] = useState<string | null>(null)
 
   // catalog
   const [categories, setCategories] = useState<Category[]>([])
@@ -48,50 +57,32 @@ export function POSInterface() {
   const [cartId, setCartId] = useState<string | null>(null)
   const [lines, setLines] = useState<CartLine[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
-  const [taxInclusive, setTaxInclusive] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true
-    const v = localStorage.getItem(LS_KEYS.TAX_INCL)
-    return v === null ? true : v === "1"
-  })
   const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const creatingCartRef = useRef(false)
 
   // restore persisted choices
   useEffect(() => {
     if (typeof window === "undefined") return
     const s = localStorage.getItem(LS_KEYS.STORE)
-    const r = localStorage.getItem(LS_KEYS.REGISTER)
+    const r = localStorage.getItem(LS_KEYS.OUTLET)
     if (s) setStoreId(s)
-    if (r) setRegisterId(r)
-    const clientId = localStorage.getItem(LS_KEYS.CLIENT)
-    if (clientId) {
-      // best-effort load for name/email
-      fetch(`/api/clients/${clientId}`).then(res => res.ok ? res.json() : null).then((data) => {
-        if (data?.client) {
-          const c = data.client
-          setSelectedCustomer({ id: c.id, name: c.firstName ?? "Customer", email: c.email ?? null, phone: c.phoneNumber ?? null })
-        }
-      }).catch(() => {})
-    }
+    if (r) setOutletId(r)
   }, [])
 
-  // persist taxInclusive toggle
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(LS_KEYS.TAX_INCL, taxInclusive ? "1" : "0")
-    }
-  }, [taxInclusive])
+  // First-run: require store→outlet selection
+  const forceSelectDialog = !storeId || !outletId
 
-  // store/register changes -> load cart (or clear)
+  // When outlet changes, restore its cart if any
   useEffect(() => {
-    if (!registerId) {
+    if (!outletId) {
       setCartId(null)
       setLines([])
       return
     }
     if (typeof window !== "undefined") {
-      localStorage.setItem(LS_KEYS.REGISTER, registerId)
-      const savedCartId = localStorage.getItem(LS_KEYS.CART(registerId))
+      localStorage.setItem(LS_KEYS.OUTLET, outletId)
+      const savedCartId = localStorage.getItem(LS_KEYS.CART(outletId))
       if (savedCartId) {
         setCartId(savedCartId)
         refreshCart(savedCartId)
@@ -100,7 +91,7 @@ export function POSInterface() {
         setLines([])
       }
     }
-  }, [registerId])
+  }, [outletId])
 
   // fetch categories
   useEffect(() => {
@@ -111,14 +102,12 @@ export function POSInterface() {
         if (ignore) return
         const cats: Category[] = (res.categories || []).map((c: any) => ({ id: c.id, name: c.name }))
         setCategories(cats)
-      } catch (e) {
-        console.error(e)
-      }
+      } catch {}
     })()
     return () => { ignore = true }
   }, [])
 
-  // fetch products page (flat variations) - basic paging disabled here for simplicity
+  // fetch products page (flat variations)
   useEffect(() => {
     let ignore = false
     const params = new URLSearchParams({ pageSize: "200", page: "1" })
@@ -140,12 +129,59 @@ export function POSInterface() {
           } as GridProduct
         })
         setProducts(flat)
-      } catch (e) {
-        console.error("load products", e)
-      }
+      } catch {}
     })()
     return () => { ignore = true }
   }, [debouncedSearch])
+
+  // DEFAULT: ensure Walk-in selected/created
+  useEffect(() => {
+    let ignore = false
+    const ensureWalkIn = async () => {
+      if (selectedCustomer) return
+      try {
+        // Try to find an existing walk-in quickly
+        const url = new URL("/api/clients", window.location.origin)
+        url.searchParams.set("page", "1")
+        url.searchParams.set("pageSize", "1")
+        url.searchParams.set("search", "Walk-in")
+        const res = await fetch(url.toString())
+        let picked: Customer | null = null
+        if (res.ok) {
+          const j = await res.json()
+          const c = (j.clients || [])[0]
+          if (c) {
+            picked = {
+              id: c.id,
+              name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.username || "Walk-in",
+              email: c.email ?? null,
+              phone: c.phoneNumber ?? null,
+            }
+          }
+        }
+        if (!picked) {
+          // create a dedicated walk-in with stable username
+          const r = await fetch("/api/clients", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: `walkin-${Date.now()}`, firstName: "Walk-in" }),
+          })
+          if (!r.ok) throw new Error("Failed to create walk-in client.")
+          const c = await r.json()
+          picked = { id: c.id, name: "Walk-in", email: null, phone: null }
+        }
+        if (!ignore && picked) {
+          setSelectedCustomer(picked)
+          if (typeof window !== "undefined") localStorage.setItem(LS_KEYS.CLIENT, picked.id)
+        }
+      } catch (e: any) {
+        if (!ignore) setError(e?.message || "Failed to prepare walk-in customer.")
+      }
+    }
+    ensureWalkIn()
+    return () => { ignore = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const filteredProducts = useMemo(() => {
     const q = debouncedSearch.toLowerCase()
@@ -176,8 +212,8 @@ export function POSInterface() {
       const newCartId = data?.newCart?.id || data?.cart?.id || data?.id
       if (!newCartId) throw new Error("No cart id returned")
       setCartId(newCartId)
-      if (registerId && typeof window !== "undefined") {
-        localStorage.setItem(LS_KEYS.CART(registerId), newCartId)
+      if (outletId && typeof window !== "undefined") {
+        localStorage.setItem(LS_KEYS.CART(outletId), newCartId)
       }
       return newCartId
     } finally {
@@ -193,7 +229,7 @@ export function POSInterface() {
       const list: any[] = j.lines || j.resultCartProducts || []
       setLines(
         list.map((l) => ({
-          productId: l.id,              // in GET mapper: id is product/affiliate id
+          productId: l.id,
           variationId: l.variationId ?? null,
           title: l.title,
           image: l.image ?? null,
@@ -201,18 +237,17 @@ export function POSInterface() {
           quantity: Number(l.quantity),
           unitPrice: Number(l.unitPrice),
           subtotal: Number(l.subtotal),
-          isAffiliate: Boolean(l.isAffiliate),
         }))
       )
-    } catch (e) {
-      console.error(e)
+    } catch (e: any) {
+      setError(e?.message || "Failed to refresh cart.")
     }
   }
 
   const addToCart = async (p: GridProduct) => {
     try {
       if (!selectedCustomer?.id) {
-        alert("Pick or create a customer first (tip: Walk-in).")
+        setError("Pick or create a customer first (Walk-in is fine).")
         return
       }
       const cid = await ensureCart(selectedCustomer.id)
@@ -229,13 +264,12 @@ export function POSInterface() {
       })
       if (!res.ok) {
         const e = await res.json().catch(() => ({}))
-        alert(e?.error || "Failed to add to cart")
+        setError(e?.error || "Failed to add to cart")
         return
       }
       await refreshCart(cid)
-    } catch (e) {
-      console.error(e)
-      alert("Failed to add to cart.")
+    } catch (e: any) {
+      setError(e?.message || "Failed to add to cart.")
     }
   }
 
@@ -252,7 +286,7 @@ export function POSInterface() {
     })
     if (!res.ok) {
       const e = await res.json().catch(() => ({}))
-      alert(e?.error || "Failed to update quantity")
+      setError(e?.error || "Failed to update quantity")
       return
     }
     await refreshCart(cartId)
@@ -271,7 +305,7 @@ export function POSInterface() {
     })
     if (!res.ok) {
       const e = await res.json().catch(() => ({}))
-      alert(e?.error || "Failed to update quantity")
+      setError(e?.error || "Failed to update quantity")
       return
     }
     await refreshCart(cartId)
@@ -289,110 +323,124 @@ export function POSInterface() {
     })
     if (!res.ok) {
       const e = await res.json().catch(() => ({}))
-      alert(e?.error || "Failed to remove item")
+      setError(e?.error || "Failed to remove item")
       return
     }
     await refreshCart(cartId)
   }
 
   const onCompleteCheckout = (orderId: string) => {
-    // open receipt
     try {
       window.open(`/api/pos/receipts/${orderId}/pdf`, "_blank")
     } catch {}
-    // clear cart context for this register
-    if (registerId && typeof window !== "undefined") {
-      localStorage.removeItem(LS_KEYS.CART(registerId))
+    if (outletId && typeof window !== "undefined") {
+      localStorage.removeItem(LS_KEYS.CART(outletId))
     }
     setCartId(null)
     setLines([])
   }
 
-  const setStoreRegister = ({ storeId: s, registerId: r }: { storeId: string; registerId: string }) => {
+  const setStoreOutlet = ({ storeId: s, outletId: o }: { storeId: string; outletId: string }) => {
     setStoreId(s)
-    setRegisterId(r)
+    setOutletId(o)
     if (typeof window !== "undefined") {
       localStorage.setItem(LS_KEYS.STORE, s)
-      localStorage.setItem(LS_KEYS.REGISTER, r)
+      localStorage.setItem(LS_KEYS.OUTLET, o)
     }
   }
 
   return (
-    <div className="flex h-screen flex-col bg-background">
-      {/* Header */}
-      <header className="flex items-center justify-between border-b bg-card px-6 py-4">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-foreground">POS</h1>
+    <>
+      <div className="flex h-screen flex-col bg-background">
+        {/* Header */}
+        <header className="flex items-center justify-between border-b bg-card px-6 py-4">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-foreground">POS</h1>
+            <div className="relative w-full max-w-xs md:w-80">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search products..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+          </div>
 
-          <div className="relative w-full max-w-xs md:w-80">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search products..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
+          <div className="flex items-center gap-2">
+            {/* Switch outlet/shop anytime */}
+            <StoreRegisterSelector
+              storeId={storeId}
+              outletId={outletId}
+              onChange={setStoreOutlet}
+            />
+            <CustomerSelector
+              selectedCustomer={selectedCustomer}
+              onSelectCustomer={(c) => {
+                setSelectedCustomer(c)
+                if (typeof window !== "undefined") {
+                  if (c?.id) localStorage.setItem(LS_KEYS.CLIENT, c.id)
+                  else localStorage.removeItem(LS_KEYS.CLIENT)
+                }
+              }}
             />
           </div>
+        </header>
 
-          <div className="ml-2 flex items-center gap-2 rounded-md border px-3 py-1.5">
-            <Switch id="tax-incl" checked={taxInclusive} onCheckedChange={setTaxInclusive} />
-            <Label htmlFor="tax-incl" className="text-sm">Tax inclusive</Label>
+        {/* Main Content */}
+        <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
+          {/* Products Section */}
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <CategoryNav
+              categories={categories}
+              selectedCategoryId={selectedCategoryId}
+              onSelect={setSelectedCategoryId}
+            />
+            <ProductGrid products={filteredProducts} onAddToCart={addToCart} />
           </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <StoreRegisterSelector
-            storeId={storeId}
-            registerId={registerId}
-            onChange={setStoreRegister}
-          />
-          <CustomerSelector
-            selectedCustomer={selectedCustomer}
-            onSelectCustomer={(c) => {
-              setSelectedCustomer(c)
-              if (typeof window !== "undefined") {
-                if (c?.id) localStorage.setItem(LS_KEYS.CLIENT, c.id)
-                else localStorage.removeItem(LS_KEYS.CLIENT)
-              }
-            }}
+          {/* Cart Section */}
+          <Cart
+            lines={lines}
+            onInc={inc}
+            onDec={dec}
+            onRemove={removeLine}
+            onCheckout={() => setCheckoutOpen(true)}
           />
         </div>
-      </header>
 
-      {/* Main Content */}
-      <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
-        {/* Products Section */}
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <CategoryNav
-            categories={categories}
-            selectedCategoryId={selectedCategoryId}
-            onSelect={setSelectedCategoryId}
-          />
-          <ProductGrid products={filteredProducts} onAddToCart={addToCart} />
-        </div>
-
-        {/* Cart Section */}
-        <Cart
-          lines={lines}
-          taxInclusive={taxInclusive}
-          onInc={inc}
-          onDec={dec}
-          onRemove={removeLine}
-          onCheckout={() => setCheckoutOpen(true)}
+        {/* Checkout Dialog */}
+        <CheckoutDialog
+          open={checkoutOpen}
+          onOpenChange={setCheckoutOpen}
+          totalEstimate={subtotalEstimate}
+          cartId={cartId}
+          clientId={selectedCustomer?.id ?? null}
+          registerId={outletId}
+          onComplete={onCompleteCheckout}
         />
       </div>
 
-      {/* Checkout Dialog */}
-      <CheckoutDialog
-        open={checkoutOpen}
-        onOpenChange={setCheckoutOpen}
-        totalEstimate={subtotalEstimate}
-        cartId={cartId}
-        clientId={selectedCustomer?.id ?? null}
-        registerId={registerId}
-        taxInclusive={taxInclusive}
-        onComplete={onCompleteCheckout}
+      {/* First-run: force store/outlet selection */}
+      <StoreRegisterSelector
+        storeId={storeId}
+        outletId={outletId}
+        onChange={setStoreOutlet}
+        forceOpen={forceSelectDialog}
       />
-    </div>
+
+      {/* Error dialog */}
+      <AlertDialog open={!!error} onOpenChange={(o) => !o && setError(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Something went wrong</AlertDialogTitle>
+          </AlertDialogHeader>
+          <div className="text-sm text-muted-foreground">{error}</div>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setError(null)}>OK</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }

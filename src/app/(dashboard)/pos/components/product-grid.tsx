@@ -6,7 +6,7 @@ import { Plus } from "lucide-react"
 import Image from "next/image"
 
 export type GridProduct = {
-  id: string           // parent productId
+  id: string
   productId: string
   variationId: string | null
   title: string
@@ -20,6 +20,21 @@ type ProductGridProps = {
   onAddToCart: (p: GridProduct) => void
 }
 
+function InitialsCircle({ text }: { text: string }) {
+  const trimmed = (text || "").trim()
+  const parts = trimmed.split(/\s+/)
+  const firstTwo =
+    (parts[0]?.[0] || "") + (parts.length > 1 ? parts[1]?.[0] || "" : parts[0]?.[1] || "")
+  const initials = firstTwo.toUpperCase()
+  return (
+    <div className="absolute inset-0 flex items-center justify-center">
+      <div className="h-16 w-16 rounded-full bg-muted-foreground/10 flex items-center justify-center">
+        <span className="text-lg font-semibold text-muted-foreground">{initials || "P"}</span>
+      </div>
+    </div>
+  )
+}
+
 export function ProductGrid({ products, onAddToCart }: ProductGridProps) {
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -31,12 +46,17 @@ export function ProductGrid({ products, onAddToCart }: ProductGridProps) {
             onClick={() => onAddToCart(product)}
           >
             <div className="relative aspect-square bg-muted">
-              <Image
-                src={product.image || "/placeholder.svg"}
-                alt={product.title}
-                fill
-                className="object-cover"
-              />
+              {product.image ? (
+                <Image
+                  src={product.image}
+                  alt={product.title}
+                  fill
+                  sizes="200px"
+                  className="object-cover"
+                />
+              ) : (
+                <InitialsCircle text={product.title} />
+              )}
               <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-all group-hover:bg-black/10">
                 <Button
                   size="icon"
@@ -52,9 +72,7 @@ export function ProductGrid({ products, onAddToCart }: ProductGridProps) {
             </div>
             <div className="p-3">
               <h3 className="font-medium text-foreground line-clamp-2">{product.title}</h3>
-              <p className="mt-1 text-lg font-bold text-primary">
-                ${product.priceForDisplay.toFixed(2)}
-              </p>
+              <p className="mt-1 text-lg font-bold text-primary">${product.priceForDisplay.toFixed(2)}</p>
             </div>
           </Card>
         ))}

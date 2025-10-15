@@ -5,9 +5,8 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Minus, Plus, Trash2 } from "lucide-react"
-import Image from "next/image"
 
-export type CartLine = {
+type CartLine = {
   productId: string
   variationId: string | null
   title: string
@@ -16,21 +15,35 @@ export type CartLine = {
   quantity: number
   unitPrice: number
   subtotal: number
-  isAffiliate?: boolean
 }
 
 type CartProps = {
   lines: CartLine[]
-  taxInclusive: boolean
   onInc: (line: CartLine) => void
   onDec: (line: CartLine) => void
   onRemove: (line: CartLine) => void
   onCheckout: () => void
 }
 
+function InitialsSquare({ text }: { text: string }) {
+  const trimmed = (text || "").trim()
+  const parts = trimmed.split(/\s+/)
+  const firstTwo =
+    (parts[0]?.[0] || "") + (parts.length > 1 ? parts[1]?.[0] || "" : parts[0]?.[1] || "")
+  const initials = firstTwo.toUpperCase()
+  return (
+    <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md bg-muted">
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="h-10 w-10 rounded-full bg-muted-foreground/10 flex items-center justify-center">
+          <span className="text-sm font-semibold text-muted-foreground">{initials || "P"}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function Cart({
   lines,
-  taxInclusive,
   onInc,
   onDec,
   onRemove,
@@ -40,15 +53,12 @@ export function Cart({
 
   return (
     <div className="flex w-full flex-col border-l bg-card lg:w-96">
-      {/* Cart Header */}
+      {/* Header */}
       <div className="border-b p-4">
         <h2 className="text-lg font-semibold text-foreground">Current Order</h2>
-        <p className="text-xs text-muted-foreground">
-          Prices {taxInclusive ? "include" : "exclude"} tax (exact tax at checkout)
-        </p>
       </div>
 
-      {/* Cart Items */}
+      {/* Lines */}
       <ScrollArea className="flex-1 p-4">
         {lines.length === 0 ? (
           <div className="flex h-full items-center justify-center">
@@ -59,16 +69,17 @@ export function Cart({
             {lines.map((l) => (
               <Card key={`${l.productId}:${l.variationId ?? "base"}`} className="p-3">
                 <div className="flex gap-3">
-                  <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md bg-muted">
-                    <Image src={l.image || "/placeholder.svg"} alt={l.title} fill className="object-cover" />
-                  </div>
+                  {l.image ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={l.image} alt={l.title} className="h-16 w-16 rounded-md object-cover" />
+                  ) : (
+                    <InitialsSquare text={l.title} />
+                  )}
                   <div className="flex flex-1 flex-col">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
                         <h3 className="font-medium text-sm text-foreground line-clamp-2">{l.title}</h3>
-                        <p className="text-xs text-muted-foreground">
-                          Unit: ${Number(l.unitPrice).toFixed(2)}
-                        </p>
+                        <p className="text-xs text-muted-foreground">Unit: ${Number(l.unitPrice).toFixed(2)}</p>
                       </div>
                       <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onRemove(l)}>
                         <Trash2 className="h-3 w-3" />
@@ -123,7 +134,7 @@ export function Cart({
         </div>
       </div>
 
-      {/* Checkout Button */}
+      {/* Checkout */}
       <div className="border-t p-4">
         <Button className="w-full" size="lg" disabled={lines.length === 0} onClick={onCheckout}>
           Checkout
