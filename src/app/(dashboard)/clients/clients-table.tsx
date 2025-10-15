@@ -6,6 +6,7 @@ import {
   useEffect,
   useCallback,
   startTransition,
+  useMemo,
 } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -51,7 +52,6 @@ import en from "i18n-iso-countries/langs/en.json";
 import { toast } from "sonner";
 
 // ⬇️ TanStack + shared table
-import { useMemo } from "react";
 import {
   type ColumnDef,
   getCoreRowModel,
@@ -248,9 +248,7 @@ export function ClientsTable() {
     }
   };
 
-  if (viewLoading || !canView) return null;
-
-  /* ── columns + table ───────────────────────────────────────────── */
+  /* ── columns + table (UNCONDITIONAL) ───────────────────────────── */
   const columns = useMemo<ColumnDef<Client>[]>(() => [
     {
       accessorKey: "username",
@@ -343,10 +341,13 @@ export function ClientsTable() {
   ], [canPoints, canUpdate, canDelete, openStatsModal, router]);
 
   const table = useReactTable({
-    data: clients,
+    data: canView ? clients : [], // keep hooks stable even if access is denied/loading
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
+
+  /* ── guards AFTER hooks (keeps hook order stable) ──────────────── */
+  if (viewLoading || !canView) return null;
 
   /* ── JSX ───────────────────────────────────────────────────────── */
   return (

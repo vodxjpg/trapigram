@@ -222,15 +222,6 @@ export default function Component() {
     );
   };
 
-  if (permsLoading) {
-    return (
-      <div className="container mx-auto p-6">
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      </div>
-    );
-  }
-  if (!canShow) return null;
-
   // ⬇️ Columns for the StandardDataTable
   const columns = useMemo<ColumnDef<InventoryCountRow>[]>(() => [
     { accessorKey: "reference", header: "Reference" },
@@ -305,6 +296,15 @@ export default function Component() {
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
+
+  if (permsLoading) {
+    return (
+      <div className="container mx-auto p-6">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    );
+  }
+  if (!canShow) return null;
 
   return (
     <div className="container mx-auto p-6 space-y-6">

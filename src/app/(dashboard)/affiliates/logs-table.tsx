@@ -9,32 +9,15 @@ import { DateRange } from "react-day-picker";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  Calendar as CalendarIcon,
-} from "lucide-react";
+import { Clock, Calendar as CalendarIcon } from "lucide-react";
 import { toast } from "sonner";
 
-// ⬇️ TanStack + standardized table
 import { useReactTable, getCoreRowModel, type ColumnDef } from "@tanstack/react-table";
 import { StandardDataTable } from "@/components/data-table/data-table";
 
-/* ───────────── Types ───────────── */
 type Log = {
   id: string;
   organizationId: string;
@@ -48,65 +31,46 @@ type Log = {
   sourceClientLabel?: string;
 };
 
-/* ───────────── Component ───────────── */
 export function LogsTable() {
-  // data
   const [logs, setLogs] = useState<Log[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // paging
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
-  // search / filters
   const [query, setQuery] = useState("");
   const debounced = useDebounce(query, 300);
 
-  // action filter (values populated from API results for convenience)
   const [actionFilter, setActionFilter] = useState<string>("");
   const [actionOptions, setActionOptions] = useState<string[]>([]);
-
-  // points direction filter
   const [pointsFilter, setPointsFilter] = useState<"" | "gains" | "losses">("");
 
-  // date range filter
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [range, setRange] = useState<DateRange | undefined>();
 
-  // optional: mirror UI picker into actual filter
   useEffect(() => {
     setDateRange(range);
   }, [range]);
 
-  /* fetch logs */
   const loadLogs = async () => {
     setLoading(true);
     try {
       const url = new URL("/api/affiliate/points", window.location.origin);
       url.searchParams.set("page", String(page));
       url.searchParams.set("pageSize", String(pageSize));
-
       if (debounced.trim()) url.searchParams.set("search", debounced.trim());
       if (actionFilter) url.searchParams.set("action", actionFilter);
       if (pointsFilter) url.searchParams.set("direction", pointsFilter);
-      if (dateRange?.from)
-        url.searchParams.set("dateFrom", dateRange.from.toISOString());
-      if (dateRange?.to)
-        url.searchParams.set("dateTo", endOfDay(dateRange.to).toISOString());
+      if (dateRange?.from) url.searchParams.set("dateFrom", dateRange.from.toISOString());
+      if (dateRange?.to) url.searchParams.set("dateTo", endOfDay(dateRange.to).toISOString());
 
       const r = await fetch(url.toString(), {
-        headers: {
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "",
-        },
+        headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? "" },
       });
-
       if (!r.ok) {
         let msg = "Fetch failed";
-        try {
-          const j = await r.json();
-          msg = j?.error || msg;
-        } catch { }
+        try { const j = await r.json(); msg = j?.error || msg; } catch { }
         throw new Error(msg);
       }
 
@@ -116,7 +80,6 @@ export function LogsTable() {
       setTotalPages(totalPages ?? 1);
       setPage(currentPage ?? page);
 
-      // derive unique action options
       const unique = Array.from(new Set(list.map((l) => l.action).filter(Boolean)));
       setActionOptions(unique);
     } catch (e: any) {
@@ -133,10 +96,6 @@ export function LogsTable() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageSize, debounced, actionFilter, pointsFilter, dateRange?.from, dateRange?.to]);
 
-  /* helpers */
-  const fallbackId = (id: string | null | undefined) =>
-    id ? id.slice(0, 8) + "…" : "-";
-
   const showingFrom = useMemo(
     () => (page - 1) * pageSize + (logs.length ? 1 : 0),
     [page, pageSize, logs.length]
@@ -146,81 +105,68 @@ export function LogsTable() {
     [page, pageSize, logs.length]
   );
 
-  /* columns */
-  const columns = useMemo<ColumnDef<Log>[]>(
-    () => [
-      {
-        id: "id",
-        header: "ID",
-        cell: ({ row }) => (
-          <span className="font-mono text-xs">{row.original.id.slice(0, 8)}…</span>
-        ),
+  // ⬇️ define columns UNCONDITIONALLY
+  const fallbackId = (id: string | null | undefined) => (id ? id.slice(0, 8) + "…" : "-");
+  const columns = useMemo<ColumnDef<Log>[]>(() => [
+    {
+      id: "id",
+      header: "ID",
+      cell: ({ row }) => <span className="font-mono text-xs">{row.original.id.slice(0, 8)}…</span>,
+    },
+    {
+      accessorKey: "createdAt",
+      header: "Date",
+      cell: ({ row }) => (
+        <div className="flex items-center gap-1">
+          <Clock className="h-4 w-4 opacity-70" />
+          {new Date(row.original.createdAt).toLocaleString()}
+        </div>
+      ),
+    },
+    {
+      id: "client",
+      header: "Client",
+      cell: ({ row }) => (
+        <Link href={`/clients/${row.original.clientId}/info`} className="text-foreground no-underline">
+          {row.original.clientLabel || fallbackId(row.original.clientId)}
+        </Link>
+      ),
+    },
+    {
+      id: "delta",
+      header: "Δ Points",
+      cell: ({ row }) => {
+        const p = row.original.points;
+        return <span className={p >= 0 ? "text-green-600" : "text-red-600"}>{p > 0 ? "+" : ""}{p}</span>;
       },
-      {
-        accessorKey: "createdAt",
-        header: "Date",
-        cell: ({ row }) => (
-          <div className="flex items-center gap-1">
-            <Clock className="h-4 w-4 opacity-70" />
-            {new Date(row.original.createdAt).toLocaleString()}
-          </div>
-        ),
-      },
-      {
-        id: "client",
-        header: "Client",
-        cell: ({ row }) => (
-          <Link href={`/clients/${row.original.clientId}/info`}>
-            {row.original.clientLabel || fallbackId(row.original.clientId)}
+    },
+    { accessorKey: "action", header: "Action" },
+    {
+      accessorKey: "description",
+      header: "Description",
+      cell: ({ row }) => row.original.description ?? "-",
+    },
+    {
+      id: "sourceClient",
+      header: "Source Client",
+      cell: ({ row }) =>
+        row.original.sourceClientId ? (
+          <Link href={`/clients/${row.original.sourceClientId}/info`} className="text-foreground no-underline">
+            {row.original.sourceClientLabel || fallbackId(row.original.sourceClientId)}
           </Link>
+        ) : (
+          <span>-</span>
         ),
-      },
-      {
-        id: "delta",
-        header: "Δ Points",
-        cell: ({ row }) => {
-          const p = row.original.points;
-          return (
-            <span className={p >= 0 ? "text-green-600" : "text-red-600"}>
-              {p > 0 ? "+" : ""}
-              {p}
-            </span>
-          );
-        },
-      },
-      {
-        accessorKey: "action",
-        header: "Action",
-      },
-      {
-        accessorKey: "description",
-        header: "Description",
-        cell: ({ row }) => row.original.description ?? "-",
-      },
-      {
-        id: "sourceClient",
-        header: "Source Client",
-        cell: ({ row }) =>
-          row.original.sourceClientId ? (
-            <Link href={`/clients/${row.original.sourceClientId}/info`}>
-              {row.original.sourceClientLabel ||
-                fallbackId(row.original.sourceClientId)}
-            </Link>
-          ) : (
-            <span>-</span>
-          ),
-      },
-    ],
-    []
-  );
+    },
+  ], []);
 
+  // ⬇️ create the table UNCONDITIONALLY
   const table = useReactTable({
     data: logs,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
-  /* ───────────── JSX ───────────── */
   return (
     <div className="space-y-4">
       {/* Toolbar */}
