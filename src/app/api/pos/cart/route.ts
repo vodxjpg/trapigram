@@ -5,57 +5,52 @@ import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
 
-/** Util: optional DB-backed idempotency (table: idempotency) */
+/** DB-backed idempotency (optional) */
 async function withIdempotency(
   req: NextRequest,
   exec: () => Promise<{ status: number; body: any }>
 ): Promise<NextResponse> {
   const key = req.headers.get("Idempotency-Key");
   if (!key) {
-    const { status, body } = await exec();
-    return NextResponse.json(body, { status });
+    const r = await exec();
+    return NextResponse.json(r.body, { status: r.status });
   }
+
   const method = req.method;
   const path = new URL(req.url).pathname;
-
   const c = await pool.connect();
   try {
     await c.query("BEGIN");
     try {
       await c.query(
-        `INSERT INTO idempotency(key, method, path, "createdAt")
-         VALUES ($1,$2,$3,NOW())`,
+        `INSERT INTO idempotency(key, method, path, "createdAt") VALUES ($1,$2,$3,NOW())`,
         [key, method, path]
       );
     } catch (e: any) {
       if (e?.code === "23505") {
         const { rows } = await c.query(
-          `SELECT status, response FROM idempotency WHERE key = $1`,
+          `SELECT status, response FROM idempotency WHERE key=$1`,
           [key]
         );
         await c.query("COMMIT");
-        if (rows[0]) {
-          return NextResponse.json(rows[0].response, { status: rows[0].status });
-        }
+        if (rows[0]) return NextResponse.json(rows[0].response, { status: rows[0].status });
         return NextResponse.json({ error: "Idempotency replay but no record" }, { status: 409 });
       }
       if (e?.code === "42P01") {
         await c.query("ROLLBACK");
-        const { status, body } = await exec();
-        return NextResponse.json(body, { status });
+        const r = await exec();
+        return NextResponse.json(r.body, { status: r.status });
       }
       throw e;
     }
 
-    const { status, body } = await exec();
+    const r = await exec();
     await c.query(
-      `UPDATE idempotency
-         SET status = $2, response = $3, "updatedAt" = NOW()
-       WHERE key = $1`,
-      [key, status, body]
+      `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
+      [key, r.status, r.body]
     );
     await c.query("COMMIT");
-    return NextResponse.json(body, { status });
+    return NextResponse.json(r.body, { status: r.status });
   } catch (err) {
     await c.query("ROLLBACK");
     throw err;
@@ -66,9 +61,7 @@ async function withIdempotency(
 
 const CreateSchema = z.object({
   clientId: z.string().min(1).optional(),
-  storeId: z.string().min(1).optional(),
-  registerId: z.string().min(1).optional(),
-  country: z.string().length(2).optional(), // ✅ allow explicit country from client
+  country: z.string().length(2).optional(), // allow explicit override from UI
 });
 
 export async function POST(req: NextRequest) {
@@ -80,16 +73,15 @@ export async function POST(req: NextRequest) {
       const { organizationId } = ctx;
       const input = CreateSchema.parse(await req.json());
 
-      // 1) Resolve client
+      /* 1) Resolve client (require an existing client; UI should already create Walk-in) */
       let clientId = input.clientId ?? null;
 
       if (!clientId) {
-        // Prefer a pre-existing "Walk-in" client if one exists,
-        // otherwise require clientId (UI should have created walk-in already).
+        // Try to find an existing Walk-in in this org
         const { rows: walk } = await pool.query(
           `SELECT id FROM clients
              WHERE "organizationId"=$1
-               AND (LOWER("firstName")='walk-in' OR COALESCE("isWalkIn",false)=true)
+               AND (COALESCE("isWalkIn",false)=true OR LOWER("firstName")='walk-in')
            ORDER BY "createdAt" ASC
             LIMIT 1`,
           [organizationId]
@@ -97,64 +89,42 @@ export async function POST(req: NextRequest) {
         if (walk.length) {
           clientId = walk[0].id;
         } else {
-          return { status: 400, body: { error: "clientId is required" } };
+          // Do NOT create a new client here (to avoid schema constraints & web flow side effects)
+          return { status: 400, body: { error: "clientId is required for POS cart" } };
         }
       }
 
-      // Ensure client exists & belongs to org
+      // Validate client belongs to org
       const { rows: clientRows } = await pool.query(
         `SELECT id FROM clients WHERE id=$1 AND "organizationId"=$2`,
         [clientId, organizationId]
       );
-      if (!clientRows.length) {
-        return { status: 404, body: { error: "Client not found" } };
-      }
+      if (!clientRows.length) return { status: 404, body: { error: "Client not found" } };
 
-      // 2) Reuse active cart, if any
+      /* 2) Reuse only an ACTIVE POS cart (don’t touch web carts) */
       const { rows: active } = await pool.query(
         `SELECT * FROM carts
-           WHERE "clientId"=$1 AND "organizationId"=$2 AND status=true
-         ORDER BY "createdAt" DESC
-            LIMIT 1`,
+          WHERE "clientId"=$1 AND "organizationId"=$2 AND status=true AND channel='pos'
+        ORDER BY "createdAt" DESC
+           LIMIT 1`,
         [clientId, organizationId]
       );
       if (active.length) {
         return { status: 201, body: { newCart: active[0], reused: true } };
       }
 
-      // 3) Resolve NON-NULL cart.country
+      /* 3) Resolve NON-NULL country */
       const resolveCountry = async (): Promise<string> => {
-        // a) explicit from payload
+        // a) explicit
         if (input.country && input.country.length === 2) return input.country.toUpperCase();
 
-        // b) from store.address.country if storeId provided
-        if (input.storeId) {
-          const { rows: s } = await pool.query(
-            `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
-            [input.storeId, organizationId]
-          );
-          const fromStore =
-            s[0]?.address?.country ??
-            s[0]?.address?.Country ??
-            s[0]?.address?.COUNTRY ??
-            null;
-          if (fromStore && typeof fromStore === "string" && fromStore.length === 2) {
-            return fromStore.toUpperCase();
-          }
-        }
-
-        // c) from organization configured countries (first)
+        // b) organization countries (first) or metadata default
         const { rows: org } = await pool.query(
           `SELECT countries, metadata FROM organizations WHERE id=$1`,
           [organizationId]
         );
-
         if (org.length) {
           const row = org[0];
-          // cases:
-          // - countries is text[] (pg array)
-          // - countries is json/JSONB string
-          // - metadata JSON with defaultCountry/country
           let first: string | null = null;
 
           if (Array.isArray(row.countries) && row.countries.length) {
@@ -165,32 +135,60 @@ export async function POST(req: NextRequest) {
               if (Array.isArray(parsed) && parsed.length) first = parsed[0];
             } catch { /* ignore */ }
           }
-
           if (!first && row.metadata) {
             try {
               const m = typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata;
               first = m?.defaultCountry || m?.country || null;
             } catch { /* ignore */ }
           }
-
           if (first && typeof first === "string" && first.length === 2) {
             return first.toUpperCase();
           }
         }
 
-        // d) hard default
+        // c) hard fallback
         return "US";
       };
 
       const country = await resolveCountry();
 
-      // 4) Insert new cart
-      const cartId = uuidv4();
-      const initialHash = "e3b0c44298fc1c149afbf4c8996fb924"; // sha256("")
+      /* 4) Resolve a valid shippingMethod id (NOT NULL FK) */
+      const resolveShippingMethodId = async (): Promise<string> => {
+        // Try by org (if column exists); otherwise fall back to any record
+        // Attempt 1: org-scoped
+        try {
+          const r1 = await pool.query(
+            `SELECT id FROM "shippingMethods" WHERE "organizationId"=$1 ORDER BY "createdAt" ASC LIMIT 1`,
+            [organizationId]
+          );
+          if (r1.rows.length) return r1.rows[0].id;
+        } catch (e: any) {
+          // 42703 → column doesn’t exist in this schema; ignore and try global
+          if (e?.code !== "42703") throw e;
+        }
 
-      const cols: string[] = [
+        // Attempt 2: any method
+        const r2 = await pool.query(
+          `SELECT id FROM "shippingMethods" ORDER BY "createdAt" ASC LIMIT 1`
+        );
+        if (r2.rows.length) return r2.rows[0].id;
+
+        throw new Error("No shipping method configured");
+      };
+
+      let shippingMethodId: string;
+      try {
+        shippingMethodId = await resolveShippingMethodId();
+      } catch (e: any) {
+        return { status: 400, body: { error: e?.message || "No shipping method available" } };
+      }
+
+      /* 5) Create the POS cart */
+      const cartId = uuidv4();
+      const emptySha256 = "e3b0c44298fc1c149afbf4c8996fb924"; // sha256("")
+
+      const cols = [
         "id",
-        "\"organizationId\"",
         "\"clientId\"",
         "country",
         "\"couponCode\"",
@@ -200,33 +198,23 @@ export async function POST(req: NextRequest) {
         "status",
         "\"createdAt\"",
         "\"updatedAt\"",
+        "\"organizationId\"",
+        "channel",
       ];
       const vals: any[] = [
         cartId,
-        organizationId,
         clientId,
-        country,           // ✅ guaranteed non-null
-        null,              // couponCode
-        null,              // shippingMethod
-        initialHash,
-        initialHash,
-        true,
+        country,
+        null,                 // couponCode
+        shippingMethodId,     // ✅ NOT NULL FK
+        emptySha256,
+        emptySha256,
+        true,                 // status (active)
         new Date(),
         new Date(),
+        organizationId,
+        "pos",                // ✅ isolate POS carts
       ];
-
-      // Optionally attach store/register if columns exist in your schema
-      // We'll add defensively; if the columns do not exist, DB will error — so only push if you have them.
-      if (input.storeId) {
-        cols.push("\"storeId\"");
-        vals.push(input.storeId);
-      }
-      if (input.registerId) {
-        cols.push("\"registerId\"");
-        vals.push(input.registerId);
-      }
-
-      // Build placeholders dynamically
       const placeholders = vals.map((_, i) => `$${i + 1}`).join(",");
 
       const sql = `INSERT INTO carts (${cols.join(",")}) VALUES (${placeholders}) RETURNING *`;
