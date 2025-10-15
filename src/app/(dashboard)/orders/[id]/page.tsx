@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Pusher from "pusher-js";                          // ★ NEW
 import {
   ArrowLeft, CreditCard, Package, Truck, Send,
   Eye, EyeOff, MessageSquarePlus, Trash, Loader2
@@ -373,32 +372,37 @@ export default function OrderView() {
   }, [id]);
 
   useEffect(() => {
-    if (!canViewChat) return;
+        if (!canViewChat) return;
+    let pusher: any | null = null;
+    let channel: any | null = null;
+    let cancelled = false;
 
-    fetchMessages();                               // initial back‑fill
+    fetchMessages(); // initial back-fill
 
-    const pusher = new Pusher("6f9adcf7a6b2d8780aa9", {
-      cluster: "eu",
-      channelAuthorization: { transport: "ajax" }, // no‑op (public channel)
-    });
-    const channel = pusher.subscribe(`order-${id}`);
+    (async () => {
+      const mod = await import("pusher-js");                // ★ dynamic import
+      if (cancelled) return;
+      const Pusher = mod.default;
+      pusher = new Pusher("6f9adcf7a6b2d8780aa9", {
+        cluster: "eu",
+      });
+      channel = pusher.subscribe(`order-${id}`);
+      channel.bind("new-message", (msg: any) => {
+        setMessages((prev) =>
+          prev.some((m) => m.id === msg.id)
+            ? prev
+            : [...prev, { ...msg, createdAt: new Date(msg.createdAt) }],
+        );
+        lastSeen.current = msg.createdAt;
+      });
+    })();
 
-    channel.bind("new-message", (msg: any) => {
-      setMessages((prev) =>
-        prev.some((m) => m.id === msg.id)
-          ? prev
-          : [...prev, { ...msg, createdAt: new Date(msg.createdAt) }],
-      );
-      lastSeen.current = msg.createdAt;
-    });
-
-    /* backup poll every 60 s */
     const poll = setInterval(fetchMessages, 60_000);
-
     return () => {
-      channel.unbind_all();
-      pusher.unsubscribe(`order-${id}`);
-      pusher.disconnect();
+      cancelled = true;
+      channel?.unbind_all();
+      if (pusher && channel) pusher.unsubscribe(`order-${id}`);
+      pusher?.disconnect();
       clearInterval(poll);
     };
   }, [id, canViewChat, fetchMessages]);

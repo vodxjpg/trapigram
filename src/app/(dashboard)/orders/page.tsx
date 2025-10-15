@@ -427,7 +427,6 @@ export default function OrdersPage() {
             <Button variant="link" className="p-0 h-auto font-medium" asChild>
               <Link
                 href={`/orders/${row.original.id}`}
-                prefetch={false}
                 onClick={(e) => {
                   // Avoid row-level handlers (selection/expansion) from interfering
                   e.stopPropagation();
