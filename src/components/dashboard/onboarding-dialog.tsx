@@ -91,14 +91,6 @@ export default function OnboardingDialog({
         if (idx >= 0) setStepIndex(idx);
     }, [open, startAtKey, steps]);
 
-    // Consider the step "empty" when the user hasn't typed anything meaningful.
-    // This lets Next act as "Skip" if all relevant inputs are blank.
-    const isPaymentFormEmpty = () =>
-        pmName.trim() === "" &&
-        pmApiKey.trim() === "" &&
-        pmSecretKey.trim() === "" &&
-        pmDescription.trim() === "";
-
     const isCompanyFormEmpty = () =>
         companyName.trim() === "" && selectedCompanyCountries.length === 0;
 
@@ -232,105 +224,29 @@ export default function OnboardingDialog({
     }, []);
 
     const togglePaymentActive = async (pm: PaymentMethod, nextActive: boolean) => {
+        setTogglingId(pm.id);
+
+        // optimistic update for just this row
+        setPaymentMethods((prev) =>
+            prev.map((m) => (m.id === pm.id ? { ...m, active: nextActive } : m))
+        );
+
         try {
-            setTogglingId(pm.id);
-
-            // If turning ON, make it the only active one (typical “choose the one you want to use”)
-            let next = paymentMethods.slice();
-            if (nextActive) {
-                // optimistic update: deactivate all, then activate this one
-                next = next.map((m) => ({ ...m, active: m.id === pm.id }));
-                setPaymentMethods(next);
-
-                // first deactivate the ones that were active (fire-and-forget sequentially)
-                const toDeactivate = paymentMethods.filter((m) => m.id !== pm.id && m.active);
-                for (const m of toDeactivate) {
-                    await fetch(`/api/payment-methods/${m.id}/active`, {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ active: false }),
-                    });
-                }
-                // then activate selected one
-                await fetch(`/api/payment-methods/${pm.id}/active`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ active: true }),
-                });
-            } else {
-                // Turning OFF this one (leaves zero active)
-                setPaymentMethods((prev) =>
-                    prev.map((m) => (m.id === pm.id ? { ...m, active: false } : m))
-                );
-                await fetch(`/api/payment-methods/${pm.id}/active`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ active: false }),
-                });
-            }
-
-            // notify reminder banner to refresh
+            const res = await fetch(`/api/payment-methods/${pm.id}/active`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ active: nextActive }),
+            });
+            if (!res.ok) throw new Error("Failed to update payment method");
             window.dispatchEvent(new Event("onboarding:refresh"));
-        } catch {
+        } catch (e) {
+            // revert on error
+            setPaymentMethods((prev) =>
+                prev.map((m) => (m.id === pm.id ? { ...m, active: !nextActive } : m))
+            );
             toast.error("Failed to update payment method");
-            // reload to recover optimistic UI if something failed
-            try {
-                const res = await fetch("/api/payment-methods", { method: "GET" });
-                const data = await res.json();
-                const list: PaymentMethod[] = Array.isArray(data?.methods)
-                    ? data.methods.map((m: any) => ({ id: m.id, name: m.name, active: !!m.active }))
-                    : [];
-                setPaymentMethods(list);
-            } catch { }
         } finally {
             setTogglingId(null);
-        }
-    };
-
-    const paymentDisabled = hasAnyPaymentMethod || checkingExistingPayments;
-
-    const savePaymentIfNeeded = async (): Promise<boolean> => {
-        if (paymentDisabled) return true; // already satisfied
-        if (!pmName.trim()) {
-            toast.error("Name is required");
-            return false;
-        }
-
-        try {
-            setSavingPayment(true);
-            const payload: Record<string, any> = {
-                name: pmName.trim(),
-                active: pmActive,
-                apiKey: pmApiKey.trim() || null,
-                secretKey: pmSecretKey.trim() || null,
-                description: pmDescription.trim() || null,
-            };
-
-            const res = await fetch("/api/payment-methods", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-            });
-
-            if (!res.ok) {
-                let errMsg = "Failed to save";
-                try {
-                    const j = await res.json();
-                    errMsg = j?.error || errMsg;
-                } catch { /* ignore */ }
-                throw new Error(errMsg);
-            }
-
-            toast.success("Payment method created successfully");
-            window.dispatchEvent(new Event(ONBOARDING_REFRESH_EVENT));
-            setHasAnyPaymentMethod(true);
-            setHasAnyPaymentMethod(true);
-            return true;
-        } catch (e: any) {
-            toast.error(e?.message || "Failed to save");
-            return false;
-        } finally {
-            setSavingPayment(false);
         }
     };
 

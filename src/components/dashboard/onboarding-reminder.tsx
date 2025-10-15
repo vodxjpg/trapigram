@@ -156,7 +156,7 @@ export function OnboardingReminder({ onOpenStep, className }: ReminderProps) {
     if (remaining <= 0) return null;
 
     const items: { key: RequiredStepKey; title: string; done: boolean }[] = [
-        { key: "payment-method", title: "Create a payment method", done: status.hasPayment },
+        { key: "payment-method", title: "Activate your payment methods", done: status.hasPayment },
         { key: "shipping-company", title: "Create a shipping company", done: status.hasCompany },
         { key: "shipping-method", title: "Create a shipping method", done: status.hasMethod },
         { key: "product-category", title: "Create a product category", done: status.hasCategory },
