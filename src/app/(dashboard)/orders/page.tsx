@@ -1,8 +1,6 @@
-// src/app/(dashboard)/orders/page.tsx (or your current path)
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
-import Link from "next/link";
+import { useState, useEffect, useMemo } from "react";
 import { type DateRange } from "react-day-picker";
 import { useRouter } from "next/navigation";
 import { useHasPermission } from "@/hooks/use-has-permission";
@@ -11,10 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Edit,
+  Mail,
   MoreVertical,
   Search,
   Truck,
-  Calendar as CalendarIcon,
+  CalendarIcon,
 } from "lucide-react";
 import {
   Select,
@@ -35,7 +34,16 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { format, startOfDay, endOfDay, subWeeks, subMonths } from "date-fns";
 import { toast } from "sonner";
 import {
@@ -52,26 +60,21 @@ import {
   TooltipProvider,
 } from "@/components/ui/tooltip";
 
-/* NEW: TanStack + standardized table */
-import {
-  type ColumnDef,
-  getCoreRowModel,
-  useReactTable,
-} from "@tanstack/react-table";
-import { StandardDataTable } from "@/components/data-table/data-table";
 
 /* ------------------------------------------------------------------ */
-/*  Types & helpers                                                   */
+/*  Types                                                             */
 /* ------------------------------------------------------------------ */
 type OrderStatus =
   | "open"
   | "underpaid"
-  | "pending_payment"
+  | "pending_payment"       // ⬅️ NEW
   | "paid"
   | "cancelled"
   | "refunded"
   | "completed";
 
+
+// Pretty labels for statuses (single source of truth)
 const STATUS_LABELS: Record<OrderStatus, string> = {
   open: "Open",
   underpaid: "Partially paid",
@@ -100,10 +103,38 @@ interface Order {
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
 type ShippingCompany = { id: string; name: string };
 
-/* currency helpers */
-const EUROZONE = new Set(["AT", "BE", "CY", "DE", "EE", "ES", "FI", "FR", "GR", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PT", "SI", "SK", "AD", "MC", "SM", "VA", "ME", "XK"]);
+// Show EUR for eurozone, GBP for UK, and USD for everything else
+const EUROZONE = new Set([
+  "AT",
+  "BE",
+  "CY",
+  "DE",
+  "EE",
+  "ES",
+  "FI",
+  "FR",
+  "GR",
+  "IE",
+  "IT",
+  "LT",
+  "LU",
+  "LV",
+  "MT",
+  "NL",
+  "PT",
+  "SI",
+  "SK",
+  "AD",
+  "MC",
+  "SM",
+  "VA",
+  "ME",
+  "XK",
+]);
 const STERLING = new Set(["GB", "UK", "GG", "JE", "IM"]);
 const USD_ZONES = new Set(["US", "PR", "GU", "AS", "MP", "VI"]);
+
+// Common aliases → ISO2
 const COUNTRY_ALIAS: Record<string, string> = {
   UK: "GB",
   UNITEDKINGDOM: "GB",
@@ -115,33 +146,32 @@ const COUNTRY_ALIAS: Record<string, string> = {
   UNITEDSTATES: "US",
   UNITEDSTATESOFAMERICA: "US",
 };
+
 type SupportedCcy = "EUR" | "GBP" | "USD";
-const norm = (s?: string) => (s ?? "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+
+const norm = (s?: string) =>
+  (s ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "");
+
 const currencyForCountry = (country?: string): SupportedCcy => {
   if (!country) return "USD";
   const raw = norm(country);
   const c = COUNTRY_ALIAS[raw] ?? raw;
+
   if (EUROZONE.has(c)) return "EUR";
   if (STERLING.has(c)) return "GBP";
   if (USD_ZONES.has(c)) return "USD";
+  // ✅ all other countries → USD
   return "USD";
 };
-export const formatMoneyByCountry = (amount: number, country?: string) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: currencyForCountry(country) }).format(amount);
 
-const getStatusColor = (s: OrderStatus) => {
-  switch (s) {
-    case "open": return "bg-blue-500";
-    case "pending_payment": return "bg-yellow-500";
-    case "paid": return "bg-green-500";
-    case "cancelled":
-    case "refunded": return "bg-red-500";
-    case "underpaid": return "bg-orange-500";
-    case "completed": return "bg-purple-500";
-    default: return "bg-gray-500";
-  }
-};
-const formatDate = (d: string) => format(new Date(d), "MMM dd, yyyy");
+export const formatMoneyByCountry = (amount: number, country?: string) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currencyForCountry(country),
+  }).format(amount);
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                         */
@@ -149,41 +179,55 @@ const formatDate = (d: string) => format(new Date(d), "MMM dd, yyyy");
 export default function OrdersPage() {
   const router = useRouter();
 
-  /* org + permissions */
+  /* ── active organisation id ───────────────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
   const organizationId = activeOrg?.id ?? null;
 
-  const { hasPermission: canViewDetail } = useHasPermission(organizationId, { order: ["view"] });
-  const { hasPermission: canViewPricing } = useHasPermission(organizationId, { order: ["view_pricing"] });
-  const { hasPermission: canUpdate } = useHasPermission(organizationId, { order: ["update"] });
-  const { hasPermission: canUpdateTracking } = useHasPermission(organizationId, { order: ["update_tracking"] });
+  /* ── permission flags (new hook) ───────────────────────────────── */
+  const { hasPermission: canViewDetail } = useHasPermission(organizationId, {
+    order: ["view"],
+  });
+  const { hasPermission: canViewPricing } = useHasPermission(organizationId, {
+    order: ["view_pricing"],
+  });
+  const { hasPermission: canUpdate } = useHasPermission(organizationId, {
+    order: ["update"],
+  });
+  const { hasPermission: canUpdateTracking } = useHasPermission(
+    organizationId,
+    { order: ["update_tracking"] }
+  );
   const { hasPermission: canUpdateStatus, isLoading: permissionsLoading } =
     useHasPermission(organizationId, { order: ["update_status"] });
 
-  /* data + ui state */
+  /* ── orders & ui state ────────────────────────────────────────── */
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [draftTracking, setDraftTracking] = useState("");
 
   /* filters */
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [dateFilter, setDateFilter] = useState<DateFilterOption>("all");
-  const [dateRange, setDateRange] = useState<DateRange>();
+  const [dateRange, setDateRange] = useState<DateRange>(); // ← correct type
 
   /* pagination */
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
-  /* shipping */
-  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>([]);
+  /* shipping companies */
+  const [shippingCompanies, setShippingCompanies] = useState<ShippingCompany[]>(
+    []
+  );
   const [shippingLoading, setShippingLoading] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState<string>();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
-  const [draftTracking, setDraftTracking] = useState("");
 
-  /* fetch orders */
+  /* ---------------------------------------------------------------- */
+  /*  Data fetching                                                   */
+  /* ---------------------------------------------------------------- */
   useEffect(() => {
     setLoading(true);
     fetch("/api/order")
@@ -199,25 +243,30 @@ export default function OrdersPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  /* memo filters */
+  /* ---------------------------------------------------------------- */
+  /*  Memoised filtering (no state writes → no render loop)           */
+  /* ---------------------------------------------------------------- */
   const filteredOrders = useMemo(() => {
     let result = [...orders];
 
+    /* text search ---------------------------------------------------*/
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(
         (o) =>
-          String(o.orderKey).toLowerCase().includes(q) ||
-          (o.email ?? "").toLowerCase().includes(q) ||
-          `${o.firstName} ${o.lastName}`.toLowerCase().includes(q) ||
-          (o.username ?? "").toLowerCase().includes(q)
+          String(o.orderKey).toLowerCase().includes(q) || // order #
+          (o.email ?? "").toLowerCase().includes(q) || // e-mail
+          `${o.firstName} ${o.lastName}`.toLowerCase().includes(q) || // full name
+          (o.username ?? "").toLowerCase().includes(q) // username
       );
     }
 
+    /* status filter -------------------------------------------------*/
     if (statusFilter !== "all") {
       result = result.filter((o) => o.status === statusFilter);
     }
 
+    /* date filter ---------------------------------------------------*/
     if (dateFilter !== "all") {
       const now = new Date();
       const created = (d: string) => new Date(d);
@@ -234,69 +283,61 @@ export default function OrdersPage() {
       } else if (dateFilter === "custom" && dateRange?.from) {
         const from = startOfDay(dateRange.from);
         const to = dateRange.to ? endOfDay(dateRange.to) : endOfDay(now);
-        result = result.filter((o) => created(o.createdAt) >= from && created(o.createdAt) <= to);
+        result = result.filter(
+          (o) => created(o.createdAt) >= from && created(o.createdAt) <= to
+        );
       }
     }
 
     return result;
   }, [orders, searchQuery, statusFilter, dateFilter, dateRange]);
 
-  /* keep pagination sane on filter changes */
+  /* keep pagination sane when filters change ------------------------*/
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, statusFilter, dateFilter, dateRange]);
 
-  const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
-  const paginatedOrders = filteredOrders.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
-
+  /* helper to collapse the custom-range picker when needed ----------*/
   const handleDateFilterChange = (opt: DateFilterOption) => {
     setDateFilter(opt);
     if (opt !== "custom") setDateRange(undefined);
   };
-
-  /* actions */
-  const handleStatusChange = useCallback(async (orderId: string, newStatus: OrderStatus) => {
-    try {
-      const res = await fetch(`/api/order/${orderId}/change-status`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(payload?.error || "Failed to update status");
-
-      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
-
-      if (Array.isArray(payload?.warnings)) {
-        payload.warnings.forEach((msg: string) => msg && toast.warning(msg));
-      }
-    } catch (err: any) {
-      console.error(err);
-      toast.error(err?.message || "Error updating order status");
+  /* ---------------------------------------------------------------- */
+  /*  Helpers                                                         */
+  /* ---------------------------------------------------------------- */
+  const getStatusColor = (s: OrderStatus) => {
+    switch (s) {
+      case "open":
+        return "bg-blue-500";
+      case "pending_payment":         // ⬅️ NEW
+        return "bg-yellow-500";
+      case "paid":
+        return "bg-green-500";
+      case "cancelled":
+      case "refunded":
+        return "bg-red-500";
+      case "underpaid":
+        return "bg-orange-500";
+      case "completed":
+        return "bg-purple-500";
+      default:
+        return "bg-gray-500";
     }
-  }, []);
-
-  const handleTracking = useCallback((orderId: string) => {
-    const order = orders.find((o) => o.id === orderId);
-    if (!order) return;
-    setSelectedOrderId(orderId);
-    setDraftTracking(order.trackingNumber ?? "");
-    setDialogOpen(true);
-  }, [orders]);
-
-  /* fetch shipping companies on dialog open */
+  };
+  /* fetch shipping companies when the dialog opens */
   useEffect(() => {
     if (!dialogOpen) return;
     (async () => {
       setShippingLoading(true);
       try {
         const res = await fetch("/api/shipping-companies", {
-          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET! },
+          headers: {
+            "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          },
         });
         if (!res.ok) throw new Error("Failed to fetch shipping companies");
+
+        // API returns { shippingMethods: [...] }
         const { shippingMethods } = await res.json();
         setShippingCompanies(shippingMethods);
       } catch (err: any) {
@@ -307,14 +348,94 @@ export default function OrdersPage() {
     })();
   }, [dialogOpen]);
 
-  /* pre-select saved company when dialog opens */
+  /* ------------------------------------------------------------- */
+  /*  Pre-select the saved company when the dialog opens            */
+  /* ------------------------------------------------------------- */
   useEffect(() => {
-    if (!dialogOpen || !selectedOrderId || shippingCompanies.length === 0) return;
+    /* dialog not visible yet, or companies not loaded → skip */
+    if (!dialogOpen || !selectedOrderId || shippingCompanies.length === 0)
+      return;
+
     const order = orders.find((o) => o.id === selectedOrderId);
     if (!order?.shippingCompany) return;
-    const match = shippingCompanies.find((c) => c.name === order.shippingCompany);
+
+    /* find the option whose *name* matches what we stored */
+    const match = shippingCompanies.find(
+      (c) => c.name === order.shippingCompany
+    );
     if (match) setSelectedCompany(match.id);
   }, [dialogOpen, selectedOrderId, shippingCompanies, orders]);
+
+  /* ---------------------------------------------------------------- */
+  /*  Render guards                                                   */
+  /* ---------------------------------------------------------------- */
+  if (permissionsLoading) {
+    return <div>Loading permissions…</div>;
+  }
+  if (loading) {
+    return (
+      <div className="container mx-auto py-8 px-4 text-center">
+        Loading orders…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="container mx-auto py-8 px-4 text-center text-red-600">
+        Error loading orders: {error}
+      </div>
+    );
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  JSX                                                             */
+  /* ---------------------------------------------------------------- */
+  const pageCount = Math.ceil(filteredOrders.length / itemsPerPage);
+  const paginatedOrders = filteredOrders.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+  const formatDate = (d: string) => format(new Date(d), "MMM dd, yyyy");
+
+  /* status / tracking helpers (unchanged) */
+  const handleStatusChange = async (
+    orderId: string,
+    newStatus: OrderStatus
+  ) => {
+    try {
+      const res = await fetch(`/api/order/${orderId}/change-status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to update status");
+      }
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+      );
+      if (Array.isArray(payload?.warnings) && payload.warnings.length) {
+        payload.warnings.forEach((msg: string) => {
+          if (msg) toast.warning(msg);
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err?.message || "Error updating order status");
+    }
+  };
+  const handleTracking = (orderId: string) => {
+    const order = orders.find((o) => o.id === orderId)!;
+    setSelectedOrderId(orderId);
+    setDraftTracking(order.trackingNumber ?? "");
+    // find the company ID for the previously saved name (if any):
+    const prevCompany = shippingCompanies.find(
+      (c) => c.name === order.shippingCompany
+    );
+    setSelectedCompany(prevCompany?.id);
+    setDialogOpen(true);
+  };
 
   const saveTracking = async () => {
     if (!selectedOrderId || !selectedCompany) return;
@@ -324,13 +445,22 @@ export default function OrdersPage() {
       const res = await fetch(`/api/order/${selectedOrderId}/tracking-number`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trackingNumber: draftTracking, shippingCompany: company.name }),
+        body: JSON.stringify({
+          trackingNumber: draftTracking,
+          shippingCompany: company.name,
+        }),
       });
       if (!res.ok) throw new Error("Failed to save tracking number");
+      // Reflect API behavior locally: tracking, company, and status → completed
       setOrders((prev) =>
         prev.map((o) =>
           o.id === selectedOrderId
-            ? { ...o, trackingNumber: draftTracking, shippingCompany: company.name, status: "completed" }
+            ? {
+              ...o,
+              trackingNumber: draftTracking,
+              shippingCompany: company.name,
+              status: "completed",
+            }
             : o
         )
       );
@@ -341,306 +471,378 @@ export default function OrdersPage() {
       toast.error("Could not save tracking");
     }
   };
+  return (
+    <div className="container mx-auto py-8 px-4">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold">Orders</h1>
+        <p className="text-muted-foreground mt-1">
+          Manage and track all customer orders
+        </p>
+      </div>
 
-  /* -------------------- Columns for StandardDataTable -------------------- */
-  const columns: ColumnDef<Order>[] = useMemo(() => {
-    const base: ColumnDef<Order>[] = [
-     {
-        accessorKey: "orderKey",
-        header: "Order #",
-        cell: ({ row }) =>
-          canViewDetail ? (
-            <Button
-              variant="link"
-              className="p-0 h-auto font-medium"
-              asChild
-            >
-              <Link
-                href={`/orders/${row.original.id}`}
-                prefetch={false}
-                onClick={(e) => {
-                  // protect against any row-level handlers in the table component
-                  e.stopPropagation();
-                }}
-                aria-label={`Open order ${row.original.orderKey}`}
-              >
-                {row.original.orderKey}
-              </Link>
-            </Button>
-          ) : (
-            <span className="font-medium text-muted-foreground cursor-not-allowed">
-              {row.original.orderKey}
-            </span>
-          ),
-      },
-      {
-        id: "user",
-        header: "User",
-        cell: ({ row }) => {
-          const o = row.original;
-          return (
-            <span>
-              {o.firstName} {o.lastName} — {o.username} ({o.email})
-            </span>
-          );
-        },
-      },
-      {
-        accessorKey: "status",
-        header: "Status",
-        cell: ({ row }) => {
-          const o = row.original;
-          return canUpdateStatus ? (
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Filters</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Search Input */}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by order ID or email"
+                className="pl-8"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+
+            {/* Status Filter */}
             <Select
-              value={o.status}
-              onValueChange={(v) => handleStatusChange(o.id, v as OrderStatus)}
+              value={statusFilter}
+              onValueChange={(v) => setStatusFilter(v)}
             >
-              <SelectTrigger className="w-auto flex justify-center">
-                <Badge className={getStatusColor(o.status)}>{statusLabel(o.status)}</Badge>
+              <SelectTrigger>
+                <SelectValue placeholder="Filter by status" />
               </SelectTrigger>
               <SelectContent>
-                {(["open", "underpaid", "pending_payment", "paid", "completed", "cancelled", "refunded"] as OrderStatus[]).map((s) => (
-                  <SelectItem key={s} value={s} className="w-auto flex justify-left">
-                    <Badge className={getStatusColor(s)}>{statusLabel(s)}</Badge>
-                  </SelectItem>
-                ))}
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="open">Open</SelectItem>
+                <SelectItem value="pending_payment">Pending payment</SelectItem>
+                <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="underpaid">Underpaid</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+                <SelectItem value="cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
-          ) : (
-            <Badge className={getStatusColor(o.status)}>{statusLabel(o.status)}</Badge>
-          );
-        },
-      },
-      {
-        accessorKey: "createdAt",
-        header: "Date",
-        cell: ({ row }) => formatDate(row.original.createdAt),
-      },
-    ];
 
-    if (canViewPricing) {
-      base.push({
-        id: "total",
-        header: "Total",
-        cell: ({ row }) => formatMoneyByCountry(row.original.total, row.original.country),
-      });
-    }
+            {/* Date Filter */}
+            <Select
+              value={dateFilter}
+              onValueChange={(v) =>
+                handleDateFilterChange(v as DateFilterOption)
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Filter by date" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Time</SelectItem>
+                <SelectItem value="today">Today</SelectItem>
+                <SelectItem value="last-week">Last Week</SelectItem>
+                <SelectItem value="last-month">Last Month</SelectItem>
+                <SelectItem value="custom">Custom Range</SelectItem>
+              </SelectContent>
+            </Select>
 
-    base.push(
-      {
-        accessorKey: "shippingCompany",
-        header: "Shipping Company",
-        cell: ({ row }) => row.original.shippingCompany ?? <span className="text-muted-foreground">—</span>,
-      },
-      {
-        accessorKey: "trackingNumber",
-        header: "Tracking #",
-        cell: ({ row }) =>
-          row.original.trackingNumber ? (
-            <code className="font-mono">{row.original.trackingNumber}</code>
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          ),
-      },
-      {
-        id: "actions",
-        header: () => <div className="text-right">Actions</div>,
-        cell: ({ row }) => {
-          const o = row.original;
-          const canEdit = canUpdate && o.status === "open";
-          return (
-            <div className="text-right">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon">
-                    <MoreVertical className="h-4 w-4" />
-                    <span className="sr-only">Open menu</span>
+            {/* Custom Date Range Picker */}
+            {dateFilter === "custom" && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="justify-start text-left font-normal"
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {dateRange?.from ? (
+                      dateRange.to ? (
+                        <>
+                          {format(dateRange.from, "LLL dd, y")} -{" "}
+                          {format(dateRange.to, "LLL dd, y")}
+                        </>
+                      ) : (
+                        format(dateRange.from, "LLL dd, y")
+                      )
+                    ) : (
+                      <span>Pick a date range</span>
+                    )}
                   </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {canEdit ? (
-                    <DropdownMenuItem onClick={() => router.push(`/orders/${o.id}/edit`)}>
-                      <Edit className="mr-2 h-4 w-4" />
-                      Edit
-                    </DropdownMenuItem>
-                  ) : (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div>
-                            <DropdownMenuItem
-                              onSelect={(e) => e.preventDefault()}
-                              aria-disabled="true"
-                              className="text-muted-foreground cursor-not-allowed"
-                            >
-                              <Edit className="mr-2 h-4 w-4" />
-                              Edit
-                            </DropdownMenuItem>
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent side="left">
-                          Order must be <span className="font-semibold">Open</span> to edit.
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-                  {canUpdateTracking && (
-                    <DropdownMenuItem onClick={() => handleTracking(o.id)}>
-                      <Truck className="mr-2 h-4 w-4" />
-                      <span>{o.trackingNumber ? "Update tracking number" : "Set tracking number"}</span>
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          );
-        },
-      }
-    );
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="range"
+                    selected={dateRange}
+                    onSelect={(range) => setDateRange(range)} // react-day-picker already returns DateRange|undefined
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-    return base;
-  }, [canViewDetail, canViewPricing, canUpdate, canUpdateStatus, canUpdateTracking, handleStatusChange, handleTracking, router]);
+      <Card>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Order #</TableHead>
+                  <TableHead>User</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Date</TableHead>
+                  {canViewPricing && <TableHead>Total</TableHead>}
+                  <TableHead>Shipping Company</TableHead>
+                  <TableHead>Tracking&nbsp;#</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paginatedOrders.length > 0 ? (
+                  paginatedOrders.map((order) => (
+                    <TableRow key={order.id}>
+                      <TableCell className="font-medium">
+                        {canViewDetail ? (
+                          <Button
+                            variant="link"
+                            className="p-0 h-auto font-medium"
+                            onClick={() => router.push(`/orders/${order.id}`)}
+                          >
+                            {order.orderKey}
+                          </Button>
+                        ) : (
+                          <span className="font-medium text-muted-foreground cursor-not-allowed">
+                            {order.orderKey}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {order.firstName} {order.lastName} — {order.username} (
+                        {order.email})
+                      </TableCell>
+                      {/* Status Select showing only badges or editable based on permission */}
+                      <TableCell>
+                        {canUpdateStatus ? (
+                          <Select
+                            value={order.status}
+                            onValueChange={(v) =>
+                              handleStatusChange(order.id, v as OrderStatus)
+                            }
+                          >
+                            <SelectTrigger className="w-auto flex justify-center">
+                              <Badge className={getStatusColor(order.status)}>
+                                {statusLabel(order.status)}
+                              </Badge>
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem
+                                value="open"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("open")}>
+                                  {statusLabel("open")}
+                                </Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="underpaid"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("underpaid")}>
+                                  {statusLabel("underpaid")}
+                                </Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="pending_payment"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("pending_payment")}>
+                                  {statusLabel("pending_payment")}
+                                </Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="paid"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("paid")}>
+                                  {statusLabel("paid")}
+                                </Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="completed"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("completed")}>
+                                  {statusLabel("completed")}
+                                </Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="cancelled"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("cancelled")}>
+                                  {statusLabel("cancelled")}
+                                </Badge>
+                              </SelectItem>
+                              <SelectItem
+                                value="refunded"
+                                className="w-auto flex justify-left"
+                              >
+                                <Badge className={getStatusColor("refunded")}>
+                                  {statusLabel("refunded")}
+                                </Badge>
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge className={getStatusColor(order.status)}>
+                            {statusLabel(order.status)}
+                          </Badge>
+                        )}
+                      </TableCell>
 
-  /* TanStack instance — feed the paginated slice to keep your current paging */
-  const table = useReactTable({
-    data: paginatedOrders,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
+                      <TableCell>{formatDate(order.createdAt)}</TableCell>
+                      {canViewPricing && (
+                        <TableCell>
+                          {formatMoneyByCountry(order.total, order.country)}
+                        </TableCell>
+                      )}
 
-  /* render guards for permission only; let table show loading/empty states */
-  if (permissionsLoading) return <div className="container mx-auto py-8 px-4">Loading permissions…</div>;
-
-  return (
-    <div className="container mx-auto py-8 px-4 space-y-6">
-      {/* Page title */}
-      <div>
-        <h1 className="text-3xl font-bold">Orders</h1>
-        <p className="text-muted-foreground mt-1">Manage and track all customer orders</p>
-      </div>
-
-      {/* Filters (no Card) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search by order ID or email"
-            className="pl-8"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-
-        {/* Status */}
-        <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v)}>
-          <SelectTrigger>
-            <SelectValue placeholder="Filter by status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="open">Open</SelectItem>
-            <SelectItem value="pending_payment">Pending payment</SelectItem>
-            <SelectItem value="paid">Paid</SelectItem>
-            <SelectItem value="underpaid">Underpaid</SelectItem>
-            <SelectItem value="completed">Completed</SelectItem>
-            <SelectItem value="cancelled">Cancelled</SelectItem>
-            <SelectItem value="refunded">Refunded</SelectItem>
-          </SelectContent>
-        </Select>
-
-        {/* Date preset */}
-        <Select value={dateFilter} onValueChange={(v) => handleDateFilterChange(v as DateFilterOption)}>
-          <SelectTrigger>
-            <SelectValue placeholder="Filter by date" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Time</SelectItem>
-            <SelectItem value="today">Today</SelectItem>
-            <SelectItem value="last-week">Last Week</SelectItem>
-            <SelectItem value="last-month">Last Month</SelectItem>
-            <SelectItem value="custom">Custom Range</SelectItem>
-          </SelectContent>
-        </Select>
-
-        {/* Custom range */}
-        {dateFilter === "custom" && (
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="justify-start text-left font-normal">
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                {dateRange?.from ? (
-                  dateRange.to ? (
-                    <>
-                      {format(dateRange.from, "LLL dd, y")} - {format(dateRange.to, "LLL dd, y")}
-                    </>
-                  ) : (
-                    format(dateRange.from, "LLL dd, y")
-                  )
+                      {/* Shipping Company */}
+                      <TableCell>
+                        {order.shippingCompany ?? (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      {/* Tracking Number */}
+                      <TableCell>
+                        {order.trackingNumber ? (
+                          <code className="font-mono">
+                            {order.trackingNumber}
+                          </code>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon">
+                              <MoreVertical className="h-4 w-4" />
+                              <span className="sr-only">Open menu</span>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {canUpdate && (
+                              order.status === "open" ? (
+                                <DropdownMenuItem
+                                  onClick={() => router.push(`/orders/${order.id}/edit`)}
+                                >
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Edit
+                                </DropdownMenuItem>
+                              ) : (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      {/* wrap so the item can still receive hover even when “disabled” */}
+                                      <div>
+                                        <DropdownMenuItem
+                                          onSelect={(e) => e.preventDefault()} // block selection
+                                          aria-disabled="true"
+                                          className="text-muted-foreground cursor-not-allowed"
+                                        >
+                                          <Edit className="mr-2 h-4 w-4" />
+                                          Edit
+                                        </DropdownMenuItem>
+                                      </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="left">
+                                      Order must be <span className="font-semibold">Open</span> to edit.
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )
+                            )}
+                            {canUpdateTracking && (
+                              <DropdownMenuItem
+                                onClick={() => handleTracking(order.id)}
+                              >
+                                <Truck className="mr-2 h-4 w-4" />
+                                <span>
+                                  {order.trackingNumber
+                                    ? "Update tracking number"
+                                    : "Set tracking number"}
+                                </span>
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))
                 ) : (
-                  <span>Pick a date range</span>
+                  <TableRow>
+                    <TableCell
+                      colSpan={canViewPricing ? 6 : 5}
+                      className="text-center py-6"
+                    >
+                      No orders found matching your filters
+                    </TableCell>
+                  </TableRow>
                 )}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* Pagination Controls */}
+          <div className="flex items-center justify-between p-4">
+            <div>
+              Showing{" "}
+              <strong>
+                {(currentPage - 1) * itemsPerPage + 1} to{" "}
+                {Math.min(currentPage * itemsPerPage, filteredOrders.length)}
+              </strong>{" "}
+              of <strong>{filteredOrders.length}</strong> orders
+            </div>
+            <div className="space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+              >
+                Previous
               </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <Calendar mode="range" selected={dateRange} onSelect={(range) => setDateRange(range)} initialFocus />
-            </PopoverContent>
-          </Popover>
-        )}
-      </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage === pageCount || pageCount === 0}
+                onClick={() =>
+                  setCurrentPage((p) => Math.min(p + 1, pageCount))
+                }
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Standardized Table (no Cards) */}
-      <StandardDataTable<Order>
-        table={table}
-        columns={columns}
-        isLoading={loading}
-        emptyMessage={error ? `Error: ${error}` : "No orders found matching your filters"}
-        skeletonRows={8}
-      />
-
-      {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">
-          Showing{" "}
-          <strong>
-            {filteredOrders.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{" "}
-            {Math.min(currentPage * itemsPerPage, filteredOrders.length)}
-          </strong>{" "}
-          of <strong>{filteredOrders.length}</strong> orders
-        </div>
-        <div className="space-x-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={currentPage === 1}
-            onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-          >
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={currentPage === pageCount || pageCount === 0}
-            onClick={() => setCurrentPage((p) => Math.min(p + 1, pageCount))}
-          >
-            Next
-          </Button>
-        </div>
-      </div>
-
-      {/* Tracking Dialog */}
+      {/* — Tracking Number Dialog — */}
       {canUpdateTracking && (
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>
-                {orders.find((o) => o.id === selectedOrderId)?.trackingNumber ? "Update Tracking Number" : "Set Tracking Number"}
+                {orders.find((o) => o.id === selectedOrderId)?.trackingNumber
+                  ? "Update Tracking Number"
+                  : "Set Tracking Number"}
               </DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4">
-              <Select value={selectedCompany} onValueChange={setSelectedCompany} disabled={shippingLoading}>
+              {/* NEW: Shipping Company selector */}
+              <Select
+                value={selectedCompany}
+                onValueChange={(val) => setSelectedCompany(val)}
+                disabled={shippingLoading}
+              >
                 <SelectTrigger>
-                  <SelectValue placeholder={shippingLoading ? "Loading…" : "Select company"} />
+                  <SelectValue
+                    placeholder={
+                      shippingLoading ? "Loading…" : "Select company"
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {shippingCompanies.map((c) => (
