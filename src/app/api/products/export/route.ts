@@ -94,7 +94,7 @@ async function buildExportRows(products: any[]) {
                 .map(([country, amount]) => `${country}:${amount ? amount : 0}`)
                 .join(", ");
             newProduct.salePrice = Object.entries(salePriceObj)
-                .map(([country, amount]) => country ? `${country}:${amount ? amount : 0}` : "")
+                .map(([country, amount]) => `${country}:${amount ? amount : 0}`)
                 .join(", ");
             newProduct.cost = Object.entries(costObj)
                 .map(([country, amount]) => `${country}:${amount ? amount : 0}`)
