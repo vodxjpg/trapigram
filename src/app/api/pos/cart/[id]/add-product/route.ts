@@ -9,7 +9,6 @@ import { resolveUnitPrice } from "@/lib/pricing";
 import { adjustStock } from "@/lib/stock";
 import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
 
-/** Idempotency helper (see cart/route.ts for details) */
 async function withIdempotency(
   req: NextRequest,
   exec: () => Promise<{ status: number; body: any }>
@@ -33,7 +32,7 @@ async function withIdempotency(
     } catch (e: any) {
       if (e?.code === "23505") {
         const { rows } = await c.query(
-          `SELECT status, response FROM idempotency WHERE key = $1`,
+          `SELECT status, response FROM idempotency WHERE key=$1`,
           [key]
         );
         await c.query("COMMIT");
@@ -47,7 +46,6 @@ async function withIdempotency(
       }
       throw e;
     }
-
     const r = await exec();
     await c.query(
       `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
@@ -114,31 +112,37 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ? body.variationId
           : null;
 
-      // Cart + client context
+      // IMPORTANT: use CART.country (never null), not client.country
       const { rows: cRows } = await pool.query(
-        `SELECT cl.country, cl."levelId", cl.id AS "clientId"
+        `SELECT ca.country, cl."levelId", cl.id AS "clientId"
            FROM carts ca
            JOIN clients cl ON cl.id = ca."clientId"
           WHERE ca.id = $1`,
         [cartId]
       );
       if (!cRows.length) return { status: 404, body: { error: "Cart or client not found" } };
-      const { country, levelId, clientId } = cRows[0];
+      const country: string = cRows[0].country;                 // from cart
+      const levelId: string | null = cRows[0].levelId ?? null;  // may be null
+      const clientId: string = cRows[0].clientId;
 
-      // Price (own products only)
-      const { price: basePrice } = await resolveUnitPrice(body.productId, variationId, country, levelId);
+      // Base price (own products only). Guard level fallback → 'default'
+      const { price: basePrice } = await resolveUnitPrice(
+        body.productId,
+        variationId,
+        country,
+        levelId ?? "default",
+      );
 
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
 
-        // Upsert cartProducts row (products only)
-        let sql = `SELECT id, quantity
-                     FROM "cartProducts"
-                    WHERE "cartId" = $1 AND "productId" = $2`;
+        // Upsert cartProducts row
+        let sql = `SELECT id, quantity FROM "cartProducts"
+                    WHERE "cartId"=$1 AND "productId"=$2`;
         const vals: any[] = [cartId, body.productId];
         if (variationId) {
-          sql += ` AND "variationId" = $3`;
+          sql += ` AND "variationId"=$3`;
           vals.push(variationId);
         }
         const { rows: existing } = await client.query(sql, vals);
@@ -156,7 +160,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const { rows: sumRow } = await client.query(
             `SELECT COALESCE(SUM(quantity),0)::int AS qty
                FROM "cartProducts"
-              WHERE "cartId" = $1
+              WHERE "cartId"=$1
                 AND ( ("productId" = ANY($2::text[]))
                       OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
             [cartId, tierProdIds, tierVarIds],
@@ -167,8 +171,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
           await client.query(
             `UPDATE "cartProducts"
-                SET "unitPrice" = $1, "updatedAt" = NOW()
-              WHERE "cartId" = $2
+                SET "unitPrice"=$1,"updatedAt"=NOW()
+              WHERE "cartId"=$2
                 AND ( ("productId" = ANY($3::text[]))
                       OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[])) )`,
             [unitPrice, cartId, tierProdIds, tierVarIds]
@@ -179,26 +183,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (existing.length) {
           await client.query(
             `UPDATE "cartProducts"
-                SET quantity=$1, "unitPrice"=$2, "updatedAt"=NOW()
+                SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
               WHERE id=$3`,
             [quantity, unitPrice, existing[0].id]
           );
         } else {
+          const cols = [`id`,`"cartId"`,`"productId"`,`quantity`,`"unitPrice"`,`"createdAt"`,`"updatedAt"`];
+          const vals2: any[] = [uuidv4(), cartId, body.productId, quantity, unitPrice, /* NOW/NOW */];
+          let placeholders = "$1,$2,$3,$4,$5,NOW(),NOW()";
           if (variationId) {
-            await client.query(
-              `INSERT INTO "cartProducts"
-                (id,"cartId","productId","variationId",quantity,"unitPrice","createdAt","updatedAt")
-               VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
-              [uuidv4(), cartId, body.productId, variationId, quantity, unitPrice]
-            );
-          } else {
-            await client.query(
-              `INSERT INTO "cartProducts"
-                (id,"cartId","productId",quantity,"unitPrice","createdAt","updatedAt")
-               VALUES ($1,$2,$3,$4,$5,NOW(),NOW())`,
-              [uuidv4(), cartId, body.productId, quantity, unitPrice]
-            );
+            cols.splice(4, 0, `"variationId"`);
+            vals2.splice(4, 0, variationId);
+            placeholders = "$1,$2,$3,$4,$5,$6,NOW(),NOW()";
           }
+          await client.query(
+            `INSERT INTO "cartProducts" (${cols.join(",")}) VALUES (${placeholders})`,
+            vals2
+          );
         }
 
         // Reserve stock
@@ -212,18 +213,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         );
         const hash = crypto.createHash("sha256").update(JSON.stringify(hRows)).digest("hex");
         await client.query(
-          `UPDATE carts SET "cartUpdatedHash"=$1, "updatedAt"=NOW() WHERE id=$2`,
+          `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
           [hash, cartId]
         );
 
         await client.query("COMMIT");
 
-        // Response
+        // Slim product payload (normal products)
         const { rows: prod } = await pool.query(
           `SELECT id,title,description,image,sku,"regularPrice" FROM products WHERE id=$1`,
           [body.productId]
         );
-
         const product = prod[0] && {
           id: prod[0].id,
           variationId,
@@ -246,6 +246,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
     } catch (err: any) {
       if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };
+      // Convert the specific pricing throw into a user error
+      if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
+        return { status: 400, body: { error: err.message } };
+      }
       console.error("[POS POST /pos/cart/:id/add-product]", err);
       return { status: 500, body: { error: err.message ?? "Internal server error" } };
     }

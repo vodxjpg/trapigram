@@ -148,10 +148,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // Context for stock + tier recompute
       const { rows: cRows } = await pool.query(
-        `SELECT cl.country, cl."levelId", ca."clientId"
-           FROM carts ca
-           JOIN clients cl ON cl.id = ca."clientId"
-          WHERE ca.id = $1`,
+        `SELECT ca.country, cl."levelId", ca."clientId"
+          FROM carts ca
+          JOIN clients cl ON cl.id = ca."clientId"
+        WHERE ca.id = $1`,
         [cartId]
       );
       const country = cRows[0]?.country as string | undefined;

@@ -8,7 +8,6 @@ import { adjustStock } from "@/lib/stock";
 import { resolveUnitPrice } from "@/lib/pricing";
 import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
 
-/** Idempotency helper */
 async function withIdempotency(
   req: NextRequest,
   exec: () => Promise<{ status: number; body: any }>
@@ -32,7 +31,7 @@ async function withIdempotency(
     } catch (e: any) {
       if (e?.code === "23505") {
         const { rows } = await c.query(
-          `SELECT status, response FROM idempotency WHERE key = $1`,
+          `SELECT status, response FROM idempotency WHERE key=$1`,
           [key]
         );
         await c.query("COMMIT");
@@ -46,7 +45,6 @@ async function withIdempotency(
       }
       throw e;
     }
-
     const r = await exec();
     await c.query(
       `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
@@ -65,7 +63,7 @@ async function withIdempotency(
 const BodySchema = z.object({
   productId: z.string(),
   variationId: z.string().nullable().optional(),
-  action: z.enum(["add", "subtract"]), // +/- 1
+  action: z.enum(["add", "subtract"]),
 });
 
 function findTier(
@@ -118,12 +116,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       try {
         await client.query("BEGIN");
 
-        // Current line + client context
+        // Use CART.country
         const { rows: cRows } = await client.query(
-          `SELECT cl.country, cl."levelId", cl.id AS "clientId",
-                  cp.quantity
-             FROM clients cl
-             JOIN carts   ca ON ca."clientId" = cl.id
+          `SELECT ca.country, cl."levelId", cl.id AS "clientId", cp.quantity
+             FROM carts ca
+             JOIN clients cl ON cl.id = ca."clientId"
              JOIN "cartProducts" cp ON cp."cartId" = ca.id
             WHERE ca.id = $1
               AND cp."productId" = $2
@@ -136,8 +133,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
         const { country, levelId, clientId, quantity: oldQty } = cRows[0];
 
-        // Base price (own products)
-        const { price: basePrice } = await resolveUnitPrice(data.productId, variationId, country, levelId);
+        // Base price
+        const { price: basePrice } = await resolveUnitPrice(
+          data.productId,
+          variationId,
+          country,
+          levelId ?? "default"
+        );
 
         // New quantity
         const newQty = data.action === "add" ? oldQty + 1 : oldQty - 1;
@@ -146,7 +148,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           return { status: 400, body: { error: "Quantity cannot be negative" } };
         }
 
-        // Tier price recompute
+        // Tier pricing
         let pricePerUnit = basePrice;
         const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
         const tier = findTier(tiers, country, data.productId, variationId, clientId);
@@ -156,10 +158,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           const { rows: sumRow } = await client.query(
             `SELECT COALESCE(SUM(quantity),0)::int AS qty
                FROM "cartProducts"
-              WHERE "cartId" = $1
+              WHERE "cartId"=$1
                 AND ( ("productId" = ANY($2::text[]))
                       OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
-            [cartId, tierProdIds, tierVarIds],
+            [cartId, tierProdIds, tierVarIds]
           );
           const qtyBefore = Number(sumRow[0].qty);
           const qtyAfter = qtyBefore - oldQty + newQty;
@@ -167,45 +169,45 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
           await client.query(
             `UPDATE "cartProducts"
-                SET "unitPrice" = $1, "updatedAt" = NOW()
-              WHERE "cartId" = $2
+                SET "unitPrice"=$1,"updatedAt"=NOW()
+              WHERE "cartId"=$2
                 AND ( ("productId" = ANY($3::text[]))
                       OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[])) )`,
             [pricePerUnit, cartId, tierProdIds, tierVarIds]
           );
         }
 
-        // Persist change or delete if zero
+        // Persist change / delete if zero
         if (newQty === 0) {
           await client.query(
             `DELETE FROM "cartProducts"
-              WHERE "cartId" = $1 AND "productId" = $2
-              ${withVariation ? `AND "variationId" = $3` : ""}`,
+              WHERE "cartId"=$1 AND "productId"=$2
+              ${withVariation ? `AND "variationId"=$3` : ""}`,
             [cartId, data.productId, ...(withVariation ? [variationId] : [])]
           );
         } else {
           await client.query(
             `UPDATE "cartProducts"
-                SET quantity=$1, "unitPrice"=$2, "updatedAt"=NOW()
+                SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
               WHERE "cartId"=$3 AND "productId"=$4
-              ${withVariation ? `AND "variationId" = $5` : ""}`,
+              ${withVariation ? `AND "variationId"=$5` : ""}`,
             [newQty, pricePerUnit, cartId, data.productId, ...(withVariation ? [variationId] : [])]
           );
         }
 
-        // Stock adjust (-1 on add, +1 on subtract)
+        // Stock adjust
         await adjustStock(client, data.productId, variationId, country, data.action === "add" ? -1 : 1);
 
-        // Cart hash
+        // Hash
         const { rows: linesForHash } = await client.query(
           `SELECT "productId","variationId",quantity,"unitPrice"
              FROM "cartProducts" WHERE "cartId"=$1`,
           [cartId]
         );
-        const encrypted = crypto.createHash("sha256").update(JSON.stringify(linesForHash)).digest("base64");
+        const newHash = crypto.createHash("sha256").update(JSON.stringify(linesForHash)).digest("hex");
         await client.query(
-          `UPDATE carts SET "cartUpdatedHash"=$1, "updatedAt"=NOW() WHERE id=$2`,
-          [encrypted, cartId]
+          `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
+          [newHash, cartId]
         );
 
         await client.query("COMMIT");
@@ -225,7 +227,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           unitPrice: Number(l.unitPrice),
           subtotal: Number(l.unitPrice) * l.quantity,
         }));
-        return { status: 200, body: { lines } };
+        return NextResponse.json({ lines }, { status: 200 });
       } catch (e) {
         await client.query("ROLLBACK");
         throw e;
@@ -233,9 +235,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         client.release();
       }
     } catch (err: any) {
-      if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };
+      if (err instanceof z.ZodError) return NextResponse.json({ error: err.errors }, { status: 400 });
+      if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
+        return NextResponse.json({ error: err.message }, { status: 400 });
+      }
       console.error("[POS PATCH /pos/cart/:id/update-product]", err);
-      return { status: 500, body: { error: err.message ?? "Internal server error" } };
+      return NextResponse.json({ error: err.message ?? "Internal server error" }, { status: 500 });
     }
   });
 }
