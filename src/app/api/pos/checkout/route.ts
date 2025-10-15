@@ -2,255 +2,189 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
-import { getContext } from "@/lib/context";
 import { v4 as uuidv4 } from "uuid";
+import crypto from "crypto";
+import { getContext } from "@/lib/context";
 
-/** Idempotency helper */
-async function withIdempotency(
-  req: NextRequest,
-  exec: () => Promise<{ status: number; body: any }>
-): Promise<NextResponse> {
-  const key = req.headers.get("Idempotency-Key");
-  if (!key) {
-    const r = await exec();
-    return NextResponse.json(r.body, { status: r.status });
-  }
-  const method = req.method;
-  const path = new URL(req.url).pathname;
-  const c = await pool.connect();
-  try {
-    await c.query("BEGIN");
-    try {
-      await c.query(
-        `INSERT INTO idempotency(key, method, path, "createdAt")
-         VALUES ($1,$2,$3,NOW())`,
-        [key, method, path]
-      );
-    } catch (e: any) {
-      if (e?.code === "23505") {
-        const { rows } = await c.query(
-          `SELECT status, response FROM idempotency WHERE key = $1`,
-          [key]
-        );
-        await c.query("COMMIT");
-        if (rows[0]) return NextResponse.json(rows[0].response, { status: rows[0].status });
-        return NextResponse.json({ error: "Idempotency replay but no record" }, { status: 409 });
-      }
-      if (e?.code === "42P01") {
-        await c.query("ROLLBACK");
-        const r = await exec();
-        return NextResponse.json(r.body, { status: r.status });
-      }
-      throw e;
-    }
+/* -------- helpers -------- */
+async function loadCartSummary(cartId: string) {
+  const { rows } = await pool.query(
+    `SELECT ca.id, ca."clientId", ca.country, ca."cartUpdatedHash", ca.status, ca.channel,
+            cl."firstName", cl."lastName", cl.username, cl."levelId"
+       FROM carts ca
+       JOIN clients cl ON cl.id = ca."clientId"
+      WHERE ca.id = $1`,
+    [cartId]
+  );
+  if (!rows.length) return null;
 
-    const r = await exec();
-    await c.query(
-      `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
-      [key, r.status, r.body]
-    );
-    await c.query("COMMIT");
-    return NextResponse.json(r.body, { status: r.status });
-  } catch (err) {
-    await c.query("ROLLBACK");
-    throw err;
-  } finally {
-    c.release();
-  }
+  const c = rows[0];
+  const clientDisplayName =
+    [c.firstName, c.lastName].filter(Boolean).join(" ").trim() ||
+    c.username || "Customer";
+
+  const { rows: sum } = await pool.query<{ subtotal: string }>(
+    `SELECT COALESCE(SUM(quantity * "unitPrice"),0)::numeric AS subtotal
+       FROM "cartProducts"
+      WHERE "cartId" = $1`,
+    [cartId]
+  );
+
+  return {
+    cartId: c.id as string,
+    clientId: c.clientId as string,
+    country: c.country as string,
+    cartUpdatedHash: c.cartUpdatedHash as string,
+    status: !!c.status,
+    channel: (c.channel as string | null) ?? "web",
+    clientDisplayName,
+    levelId: (c.levelId as string | null) ?? "default",
+    subtotal: Number(sum[0]?.subtotal ?? 0),
+  };
 }
 
-const PaymentSchema = z.object({
-  methodId: z.string().min(1),
-  amount: z.number().nonnegative(),
-});
-const BodySchema = z.object({
+async function activePaymentMethods(tenantId: string) {
+  const { rows } = await pool.query(
+    `SELECT id, name, active, "default", description, instructions
+       FROM "paymentMethods"
+      WHERE "tenantId" = $1 AND active = TRUE
+      ORDER BY "createdAt" DESC`,
+    [tenantId]
+  );
+  return rows;
+}
+
+/* -------- schemas -------- */
+const CheckoutCreateSchema = z.object({
   cartId: z.string().min(1),
-  taxInclusive: z.boolean().default(true),
-  payments: z.array(PaymentSchema).min(1),
-  emailOverride: z.string().email().optional().nullable(),
-  registerId: z.string().optional(),
-  note: z.string().optional(),
+  paymentMethodId: z.string().min(1),
 });
 
+/* GET: return summary + ACTIVE payment methods */
+export async function GET(req: NextRequest) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+
+  const { tenantId } = ctx as { tenantId: string | null };
+  if (!tenantId) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
+
+  const url = new URL(req.url);
+  const cartId = url.searchParams.get("cartId");
+  if (!cartId) return NextResponse.json({ error: "cartId is required" }, { status: 400 });
+
+  const summary = await loadCartSummary(cartId);
+  if (!summary) return NextResponse.json({ error: "Cart not found" }, { status: 404 });
+
+  // ✅ Only allow POS carts where channel starts with "pos-"
+  if (typeof summary.channel !== "string" || !summary.channel.toLowerCase().startsWith("pos-")) {
+    return NextResponse.json({ error: "Not a POS cart" }, { status: 400 });
+  }
+
+  const methods = await activePaymentMethods(tenantId);
+  return NextResponse.json({ summary, paymentMethods: methods }, { status: 200 });
+}
+
+/* POST: create order for POS cart */
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  return withIdempotency(req, async () => {
-    try {
-      const { organizationId } = ctx;
-      const input = BodySchema.parse(await req.json());
-      const { cartId, taxInclusive } = input;
+  const { tenantId, organizationId } = ctx as { tenantId: string | null; organizationId: string };
+  try {
+    const { cartId, paymentMethodId } = CheckoutCreateSchema.parse(await req.json());
+    if (!tenantId) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
-      // Load cart, client, lines
-      const { rows: cartRows } = await pool.query(`SELECT * FROM carts WHERE id=$1`, [cartId]);
-      if (!cartRows.length) return { status: 404, body: { error: "Cart not found" } };
-      const cart = cartRows[0];
+    const summary = await loadCartSummary(cartId);
+    if (!summary) return NextResponse.json({ error: "Cart not found" }, { status: 404 });
+    if (!summary.status) return NextResponse.json({ error: "Cart is not active" }, { status: 400 });
 
-      const { rows: clientRows } = await pool.query(
-        `SELECT id,name,email,country,"levelId","isWalkIn" FROM clients WHERE id=$1`,
-        [cart.clientId]
-      );
-      if (!clientRows.length) return { status: 404, body: { error: "Client not found" } };
-      const client = clientRows[0];
-
-      const { rows: lines } = await pool.query(
-        `SELECT cp."productId",cp."variationId",cp.quantity,cp."unitPrice",
-                p.title,p.sku
-           FROM "cartProducts" cp
-           JOIN products p ON p.id = cp."productId"
-          WHERE cp."cartId"=$1
-          ORDER BY cp."createdAt"`,
-        [cartId]
-      );
-      if (!lines.length) return { status: 400, body: { error: "Cart is empty" } };
-
-      // Tax rules per product (can be many -> sum rates)
-      const { rows: taxRows } = await pool.query(
-        `SELECT ptr."productId", tr.rate
-           FROM "productTaxRules" ptr
-           JOIN "taxRules" tr ON tr.id = ptr."taxRuleId"
-          WHERE ptr."organizationId"=$1
-            AND tr."organizationId"=$1
-            AND tr.active=true
-            AND ptr."productId" = ANY($2::text[])`,
-        [organizationId, lines.map((l) => l.productId)]
-      );
-      const RATE_BY_PRODUCT: Record<string, number> = {};
-      for (const r of taxRows) {
-        const current = RATE_BY_PRODUCT[r.productId] ?? 0;
-        RATE_BY_PRODUCT[r.productId] = current + Number(r.rate ?? 0); // rate stored as fraction (0..1)
-      }
-
-      // Totals
-      let subtotalNet = 0;
-      let taxTotal = 0;
-      const receiptLines = lines.map((l) => {
-        const qty = Number(l.quantity);
-        const unit = Number(l.unitPrice);
-        const rate = Number(RATE_BY_PRODUCT[l.productId] ?? 0);
-
-        let netUnit = unit;
-        let taxUnit = 0;
-        if (taxInclusive && rate > 0) {
-          taxUnit = unit * (rate / (1 + rate));
-          netUnit = unit - taxUnit;
-        } else if (!taxInclusive && rate > 0) {
-          taxUnit = unit * rate;
-        }
-        const lineNet = netUnit * qty;
-        const lineTax = (taxInclusive ? taxUnit : taxUnit) * qty;
-
-        subtotalNet += lineNet;
-        taxTotal += lineTax;
-
-        return {
-          productId: l.productId,
-          variationId: l.variationId,
-          title: l.title,
-          sku: l.sku,
-          quantity: qty,
-          unitPrice: unit,
-          netUnit,
-          taxUnit,
-          taxRate: rate,
-          lineNet,
-          lineTax,
-          lineTotal: taxInclusive ? unit * qty : (netUnit + taxUnit) * qty,
-        };
-      });
-      const grandTotal = subtotalNet + taxTotal;
-
-      const paid = input.payments.reduce((s, p) => s + Number(p.amount), 0);
-      const delta = Math.abs(paid - grandTotal);
-      if (delta > 0.005) {
-        return {
-          status: 400,
-          body: { error: "Payment splits do not match total", paid, grandTotal },
-        };
-      }
-
-      // Close cart and (optionally) create order; tolerate missing tables
-      const c = await pool.connect();
-      try {
-        await c.query("BEGIN");
-
-        // Close the cart (status=false)
-        await c.query(`UPDATE carts SET status=false, "updatedAt"=NOW() WHERE id=$1`, [cartId]);
-
-        // Try to create an order if the table exists
-        try {
-          const orderId = uuidv4();
-          await c.query(
-            `INSERT INTO orders
-              (id,"organizationId","clientId","cartId","subtotal","tax","total",
-               "taxInclusive","payments","note","createdAt","updatedAt")
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())`,
-            [
-              orderId,
-              organizationId,
-              client.id,
-              cartId,
-              subtotalNet,
-              taxTotal,
-              grandTotal,
-              taxInclusive,
-              JSON.stringify(input.payments),
-              input.note ?? null,
-            ]
-          );
-
-          // Optionally save registerId to orders if column exists
-          if (input.registerId) {
-            try {
-              await c.query(`UPDATE orders SET "registerId"=$2 WHERE id=$1`, [orderId, input.registerId]);
-            } catch (_) {
-              /* ignore if col missing */
-            }
-          }
-        } catch (e: any) {
-          if (e?.code !== "42P01") throw e; // relation missing => skip creating order
-        }
-
-        await c.query("COMMIT");
-      } catch (e) {
-        await c.query("ROLLBACK");
-        throw e;
-      } finally {
-        c.release();
-      }
-
-      // Prepare receipt payload (no branding yet)
-      const receipt = {
-        organizationId,
-        cartId,
-        client: {
-          id: client.id,
-          name: client.name,
-          email: client.isWalkIn ? null : input.emailOverride ?? client.email ?? null, // suppress for walk-in
-        },
-        taxInclusive,
-        lines: receiptLines,
-        totals: {
-          subtotalNet,
-          taxTotal,
-          grandTotal,
-          paid,
-          change: Math.max(0, paid - grandTotal),
-        },
-        payments: input.payments,
-        meta: {
-          registerId: input.registerId ?? null,
-          note: input.note ?? null,
-        },
-        createdAt: new Date().toISOString(),
-      };
-
-      return { status: 201, body: { ok: true, receipt } };
-    } catch (err: any) {
-      if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };
-      console.error("[POS POST /pos/checkout]", err);
-      return { status: 500, body: { error: err.message ?? "Internal server error" } };
+    // ✅ Enforce "pos-" prefix for checkout
+    if (typeof summary.channel !== "string" || !summary.channel.toLowerCase().startsWith("pos-")) {
+      return NextResponse.json({ error: "Only POS carts can be checked out here" }, { status: 400 });
     }
-  });
+
+    // Validate payment method is ACTIVE for this tenant
+    const { rows: pmRows } = await pool.query(
+      `SELECT id, name, active FROM "paymentMethods" WHERE id = $1 AND "tenantId" = $2`,
+      [paymentMethodId, tenantId]
+    );
+    const pm = pmRows[0];
+    if (!pm || pm.active !== true) {
+      return NextResponse.json({ error: "Invalid or inactive payment method" }, { status: 400 });
+    }
+
+    const shippingTotal = 0;
+    const discountTotal = 0;
+    const subtotal = summary.subtotal;
+    const totalAmount = subtotal + shippingTotal - discountTotal;
+
+    const orderId = uuidv4();
+    const orderKey = "pos-" + crypto.randomBytes(6).toString("hex");
+
+    const { rows: cartRow } = await pool.query(
+      `SELECT "couponCode" FROM carts WHERE id = $1`,
+      [cartId]
+    );
+    const couponCode: string | null = cartRow[0]?.couponCode ?? null;
+
+    const insertSql = `
+      INSERT INTO orders (
+        id, "clientId", "cartId", country, status,
+        "paymentMethod", "orderKey", "cartHash",
+        "shippinTotal", "discountTotal", "totalAmount",
+        "couponCode", "shippingService",
+        "dateCreated", "datePaid", "dateCompleted", "dateCancelled",
+        "createdAt", "updatedAt", "organizationId", channel
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,
+        $6,$7,$8,
+        $9,$10,$11,
+        $12,$13,
+        $14,$15,$16,$17,
+        NOW(),NOW(),$18,$19
+      )
+      RETURNING *`;
+    const vals = [
+      orderId,
+      summary.clientId,
+      summary.cartId,
+      summary.country,
+      "paid",
+      pm.id,
+      orderKey,
+      summary.cartUpdatedHash,
+      shippingTotal,
+      discountTotal,
+      totalAmount,
+      couponCode,
+      "-",
+      new Date(),
+      new Date(),
+      new Date(),
+      null,
+      organizationId,
+      summary.channel, // ✅ keep the exact pos-... channel on the order
+    ];
+
+    const tx = await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      const { rows: orderRows } = await tx.query(insertSql, vals);
+      const order = orderRows[0];
+
+      await tx.query(`UPDATE carts SET status = FALSE, "updatedAt" = NOW() WHERE id = $1`, [cartId]);
+      await tx.query("COMMIT");
+      return NextResponse.json({ order }, { status: 201 });
+    } catch (e) {
+      await tx.query("ROLLBACK");
+      throw e;
+    } finally {
+      tx.release();
+    }
+  } catch (err: any) {
+    if (err instanceof z.ZodError) return NextResponse.json({ error: err.errors }, { status: 400 });
+    console.error("[POS POST /pos/checkout] error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }
