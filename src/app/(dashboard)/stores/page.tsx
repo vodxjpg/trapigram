@@ -3,63 +3,37 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  ColumnDef,
-  getCoreRowModel,
-  useReactTable,
-} from "@tanstack/react-table";
+import { ColumnDef, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { StandardDataTable } from "@/components/data-table/data-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { MoreHorizontal, Pencil, Plus, Trash2, Search } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
 
 type Store = {
   id: string;
   name: string;
   address: Record<string, any> | null;
-  active: boolean;
   createdAt: string;
   updatedAt: string;
 };
 
 function formatAddress(a?: Record<string, any> | null) {
   if (!a) return "—";
-  const parts = [
-    a.street || a.line1,
-    a.city,
-    a.state,
-    a.zip || a.postalCode,
-    a.country,
-  ].filter(Boolean);
+  const parts = [a.street || a.line1, a.city, a.state, a.zip || a.postalCode, a.country]
+    .filter(Boolean);
   return parts.join(", ") || "—";
 }
 
@@ -69,21 +43,16 @@ export default function StoresPage() {
   const [rows, setRows] = React.useState<Store[]>([]);
   const [query, setQuery] = React.useState("");
 
-  // add/edit dialog
+  // add/edit dialog state
   const [editOpen, setEditOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Store | null>(null);
   const [formName, setFormName] = React.useState("");
-  const [formActive, setFormActive] = React.useState(true);
   const [formAddress, setFormAddress] = React.useState({
-    street: "",
-    city: "",
-    state: "",
-    zip: "",
-    country: "",
+    street: "", city: "", state: "", zip: "", country: "",
   });
   const [saving, setSaving] = React.useState(false);
 
-  // single/bulk delete confirm
+  // delete confirm
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [deleteIds, setDeleteIds] = React.useState<string[]>([]);
 
@@ -101,125 +70,102 @@ export default function StoresPage() {
     }
   }, []);
 
-  React.useEffect(() => {
-    load();
-  }, [load]);
+  React.useEffect(() => { load(); }, [load]);
 
   const filtered = React.useMemo(() => {
-    if (!query.trim()) return rows;
-    const q = query.toLowerCase();
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
     return rows.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        formatAddress(s.address).toLowerCase().includes(q),
+      (s) => s.name.toLowerCase().includes(q) ||
+        formatAddress(s.address).toLowerCase().includes(q)
     );
   }, [rows, query]);
 
+  const columns = React.useMemo<ColumnDef<Store>[]>(() => [
+    {
+      id: "select",
+      header: ({ table }) => (
+        <Checkbox
+          checked={table.getIsAllRowsSelected()}
+          onCheckedChange={(v) => table.toggleAllRowsSelected(!!v)}
+          aria-label="Select all"
+        />
+      ),
+      cell: ({ row }) => (
+        <Checkbox
+          checked={row.getIsSelected()}
+          onCheckedChange={(v) => row.toggleSelected(!!v)}
+          aria-label="Select row"
+        />
+      ),
+      size: 30,
+    },
+    {
+      accessorKey: "name",
+      header: "Store",
+      cell: ({ row }) => {
+        const s = row.original;
+        return (
+          <Link href={`/stores/${s.id}`} className="font-medium text-primary hover:underline">
+            {s.name}
+          </Link>
+        );
+      },
+    },
+    {
+      id: "address",
+      header: "Address",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{formatAddress(row.original.address)}</span>
+      ),
+    },
+    {
+      accessorKey: "createdAt",
+      header: "Created",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">
+          {new Date(row.original.createdAt).toLocaleDateString()}
+        </span>
+      ),
+      size: 110,
+    },
+    {
+      id: "actions",
+      header: "",
+      size: 40,
+      cell: ({ row }) => {
+        const s = row.original;
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem className="gap-2" onClick={() => openEdit(s)}>
+                <Pencil className="h-4 w-4" /> Edit
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="gap-2 text-destructive focus:text-destructive"
+                onClick={() => {
+                  setDeleteIds([s.id]);
+                  setConfirmOpen(true);
+                }}
+              >
+                <Trash2 className="h-4 w-4" /> Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+    },
+  ], []);
+
   const table = useReactTable({
     data: filtered,
-    columns: React.useMemo<ColumnDef<Store>[]>(() => [
-      {
-        id: "select",
-        header: ({ table }) => (
-          <Checkbox
-            checked={table.getIsAllRowsSelected()}
-            onCheckedChange={(v) => table.toggleAllRowsSelected(!!v)}
-            aria-label="Select all"
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={row.getIsSelected()}
-            onCheckedChange={(v) => row.toggleSelected(!!v)}
-            aria-label="Select row"
-          />
-        ),
-        size: 30,
-      },
-      {
-        accessorKey: "name",
-        header: "Store",
-        cell: ({ row }) => {
-          const s = row.original;
-          return (
-            <Link
-              href={`/stores/${s.id}`}
-              className="font-medium text-primary hover:underline"
-            >
-              {s.name}
-            </Link>
-          );
-        },
-      },
-      {
-        id: "address",
-        header: "Address",
-        cell: ({ row }) => (
-          <span className="text-muted-foreground">
-            {formatAddress(row.original.address)}
-          </span>
-        ),
-      },
-      {
-        accessorKey: "active",
-        header: "Status",
-        cell: ({ row }) => (
-          row.original.active ? (
-            <Badge variant="default">Active</Badge>
-          ) : (
-            <Badge variant="secondary" className="bg-muted text-foreground">Inactive</Badge>
-          )
-        ),
-        size: 90,
-      },
-      {
-        accessorKey: "createdAt",
-        header: "Created",
-        cell: ({ row }) => (
-          <span className="text-muted-foreground">
-            {new Date(row.original.createdAt).toLocaleDateString()}
-          </span>
-        ),
-        size: 110,
-      },
-      {
-        id: "actions",
-        header: "",
-        cell: ({ row }) => {
-          const s = row.original;
-          return (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={() => openEdit(s)}
-                  className="gap-2"
-                >
-                  <Pencil className="h-4 w-4" />
-                  Edit
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className={cn("gap-2 text-destructive focus:text-destructive")}
-                  onClick={() => {
-                    setDeleteIds([s.id]);
-                    setConfirmOpen(true);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          );
-        },
-        size: 40,
-      },
-    ], []),
+    columns,
     getCoreRowModel: getCoreRowModel(),
     enableRowSelection: true,
   });
@@ -227,16 +173,14 @@ export default function StoresPage() {
   function openCreate() {
     setEditing(null);
     setFormName("");
-    setFormActive(true);
     setFormAddress({ street: "", city: "", state: "", zip: "", country: "" });
     setEditOpen(true);
   }
 
   function openEdit(s: Store) {
     setEditing(s);
-    setFormName(s.name);
-    setFormActive(Boolean(s.active));
     const a = s.address || {};
+    setFormName(s.name);
     setFormAddress({
       street: a.street || a.line1 || "",
       city: a.city || "",
@@ -249,19 +193,19 @@ export default function StoresPage() {
 
   async function saveStore() {
     setSaving(true);
-    const payload = {
-      name: formName.trim(),
-      active: formActive,
-      address: {
-        street: formAddress.street || undefined,
-        city: formAddress.city || undefined,
-        state: formAddress.state || undefined,
-        zip: formAddress.zip || undefined,
-        country: formAddress.country || undefined,
-      },
-    };
     try {
+      const payload = {
+        name: formName.trim(),
+        address: {
+          street: formAddress.street || undefined,
+          city: formAddress.city || undefined,
+          state: formAddress.state || undefined,
+          zip: formAddress.zip || undefined,
+          country: formAddress.country || undefined,
+        },
+      };
       if (!payload.name) throw new Error("Name is required.");
+
       if (editing) {
         const res = await fetch(`/api/pos/stores/${editing.id}`, {
           method: "PATCH",
@@ -291,33 +235,24 @@ export default function StoresPage() {
     }
   }
 
-  async function hardOrSoftDelete(id: string) {
-    // Try DELETE; if not supported, fall back to soft delete (active=false)
-    const tryDelete = await fetch(`/api/pos/stores/${id}`, { method: "DELETE" });
-    if (tryDelete.ok) return true;
-    if (tryDelete.status === 405 || tryDelete.status === 404) {
-      const soft = await fetch(`/api/pos/stores/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ active: false }),
-      });
-      return soft.ok;
-    }
-    return tryDelete.ok;
+  async function deleteIdsNow(ids: string[]) {
+    await Promise.all(
+      ids.map(async (id) => {
+        const r = await fetch(`/api/pos/stores/${id}`, { method: "DELETE" });
+        if (!r.ok) throw new Error("Delete failed");
+      })
+    );
   }
 
   async function confirmBulkDelete() {
-    const ids =
-      deleteIds.length > 0
-        ? deleteIds
-        : table.getSelectedRowModel().rows.map((r) => r.original.id);
+    const ids = deleteIds.length
+      ? deleteIds
+      : table.getSelectedRowModel().rows.map((r) => r.original.id);
 
-    if (!ids.length) {
-      setConfirmOpen(false);
-      return;
-    }
+    if (!ids.length) { setConfirmOpen(false); return; }
+
     try {
-      await Promise.all(ids.map((id) => hardOrSoftDelete(id)));
+      await deleteIdsNow(ids);
       toast.success(ids.length > 1 ? "Stores deleted" : "Store deleted");
       setConfirmOpen(false);
       setDeleteIds([]);
@@ -371,7 +306,7 @@ export default function StoresPage() {
 
       <StandardDataTable
         table={table}
-        columns={table.getAllColumns().map((c) => c.columnDef as any)}
+        columns={columns}
         isLoading={isLoading}
         emptyMessage="No stores yet."
       />
@@ -392,58 +327,35 @@ export default function StoresPage() {
                   placeholder="Downtown Shop"
                 />
               </div>
-
               <div className="space-y-2">
                 <Label>Street</Label>
-                <Input
-                  value={formAddress.street}
-                  onChange={(e) => setFormAddress({ ...formAddress, street: e.target.value })}
-                  placeholder="123 Main St"
-                />
+                <Input value={formAddress.street}
+                       onChange={(e) => setFormAddress({ ...formAddress, street: e.target.value })}
+                       placeholder="123 Main St" />
               </div>
               <div className="space-y-2">
                 <Label>City</Label>
-                <Input
-                  value={formAddress.city}
-                  onChange={(e) => setFormAddress({ ...formAddress, city: e.target.value })}
-                  placeholder="Springfield"
-                />
+                <Input value={formAddress.city}
+                       onChange={(e) => setFormAddress({ ...formAddress, city: e.target.value })}
+                       placeholder="Springfield" />
               </div>
               <div className="space-y-2">
                 <Label>State</Label>
-                <Input
-                  value={formAddress.state}
-                  onChange={(e) => setFormAddress({ ...formAddress, state: e.target.value })}
-                  placeholder="CA"
-                />
+                <Input value={formAddress.state}
+                       onChange={(e) => setFormAddress({ ...formAddress, state: e.target.value })}
+                       placeholder="CA" />
               </div>
               <div className="space-y-2">
                 <Label>ZIP</Label>
-                <Input
-                  value={formAddress.zip}
-                  onChange={(e) => setFormAddress({ ...formAddress, zip: e.target.value })}
-                  placeholder="90210"
-                />
+                <Input value={formAddress.zip}
+                       onChange={(e) => setFormAddress({ ...formAddress, zip: e.target.value })}
+                       placeholder="90210" />
               </div>
               <div className="space-y-2">
                 <Label>Country</Label>
-                <Input
-                  value={formAddress.country}
-                  onChange={(e) => setFormAddress({ ...formAddress, country: e.target.value })}
-                  placeholder="US"
-                />
-              </div>
-
-              <div className="space-y-2 sm:col-span-2">
-                <div className="flex items-center justify-between rounded-md border p-3">
-                  <div>
-                    <Label className="mb-0">Active</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Inactive stores are hidden from POS selection.
-                    </p>
-                  </div>
-                  <Switch checked={formActive} onCheckedChange={setFormActive} />
-                </div>
+                <Input value={formAddress.country}
+                       onChange={(e) => setFormAddress({ ...formAddress, country: e.target.value })}
+                       placeholder="US" />
               </div>
             </div>
           </div>
@@ -467,12 +379,14 @@ export default function StoresPage() {
             </AlertDialogTitle>
           </AlertDialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will remove the store{deleteIds.length > 1 ? "s" : ""} from normal use. If hard delete
-            isn’t available, we’ll deactivate instead.
+            This permanently removes the store{deleteIds.length > 1 ? "s" : ""} (and its registers).
           </p>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={confirmBulkDelete}>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmBulkDelete}
+            >
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>

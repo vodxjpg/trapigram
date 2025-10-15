@@ -75,3 +75,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+  const { id } = await params;
+
+  try {
+    const r = await pool.query(
+      `DELETE FROM registers WHERE "organizationId"=$1 AND id=$2 RETURNING id`,
+      [organizationId, id]
+    );
+    if (!r.rowCount) return NextResponse.json({ error: "Register not found" }, { status: 404 });
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (err) {
+    console.error("[DELETE /pos/registers/:id]", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}

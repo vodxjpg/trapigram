@@ -61,9 +61,7 @@ async function withIdempotency(
 
 const CreateSchema = z.object({
   name: z.string().min(1),
-  // free-form address; include fields like street, city, state, zip, country
-  address: z.record(z.any()).optional(),
-  active: z.boolean().default(true),
+  address: z.record(z.any()).optional(), // free-form address blob
 });
 
 export async function GET(req: NextRequest) {
@@ -95,10 +93,10 @@ export async function POST(req: NextRequest) {
 
       const { rows } = await pool.query(
         `INSERT INTO stores
-          (id,"organizationId",name,address,active,"createdAt","updatedAt")
-         VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+          (id,"organizationId",name,address,"createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,NOW(),NOW())
          RETURNING *`,
-        [id, organizationId, input.name, input.address ?? {}, input.active]
+        [id, organizationId, input.name, input.address ?? {}]
       );
 
       return { status: 201, body: { store: rows[0] } };

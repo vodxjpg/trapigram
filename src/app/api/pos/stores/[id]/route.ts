@@ -7,7 +7,6 @@ import { getContext } from "@/lib/context";
 const UpdateSchema = z.object({
   name: z.string().min(1).optional(),
   address: z.record(z.any()).optional(),
-  active: z.boolean().optional(),
 });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -41,15 +40,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const values: any[] = [];
     let idx = 1;
 
-    if (body.name !== undefined) {
-      fields.push(`name=$${idx++}`); values.push(body.name);
-    }
-    if (body.address !== undefined) {
-      fields.push(`address=$${idx++}`); values.push(body.address);
-    }
-    if (body.active !== undefined) {
-      fields.push(`active=$${idx++}`); values.push(body.active);
-    }
+    if (body.name !== undefined) { fields.push(`name=$${idx++}`); values.push(body.name); }
+    if (body.address !== undefined) { fields.push(`address=$${idx++}`); values.push(body.address); }
     if (!fields.length) return NextResponse.json({ ok: true }, { status: 200 });
 
     const sql = `UPDATE stores SET ${fields.join(", ")}, "updatedAt"=NOW()
@@ -63,5 +55,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (err instanceof z.ZodError) return NextResponse.json({ error: err.errors }, { status: 400 });
     console.error("[PATCH /pos/stores/:id]", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  const { organizationId } = ctx;
+  const { id } = await params;
+
+  const c = await pool.connect();
+  try {
+    await c.query("BEGIN");
+    // Remove child registers first (avoids FK violations)
+    await c.query(`DELETE FROM registers WHERE "organizationId"=$1 AND "storeId"=$2`, [
+      organizationId,
+      id,
+    ]);
+    const r = await c.query(
+      `DELETE FROM stores WHERE "organizationId"=$1 AND id=$2 RETURNING id`,
+      [organizationId, id]
+    );
+    await c.query("COMMIT");
+    if (!r.rowCount) return NextResponse.json({ error: "Store not found" }, { status: 404 });
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (err) {
+    await c.query("ROLLBACK");
+    console.error("[DELETE /pos/stores/:id]", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  } finally {
+    c.release();
   }
 }
