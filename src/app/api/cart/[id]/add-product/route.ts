@@ -84,7 +84,7 @@ export async function POST(
 
     /* client context */
     const { rows: clientRows } = await pool.query(
-      `SELECT c.country, c."levelId", c.id AS "clientId"
+      `SELECT c.country, c."levelId", c.id AS "clientId", ca."channel"
          FROM carts ca
          JOIN clients c ON c.id = ca."clientId"
         WHERE ca.id = $1`,
@@ -96,7 +96,9 @@ export async function POST(
         { status: 404 },
       );
 
-    const { country, levelId, clientId } = clientRows[0];
+    const { country, levelId, clientId, channel } = clientRows[0] as {
+      country: string; levelId: string; clientId: string; channel: "web" | "pos" | null;
+    };
 
     /* price resolution */
     const { price: basePrice, isAffiliate } = await resolveUnitPrice(
@@ -111,6 +113,26 @@ export async function POST(
         { error: "No points price configured for this product" },
         { status: 400 },
       );
+
+    /* POS-only guard: disallow shared products for POS carts */
+    if (channel === "pos" && !isAffiliate) {
+      const { rows: prodOrgRows } = await pool.query<{ organizationId: string }>(
+        `SELECT "organizationId" FROM products WHERE id = $1`,
+        [body.productId],
+      );
+      if (!prodOrgRows.length) {
+        return NextResponse.json(
+          { error: "Product not found" },
+          { status: 404 },
+        );
+      }
+      if (prodOrgRows[0].organizationId !== organizationId) {
+        return NextResponse.json(
+          { error: "Shared products are not allowed in POS" },
+          { status: 403 },
+        );
+      }
+    }
 
     const client = await pool.connect();
     try {

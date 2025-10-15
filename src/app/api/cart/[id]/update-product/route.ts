@@ -43,7 +43,6 @@ function findTier(
     );
   const candidates = tiers.filter(inTier);
    if (!candidates.length) return null;
-  if (!candidates.length) return null;
 
   const targets = (t: Tier): string[] =>
     ((((t as any).clients as string[] | undefined) ??
@@ -87,7 +86,8 @@ export async function PATCH(
                 cl."levelId",
                 cl.id                    AS "clientId",
                 cp.quantity,
-                cp."affiliateProductId"
+                cp."affiliateProductId",
+                ca."channel"
            FROM clients            cl
            JOIN carts              ca ON ca."clientId" = cl.id
            JOIN "cartProducts"     cp ON cp."cartId"   = ca.id
@@ -110,12 +110,14 @@ export async function PATCH(
         clientId,
         quantity: oldQty,
         affiliateProductId,
+        channel,
       } = cRows[0] as {
         country: string;
         levelId: string;
         clientId: string;
         quantity: number;
         affiliateProductId: string | null;
+        channel: "web" | "pos" | null;
       };
       const isAffiliate = Boolean(affiliateProductId);
 
@@ -148,6 +150,25 @@ export async function PATCH(
       } else {
         const p = await resolveUnitPrice(data.productId, variationId, country, levelId);
         basePrice = p.price;
+      }
+
+            /* POS-only guard: disallow shared products for POS carts */
+      if (channel === "pos" && !isAffiliate) {
+        const { rows: prodOrgRows } = await client.query<{ organizationId: string }>(
+          `SELECT "organizationId" FROM products WHERE id = $1`,
+          [data.productId],
+        );
+        if (!prodOrgRows.length) {
+          await client.query("ROLLBACK");
+          return NextResponse.json(
+            { error: "Product not found" },
+            { status: 404 },
+          );
+        }
+        if (prodOrgRows[0].organizationId !== organizationId) {
+          await client.query("ROLLBACK");
+          return NextResponse.json({ error: "Shared products are not allowed in POS" }, { status: 403 });
+        }
       }
 
       /* 3️⃣ compute new quantity */
@@ -292,16 +313,16 @@ export async function PATCH(
           WHERE "cartId" = $1`,
         [cartId],
       );
-      const encrypted = crypto
+      const newHash = crypto
         .createHash("sha256")
         .update(JSON.stringify(linesForHash))
-        .digest("base64");
+        .digest("hex");
       await client.query(
         `UPDATE carts
             SET "cartUpdatedHash" = $1,
                 "updatedAt"      = NOW()
           WHERE id = $2`,
-        [encrypted, cartId],
+        [newHash, cartId],
       );
 
       await client.query("COMMIT");

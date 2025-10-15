@@ -8,7 +8,9 @@ import { getContext } from "@/lib/context";
 
 
 const cartSchema = z.object({
-  clientId: z.string().min(1, { message: "Name is required." }),
+  clientId: z.string().min(1, { message: "Client is required." }),
+  // allow POS to tag carts so we can enforce POS-only rules elsewhere
+  channel: z.enum(["web", "pos"]).optional().default("web"),
 });
 
 export async function POST(req: NextRequest) {
@@ -18,14 +20,16 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { clientId } = cartSchema.parse(body);
+    const parsed = cartSchema.parse(body);
+    const { clientId, channel } = parsed;
 
     // See if there's an existing active cart
     const activeCartQ = `
-      SELECT * FROM carts
-      WHERE "clientId" = $1 AND status = true
+       SELECT * FROM carts
+  WHERE "clientId" = $1 AND status = true
+    AND COALESCE("channel",'web') = $2
     `;
-    const resultCart = await pool.query(activeCartQ, [clientId]);
+    const resultCart = await pool.query(activeCartQ, [clientId, channel]);
     const cart = resultCart.rows[0];
     console.log(cart)
 
@@ -69,11 +73,12 @@ export async function POST(req: NextRequest) {
 
     const insertQ = `
       INSERT INTO carts (
-        id, "clientId", country, "couponCode",
+                id, "clientId", country, "couponCode",
         "shippingMethod", "cartHash", "cartUpdatedHash",
-        status, "createdAt", "updatedAt", "organizationId"
+        status, "createdAt", "updatedAt", "organizationId",
+        "channel"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), $9)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), $9, $10)
       RETURNING *
     `;
     const values = [
@@ -85,7 +90,8 @@ export async function POST(req: NextRequest) {
       cartHash,
       cartUpdatedHash,
       status,
-      organizationId
+      organizationId,
+      channel
     ];
 
     const result = await pool.query(insertQ, values);
