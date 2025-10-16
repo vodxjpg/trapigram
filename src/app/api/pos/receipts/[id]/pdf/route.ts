@@ -1,4 +1,4 @@
-// src/app/api/pos/receipts/[orderId]/pdf/route.ts
+// src/app/api/pos/receipts/[id]/pdf/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
@@ -29,7 +29,14 @@ function addressToLines(addr: any): string[] {
   return [line1, line2, line3].filter((s) => s && s.trim().length);
 }
 
-function drawRow(doc: PDFKit.PDFDocument, x: number, y: number, widths: number[], cells: (string | number)[], options: { bold?: boolean } = {}) {
+function drawRow(
+  doc: PDFKit.PDFDocument,
+  x: number,
+  y: number,
+  widths: number[],
+  cells: (string | number)[],
+  options: { bold?: boolean } = {}
+) {
   const [wQty, wTitle, wUnit, wTax, wTotal] = widths;
   const font = options.bold ? "Helvetica-Bold" : "Helvetica";
 
@@ -53,12 +60,12 @@ function collectStream(doc: PDFKit.PDFDocument): Promise<Buffer> {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ orderId: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
-  const { orderId } = await params;
+  const { id } = await params;
 
   try {
     /* ── Load order (payments, totals, etc.) ───────────────────────────────── */
@@ -66,7 +73,7 @@ export async function GET(
       `SELECT *
          FROM orders
         WHERE id = $1 AND "organizationId" = $2`,
-      [orderId, organizationId]
+      [id, organizationId]
     );
     if (!orderRows.length) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
@@ -208,7 +215,7 @@ export async function GET(
     // Order meta
     doc.moveDown(0.5);
     const createdAt = new Date(order.createdAt ?? Date.now());
-    doc.text(`Order ID: ${orderId}`);
+    doc.text(`Order ID: ${id}`);
     doc.text(`Date: ${createdAt.toLocaleString()}`);
     doc.text(`Tax Mode: ${taxInclusive ? "Tax Inclusive" : "Tax Exclusive"}`);
     if (client?.name) doc.text(`Customer: ${client.name}`);
@@ -335,12 +342,12 @@ export async function GET(
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="receipt-${orderId}.pdf"`,
+        "Content-Disposition": `inline; filename="receipt-${id}.pdf"`,
         "Cache-Control": "private, max-age=0, must-revalidate",
       },
     });
   } catch (err: any) {
-    console.error("[GET /pos/receipts/:orderId/pdf]", err);
+    console.error("[GET /pos/receipts/:id/pdf]", err);
     return NextResponse.json(
       { error: err?.message ?? "Internal server error" },
       { status: 500 }
