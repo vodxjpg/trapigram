@@ -23,6 +23,15 @@ type CartProps = {
   onDec: (line: CartLine) => void
   onRemove: (line: CartLine) => void
   onCheckout: () => void
+  // discount controls
+  discountType: "fixed" | "percentage"
+  discountValue: string
+  onDiscountType: (t: "fixed" | "percentage") => void
+  onDiscountValue: (v: string) => void
+  // display numbers (computed in parent)
+  subtotal: number
+  discountAmount: number
+  total: number
 }
 
 function InitialsSquare({ text }: { text: string }) {
@@ -48,8 +57,15 @@ export function Cart({
   onDec,
   onRemove,
   onCheckout,
+  discountType,
+  discountValue,
+  onDiscountType,
+  onDiscountValue,
+  subtotal,
+  discountAmount,
+  total,
 }: CartProps) {
-  const subtotal = lines.reduce((s, l) => s + l.subtotal, 0)
+  // subtotal/discount/total provided by parent
 
   return (
     <div className="flex w-full flex-col border-l bg-card lg:w-96">
@@ -116,20 +132,49 @@ export function Cart({
       </ScrollArea>
 
       {/* Totals */}
-      <div className="border-t p-4">
+      <div className="border-t p-4 space-y-3">
+        {/* Discount control */}
+        <div className="space-y-2">
+          <span className="text-sm font-medium text-foreground">Discount</span>
+          <div className="flex items-center gap-2">
+            <select
+              className="h-9 rounded-md border bg-background px-2 text-sm"
+              value={discountType}
+              onChange={(e) => onDiscountType(e.target.value as "fixed" | "percentage")}
+            >
+              <option value="fixed">$ Fixed</option>
+              <option value="percentage">% Percentage</option>
+            </select>
+            <input
+              type="text"
+              inputMode="decimal"
+              pattern="^\\d*([.]\\d{0,2})?$"
+              className="h-9 w-24 rounded-md border bg-background px-2 text-sm"
+              placeholder="0"
+              value={discountValue}
+              onChange={(e) => onDiscountValue(e.target.value)}
+            />
+          </div>
+        </div>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Subtotal</span>
             <span className="font-medium">${subtotal.toFixed(2)}</span>
           </div>
+          {discountAmount > 0 && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Discount</span>
+              <span className="font-medium">- ${discountAmount.toFixed(2)}</span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-muted-foreground">Tax</span>
             <span className="font-medium">Calculated at checkout</span>
           </div>
           <Separator />
           <div className="flex justify-between text-lg font-bold">
-            <span>Estimate</span>
-            <span className="text-primary">${subtotal.toFixed(2)}</span>
+            <span>Total</span>
+            <span className="text-primary">${total.toFixed(2)}</span>
           </div>
         </div>
       </div>
@@ -137,7 +182,7 @@ export function Cart({
       {/* Checkout */}
       <div className="border-t p-4">
         <Button className="w-full" size="lg" disabled={lines.length === 0} onClick={onCheckout}>
-          Checkout
+          Checkout ${total.toFixed(2)}
         </Button>
       </div>
     </div>

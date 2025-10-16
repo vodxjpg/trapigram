@@ -27,8 +27,8 @@ async function fetchJSON(
 }
 
 const euroCountries = [
-  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE","IT","LV","LT","LU","MT",
-  "NL","PT","SK","SI","ES"
+  "AT", "BE", "HR", "CY", "EE", "FI", "FR", "DE", "GR", "IE", "IT", "LV", "LT", "LU", "MT",
+  "NL", "PT", "SK", "SI", "ES"
 ];
 
 const currencyFromCountry = (c: string) =>
@@ -528,11 +528,18 @@ async function activePaymentMethods(tenantId: string) {
 }
 
 /* -------- schemas -------- */
+
+const DiscountSchema = z.object({
+  type: z.enum(["fixed", "percentage"]),
+  value: z.number().nonnegative(),
+}).optional();
+
 const CheckoutCreateSchema = z.object({
   cartId: z.string().min(1),
   payments: z.array(z.object({ methodId: z.string().min(1), amount: z.number().positive() })).min(1),
   storeId: z.string().optional(),
   registerId: z.string().optional(),
+  discount: DiscountSchema,
 });
 
 /* GET: summary + ACTIVE payment methods */
@@ -565,7 +572,8 @@ export async function POST(req: NextRequest) {
 
   const { tenantId, organizationId } = ctx as { tenantId: string | null; organizationId: string };
   try {
-    const { cartId, payments, storeId, registerId } = CheckoutCreateSchema.parse(await req.json());
+    const { cartId, payments, storeId, registerId, discount } =
+      CheckoutCreateSchema.parse(await req.json());
     if (!tenantId) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
     const summary = await loadCartSummary(cartId);
@@ -588,9 +596,35 @@ export async function POST(req: NextRequest) {
     }
 
     const shippingTotal = 0;
-    const discountTotal = 0;
-    const subtotal = summary.subtotal;
-    const totalAmount = subtotal + shippingTotal - discountTotal;
+    const subtotal = Number(summary.subtotal || 0);
+
+    // ── POS discount → coupon "POS"
+    let discountTotal = 0;
+    let couponCode: string | null = null;
+    let couponType: "fixed" | "percentage" | null = null;
+    let discountValueArr: string[] = [];
+    if (discount && Number.isFinite(discount.value) && discount.value > 0) {
+      if (discount.type === "percentage") {
+        const pct = Math.max(0, Math.min(100, discount.value));
+        discountTotal = +(subtotal * (pct / 100)).toFixed(2);
+        couponCode = "POS";
+        couponType = "percentage";
+        discountValueArr = [String(pct)];
+      } else {
+        const fixed = Math.max(0, discount.value);
+        discountTotal = +Math.min(subtotal, fixed).toFixed(2);
+        couponCode = "POS";
+        couponType = "fixed";
+        discountValueArr = [String(fixed)];
+      }
+      // keep carts table in sync
+      await pool.query(
+        `UPDATE carts SET "couponCode" = $1, "updatedAt" = NOW() WHERE id = $2`,
+        [couponCode, cartId],
+      );
+    }
+
+    const totalAmount = +(subtotal + shippingTotal - discountTotal).toFixed(2);
 
     const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
     const epsilon = 0.01;
@@ -604,8 +638,7 @@ export async function POST(req: NextRequest) {
     const orderId = uuidv4();
     const orderKey = "pos-" + crypto.randomBytes(6).toString("hex");
 
-    const { rows: cartRow } = await pool.query(`SELECT "couponCode" FROM carts WHERE id = $1`, [cartId]);
-    const couponCode: string | null = cartRow[0]?.couponCode ?? null;
+
 
     const primaryMethodId = payments[0].methodId;
 
@@ -619,8 +652,9 @@ export async function POST(req: NextRequest) {
       INSERT INTO orders (
         id, "clientId", "cartId", country, status,
         "paymentMethod", "orderKey", "cartHash",
-        "shippingTotal", "discountTotal", "totalAmount",
-        "couponCode", "shippingService",
+          "shippingTotal", "discountTotal", "totalAmount",
+  "couponCode", "couponType", "counponType", "discountValue",
+  "shippingService",
         "dateCreated", "datePaid", "dateCompleted", "dateCancelled",
         "createdAt", "updatedAt", "organizationId", channel
       )
@@ -628,9 +662,10 @@ export async function POST(req: NextRequest) {
         $1,$2,$3,$4,$5,
         $6,$7,$8,
         $9,$10,$11,
-        $12,$13,
-        $14,$15,$16,$17,
-        NOW(),NOW(),$18,$19
+        $12,$13,$14,$15,
+        $16,
+        $17,$18,$19,$20,
+        NOW(),NOW(),$21,$22
       )
       RETURNING *`;
 
@@ -646,7 +681,10 @@ export async function POST(req: NextRequest) {
       shippingTotal,
       discountTotal,
       totalAmount,
-      couponCode,
+      couponCode,                      // 'POS' or null
+      couponType,                      // 'fixed' | 'percentage' | null
+      couponType,                      // legacy misspelling
+      discountValueArr,                // text[] e.g. ['10'] or ['5']
       "-",
       new Date(),      // dateCreated
       new Date(),      // datePaid
@@ -691,8 +729,8 @@ export async function POST(req: NextRequest) {
           [organizationId],
         );
         const ptsPerReferral = Number(affSet?.pointsPerReferral || 0);
-        const stepEur        = Number(affSet?.spendingStep || 0);
-        const ptsPerStep     = Number(affSet?.pointsPerSpendingStep || 0);
+        const stepEur = Number(affSet?.spendingStep || 0);
+        const ptsPerStep = Number(affSet?.pointsPerSpendingStep || 0);
 
         // 2) one-time referral award to referrer (if any)
         const { rows: [refFlag] } = await pool.query(
@@ -769,7 +807,7 @@ export async function POST(req: NextRequest) {
 
           // how many steps did this order cross?
           const stepsBefore = Math.floor(prevTotalEur / stepEur);
-          const stepsAfter  = Math.floor((prevTotalEur + thisOrderEur) / stepEur);
+          const stepsAfter = Math.floor((prevTotalEur + thisOrderEur) / stepEur);
           const stepsFromThisOrder = Math.max(0, stepsAfter - stepsBefore);
 
           // per-order points multiplier from orderMeta (if any)

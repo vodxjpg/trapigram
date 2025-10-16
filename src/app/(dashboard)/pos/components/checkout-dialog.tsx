@@ -22,6 +22,7 @@ type PaymentMethodRow = {
 }
 
 type Payment = { methodId: string; amount: number }
+type DiscountPayload = { type: "fixed" | "percentage"; value: number }
 
 type CheckoutDialogProps = {
   open: boolean
@@ -32,10 +33,14 @@ type CheckoutDialogProps = {
   registerId: string | null
   storeId: string | null
   onComplete: (orderId: string) => void
+  /** Optional POS discount to apply as coupon "POS" */
+  discount?: DiscountPayload
 }
 
 export function CheckoutDialog(props: CheckoutDialogProps) {
-  const { open, onOpenChange, totalEstimate, cartId, clientId, registerId, storeId, onComplete } = props
+  const {
+    open, onOpenChange, totalEstimate, cartId, clientId, registerId, storeId, onComplete, discount
+  } = props
 
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([])
   const [currentMethodId, setCurrentMethodId] = useState<string | null>(null)
@@ -134,8 +139,27 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
     try {
       setBusy(true)
-      const idem = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
-      const payload = { cartId, payments, storeId, registerId }
+      const idem =
+        (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string
+
+      const payload: {
+        cartId: string
+        payments: Payment[]
+        storeId: string | null
+        registerId: string | null
+        discount?: DiscountPayload
+      } = {
+        cartId,
+        payments,
+        storeId,
+        registerId,
+      }
+
+      // Only send discount if it’s meaningful (> 0)
+      if (discount && Number.isFinite(discount.value) && discount.value > 0) {
+        payload.discount = discount
+      }
+
       const res = await fetch("/api/pos/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": idem },

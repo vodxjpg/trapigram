@@ -74,6 +74,10 @@ export function POSInterface() {
   const [error, setError] = useState<string | null>(null)
   const creatingCartRef = useRef(false)
 
+    // POS discount (coupon "POS")
+  const [discountType, setDiscountType] = useState<"fixed" | "percentage">("fixed")
+  const [discountValue, setDiscountValue] = useState<string>("")
+
   // post-checkout receipt dialog
   const [receiptDlg, setReceiptDlg] = useState<{ orderId: string; email: string | null } | null>(null)
 
@@ -320,6 +324,16 @@ export function POSInterface() {
   }, [products, selectedCategoryId, debouncedSearch, parentById])
 
   const subtotalEstimate = useMemo(() => lines.reduce((s, l) => s + l.subtotal, 0), [lines])
+  const discountAmount = useMemo(() => {
+    const v = Number(discountValue)
+    if (!Number.isFinite(v) || v <= 0) return 0
+    if (discountType === "percentage") {
+      const pct = Math.max(0, Math.min(100, v))
+      return +(subtotalEstimate * (pct / 100)).toFixed(2)
+    }
+    return +Math.min(subtotalEstimate, Math.max(0, v)).toFixed(2)
+  }, [discountType, discountValue, subtotalEstimate])
+  const totalEstimate = Math.max(0, +(subtotalEstimate - discountAmount).toFixed(2))
 
   const resolveCartCountry = () =>
     storeCountry || orgCountries[0] || "US"
@@ -545,6 +559,17 @@ export function POSInterface() {
             onDec={dec}
             onRemove={removeLine}
             onCheckout={() => setCheckoutOpen(true)}
+            discountType={discountType}
+            discountValue={discountValue}
+            onDiscountType={setDiscountType}
+            onDiscountValue={(val) => {
+              // strip leading zeros like qty inputs (keep "0.", "")
+              const sanitized = val.replace(/^0+(?=\d)(?!\.)/, "")
+              setDiscountValue(sanitized)
+            }}
+            subtotal={subtotalEstimate}
+            discountAmount={discountAmount}
+            total={totalEstimate}
           />
         </div>
 
@@ -552,12 +577,16 @@ export function POSInterface() {
         <CheckoutDialog
           open={checkoutOpen}
           onOpenChange={setCheckoutOpen}
-          totalEstimate={subtotalEstimate}
+          totalEstimate={totalEstimate}
           cartId={cartId}
           clientId={selectedCustomer?.id ?? null}
           registerId={outletId}
           storeId={storeId}
           onComplete={onCompleteCheckout}
+          discount={{
+            type: discountType,
+            value: Number(discountValue || 0)
+          }}
         />
       </div>
 
