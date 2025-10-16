@@ -117,19 +117,25 @@ export async function POST(req: NextRequest) {
         if (exact.length) return { status: 201, body: { newCart: exact[0], reused: true } };
       }
 
-      /* 4) Fallback: reuse any active POS cart (channel LIKE 'pos-%') */
-      const { rows: anyPos } = await pool.query(
-        `SELECT *
-           FROM carts
-          WHERE "clientId"=$1
-            AND "organizationId"=$2
-            AND status=true
-            AND channel ILIKE 'pos-%'
-       ORDER BY "createdAt" DESC
+     // 4) Fallback: reuse any active POS cart (channel LIKE 'pos-%')
+    const { rows: anyPos } = await pool.query(
+        `SELECT * FROM carts
+          WHERE "clientId"=$1 AND "organizationId"=$2
+            AND status=true AND channel ILIKE 'pos-%'
+      ORDER BY "createdAt" DESC
           LIMIT 1`,
         [clientId, organizationId]
       );
-      if (anyPos.length) return { status: 201, body: { newCart: anyPos[0], reused: true } };
+      if (anyPos.length) {
+        const cart = anyPos[0];
+        if (channelVal !== "pos-" && cart.channel === "pos-") {
+          // upgrade generic channel to specific now that we have store/register
+          await pool.query(`UPDATE carts SET channel=$1 WHERE id=$2`, [channelVal, cart.id]);
+          cart.channel = channelVal;
+        }
+        return { status: 201, body: { newCart: cart, reused: true } };
+    }
+
 
       /* 5) Resolve non-null country (payload → org settings → 'US') */
       const country = await (async () => {

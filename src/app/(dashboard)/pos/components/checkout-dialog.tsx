@@ -30,6 +30,7 @@ type CheckoutDialogProps = {
   cartId: string | null
   clientId: string | null
   registerId: string | null
+  storeId: string | null
   onComplete: (orderId: string) => void
 }
 
@@ -121,7 +122,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     try {
       setBusy(true)
       const idem = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
-      const payload = { cartId, payments }
+      const payload = { cartId, payments, storeId, registerId };
       const res = await fetch("/api/pos/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": idem },

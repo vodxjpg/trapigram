@@ -79,6 +79,8 @@ const CheckoutCreateSchema = z.object({
       })
     )
     .min(1, "At least one payment is required"),
+  storeId: z.string().optional(),
+  registerId: z.string().optional(),
 });
 
 /* GET: summary + ACTIVE payment methods */
@@ -111,7 +113,7 @@ export async function POST(req: NextRequest) {
 
   const { tenantId, organizationId } = ctx as { tenantId: string | null; organizationId: string };
   try {
-    const { cartId, payments } = CheckoutCreateSchema.parse(await req.json());
+    const { cartId, payments, storeId, registerId } = CheckoutCreateSchema.parse(await req.json());
     if (!tenantId) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
     const summary = await loadCartSummary(cartId);
@@ -156,6 +158,16 @@ export async function POST(req: NextRequest) {
     // Persist the first method id into orders.paymentMethod for compatibility
     const primaryMethodId = payments[0].methodId;
 
+    let orderChannel = summary.channel;
+    if (
+      orderChannel === "pos-" &&
+      (storeId || registerId)
+    ) {
+      orderChannel = `pos-${storeId ?? "na"}-${registerId ?? "na"}`;
+      // persist upgraded channel on the cart so future reads see it
+      await pool.query(`UPDATE carts SET channel=$1 WHERE id=$2`, [orderChannel, cartId]);
+    }
+
     const insertSql = `
       INSERT INTO orders (
         id, "clientId", "cartId", country, status,
@@ -194,6 +206,7 @@ export async function POST(req: NextRequest) {
       new Date(),       // dateCompleted
       null,             // dateCancelled
       organizationId,
+      orderChannel,
       summary.channel,  // keep exact "pos-..." channel
     ];
 
@@ -202,6 +215,16 @@ export async function POST(req: NextRequest) {
       await tx.query("BEGIN");
       const { rows: orderRows } = await tx.query(insertSql, vals);
       const order = orderRows[0];
+
+      // persist each split
+      for (const p of payments) {
+        await tx.query(
+          `INSERT INTO "orderPayments"(id,"orderId","methodId",amount)
+          VALUES ($1,$2,$3,$4)`,
+          [uuidv4(), order.id, p.methodId, Number(p.amount)]
+        );
+      }
+
 
       // Optional: insert each split into orderPayments here
 

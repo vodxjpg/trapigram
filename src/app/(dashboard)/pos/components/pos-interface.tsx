@@ -1,3 +1,4 @@
+// src/app/(dashboard)/pos/components/pos-interface.tsx
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -6,9 +7,11 @@ import { Cart } from "./cart"
 import { CategoryNav } from "./category-nav"
 import { CustomerSelector, type Customer } from "./customer-selector"
 import { CheckoutDialog } from "./checkout-dialog"
+import { ReceiptOptionsDialog } from "./receipt-options-dialog"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { StoreRegisterSelector } from "./store-register-selector"
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -70,6 +73,9 @@ export function POSInterface() {
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const creatingCartRef = useRef(false)
+
+  // post-checkout receipt dialog
+  const [receiptDlg, setReceiptDlg] = useState<{ orderId: string; email: string | null } | null>(null)
 
   // restore persisted choices
   useEffect(() => {
@@ -429,9 +435,10 @@ export function POSInterface() {
   }
 
   const onCompleteCheckout = (orderId: string) => {
-    try {
-      window.open(`/api/pos/receipts/${orderId}/pdf`, "_blank")
-    } catch {}
+    // ✅ show a dialog with Print / Email / Both / Skip
+    setReceiptDlg({ orderId, email: selectedCustomer?.email ?? null })
+
+    // clear local POS cart state
     if (outletId && typeof window !== "undefined") {
       localStorage.removeItem(LS_KEYS.CART(outletId))
     }
@@ -497,7 +504,7 @@ export function POSInterface() {
             <ProductGrid products={filteredProducts} onAddToCart={addToCart} />
           </div>
 
-          {/* Cart Section */}
+        {/* Cart Section */}
           <Cart
             lines={lines}
             onInc={inc}
@@ -515,9 +522,18 @@ export function POSInterface() {
           cartId={cartId}
           clientId={selectedCustomer?.id ?? null}
           registerId={outletId}
+          storeId={storeId}
           onComplete={onCompleteCheckout}
         />
       </div>
+
+      {/* Post-checkout: receipt options */}
+      <ReceiptOptionsDialog
+        open={!!receiptDlg}
+        onOpenChange={(o) => !o && setReceiptDlg(null)}
+        orderId={receiptDlg?.orderId ?? null}
+        defaultEmail={receiptDlg?.email ?? ""}
+      />
 
       {/* First-run: force store/outlet selection */}
       <StoreRegisterSelector

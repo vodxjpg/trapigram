@@ -357,6 +357,31 @@ export async function GET(
     dropshipperName = await resolveDropshipperLabel(dropshipperOrgId);
   }
 
+  // ── Payment summary (names + splits) ───────────────────────────
+  const splitsQ = await pool.query(
+    `SELECT op."methodId", op.amount, pm.name
+      FROM "orderPayments" op
+  LEFT JOIN "paymentMethods" pm ON pm.id = op."methodId"
+      WHERE op."orderId" = $1`,
+    [order.id]
+  );
+  const splits = splitsQ.rows.map(r => ({
+    id: r.methodId,
+    name: r.name ?? r.methodId,       // fallback to id
+    amount: Number(r.amount),
+  }));
+
+  // Primary method → name (works even if there are no splits)
+  let primaryPaymentName = order.paymentMethod;
+  try {
+    const pm = await pool.query(
+      `SELECT name FROM "paymentMethods" WHERE id = $1 LIMIT 1`,
+      [order.paymentMethod]
+    );
+    if (pm.rowCount) primaryPaymentName = pm.rows[0].name ?? order.paymentMethod;
+  } catch { /* ignore */ }
+
+
   const normalizedMeta =
     order.orderMeta
       ? (typeof order.orderMeta === "string" ? JSON.parse(order.orderMeta) : order.orderMeta)
@@ -385,11 +410,16 @@ export async function GET(
     referralAwarded: order.referralAwarded === true,
     trackingNumber: order.trackingNumber,
     referredBy: client?.referredBy ?? null,
+    payment: {
+      primary: { id: order.paymentMethod, name: primaryPaymentName },
+      splits,                                            // ← array with names + amounts
+      totalPaid: splits.reduce((s, x) => s + x.amount, 0) || Number(order.totalAmount),
+    },
     shippingInfo: {
       address: decryptSecretNode(order.address),
       company: order.shippingService,
       method: order.shippingMethod,
-      payment: order.paymentMethod,
+      payment: primaryPaymentName,
     },
     client: {
       firstName: client.firstName,
