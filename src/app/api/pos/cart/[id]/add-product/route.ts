@@ -9,6 +9,8 @@ import { resolveUnitPrice } from "@/lib/pricing";
 import { adjustStock } from "@/lib/stock";
 import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
 
+/* ───────────────────────────────────────────────────────────── */
+
 async function withIdempotency(
   req: NextRequest,
   exec: () => Promise<{ status: number; body: any }>
@@ -61,6 +63,8 @@ async function withIdempotency(
   }
 }
 
+/* ───────────────────────────────────────────────────────────── */
+
 const BodySchema = z.object({
   productId: z.string(),
   variationId: z.string().nullable().optional(),
@@ -99,6 +103,65 @@ function findTier(
   return global ?? null;
 }
 
+/** Read inventory flags/qty (product + variation override). If columns/tables
+ *  are missing in this environment, gracefully fall back to "unlimited".
+ */
+async function readInventory(
+  client: any,
+  productId: string,
+  variationId: string | null
+): Promise<{ manage: boolean; backorder: boolean; stock: number | null }> {
+  let manage = false;
+  let backorder = false;
+  let stock: number | null = null;
+
+  try {
+    const { rows } = await client.query(
+      `SELECT 
+         COALESCE("manageStock", false)                                  AS manage,
+         COALESCE("allowBackorder", COALESCE("backorderAllowed", false)) AS backorder,
+         COALESCE("stockQuantity", COALESCE(stock, NULL))                AS stock
+       FROM products WHERE id = $1 LIMIT 1`,
+      [productId]
+    );
+    if (rows[0]) {
+      manage = !!rows[0].manage;
+      backorder = !!rows[0].backorder;
+      if (rows[0].stock !== null && rows[0].stock !== undefined) {
+        stock = Number(rows[0].stock);
+      }
+    }
+  } catch (e: any) {
+    if (e?.code !== "42703" && e?.code !== "42P01") throw e;
+  }
+
+  if (variationId) {
+    try {
+      const { rows } = await client.query(
+        `SELECT 
+           COALESCE("manageStock", false)                                  AS manage,
+           COALESCE("allowBackorder", COALESCE("backorderAllowed", false)) AS backorder,
+           COALESCE("stockQuantity", COALESCE(stock, NULL))                AS stock
+         FROM "productVariations" WHERE id = $1 LIMIT 1`,
+        [variationId]
+      );
+      if (rows[0]) {
+        manage = !!rows[0].manage || manage; // variation can enable management
+        if (rows[0].backorder !== null && rows[0].backorder !== undefined) {
+          backorder = !!rows[0].backorder;   // explicit override
+        }
+        if (rows[0].stock !== null && rows[0].stock !== undefined) {
+          stock = Number(rows[0].stock);     // explicit override
+        }
+      }
+    } catch (e: any) {
+      if (e?.code !== "42703" && e?.code !== "42P01") throw e;
+    }
+  }
+
+  return { manage, backorder, stock };
+}
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -112,7 +175,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ? body.variationId
           : null;
 
-      // IMPORTANT: use CART.country (never null), not client.country
+      // use CART.country (never null)
       const { rows: cRows } = await pool.query(
         `SELECT ca.country, cl."levelId", cl.id AS "clientId"
            FROM carts ca
@@ -121,11 +184,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         [cartId]
       );
       if (!cRows.length) return { status: 404, body: { error: "Cart or client not found" } };
-      const country: string = cRows[0].country;                 // from cart
-      const levelId: string | null = cRows[0].levelId ?? null;  // may be null
+      const country: string = cRows[0].country;
+      const levelId: string | null = cRows[0].levelId ?? null;
       const clientId: string = cRows[0].clientId;
 
-      // Base price (own products only). Guard level fallback → 'default'
+      // price resolution
       const { price: basePrice } = await resolveUnitPrice(
         body.productId,
         variationId,
@@ -137,7 +200,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       try {
         await client.query("BEGIN");
 
-        // Upsert cartProducts row
+        // existing cart line
         let sql = `SELECT id, quantity FROM "cartProducts"
                     WHERE "cartId"=$1 AND "productId"=$2`;
         const vals: any[] = [cartId, body.productId];
@@ -147,10 +210,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
         const { rows: existing } = await client.query(sql, vals);
 
+        // compute new total quantity for this line
         let quantity = body.quantity;
         if (existing.length) quantity += existing[0].quantity;
 
-        // Tier pricing
+        // --- inventory enforcement BEFORE mutate ---
+        const inv = await readInventory(client, body.productId, variationId);
+        if (inv.manage && !inv.backorder && inv.stock !== null) {
+          if (quantity > inv.stock) {
+            await client.query("ROLLBACK");
+            return {
+              status: 400,
+              body: {
+                error: `Only ${inv.stock} unit${inv.stock === 1 ? "" : "s"} available for this item.`,
+                available: inv.stock,
+              },
+            };
+          }
+        }
+
+        // tier pricing
         let unitPrice = basePrice;
         const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
         const tier = findTier(tiers, country, body.productId, variationId, clientId);
@@ -179,7 +258,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           );
         }
 
-        // Insert/update line
+        // upsert line
         if (existing.length) {
           await client.query(
             `UPDATE "cartProducts"
@@ -189,7 +268,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           );
         } else {
           const cols = [`id`,`"cartId"`,`"productId"`,`quantity`,`"unitPrice"`,`"createdAt"`,`"updatedAt"`];
-          const vals2: any[] = [uuidv4(), cartId, body.productId, quantity, unitPrice, /* NOW/NOW */];
+          const vals2: any[] = [uuidv4(), cartId, body.productId, quantity, unitPrice];
           let placeholders = "$1,$2,$3,$4,$5,NOW(),NOW()";
           if (variationId) {
             cols.splice(4, 0, `"variationId"`);
@@ -202,10 +281,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           );
         }
 
-        // Reserve stock
+        // reserve stock (negative)
         await adjustStock(client, body.productId, variationId, country, -body.quantity);
 
-        // Update cart hash
+        // update cart hash
         const { rows: hRows } = await client.query(
           `SELECT "productId","variationId",quantity,"unitPrice"
              FROM "cartProducts" WHERE "cartId"=$1 ORDER BY "createdAt"`,
@@ -219,7 +298,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
         await client.query("COMMIT");
 
-        // Slim product payload (normal products)
+        // slim payload
         const { rows: prod } = await pool.query(
           `SELECT id,title,description,image,sku,"regularPrice" FROM products WHERE id=$1`,
           [body.productId]
@@ -246,7 +325,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
     } catch (err: any) {
       if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };
-      // Convert the specific pricing throw into a user error
       if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
         return { status: 400, body: { error: err.message } };
       }

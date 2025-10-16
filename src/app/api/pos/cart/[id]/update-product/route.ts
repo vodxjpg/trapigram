@@ -8,14 +8,16 @@ import { adjustStock } from "@/lib/stock";
 import { resolveUnitPrice } from "@/lib/pricing";
 import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
 
+/* ───────────────────────────────────────────────────────────── */
+
 async function withIdempotency(
   req: NextRequest,
-  exec: () => Promise<{ status: number; body: any }>
+  exec: () => Promise<{ status: number; body: any } | NextResponse>
 ): Promise<NextResponse> {
   const key = req.headers.get("Idempotency-Key");
   if (!key) {
     const r = await exec();
-    return NextResponse.json(r.body, { status: r.status });
+    return r instanceof NextResponse ? r : NextResponse.json(r.body, { status: r.status });
   }
   const method = req.method;
   const path = new URL(req.url).pathname;
@@ -41,17 +43,17 @@ async function withIdempotency(
       if (e?.code === "42P01") {
         await c.query("ROLLBACK");
         const r = await exec();
-        return NextResponse.json(r.body, { status: r.status });
+        return r instanceof NextResponse ? r : NextResponse.json(r.body, { status: r.status });
       }
       throw e;
     }
     const r = await exec();
     await c.query(
       `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
-      [key, r.status, r.body]
+      [key, r instanceof NextResponse ? r.status : r.status, r instanceof NextResponse ? await r.json().catch(() => ({})) : r.body]
     );
     await c.query("COMMIT");
-    return NextResponse.json(r.body, { status: r.status });
+    return r instanceof NextResponse ? r : NextResponse.json(r.body, { status: r.status });
   } catch (err) {
     await c.query("ROLLBACK");
     throw err;
@@ -59,6 +61,8 @@ async function withIdempotency(
     c.release();
   }
 }
+
+/* ───────────────────────────────────────────────────────────── */
 
 const BodySchema = z.object({
   productId: z.string(),
@@ -98,6 +102,63 @@ function findTier(
   return global ?? null;
 }
 
+/** Same helper as in add-product: read stock/backorder; skip if schema lacks columns. */
+async function readInventory(
+  client: any,
+  productId: string,
+  variationId: string | null
+): Promise<{ manage: boolean; backorder: boolean; stock: number | null }> {
+  let manage = false;
+  let backorder = false;
+  let stock: number | null = null;
+
+  try {
+    const { rows } = await client.query(
+      `SELECT 
+         COALESCE("manageStock", false)                                  AS manage,
+         COALESCE("allowBackorder", COALESCE("backorderAllowed", false)) AS backorder,
+         COALESCE("stockQuantity", COALESCE(stock, NULL))                AS stock
+       FROM products WHERE id = $1 LIMIT 1`,
+      [productId]
+    );
+    if (rows[0]) {
+      manage = !!rows[0].manage;
+      backorder = !!rows[0].backorder;
+      if (rows[0].stock !== null && rows[0].stock !== undefined) {
+        stock = Number(rows[0].stock);
+      }
+    }
+  } catch (e: any) {
+    if (e?.code !== "42703" && e?.code !== "42P01") throw e;
+  }
+
+  if (variationId) {
+    try {
+      const { rows } = await client.query(
+        `SELECT 
+           COALESCE("manageStock", false)                                  AS manage,
+           COALESCE("allowBackorder", COALESCE("backorderAllowed", false)) AS backorder,
+           COALESCE("stockQuantity", COALESCE(stock, NULL))                AS stock
+         FROM "productVariations" WHERE id = $1 LIMIT 1`,
+        [variationId]
+      );
+      if (rows[0]) {
+        manage = !!rows[0].manage || manage;
+        if (rows[0].backorder !== null && rows[0].backorder !== undefined) {
+          backorder = !!rows[0].backorder;
+        }
+        if (rows[0].stock !== null && rows[0].stock !== undefined) {
+          stock = Number(rows[0].stock);
+        }
+      }
+    } catch (e: any) {
+      if (e?.code !== "42703" && e?.code !== "42P01") throw e;
+    }
+  }
+
+  return { manage, backorder, stock };
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -116,7 +177,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       try {
         await client.query("BEGIN");
 
-        // Use CART.country
+        // cart line + client context
         const { rows: cRows } = await client.query(
           `SELECT ca.country, cl."levelId", cl.id AS "clientId", cp.quantity
              FROM carts ca
@@ -129,11 +190,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         );
         if (!cRows.length) {
           await client.query("ROLLBACK");
-          return { status: 404, body: { error: "Cart item not found" } };
+          return NextResponse.json({ error: "Cart item not found" }, { status: 404 });
         }
         const { country, levelId, clientId, quantity: oldQty } = cRows[0];
 
-        // Base price
+        // base price
         const { price: basePrice } = await resolveUnitPrice(
           data.productId,
           variationId,
@@ -141,14 +202,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           levelId ?? "default"
         );
 
-        // New quantity
+        // new quantity
         const newQty = data.action === "add" ? oldQty + 1 : oldQty - 1;
         if (newQty < 0) {
           await client.query("ROLLBACK");
-          return { status: 400, body: { error: "Quantity cannot be negative" } };
+          return NextResponse.json({ error: "Quantity cannot be negative" }, { status: 400 });
         }
 
-        // Tier pricing
+        // --- inventory enforcement on increment ---
+        if (data.action === "add") {
+          const inv = await readInventory(client, data.productId, variationId);
+          if (inv.manage && !inv.backorder && inv.stock !== null) {
+            if (newQty > inv.stock) {
+              await client.query("ROLLBACK");
+              return NextResponse.json(
+                {
+                  error: `Only ${inv.stock} unit${inv.stock === 1 ? "" : "s"} available for this item.`,
+                  available: inv.stock,
+                },
+                { status: 400 }
+              );
+            }
+          }
+        }
+
+        // tier pricing
         let pricePerUnit = basePrice;
         const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
         const tier = findTier(tiers, country, data.productId, variationId, clientId);
@@ -177,7 +255,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           );
         }
 
-        // Persist change / delete if zero
+        // persist change / delete if zero
         if (newQty === 0) {
           await client.query(
             `DELETE FROM "cartProducts"
@@ -195,10 +273,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           );
         }
 
-        // Stock adjust
+        // stock adjust (negative on add, positive on subtract)
         await adjustStock(client, data.productId, variationId, country, data.action === "add" ? -1 : 1);
 
-        // Hash
+        // update cart hash
         const { rows: linesForHash } = await client.query(
           `SELECT "productId","variationId",quantity,"unitPrice"
              FROM "cartProducts" WHERE "cartId"=$1`,
@@ -212,7 +290,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
         await client.query("COMMIT");
 
-        // Snapshot
+        // snapshot
         const { rows: pRows } = await pool.query(
           `SELECT p.id,p.title,p.description,p.image,p.sku,
                   cp.quantity,cp."unitPrice",cp."variationId"
