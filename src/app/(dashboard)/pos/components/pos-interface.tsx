@@ -11,6 +11,7 @@ import { ReceiptOptionsDialog } from "./receipt-options-dialog"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { StoreRegisterSelector } from "./store-register-selector"
+import { Button } from "@/components/ui/button"
 
 import {
   AlertDialog,
@@ -54,6 +55,8 @@ export function POSInterface() {
   // store/outlet
   const [storeId, setStoreId] = useState<string | null>(null)
   const [outletId, setOutletId] = useState<string | null>(null)
+  // open the selector on demand (so we don't duplicate the component in the header)
+  const [selectorOpen, setSelectorOpen] = useState(false)
 
   // store/org meta used to resolve country for carts
   const [storeCountry, setStoreCountry] = useState<string | null>(null)
@@ -240,7 +243,6 @@ export function POSInterface() {
     const ensureWalkIn = async () => {
       if (selectedCustomer) return
       try {
-        // Try to find an existing walk-in quickly
         const url = new URL("/api/clients", window.location.origin)
         url.searchParams.set("page", "1")
         url.searchParams.set("pageSize", "1")
@@ -260,7 +262,6 @@ export function POSInterface() {
           }
         }
         if (!picked) {
-          // create a dedicated walk-in with required lastName
           const r = await fetch("/api/clients", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -487,6 +488,8 @@ export function POSInterface() {
       localStorage.setItem(LS_KEYS.STORE, s)
       localStorage.setItem(LS_KEYS.OUTLET, o)
     }
+    // close the modal we opened manually
+    setSelectorOpen(false)
   }
 
   return (
@@ -507,12 +510,20 @@ export function POSInterface() {
             </div>
           </div>
 
+          {/* Removed StoreRegisterSelector from header to avoid duplication */}
           <div className="flex items-center gap-2">
-            <StoreRegisterSelector
-              storeId={storeId}
-              outletId={outletId}
-              onChange={setStoreOutlet}
-            />
+            {/* Small summary + a button to open the same selector modal */}
+            <div className="text-xs text-muted-foreground hidden sm:block">
+              {storeId && outletId ? (
+                <span>Store: {storeId} • Register: {outletId}</span>
+              ) : (
+                <span>No outlet selected</span>
+              )}
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setSelectorOpen(true)}>
+              {storeId && outletId ? "Change outlet" : "Select outlet"}
+            </Button>
+
             <CustomerSelector
               selectedCustomer={selectedCustomer}
               onSelectCustomer={(c) => {
@@ -569,12 +580,12 @@ export function POSInterface() {
         defaultEmail={receiptDlg?.email ?? ""}
       />
 
-      {/* First-run: force store/outlet selection */}
+      {/* Only one StoreRegisterSelector instance: the modal/inline one. */}
       <StoreRegisterSelector
         storeId={storeId}
         outletId={outletId}
         onChange={setStoreOutlet}
-        forceOpen={forceSelectDialog}
+        forceOpen={forceSelectDialog || selectorOpen}
       />
 
       {/* Error dialog */}
