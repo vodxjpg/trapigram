@@ -2,10 +2,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-import PDFDocument from "pdfkit";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 export const runtime = "nodejs";
 
+/* -------- helpers -------- */
 type LineDB = {
   productId: string;
   variationId: string | null;
@@ -29,43 +30,63 @@ function addressToLines(addr: any): string[] {
   return [line1, line2, line3].filter((s) => s && s.trim().length);
 }
 
-function drawRow(
-  doc: any,
-  x: number,
-  y: number,
-  widths: number[],
-  cells: (string | number)[],
-  options: { bold?: boolean } = {}
-) {
-  const [wQty, wTitle, wUnit, wTax, wTotal] = widths;
-  const font = options.bold ? "Helvetica-Bold" : "Helvetica";
-  doc.font(font).fontSize(10);
-  doc.text(String(cells[0] ?? ""), x, y, { width: wQty, align: "right" });
-  doc.text(String(cells[1] ?? ""), x + wQty + 8, y, { width: wTitle - 8, align: "left" });
-  doc.text(String(cells[2] ?? ""), x + wQty + wTitle + 16, y, { width: wUnit - 16, align: "right" });
-  doc.text(String(cells[3] ?? ""), x + wQty + wTitle + wUnit + 24, y, { width: wTax - 24, align: "right" });
-  doc.text(String(cells[4] ?? ""), x + wQty + wTitle + wUnit + wTax + 32, y, { width: wTotal - 32, align: "right" });
-}
-
-function collectStream(doc: PDFDocument): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    doc.on("data", (b) => chunks.push(Buffer.isBuffer(b) ? b : Buffer.from(b)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-  });
-}
-
-/** Safe query helper: swallow missing-table/column errors and return [] */
+/** Try to read org/store metadata; return [] if tables/columns don’t exist */
 async function safeQuery<T = any>(sql: string, params: any[]) {
   try {
     const r = await pool.query<T>(sql, params);
-    return r.rows;
+    return r.rows as any[];
   } catch (e: any) {
-    // 42P01 = relation does not exist, 42703 = column does not exist
-    if (e?.code === "42P01" || e?.code === "42703") return [] as unknown as T[];
+    if (e?.code === "42P01" || e?.code === "42703") return [];
     throw e;
   }
+}
+
+/* -------- PDF helpers (pdf-lib) -------- */
+const A4 = { w: 595.28, h: 841.89 };
+const MARGIN = 36;
+
+type DrawCtx = {
+  page: any;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  helv: any;
+  bold: any;
+  fontSize: number;
+};
+
+function text(page: any, str: string, x: number, y: number, opts: any = {}) {
+  page.drawText(str, { x, y, color: rgb(0, 0, 0), size: 10, ...opts });
+}
+function textRight(page: any, str: string, rightX: number, y: number, font: any, size = 10) {
+  const width = font.widthOfTextAtSize(str, size);
+  page.drawText(str, { x: rightX - width, y, size, font, color: rgb(0, 0, 0) });
+}
+function wrapLines(str: string, maxWidth: number, font: any, size = 10): string[] {
+  const words = String(str).split(/\s+/);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const test = cur ? cur + " " + w : w;
+    if (font.widthOfTextAtSize(test, size) <= maxWidth) {
+      cur = test;
+    } else {
+      if (cur) lines.push(cur);
+      // very long single word fallback
+      if (font.widthOfTextAtSize(w, size) > maxWidth) {
+        lines.push(w);
+        cur = "";
+      } else {
+        cur = w;
+      }
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+function newPage(pdf: PDFDocument) {
+  return pdf.addPage([A4.w, A4.h]);
 }
 
 export async function GET(
@@ -78,12 +99,9 @@ export async function GET(
   const { id } = await params;
 
   try {
-    /* ── Load order ───────────────────────────────────────────────────────── */
+    /* ── Order ───────────────────────────────────────────────────────────── */
     const { rows: orderRows } = await pool.query(
-      `SELECT *
-         FROM orders
-        WHERE id = $1 AND "organizationId" = $2
-        LIMIT 1`,
+      `SELECT * FROM orders WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,
       [id, organizationId]
     );
     if (!orderRows.length) {
@@ -91,83 +109,80 @@ export async function GET(
     }
     const order: any = orderRows[0];
 
-    /* ── Organization (name/currency/address) — robust fallback ───────────── */
-    let orgName =
-      process.env.NEXT_PUBLIC_APP_NAME ||
-      process.env.APP_NAME ||
-      "Store";
+    /* ── Org/tenant meta (robust) ────────────────────────────────────────── */
+    let orgName = process.env.NEXT_PUBLIC_APP_NAME || process.env.APP_NAME || "Store";
     let currency = process.env.NEXT_PUBLIC_DEFAULT_CURRENCY || "USD";
     let orgAddr: any = null;
 
-    // organizations may not exist on your prod
-    {
-      const rows = await safeQuery(
-        `SELECT name, metadata FROM organizations WHERE id = $1 LIMIT 1`,
-        [organizationId]
-      );
-      if (rows.length) {
-        orgName = (rows as any)[0].name ?? orgName;
-        const meta = typeof (rows as any)[0].metadata === "string"
-          ? (() => { try { return JSON.parse((rows as any)[0].metadata); } catch { return {}; } })()
-          : ((rows as any)[0].metadata ?? {});
-        currency = meta?.currency || currency;
-        orgAddr = meta?.address || orgAddr;
-      }
-    }
-
-    // tenants table (also optional)
-    if (!orgAddr || currency === "USD") {
-      const rows = await safeQuery(
+    const orgRows = await safeQuery(
+      `SELECT name, metadata FROM organizations WHERE id = $1 LIMIT 1`,
+      [organizationId]
+    );
+    if (orgRows.length) {
+      orgName = orgRows[0].name ?? orgName;
+      const meta =
+        typeof orgRows[0].metadata === "string"
+          ? (() => {
+              try {
+                return JSON.parse(orgRows[0].metadata);
+              } catch {
+                return {};
+              }
+            })()
+          : orgRows[0].metadata ?? {};
+      currency = meta?.currency || currency;
+      orgAddr = meta?.address || orgAddr;
+    } else {
+      const tRows = await safeQuery(
         `SELECT name, settings FROM tenants WHERE id = $1 LIMIT 1`,
         [organizationId]
       );
-      if (rows.length) {
-        orgName = (rows as any)[0].name ?? orgName;
-        const settings = typeof (rows as any)[0]?.settings === "string"
-          ? (() => { try { return JSON.parse((rows as any)[0].settings); } catch { return {}; } })()
-          : ((rows as any)[0]?.settings ?? {});
+      if (tRows.length) {
+        orgName = tRows[0].name ?? orgName;
+        const settings =
+          typeof tRows[0].settings === "string"
+            ? (() => {
+                try {
+                  return JSON.parse(tRows[0].settings);
+                } catch {
+                  return {};
+                }
+              })()
+            : tRows[0].settings ?? {};
         currency = settings?.currency || currency;
         orgAddr = orgAddr || settings?.address || null;
       }
     }
 
-    /* ── Client (handle missing isWalkIn column) ──────────────────────────── */
+    /* ── Client (no hard dependency on isWalkIn) ─────────────────────────── */
     let client: { firstName?: string | null; lastName?: string | null; email?: string | null; isWalkIn?: boolean } = {
-      firstName: null, lastName: null, email: null, isWalkIn: true,
+      firstName: null,
+      lastName: null,
+      email: null,
+      isWalkIn: undefined,
     };
-
-    // First try with isWalkIn
     try {
       const { rows } = await pool.query(
-        `SELECT "firstName","lastName",email,"isWalkIn"
-           FROM clients
-          WHERE id = $1
-          LIMIT 1`,
+        `SELECT "firstName","lastName",email,"isWalkIn" FROM clients WHERE id = $1 LIMIT 1`,
         [order.clientId]
       );
       if (rows[0]) client = rows[0] as any;
     } catch (e: any) {
-      if (e?.code !== "42703") throw e; // rethrow other errors
-      // Fallback without isWalkIn (column missing)
+      if (e?.code !== "42703") throw e;
       const { rows } = await pool.query(
-        `SELECT "firstName","lastName",email
-           FROM clients
-          WHERE id = $1
-          LIMIT 1`,
+        `SELECT "firstName","lastName",email FROM clients WHERE id = $1 LIMIT 1`,
         [order.clientId]
       );
       if (rows[0]) {
         const row = rows[0] as any;
         const nameStr = [row.firstName, row.lastName].filter(Boolean).join(" ").toLowerCase();
-        const guessWalkIn = (!row.email && nameStr.includes("walk-in"));
-        client = { ...row, isWalkIn: guessWalkIn };
+        client = { ...row, isWalkIn: !row.email && nameStr.includes("walk-in") };
       }
     }
-
     const clientName =
       [client.firstName, client.lastName].filter(Boolean).join(" ").trim() || "Customer";
 
-    /* ── Parse channel → storeId/registerId if present ────────────────────── */
+    /* ── Parse channel → store/register ───────────────────────────────────── */
     let storeIdFromChannel: string | null = null;
     let registerIdFromChannel: string | null = null;
     if (typeof order.channel === "string") {
@@ -178,7 +193,7 @@ export async function GET(
       }
     }
 
-    /* ── Register/Store (address printed; fallback to org address) ────────── */
+    /* ── Register/Store details ───────────────────────────────────────────── */
     let storeName: string | null = null;
     let storeAddress: any = null;
     let registerLabel: string | null = null;
@@ -193,10 +208,10 @@ export async function GET(
         [registerIdFromChannel, organizationId]
       );
       if (regRows.length) {
-        registerLabel = (regRows as any)[0].label ?? null;
-        storeName = (regRows as any)[0].storeName ?? null;
-        storeAddress = (regRows as any)[0].address ?? null;
-        const m = (regRows as any)[0].metadata;
+        registerLabel = regRows[0].label ?? null;
+        storeName = regRows[0].storeName ?? null;
+        storeAddress = regRows[0].address ?? null;
+        const m = regRows[0].metadata;
         if (m) {
           try {
             const parsed = typeof m === "string" ? JSON.parse(m) : m;
@@ -213,18 +228,17 @@ export async function GET(
         [storeIdFromChannel, organizationId]
       );
       if (sRows.length) {
-        storeName = (sRows as any)[0].storeName ?? null;
-        storeAddress = (sRows as any)[0].address ?? null;
-        const m = (sRows as any)[0].metadata;
+        storeName = sRows[0].storeName ?? null;
+        storeAddress = sRows[0].address ?? null;
         try {
-          const parsed = typeof m === "string" ? JSON.parse(m) : m;
-          currency = parsed?.currency || currency;
+          const m = typeof sRows[0].metadata === "string" ? JSON.parse(sRows[0].metadata) : sRows[0].metadata;
+          currency = m?.currency || currency;
         } catch {}
       }
     }
     if (!storeAddress) storeAddress = orgAddr;
 
-    /* ── Lines: snapshot from cartProducts ────────────────────────────────── */
+    /* ── Lines (snapshot) ─────────────────────────────────────────────────── */
     const { rows: linesDB } = await pool.query<LineDB>(
       `SELECT cp."productId", cp."variationId", cp.quantity, cp."unitPrice",
               p.title, p.sku
@@ -284,7 +298,7 @@ export async function GET(
       return { ...l, netUnit, taxUnit, taxRate: rate, lineNet, lineTax, lineTotal };
     });
 
-    /* ── Payments from orderPayments ──────────────────────────────────────── */
+    /* ── Payments ─────────────────────────────────────────────────────────── */
     const { rows: payRows } = await pool.query(
       `SELECT op."methodId", op.amount, pm.name
          FROM "orderPayments" op
@@ -294,7 +308,6 @@ export async function GET(
       [order.id]
     );
     const payments = (payRows || []).map((p: any) => ({
-      methodId: p.methodId,
       label: p.name || p.methodId || "Payment",
       amount: Number(p.amount || 0),
     }));
@@ -302,156 +315,177 @@ export async function GET(
     const grandTotal = Number(order.totalAmount ?? subtotalNet + taxTotal);
     const change = Math.max(0, paid - grandTotal);
 
-    /* ── Build PDF ────────────────────────────────────────────────────────── */
-    const doc = new PDFDocument({ size: "A4", margin: 36 });
-    const pdfBufferP = collectStream(doc);
+    /* ── Build PDF with pdf-lib (no filesystem fonts) ─────────────────────── */
+    const pdf = await PDFDocument.create();
+    const page = newPage(pdf);
+
+    const helv = await pdf.embedFont(StandardFonts.Helvetica);
+    const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+    let y = A4.h - MARGIN;
 
     // Header
-    doc.font("Helvetica-Bold").fontSize(16).text(orgName, { align: "left" });
-    doc.moveDown(0.25);
-    doc.font("Helvetica").fontSize(10).text("POS Receipt", { align: "left" });
-    doc.moveDown(0.5);
+    page.drawText(orgName, { x: MARGIN, y, size: 16, font: bold });
+    y -= 18;
+    page.drawText("POS Receipt", { x: MARGIN, y, size: 10, font: helv, color: rgb(0.2, 0.2, 0.2) });
+    y -= 14;
 
-    // Store & Register block (if present)
+    // Store & Register block
     if (storeName || storeAddress) {
-      doc.font("Helvetica-Bold").fontSize(11).text(storeName ?? "Store", { continued: false });
-      const lines = addressToLines(storeAddress);
-      doc.font("Helvetica").fontSize(10);
-      for (const line of lines) doc.text(line);
-      if (registerLabel) doc.text(`Register: ${registerLabel}`);
-      else if (registerIdFromChannel) doc.text(`Register: ${registerIdFromChannel}`);
+      if (storeName) {
+        page.drawText(storeName, { x: MARGIN, y, size: 11, font: bold });
+        y -= 14;
+      }
+      for (const line of addressToLines(storeAddress)) {
+        page.drawText(line, { x: MARGIN, y, size: 10, font: helv });
+        y -= 12;
+      }
+      if (registerLabel) {
+        page.drawText(`Register: ${registerLabel}`, { x: MARGIN, y, size: 10, font: helv });
+        y -= 12;
+      }
     }
 
     // Order meta
-    doc.moveDown(0.5);
+    y -= 6;
     const createdAt = new Date(order.createdAt ?? Date.now());
-    doc.text(`Order ID: ${id}`);
-    doc.text(`Date: ${createdAt.toLocaleString()}`);
-    doc.text(`Tax Mode: ${taxInclusive ? "Tax Inclusive" : "Tax Exclusive"}`);
-    if (clientName) doc.text(`Customer: ${clientName}`);
-
-    // We no longer rely on isWalkIn; show the email if we have it.
-    // If you *must* hide for walk-in, uncomment the heuristic below:
-    // const isWalkIn = client.isWalkIn ?? (!client.email && clientName.toLowerCase().includes("walk-in"));
-    // if (!isWalkIn && client.email) doc.text(`Email: ${client.email}`);
-    if (client.email) doc.text(`Email: ${client.email}`);
+    page.drawText(`Order ID: ${id}`, { x: MARGIN, y, size: 10, font: helv }); y -= 12;
+    page.drawText(`Date: ${createdAt.toLocaleString()}`, { x: MARGIN, y, size: 10, font: helv }); y -= 12;
+    page.drawText(`Tax Mode: ${taxInclusive ? "Tax Inclusive" : "Tax Exclusive"}`, { x: MARGIN, y, size: 10, font: helv }); y -= 12;
+    page.drawText(`Customer: ${clientName}`, { x: MARGIN, y, size: 10, font: helv }); y -= 12;
+    if (client.email) { page.drawText(`Email: ${client.email}`, { x: MARGIN, y, size: 10, font: helv }); y -= 12; }
 
     // Table header
-    doc.moveDown(0.75);
-    const x = doc.page.margins.left;
-    let y = doc.y + 2;
+    y -= 8;
+    const colX = MARGIN;
     const widths = [40, 260, 90, 80, 90]; // Qty | Item | Unit | Tax | Total
-    doc.rect(x, y - 4, widths.reduce((a, b) => a + b, 0) + 32, 22).strokeOpacity(0.3).stroke();
-    drawRow(
-      doc,
-      x,
-      y,
-      widths,
-      [
-        "Qty",
-        "Item",
-        taxInclusive ? "Unit (incl. tax)" : "Unit",
-        "Tax",
-        "Line Total",
-      ],
-      { bold: true }
-    );
-    y += 18;
+    const totalTableWidth = widths.reduce((a, b) => a + b, 0) + 32;
+    page.drawLine({
+      start: { x: colX, y: y + 12 },
+      end: { x: colX + totalTableWidth, y: y + 12 },
+      thickness: 0.5,
+      color: rgb(0.7, 0.7, 0.7),
+    });
 
-    // Rows
-    const maxY = doc.page.height - doc.page.margins.bottom - 140;
-    const rowGap = 16;
+    page.drawText("Qty", { x: colX, y, size: 10, font: bold });
+    page.drawText("Item", { x: colX + widths[0] + 8, y, size: 10, font: bold });
+    textRight(page, taxInclusive ? "Unit (incl. tax)" : "Unit", colX + widths[0] + widths[1] + 16 + widths[2] - 4, y, bold);
+    textRight(page, "Tax", colX + widths[0] + widths[1] + widths[2] + 24 + widths[3] - 4, y, bold);
+    textRight(page, "Line Total", colX + widths[0] + widths[1] + widths[2] + widths[3] + 32 + widths[4] - 4, y, bold);
+    y -= 16;
+
+    // Rows (+ simple page break)
+    const rowGap = 14;
+    const minY = MARGIN + 160;
 
     for (const l of computedLines) {
+      if (y < minY) {
+        const p2 = newPage(pdf);
+        (p2 as any).drawText = page.drawText.bind(p2);
+        (p2 as any).drawLine = page.drawLine.bind(p2);
+        (p2 as any).drawRectangle = page.drawRectangle?.bind(p2);
+        (p2 as any).drawText && (y = A4.h - MARGIN);
+      }
+
       const itemName = l.sku ? `${l.title} (${l.sku})` : l.title;
       const unitDisp = fmtCurrency(Number(l.unitPrice), currency);
       const taxDisp = l.taxRate > 0 ? fmtCurrency(l.taxUnit, currency) : "-";
       const lineTotalDisp = fmtCurrency(l.lineTotal, currency);
 
-      if (y > maxY) {
-        doc.addPage();
-        y = doc.page.margins.top;
+      // Qty (right aligned)
+      textRight(page, String(l.quantity), colX + widths[0], y, helv);
+
+      // Item (wrap)
+      const itemX = colX + widths[0] + 8;
+      const itemW = widths[1] - 8;
+      const lines = wrapLines(itemName, itemW, helv, 10);
+      for (let i = 0; i < lines.length; i++) {
+        page.drawText(lines[i], { x: itemX, y: y - i * rowGap, size: 10, font: helv });
       }
-      drawRow(doc, x, y, widths, [l.quantity, itemName, unitDisp, taxDisp, lineTotalDisp]);
-      y += rowGap;
+
+      // Unit (right), Tax (right), Total (right)
+      textRight(page, unitDisp, colX + widths[0] + widths[1] + 16 + widths[2], y, helv);
+      textRight(page, taxDisp, colX + widths[0] + widths[1] + widths[2] + 24 + widths[3], y, helv);
+      textRight(page, lineTotalDisp, colX + widths[0] + widths[1] + widths[2] + widths[3] + 32 + widths[4], y, helv);
+
+      y -= rowGap * Math.max(1, lines.length);
     }
 
     // Totals block
-    y += 10;
-    if (y > maxY) {
-      doc.addPage();
-      y = doc.page.margins.top;
+    y -= 8;
+    if (y < minY) {
+      const p2 = newPage(pdf);
+      (p2 as any).drawText = page.drawText.bind(p2);
+      y = A4.h - MARGIN;
     }
-    const rightColX = x + widths.reduce((a, b) => a + b, 0) + 32 - 220;
 
-    doc.font("Helvetica").fontSize(10);
-    doc.text("Subtotal (net):", rightColX, y, { width: 120, align: "right" });
-    doc.text(fmtCurrency(subtotalNet, currency), rightColX + 130, y, { width: 90, align: "right" });
-    y += 16;
+    const rightColX = colX + totalTableWidth - 220;
+    page.drawText("Subtotal (net):", { x: rightColX, y, size: 10, font: helv });
+    textRight(page, fmtCurrency(subtotalNet, currency), rightColX + 220, y, helv);
+    y -= 14;
 
-    doc.text("Tax:", rightColX, y, { width: 120, align: "right" });
-    doc.text(fmtCurrency(taxTotal, currency), rightColX + 130, y, { width: 90, align: "right" });
-    y += 16;
+    page.drawText("Tax:", { x: rightColX, y, size: 10, font: helv });
+    textRight(page, fmtCurrency(taxTotal, currency), rightColX + 220, y, helv);
+    y -= 14;
 
-    doc.font("Helvetica-Bold");
-    doc.text("Grand Total:", rightColX, y, { width: 120, align: "right" });
-    doc.text(fmtCurrency(grandTotal, currency), rightColX + 130, y, { width: 90, align: "right" });
-    y += 20;
+    page.drawText("Grand Total:", { x: rightColX, y, size: 10, font: bold });
+    textRight(page, fmtCurrency(grandTotal, currency), rightColX + 220, y, bold);
+    y -= 18;
 
     // Payments
-    doc.font("Helvetica-Bold").text("Payments", x, y);
-    y += 14;
-    doc.font("Helvetica");
+    page.drawText("Payments", { x: colX, y, size: 10, font: bold });
+    y -= 12;
     if (payments.length) {
       for (const p of payments) {
-        const amt = fmtCurrency(p.amount, currency);
-        if (y > maxY) {
-          doc.addPage();
-          y = doc.page.margins.top;
+        if (y < MARGIN + 60) {
+          const p2 = newPage(pdf);
+          (p2 as any).drawText = page.drawText.bind(p2);
+          y = A4.h - MARGIN;
         }
-        doc.text(`${p.label}`, x, y, { width: 200, align: "left" });
-        doc.text(amt, rightColX + 130, y, { width: 90, align: "right" });
-        y += 14;
+        page.drawText(p.label, { x: colX, y, size: 10, font: helv });
+        textRight(page, fmtCurrency(p.amount, currency), rightColX + 220, y, helv);
+        y -= 12;
       }
     } else {
-      doc.text("—", x, y);
-      y += 14;
+      page.drawText("—", { x: colX, y, size: 10, font: helv });
+      y -= 12;
     }
 
-    // Change line (if any)
+    // Change
     if (change > 0) {
-      y += 6;
-      doc.font("Helvetica-Bold").text("Change Due:", rightColX, y, { width: 120, align: "right" });
-      doc.text(fmtCurrency(change, currency), rightColX + 130, y, { width: 90, align: "right" });
-      y += 16;
+      y -= 4;
+      page.drawText("Change Due:", { x: rightColX, y, size: 10, font: bold });
+      textRight(page, fmtCurrency(change, currency), rightColX + 220, y, bold);
+      y -= 12;
     }
 
     // Note
     if (order.note) {
-      y += 8;
-      if (y > maxY) {
-        doc.addPage();
-        y = doc.page.margins.top;
+      y -= 6;
+      page.drawText("Note", { x: colX, y, size: 10, font: bold });
+      y -= 12;
+      const noteLines = wrapLines(String(order.note), totalTableWidth, helv, 10);
+      for (const line of noteLines) {
+        page.drawText(line, { x: colX, y, size: 10, font: helv });
+        y -= 12;
       }
-      doc.font("Helvetica-Bold").text("Note", x, y);
-      y += 12;
-      doc.font("Helvetica").text(String(order.note), x, y, {
-        width: widths.reduce((a, b) => a + b, 0) + 32,
-      });
-      y = doc.y + 8;
     }
 
     // Footer
-    y = Math.max(y + 12, doc.page.height - doc.page.margins.bottom - 60);
-    doc.moveTo(x, y).lineTo(x + widths.reduce((a, b) => a + b, 0) + 32, y).strokeOpacity(0.2).stroke();
-    doc.font("Helvetica").fontSize(9).fillOpacity(0.7);
-    doc.text("Thank you for your purchase.", x, y + 8);
-    doc.text(orgName, x, y + 22);
+    y = Math.max(y - 8, MARGIN + 24);
+    page.drawLine({
+      start: { x: colX, y },
+      end: { x: colX + totalTableWidth, y },
+      thickness: 0.5,
+      color: rgb(0.8, 0.8, 0.8),
+    });
+    y -= 10;
+    page.drawText("Thank you for your purchase.", { x: colX, y, size: 9, font: helv, color: rgb(0.3, 0.3, 0.3) });
+    y -= 12;
+    page.drawText(orgName, { x: colX, y, size: 9, font: helv, color: rgb(0.3, 0.3, 0.3) });
 
-    doc.end();
-    const pdf = await collectStream(doc);
-
-    return new NextResponse(pdf, {
+    const pdfBytes = await pdf.save(); // Uint8Array
+    return new NextResponse(Buffer.from(pdfBytes), {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
