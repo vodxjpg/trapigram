@@ -103,82 +103,42 @@ function findTier(
   return global ?? null;
 }
 
-// Put this helper inside each endpoint file (or move to a shared util)
+// Optional stock reader used only for normal products
 async function readInventory(
   client: any,
   productId: string,
   variationId: string | null
 ): Promise<{ manage: boolean; backorder: boolean; stock: number | null }> {
-  let manage = false;
-  let backorder = false;
-  let stock: number | null = null;
-
-  // Helper that isolates a single query from aborting the whole tx
-  async function safeQuery(sql: string, params: any[], spName: string) {
-    await client.query(`SAVEPOINT ${spName}`);
-    try {
-      const res = await client.query(sql, params);
-      // Only release if no error happened
-      await client.query(`RELEASE SAVEPOINT ${spName}`);
-      return res;
-    } catch (e: any) {
-      // Missing table/column → roll back to savepoint and pretend no rows
-      if (e?.code === "42703" || e?.code === "42P01") {
-        await client.query(`ROLLBACK TO SAVEPOINT ${spName}`);
-        return { rows: [] };
-      }
-      // Other errors are real
-      await client.query(`ROLLBACK TO SAVEPOINT ${spName}`);
-      throw e;
-    }
+  let manage = false, backorder = false, stock: number | null = null;
+  async function safeQuery(sql: string, params: any[], sp: string) {
+    await client.query(`SAVEPOINT ${sp}`);
+    try { const r = await client.query(sql, params); await client.query(`RELEASE SAVEPOINT ${sp}`); return r; }
+    catch (e: any) { await client.query(`ROLLBACK TO SAVEPOINT ${sp}`); if (e?.code==="42703"||e?.code==="42P01") return { rows: [] }; throw e; }
   }
-
-  // Product-level flags
-  {
+  { // product
     const { rows } = await safeQuery(
-      `SELECT 
-         COALESCE("manageStock", false)                                  AS manage,
-         COALESCE("allowBackorder", COALESCE("backorderAllowed", false)) AS backorder,
-         COALESCE("stockQuantity", COALESCE(stock, NULL))                AS stock
-       FROM products
-       WHERE id = $1
-       LIMIT 1`,
-      [productId],
-      "inv_p"
+      `SELECT COALESCE("manageStock",false) AS manage,
+              COALESCE("allowBackorder",COALESCE("backorderAllowed",false)) AS backorder,
+              COALESCE("stockQuantity",COALESCE(stock,NULL)) AS stock
+         FROM products WHERE id=$1 LIMIT 1`,
+      [productId], "inv_p"
+    );
+    if (rows[0]) { manage=!!rows[0].manage; backorder=!!rows[0].backorder; if (rows[0].stock!=null) stock=Number(rows[0].stock); }
+  }
+  if (variationId) { // variation
+    const { rows } = await safeQuery(
+      `SELECT COALESCE("manageStock",false) AS manage,
+              COALESCE("allowBackorder",COALESCE("backorderAllowed",false)) AS backorder,
+              COALESCE("stockQuantity",COALESCE(stock,NULL)) AS stock
+         FROM "productVariations" WHERE id=$1 LIMIT 1`,
+      [variationId], "inv_v"
     );
     if (rows[0]) {
-      manage = !!rows[0].manage;
-      backorder = !!rows[0].backorder;
-      if (rows[0].stock !== null && rows[0].stock !== undefined) {
-        stock = Number(rows[0].stock);
-      }
+      manage = !!rows[0].manage || manage;
+      if (rows[0].backorder!=null) backorder = !!rows[0].backorder;
+      if (rows[0].stock!=null) stock = Number(rows[0].stock);
     }
   }
-
-  // Variation-level overrides
-  if (variationId) {
-    const { rows } = await safeQuery(
-      `SELECT 
-         COALESCE("manageStock", false)                                  AS manage,
-         COALESCE("allowBackorder", COALESCE("backorderAllowed", false)) AS backorder,
-         COALESCE("stockQuantity", COALESCE(stock, NULL))                AS stock
-       FROM "productVariations"
-       WHERE id = $1
-       LIMIT 1`,
-      [variationId],
-      "inv_v"
-    );
-    if (rows[0]) {
-      manage = !!rows[0].manage || manage;            // variation can enable mgmt
-      if (rows[0].backorder !== null && rows[0].backorder !== undefined) {
-        backorder = !!rows[0].backorder;              // explicit override
-      }
-      if (rows[0].stock !== null && rows[0].stock !== undefined) {
-        stock = Number(rows[0].stock);                // explicit override
-      }
-    }
-  }
-
   return { manage, backorder, stock };
 }
 
@@ -208,8 +168,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const levelId: string | null = cRows[0].levelId ?? null;
       const clientId: string = cRows[0].clientId;
 
-      // price resolution
-      const { price: basePrice } = await resolveUnitPrice(
+      // price resolution (+ affiliate flag)
+      const { price: basePrice, isAffiliate } = await resolveUnitPrice(
         body.productId,
         variationId,
         country,
@@ -220,65 +180,94 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       try {
         await client.query("BEGIN");
 
-        // existing cart line
-        let sql = `SELECT id, quantity FROM "cartProducts"
-                    WHERE "cartId"=$1 AND "productId"=$2`;
+        // Select existing line by productId or affiliateProductId
+        let sql = `SELECT id, quantity
+                     FROM "cartProducts"
+                    WHERE "cartId"=$1
+                      AND ${isAffiliate ? `"affiliateProductId"` : `"productId"`}=$2`;
         const vals: any[] = [cartId, body.productId];
-        if (variationId) {
-          sql += ` AND "variationId"=$3`;
-          vals.push(variationId);
-        }
+        if (variationId) { sql += ` AND "variationId"=$3`; vals.push(variationId); }
         const { rows: existing } = await client.query(sql, vals);
 
-        // compute new total quantity for this line
-        let quantity = body.quantity;
-        if (existing.length) quantity += existing[0].quantity;
-
-        // --- inventory enforcement BEFORE mutate ---
-        const inv = await readInventory(client, body.productId, variationId);
-        if (inv.manage && !inv.backorder && inv.stock !== null) {
-          if (quantity > inv.stock) {
+        // inventory enforcement BEFORE change → only for normal products
+        if (!isAffiliate) {
+          const inv = await readInventory(client, body.productId, variationId);
+          const newQty = (existing[0]?.quantity ?? 0) + body.quantity;
+          if (inv.manage && !inv.backorder && inv.stock !== null && newQty > inv.stock) {
             await client.query("ROLLBACK");
             return {
               status: 400,
-              body: {
-                error: `Only ${inv.stock} unit${inv.stock === 1 ? "" : "s"} available for this item.`,
-                available: inv.stock,
-              },
+              body: { error: `Only ${inv.stock} unit${inv.stock === 1 ? "" : "s"} available for this item.`, available: inv.stock },
             };
           }
         }
 
-        // tier pricing
-        let unitPrice = basePrice;
-        const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
-        const tier = findTier(tiers, country, body.productId, variationId, clientId);
-        if (tier) {
-          const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
-          const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
-          const { rows: sumRow } = await client.query(
-            `SELECT COALESCE(SUM(quantity),0)::int AS qty
-               FROM "cartProducts"
-              WHERE "cartId"=$1
-                AND ( ("productId" = ANY($2::text[]))
-                      OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
-            [cartId, tierProdIds, tierVarIds],
+        // affiliate points flow (mirror normal cart)
+        if (isAffiliate) {
+          const pointsNeeded = basePrice * body.quantity;
+          const { rows: bal } = await client.query(
+            `SELECT "pointsCurrent" FROM "affiliatePointBalances"
+              WHERE "organizationId"=$1
+                AND "clientId"=(SELECT "clientId" FROM carts WHERE id=$2)`,
+            [ctx.organizationId, cartId],
           );
-          const qtyBefore = Number(sumRow[0].qty);
-          const qtyAfter = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
-          unitPrice = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
-
+          const current = bal[0]?.pointsCurrent ?? 0;
+          if (pointsNeeded > current) {
+            await client.query("ROLLBACK");
+            return { status: 400, body: { error: "Insufficient affiliate points", required: pointsNeeded, available: current } };
+          }
           await client.query(
-            `UPDATE "cartProducts"
-                SET "unitPrice"=$1,"updatedAt"=NOW()
-              WHERE "cartId"=$2
-                AND ( ("productId" = ANY($3::text[]))
-                      OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[])) )`,
-            [unitPrice, cartId, tierProdIds, tierVarIds]
+            `UPDATE "affiliatePointBalances"
+                SET "pointsCurrent"="pointsCurrent"-$1,
+                    "pointsSpent"  ="pointsSpent"  +$1,
+                    "updatedAt"=NOW()
+              WHERE "organizationId"=$2
+                AND "clientId"=(SELECT "clientId" FROM carts WHERE id=$3)`,
+            [pointsNeeded, ctx.organizationId, cartId],
+          );
+          await client.query(
+            `INSERT INTO "affiliatePointLogs"
+               (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+             VALUES (gen_random_uuid(),$1,
+                     (SELECT "clientId" FROM carts WHERE id=$2),
+                     $3,'redeem','add to cart',NOW(),NOW())`,
+            [ctx.organizationId, cartId, -pointsNeeded],
           );
         }
 
-        // upsert line
+        // upsert line + tier pricing for normal products
+        let quantity = body.quantity + (existing[0]?.quantity ?? 0);
+        let unitPrice = basePrice;
+
+        if (!isAffiliate) {
+          const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
+          const tier = findTier(tiers, country, body.productId, variationId, clientId);
+          if (tier) {
+            const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
+            const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
+            const { rows: sumRow } = await client.query(
+              `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                 FROM "cartProducts"
+                WHERE "cartId"=$1
+                  AND ( ("productId" = ANY($2::text[]))
+                        OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
+              [cartId, tierProdIds, tierVarIds],
+            );
+            const qtyBefore = Number(sumRow[0].qty);
+            const qtyAfter = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
+            unitPrice = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
+
+            await client.query(
+              `UPDATE "cartProducts"
+                  SET "unitPrice"=$1,"updatedAt"=NOW()
+                WHERE "cartId"=$2
+                  AND ( ("productId" = ANY($3::text[]))
+                        OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[])) )`,
+              [unitPrice, cartId, tierProdIds, tierVarIds]
+            );
+          }
+        }
+
         if (existing.length) {
           await client.query(
             `UPDATE "cartProducts"
@@ -287,26 +276,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             [quantity, unitPrice, existing[0].id]
           );
         } else {
-          const cols = [`id`,`"cartId"`,`"productId"`,`quantity`,`"unitPrice"`,`"createdAt"`,`"updatedAt"`];
-          const vals2: any[] = [uuidv4(), cartId, body.productId, quantity, unitPrice];
-          let placeholders = "$1,$2,$3,$4,$5,NOW(),NOW()";
           if (variationId) {
-            cols.splice(4, 0, `"variationId"`);
-            vals2.splice(4, 0, variationId);
-            placeholders = "$1,$2,$3,$4,$5,$6,NOW(),NOW()";
+            await client.query(
+              `INSERT INTO "cartProducts"
+                 (id,"cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
+               VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
+              [uuidv4(), cartId, isAffiliate ? null : body.productId, isAffiliate ? body.productId : null, variationId, quantity, unitPrice]
+            );
+          } else {
+            await client.query(
+              `INSERT INTO "cartProducts"
+                 (id,"cartId","productId","affiliateProductId",quantity,"unitPrice","createdAt","updatedAt")
+               VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
+              [uuidv4(), cartId, isAffiliate ? null : body.productId, isAffiliate ? body.productId : null, quantity, unitPrice]
+            );
           }
-          await client.query(
-            `INSERT INTO "cartProducts" (${cols.join(",")}) VALUES (${placeholders})`,
-            vals2
-          );
         }
 
-        // reserve stock (negative)
+        // reserve stock
         await adjustStock(client, body.productId, variationId, country, -body.quantity);
 
         // update cart hash
         const { rows: hRows } = await client.query(
-          `SELECT "productId","variationId",quantity,"unitPrice"
+          `SELECT COALESCE("productId","affiliateProductId") AS pid, "variationId", quantity,"unitPrice"
              FROM "cartProducts" WHERE "cartId"=$1 ORDER BY "createdAt"`,
           [cartId]
         );
@@ -318,19 +310,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
         await client.query("COMMIT");
 
-        // slim payload
-        const { rows: prod } = await pool.query(
-          `SELECT id,title,description,image,sku,"regularPrice" FROM products WHERE id=$1`,
-          [body.productId]
-        );
-        const product = prod[0] && {
-          id: prod[0].id,
+        // slim payload (choose table by isAffiliate)
+        const prodQuery = isAffiliate
+          ? `SELECT id,title,description,image,sku FROM "affiliateProducts" WHERE id=$1`
+          : `SELECT id,title,description,image,sku,"regularPrice" FROM products WHERE id=$1`;
+        const { rows: prod } = await pool.query(prodQuery, [body.productId]);
+
+        const base = prod[0];
+        const product = {
+          id: base.id,
           variationId,
-          title: prod[0].title,
-          sku: prod[0].sku,
-          description: prod[0].description,
-          image: prod[0].image,
-          regularPrice: prod[0].regularPrice ?? {},
+          title: base.title,
+          sku: base.sku,
+          description: base.description,
+          image: base.image,
+          regularPrice: isAffiliate ? {} : base.regularPrice ?? {},
           price: unitPrice,
           stockData: {},
           subtotal: Number(unitPrice) * quantity,

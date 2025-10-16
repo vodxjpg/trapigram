@@ -101,7 +101,8 @@ function pickTierForClient(
 
 async function computeCartHash(cartId: string): Promise<string> {
   const { rows } = await pool.query(
-    `SELECT "productId","variationId",quantity,"unitPrice"
+    `SELECT COALESCE("productId","affiliateProductId") AS pid,
+            "variationId", quantity,"unitPrice"
        FROM "cartProducts"
       WHERE "cartId" = $1
       ORDER BY "createdAt"`,
@@ -138,7 +139,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       const result = await pool.query(
         `DELETE FROM "cartProducts"
-          WHERE "cartId"=$1 AND "productId"=$2
+          WHERE "cartId"=$1 AND ("productId"=$2 OR "affiliateProductId"=$2)
           ${withVariation ? `AND "variationId"=$3` : ""}
           RETURNING *`,
         [cartId, parsed.productId, ...(withVariation ? [normVariationId] : [])]
@@ -149,9 +150,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // Context for stock + tier recompute
       const { rows: cRows } = await pool.query(
         `SELECT ca.country, cl."levelId", ca."clientId"
-          FROM carts ca
-          JOIN clients cl ON cl.id = ca."clientId"
-        WHERE ca.id = $1`,
+           FROM carts ca
+           JOIN clients cl ON cl.id = ca."clientId"
+          WHERE ca.id = $1`,
         [cartId]
       );
       const country = cRows[0]?.country as string | undefined;
@@ -164,10 +165,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         await adjustStock(pool as any, parsed.productId, normVariationId, country, +releasedQty);
       }
 
-      // Tier re-evaluation
-      if (country && levelId) {
+      // Tier re-evaluation ONLY for normal products
+      if (!deleted.affiliateProductId && country && levelId) {
         const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
         const tier = pickTierForClient(tiers, country, deleted.productId, normVariationId, clientId);
+
         if (tier) {
           const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
           const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
@@ -183,7 +185,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const qtyAfter = Number(qRows[0]?.qty ?? 0);
 
           const newUnit = getPriceForQuantity(tier.steps, qtyAfter);
+
           if (newUnit === null) {
+            // fall back to base money price per line
             const { rows: lines } = await pool.query(
               `SELECT id,"productId","variationId"
                  FROM "cartProducts"
@@ -201,37 +205,39 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 levelId,
               );
               await pool.query(
-                `UPDATE "cartProducts" SET "unitPrice"=$1,"updatedAt"=NOW() WHERE id=$2`,
-                [price, line.id]
+                `UPDATE "cartProducts"
+                    SET "unitPrice"=$1, "updatedAt"=NOW()
+                  WHERE id=$2`,
+                [price, line.id],
               );
             }
           } else {
             await pool.query(
               `UPDATE "cartProducts"
-                  SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2
-                  AND ( ("productId" = ANY($3::text[]))
-                        OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[])) )`,
-              [newUnit, cartId, tierProdIds, tierVarIds]
+                    SET "unitPrice"=$1, "updatedAt"=NOW()
+                  WHERE "cartId" = $2
+                    AND ( ("productId" = ANY($3::text[]))
+                          OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[])) )`,
+              [newUnit, cartId, tierProdIds, tierVarIds],
             );
           }
         }
       }
 
+      // Recompute hash
       const newHash = await computeCartHash(cartId);
       await pool.query(
-        `UPDATE carts SET "cartUpdatedHash"=$1, "updatedAt"=NOW() WHERE id=$2`,
-        [newHash, cartId]
+        `UPDATE carts
+            SET "cartUpdatedHash"=$1,"updatedAt"=NOW()
+          WHERE id=$2`,
+        [newHash, cartId],
       );
 
       return { status: 200, body: deleted };
     } catch (err: any) {
-      if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };
       console.error("[POS POST /pos/cart/:id/remove-product]", err);
+      if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };
       return { status: 500, body: { error: err.message ?? "Internal server error" } };
     }
   });
 }
-
-// (Optional) Support DELETE if you want parity with /cart remove
-export const DELETE = POST;

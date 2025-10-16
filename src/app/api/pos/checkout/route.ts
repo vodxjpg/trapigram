@@ -6,6 +6,465 @@ import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 
+/* ========= Revenue helpers (inlined) ========= */
+
+// Small helper: fetch with timeout + JSON parse
+async function fetchJSON(
+  url: string,
+  init?: RequestInit & { timeoutMs?: number }
+): Promise<{ res: Response; data: any }> {
+  const { timeoutMs = 5000, ...rest } = init ?? {};
+  const ac = new AbortController();
+  const to = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...rest, signal: ac.signal });
+    let data: any = null;
+    try { data = await res.json(); } catch { /* non-json */ }
+    return { res, data };
+  } finally {
+    clearTimeout(to);
+  }
+}
+
+const euroCountries = [
+  "AT","BE","HR","CY","EE","FI","FR","DE","GR","IE","IT","LV","LT","LU","MT",
+  "NL","PT","SK","SI","ES"
+];
+
+const currencyFromCountry = (c: string) =>
+  c === "GB" ? "GBP" : euroCountries.includes(c) ? "EUR" : "USD";
+
+const coins: Record<string, string> = {
+  BTC: "bitcoin",
+  ETH: "ethereum",
+  USDT: "tether",
+  "USDT.ERC20": "tether",
+  "USDT.TRC20": "tether",
+  USDC: "usd-coin",
+  "USDC.ERC20": "usd-coin",
+  "USDC.TRC20": "usd-coin",
+  "USDC.SOL": "usd-coin",
+  "USDC.SPL": "usd-coin",
+  "USDC.POLYGON": "usd-coin",
+  "USDC.BEP20": "usd-coin",
+  "USDC.ARBITRUM": "usd-coin",
+  "USDC.OPTIMISM": "usd-coin",
+  "USDC.BASE": "usd-coin",
+  XRP: "ripple",
+  SOL: "solana",
+  ADA: "cardano",
+  LTC: "litecoin",
+  DOT: "polkadot",
+  BCH: "bitcoin-cash",
+  LINK: "chainlink",
+  BNB: "binancecoin",
+  DOGE: "dogecoin",
+  MATIC: "matic-network",
+  XMR: "monero",
+};
+
+type CategoryRevenue = {
+  categoryId: string;
+  price: number;
+  cost: number;
+  quantity: number;
+};
+
+type TransformedCategoryRevenue = {
+  categoryId: string;
+  total: number;
+  cost: number;
+};
+
+async function insertOrderRevenue(
+  revenueId: string,
+  orderId: string,
+  organizationId: string,
+  v: {
+    USDtotal: number; USDdiscount: number; USDshipping: number; USDcost: number;
+    GBPtotal: number; GBPdiscount: number; GBPshipping: number; GBPcost: number;
+    EURtotal: number; EURdiscount: number; EURshipping: number; EURcost: number;
+  }
+) {
+  const sql = `
+    INSERT INTO "orderRevenue" (
+      id,"orderId",
+      "USDtotal","USDdiscount","USDshipping","USDcost",
+      "GBPtotal","GBPdiscount","GBPshipping","GBPcost",
+      "EURtotal","EURdiscount","EURshipping","EURcost",
+      "createdAt","updatedAt","organizationId"
+    ) VALUES (
+      $1,$2,
+      $3,$4,$5,$6,
+      $7,$8,$9,$10,
+      $11,$12,$13,$14,
+      NOW(),NOW(),$15
+    )
+    RETURNING *`;
+  const params = [
+    revenueId, orderId,
+    v.USDtotal, v.USDdiscount, v.USDshipping, v.USDcost,
+    v.GBPtotal, v.GBPdiscount, v.GBPshipping, v.GBPcost,
+    v.EURtotal, v.EURdiscount, v.EURshipping, v.EURcost,
+    organizationId,
+  ];
+  const { rows } = await pool.query(sql, params);
+  return rows[0];
+}
+
+async function insertCategoryRevenue(
+  catRevenueId: string,
+  categoryId: string,
+  organizationId: string,
+  v: {
+    USDtotal: number; USDcost: number;
+    GBPtotal: number; GBPcost: number;
+    EURtotal: number; EURcost: number;
+  }
+) {
+  const sql = `INSERT INTO "categoryRevenue" (id,"categoryId","USDtotal","USDcost","GBPtotal","GBPcost","EURtotal","EURcost","createdAt","updatedAt","organizationId")
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW(),$9)`;
+  await pool.query(sql, [catRevenueId, categoryId, v.USDtotal, v.USDcost, v.GBPtotal, v.GBPcost, v.EURtotal, v.EURcost, organizationId]);
+}
+
+async function getRevenue(id: string, organizationId: string) {
+  const apiKey = process.env.CURRENCY_LAYER_API_KEY;
+  // 0) avoid duplicates
+  const { rows: existing } = await pool.query(
+    `SELECT * FROM "orderRevenue" WHERE "orderId"=$1 LIMIT 1`, [id]
+  );
+  if (existing.length) return existing[0];
+
+  // 1) order
+  const { rows: orderRows } = await pool.query(
+    `SELECT * FROM orders WHERE id=$1 AND "organizationId"=$2 LIMIT 1`,
+    [id, organizationId]
+  );
+  const order: any = orderRows[0];
+  if (!order) throw new Error("Order not found");
+
+  const cartId: string = order.cartId;
+  const paymentType = String(order.paymentMethod ?? "").toLowerCase();
+  const country: string = order.country;
+
+  // effective cost resolver (shared/variation aware)
+  const mappingCache = new Map<string, { shareLinkId: string; sourceProductId: string } | null>();
+  const varMapCache = new Map<string, string | null>();
+  const costCache = new Map<string, number>();
+
+  async function mapTargetToSourceVariation(
+    shareLinkId: string,
+    sourceProductId: string,
+    targetProductId: string,
+    targetVariationId: string
+  ) {
+    const key = `${shareLinkId}|${sourceProductId}|${targetProductId}|${targetVariationId}`;
+    if (varMapCache.has(key)) return varMapCache.get(key)!;
+    const { rows } = await pool.query(
+      `SELECT "sourceVariationId"
+         FROM "sharedVariationMapping"
+        WHERE "shareLinkId"=$1
+          AND "sourceProductId"=$2
+          AND "targetProductId"=$3
+          AND "targetVariationId"=$4
+        LIMIT 1`,
+      [shareLinkId, sourceProductId, targetProductId, targetVariationId],
+    );
+    const srcVar = rows[0]?.sourceVariationId ?? null;
+    varMapCache.set(key, srcVar);
+    return srcVar;
+  }
+
+  async function resolveEffectiveCost(productId: string, variationId?: string | null) {
+    const cacheKey = `${productId}:${variationId ?? "-"}:${country}`;
+    if (costCache.has(cacheKey)) return costCache.get(cacheKey)!;
+
+    let mapping = mappingCache.get(productId);
+    if (mapping === undefined) {
+      const { rows: [m] } = await pool.query(
+        `SELECT "shareLinkId","sourceProductId"
+           FROM "sharedProductMapping"
+          WHERE "targetProductId"=$1
+          LIMIT 1`,
+        [productId],
+      );
+      mapping = m ? { shareLinkId: m.shareLinkId, sourceProductId: m.sourceProductId } : null;
+      mappingCache.set(productId, mapping);
+    }
+
+    let eff = 0;
+    if (mapping) {
+      let srcVarId: string | null = null;
+      if (variationId) {
+        srcVarId = await mapTargetToSourceVariation(
+          mapping.shareLinkId, mapping.sourceProductId, productId, variationId,
+        );
+      }
+      if (srcVarId) {
+        const { rows: [pv] } = await pool.query(
+          `SELECT cost FROM "productVariations" WHERE id=$1 LIMIT 1`,
+          [srcVarId],
+        );
+        eff = Number((pv?.cost ?? {})[country] ?? 0);
+      }
+      if (!eff) {
+        const { rows: [sp] } = await pool.query(
+          `SELECT cost FROM "sharedProduct"
+             WHERE "shareLinkId"=$1 AND "productId"=$2 LIMIT 1`,
+          [mapping.shareLinkId, mapping.sourceProductId],
+        );
+        eff = Number((sp?.cost ?? {})[country] ?? 0);
+      }
+    } else {
+      if (variationId) {
+        const { rows: [pv] } = await pool.query(
+          `SELECT cost FROM "productVariations" WHERE id=$1 LIMIT 1`,
+          [variationId],
+        );
+        eff = Number((pv?.cost ?? {})[country] ?? 0);
+      }
+      if (!eff) {
+        const { rows: [p] } = await pool.query(
+          `SELECT cost FROM products WHERE id=$1 LIMIT 1`,
+          [productId],
+        );
+        eff = Number((p?.cost ?? {})[country] ?? 0);
+      }
+    }
+
+    costCache.set(cacheKey, eff);
+    return eff;
+  }
+
+  // 3) paid timestamp window for FX/crypto
+  const rawPaid = order.datePaid ?? order.dateCreated;
+  const paidDate: Date = rawPaid instanceof Date ? rawPaid : new Date(rawPaid);
+  if (Number.isNaN(paidDate.getTime())) throw new Error("Invalid paid date");
+  const to = Math.floor(paidDate.getTime() / 1000);
+  const from = to - 3600;
+
+  // 4) cart lines (normal + affiliate) and categories
+  const { rows: prodRows } = await pool.query(
+    `SELECT p.*, cp.quantity, cp."unitPrice"
+       FROM "cartProducts" cp
+       JOIN products p ON cp."productId"=p.id
+      WHERE cp."cartId"=$1`,
+    [cartId],
+  );
+  const { rows: affRows } = await pool.query(
+    `SELECT ap.*, cp.quantity, cp."unitPrice"
+       FROM "cartProducts" cp
+       JOIN "affiliateProducts" ap ON cp."affiliateProductId"=ap.id
+      WHERE cp."cartId"=$1`,
+    [cartId],
+  );
+
+  const { rows: catRows } = await pool.query(
+    `SELECT cp.quantity, cp."unitPrice", cp."variationId",
+            p."id" AS "productId", pc."categoryId"
+       FROM "cartProducts" AS cp
+       JOIN products  AS p  ON cp."productId" = p."id"
+  LEFT JOIN "productCategory" AS pc ON pc."productId" = p."id"
+      WHERE cp."cartId"=$1`,
+    [cartId],
+  );
+
+  const categories: CategoryRevenue[] = [];
+  for (const ct of catRows) {
+    const qty = Number(ct.quantity ?? 0);
+    const unitPrice = Number(ct.unitPrice ?? 0);
+    const effCost = await resolveEffectiveCost(String(ct.productId), ct.variationId ?? null);
+    categories.push({ categoryId: ct.categoryId, price: unitPrice, cost: effCost, quantity: qty });
+  }
+  const newCategories: TransformedCategoryRevenue[] = categories.map(
+    ({ categoryId, price, cost, quantity }) => ({
+      categoryId, total: price * quantity, cost: cost * quantity,
+    }),
+  );
+
+  // 5) total COST
+  const productsCost = categories.reduce((s, c) => s + c.cost * c.quantity, 0);
+  const affiliateCost = affRows.reduce((s, a: any) => {
+    const unitCost = Number(a?.cost?.[country] ?? 0);
+    const qty = Number(a?.quantity ?? 0);
+    return s + unitCost * qty;
+  }, 0);
+  const totalCost = productsCost + affiliateCost;
+
+  // 6) crypto override for Niftipay (needs PAID meta)
+  let totalUsdFromCrypto = 0;
+  let applyCryptoOverride = false;
+  let coinRaw = "";
+  let amount = 0;
+  if (paymentType === "niftipay") {
+    const metaArr: any[] = Array.isArray(order.orderMeta)
+      ? order.orderMeta
+      : JSON.parse(order.orderMeta ?? "[]");
+    const paidEntry = metaArr.find((m) => String(m?.event ?? "").toLowerCase() === "paid");
+    if (paidEntry) {
+      coinRaw = String(paidEntry?.order?.asset ?? "");
+      amount = Number(paidEntry?.order?.amount ?? 0);
+      applyCryptoOverride = Boolean(coinRaw && amount > 0);
+    }
+  }
+  if (applyCryptoOverride) {
+    const coinKey = coinRaw.toUpperCase();
+    const coinId = coins[coinKey];
+    if (!coinId) throw new Error(`Unsupported crypto asset "${coinKey}"`);
+    const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
+    const { res: cgRes, data: cgData } = await fetchJSON(url, {
+      method: "GET", headers: { accept: "application/json" }, timeoutMs: 5000,
+    });
+    if (!cgRes.ok) throw new Error(`HTTP ${cgRes.status} – ${cgRes.statusText}`);
+    const prices = Array.isArray(cgData?.prices) ? cgData.prices : [];
+    const last = prices.length ? prices[prices.length - 1] : null;
+    const price = Array.isArray(last) ? Number(last[1]) : null;
+    if (price == null || Number.isNaN(price)) throw new Error("No price data from CoinGecko");
+    totalUsdFromCrypto = amount * price;
+  }
+
+  // 7) FX
+  const { rows: fxRows } = await pool.query(
+    `SELECT "EUR","GBP" FROM "exchangeRate" WHERE date <= to_timestamp($1) ORDER BY date DESC LIMIT 1`,
+    [to],
+  );
+
+  let USDEUR = 0, USDGBP = 0;
+  if (!fxRows.length) {
+    const apiKey = process.env.CURRENCY_LAYER_API_KEY;
+    const url = `https://api.currencylayer.com/live?access_key=${apiKey}&currencies=EUR,GBP`;
+    const { res: clRes, data } = await fetchJSON(url, { timeoutMs: 5000 });
+    const usdEur = Number(data?.quotes?.USDEUR ?? 0);
+    const usdGbp = Number(data?.quotes?.USDGBP ?? 0);
+    if (!(usdEur > 0) || !(usdGbp > 0)) throw new Error("Invalid FX API response");
+    const { rows: ins } = await pool.query(
+      `INSERT INTO "exchangeRate" ("EUR","GBP",date) VALUES ($1,$2,$3) RETURNING *`,
+      [usdEur, usdGbp, new Date(paidDate)],
+    );
+    USDEUR = Number(ins[0].EUR);
+    USDGBP = Number(ins[0].GBP);
+  } else {
+    USDEUR = Number(fxRows[0].EUR);
+    USDGBP = Number(fxRows[0].GBP);
+  }
+
+  // 8) compute by native currency
+  const revenueId = uuidv4();
+
+  if (country === "GB") {
+    const discountGBP = Number(order.discountTotal ?? 0);
+    const shippingGBP = Number(order.shippingTotal ?? 0);
+    const costGBP = totalCost;
+    let totalGBP = Number(order.totalAmount ?? 0);
+
+    const discountUSD = discountGBP / USDGBP;
+    const shippingUSD = shippingGBP / USDGBP;
+    const costUSD = costGBP / USDGBP;
+    let totalUSD = totalGBP / USDGBP;
+
+    const discountEUR = discountGBP * (USDEUR / USDGBP);
+    const shippingEUR = shippingGBP * (USDEUR / USDGBP);
+    const costEUR = costGBP * (USDEUR / USDGBP);
+    let totalEUR = totalGBP * (USDEUR / USDGBP);
+
+    if (applyCryptoOverride) {
+      totalUSD = totalUsdFromCrypto;
+      totalEUR = totalUsdFromCrypto * USDEUR;
+      totalGBP = totalUsdFromCrypto * USDGBP;
+    }
+
+    const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+      USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+      GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+      EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+    });
+
+    for (const ct of newCategories) {
+      const catRevenueId = uuidv4();
+      await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+        USDtotal: ct.total / USDGBP, USDcost: ct.cost / USDGBP,
+        GBPtotal: ct.total, GBPcost: ct.cost,
+        EURtotal: ct.total * (USDEUR / USDGBP), EURcost: ct.cost * (USDEUR / USDGBP),
+      });
+    }
+    return revenue;
+  } else if (euroCountries.includes(country)) {
+    const discountEUR = Number(order.discountTotal ?? 0);
+    const shippingEUR = Number(order.shippingTotal ?? 0);
+    const costEUR = totalCost;
+    let totalEUR = Number(order.totalAmount ?? 0);
+
+    const discountUSD = discountEUR / USDEUR;
+    const shippingUSD = shippingEUR / USDEUR;
+    const costUSD = costEUR / USDEUR;
+    let totalUSD = totalEUR / USDEUR;
+
+    const discountGBP = discountEUR * (USDGBP / USDEUR);
+    const shippingGBP = shippingEUR * (USDGBP / USDEUR);
+    const costGBP = costEUR * (USDGBP / USDEUR);
+    let totalGBP = totalEUR * (USDGBP / USDEUR);
+
+    if (applyCryptoOverride) {
+      totalUSD = totalUsdFromCrypto;
+      totalEUR = totalUsdFromCrypto * USDEUR;
+      totalGBP = totalUsdFromCrypto * USDGBP;
+    }
+
+    const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+      USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+      GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+      EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+    });
+
+    for (const ct of newCategories) {
+      const catRevenueId = uuidv4();
+      await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+        USDtotal: ct.total / USDEUR, USDcost: ct.cost / USDEUR,
+        GBPtotal: ct.total * (USDGBP / USDEUR), GBPcost: ct.cost * (USDGBP / USDEUR),
+        EURtotal: ct.total, EURcost: ct.cost,
+      });
+    }
+    return revenue;
+  } else {
+    const discountUSD = Number(order.discountTotal ?? 0);
+    const shippingUSD = Number(order.shippingTotal ?? 0);
+    const costUSD = totalCost;
+    let totalUSD = Number(order.totalAmount ?? 0);
+
+    const discountEUR = discountUSD * USDEUR;
+    const shippingEUR = shippingUSD * USDEUR;
+    const costEUR = costUSD * USDEUR;
+    let totalEUR = totalUSD * USDEUR;
+
+    const discountGBP = discountUSD * USDGBP;
+    const shippingGBP = shippingUSD * USDGBP;
+    const costGBP = costUSD * USDGBP;
+    let totalGBP = totalUSD * USDGBP;
+
+    if (applyCryptoOverride) {
+      totalUSD = totalUsdFromCrypto;
+      totalEUR = totalUsdFromCrypto * USDEUR;
+      totalGBP = totalUsdFromCrypto * USDGBP;
+    }
+
+    const revenue = await insertOrderRevenue(revenueId, id, organizationId, {
+      USDtotal: totalUSD, USDdiscount: discountUSD, USDshipping: shippingUSD, USDcost: costUSD,
+      GBPtotal: totalGBP, GBPdiscount: discountGBP, GBPshipping: shippingGBP, GBPcost: costGBP,
+      EURtotal: totalEUR, EURdiscount: discountEUR, EURshipping: shippingEUR, EURcost: costEUR,
+    });
+
+    for (const ct of newCategories) {
+      const catRevenueId = uuidv4();
+      await insertCategoryRevenue(catRevenueId, ct.categoryId, organizationId, {
+        USDtotal: ct.total, USDcost: ct.cost,
+        GBPtotal: ct.total * USDGBP, GBPcost: ct.cost * USDGBP,
+        EURtotal: ct.total * USDEUR, EURcost: ct.cost * USDEUR,
+      });
+    }
+    return revenue;
+  }
+}
+
 /* -------- helpers -------- */
 async function loadCartSummary(cartId: string) {
   const { rows } = await pool.query(
@@ -71,14 +530,7 @@ async function activePaymentMethods(tenantId: string) {
 /* -------- schemas -------- */
 const CheckoutCreateSchema = z.object({
   cartId: z.string().min(1),
-  payments: z
-    .array(
-      z.object({
-        methodId: z.string().min(1),
-        amount: z.number().positive(),
-      })
-    )
-    .min(1, "At least one payment is required"),
+  payments: z.array(z.object({ methodId: z.string().min(1), amount: z.number().positive() })).min(1),
   storeId: z.string().optional(),
   registerId: z.string().optional(),
 });
@@ -155,16 +607,11 @@ export async function POST(req: NextRequest) {
     const { rows: cartRow } = await pool.query(`SELECT "couponCode" FROM carts WHERE id = $1`, [cartId]);
     const couponCode: string | null = cartRow[0]?.couponCode ?? null;
 
-    // Persist the first method id into orders.paymentMethod for compatibility
     const primaryMethodId = payments[0].methodId;
 
     let orderChannel = summary.channel;
-    if (
-      orderChannel === "pos-" &&
-      (storeId || registerId)
-    ) {
+    if (orderChannel === "pos-" && (storeId || registerId)) {
       orderChannel = `pos-${storeId ?? "na"}-${registerId ?? "na"}`;
-      // persist upgraded channel on the cart so future reads see it
       await pool.query(`UPDATE carts SET channel=$1 WHERE id=$2`, [orderChannel, cartId]);
     }
 
@@ -188,25 +635,25 @@ export async function POST(req: NextRequest) {
       RETURNING *`;
 
     const vals = [
-      orderId,                 // $1
-      summary.clientId,        // $2
-      summary.cartId,          // $3
-      summary.country,         // $4
-      "paid",                  // $5
-      primaryMethodId,         // $6
-      orderKey,                // $7
-      summary.cartUpdatedHash, // $8
-      shippingTotal,           // $9
-      discountTotal,           // $10
-      totalAmount,             // $11
-      couponCode,              // $12
-      "-",                     // $13 (POS: no carrier)
-      new Date(),              // $14 dateCreated
-      new Date(),              // $15 datePaid
-      new Date(),              // $16 dateCompleted
-      null,                    // $17 dateCancelled
-      organizationId,          // $18
-      orderChannel,            // $19 channel
+      orderId,
+      summary.clientId,
+      summary.cartId,
+      summary.country,
+      "paid",
+      primaryMethodId,
+      orderKey,
+      summary.cartUpdatedHash,
+      shippingTotal,
+      discountTotal,
+      totalAmount,
+      couponCode,
+      "-",
+      new Date(),      // dateCreated
+      new Date(),      // datePaid
+      new Date(),      // dateCompleted
+      null,            // dateCancelled
+      organizationId,
+      orderChannel,
     ];
 
     const tx = await pool.connect();
@@ -227,6 +674,10 @@ export async function POST(req: NextRequest) {
       await tx.query(`UPDATE carts SET status = FALSE, "updatedAt" = NOW() WHERE id = $1`, [cartId]);
 
       await tx.query("COMMIT");
+
+      // ⬇️ NEW: create revenue for this POS order
+      try { await getRevenue(order.id, organizationId); } catch (e) { console.warn("[POS checkout][revenue] failed", e); }
+
       return NextResponse.json({ order }, { status: 201 });
     } catch (e) {
       await tx.query("ROLLBACK");
