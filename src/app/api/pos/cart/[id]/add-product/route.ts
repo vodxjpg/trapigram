@@ -103,9 +103,7 @@ function findTier(
   return global ?? null;
 }
 
-/** Read inventory flags/qty (product + variation override). If columns/tables
- *  are missing in this environment, gracefully fall back to "unlimited".
- */
+// Put this helper inside each endpoint file (or move to a shared util)
 async function readInventory(
   client: any,
   productId: string,
@@ -115,14 +113,38 @@ async function readInventory(
   let backorder = false;
   let stock: number | null = null;
 
-  try {
-    const { rows } = await client.query(
+  // Helper that isolates a single query from aborting the whole tx
+  async function safeQuery(sql: string, params: any[], spName: string) {
+    await client.query(`SAVEPOINT ${spName}`);
+    try {
+      const res = await client.query(sql, params);
+      // Only release if no error happened
+      await client.query(`RELEASE SAVEPOINT ${spName}`);
+      return res;
+    } catch (e: any) {
+      // Missing table/column → roll back to savepoint and pretend no rows
+      if (e?.code === "42703" || e?.code === "42P01") {
+        await client.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+        return { rows: [] };
+      }
+      // Other errors are real
+      await client.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+      throw e;
+    }
+  }
+
+  // Product-level flags
+  {
+    const { rows } = await safeQuery(
       `SELECT 
          COALESCE("manageStock", false)                                  AS manage,
          COALESCE("allowBackorder", COALESCE("backorderAllowed", false)) AS backorder,
          COALESCE("stockQuantity", COALESCE(stock, NULL))                AS stock
-       FROM products WHERE id = $1 LIMIT 1`,
-      [productId]
+       FROM products
+       WHERE id = $1
+       LIMIT 1`,
+      [productId],
+      "inv_p"
     );
     if (rows[0]) {
       manage = !!rows[0].manage;
@@ -131,31 +153,29 @@ async function readInventory(
         stock = Number(rows[0].stock);
       }
     }
-  } catch (e: any) {
-    if (e?.code !== "42703" && e?.code !== "42P01") throw e;
   }
 
+  // Variation-level overrides
   if (variationId) {
-    try {
-      const { rows } = await client.query(
-        `SELECT 
-           COALESCE("manageStock", false)                                  AS manage,
-           COALESCE("allowBackorder", COALESCE("backorderAllowed", false)) AS backorder,
-           COALESCE("stockQuantity", COALESCE(stock, NULL))                AS stock
-         FROM "productVariations" WHERE id = $1 LIMIT 1`,
-        [variationId]
-      );
-      if (rows[0]) {
-        manage = !!rows[0].manage || manage; // variation can enable management
-        if (rows[0].backorder !== null && rows[0].backorder !== undefined) {
-          backorder = !!rows[0].backorder;   // explicit override
-        }
-        if (rows[0].stock !== null && rows[0].stock !== undefined) {
-          stock = Number(rows[0].stock);     // explicit override
-        }
+    const { rows } = await safeQuery(
+      `SELECT 
+         COALESCE("manageStock", false)                                  AS manage,
+         COALESCE("allowBackorder", COALESCE("backorderAllowed", false)) AS backorder,
+         COALESCE("stockQuantity", COALESCE(stock, NULL))                AS stock
+       FROM "productVariations"
+       WHERE id = $1
+       LIMIT 1`,
+      [variationId],
+      "inv_v"
+    );
+    if (rows[0]) {
+      manage = !!rows[0].manage || manage;            // variation can enable mgmt
+      if (rows[0].backorder !== null && rows[0].backorder !== undefined) {
+        backorder = !!rows[0].backorder;              // explicit override
       }
-    } catch (e: any) {
-      if (e?.code !== "42703" && e?.code !== "42P01") throw e;
+      if (rows[0].stock !== null && rows[0].stock !== undefined) {
+        stock = Number(rows[0].stock);                // explicit override
+      }
     }
   }
 
