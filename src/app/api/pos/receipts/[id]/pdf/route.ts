@@ -30,7 +30,7 @@ function addressToLines(addr: any): string[] {
 }
 
 function drawRow(
-  doc: PDFKit.PDFDocument,
+  doc: any,
   x: number,
   y: number,
   widths: number[],
@@ -40,7 +40,6 @@ function drawRow(
   const [wQty, wTitle, wUnit, wTax, wTotal] = widths;
   const font = options.bold ? "Helvetica-Bold" : "Helvetica";
   doc.font(font).fontSize(10);
-
   doc.text(String(cells[0] ?? ""), x, y, { width: wQty, align: "right" });
   doc.text(String(cells[1] ?? ""), x + wQty + 8, y, { width: wTitle - 8, align: "left" });
   doc.text(String(cells[2] ?? ""), x + wQty + wTitle + 16, y, { width: wUnit - 16, align: "right" });
@@ -48,7 +47,7 @@ function drawRow(
   doc.text(String(cells[4] ?? ""), x + wQty + wTitle + wUnit + wTax + 32, y, { width: wTotal - 32, align: "right" });
 }
 
-function collectStream(doc: PDFKit.PDFDocument): Promise<Buffer> {
+function collectStream(doc: PDFDocument): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     doc.on("data", (b) => chunks.push(Buffer.isBuffer(b) ? b : Buffer.from(b)));
@@ -57,14 +56,14 @@ function collectStream(doc: PDFKit.PDFDocument): Promise<Buffer> {
   });
 }
 
-/** Try to read org/store metadata; fall back if tables/columns don’t exist */
+/** Safe query helper: swallow missing-table/column errors and return [] */
 async function safeQuery<T = any>(sql: string, params: any[]) {
   try {
     const r = await pool.query<T>(sql, params);
     return r.rows;
   } catch (e: any) {
-    // If table/column doesn’t exist, just act like no rows
-    if (e?.code === "42P01" || e?.code === "42703") return [];
+    // 42P01 = relation does not exist, 42703 = column does not exist
+    if (e?.code === "42P01" || e?.code === "42703") return [] as unknown as T[];
     throw e;
   }
 }
@@ -100,30 +99,30 @@ export async function GET(
     let currency = process.env.NEXT_PUBLIC_DEFAULT_CURRENCY || "USD";
     let orgAddr: any = null;
 
-    // Try organizations table (may not exist in your prod)
+    // organizations may not exist on your prod
     {
       const rows = await safeQuery(
         `SELECT name, metadata FROM organizations WHERE id = $1 LIMIT 1`,
         [organizationId]
       );
       if (rows.length) {
-        orgName = rows[0].name ?? orgName;
-        const meta = typeof rows[0].metadata === "string"
-          ? (() => { try { return JSON.parse(rows[0].metadata); } catch { return {}; } })()
-          : (rows[0].metadata ?? {});
+        orgName = (rows as any)[0].name ?? orgName;
+        const meta = typeof (rows as any)[0].metadata === "string"
+          ? (() => { try { return JSON.parse((rows as any)[0].metadata); } catch { return {}; } })()
+          : ((rows as any)[0].metadata ?? {});
         currency = meta?.currency || currency;
         orgAddr = meta?.address || orgAddr;
       }
     }
 
-    // Try tenants table if available (name/settings)
+    // tenants table (also optional)
     if (!orgAddr || currency === "USD") {
       const rows = await safeQuery(
         `SELECT name, settings FROM tenants WHERE id = $1 LIMIT 1`,
         [organizationId]
       );
       if (rows.length) {
-        orgName = rows[0].name ?? orgName;
+        orgName = (rows as any)[0].name ?? orgName;
         const settings = typeof (rows as any)[0]?.settings === "string"
           ? (() => { try { return JSON.parse((rows as any)[0].settings); } catch { return {}; } })()
           : ((rows as any)[0]?.settings ?? {});
@@ -132,21 +131,43 @@ export async function GET(
       }
     }
 
-    /* ── Client (prefer first/last; hide email for walk-in) ───────────────── */
-    const { rows: clientRows } = await pool.query(
-      `SELECT id, "firstName", "lastName", email, "isWalkIn"
-         FROM clients
-        WHERE id = $1
-        LIMIT 1`,
-      [order.clientId]
-    );
-    const client = clientRows[0] ?? { firstName: null, lastName: null, email: null, isWalkIn: true };
+    /* ── Client (handle missing isWalkIn column) ──────────────────────────── */
+    let client: { firstName?: string | null; lastName?: string | null; email?: string | null; isWalkIn?: boolean } = {
+      firstName: null, lastName: null, email: null, isWalkIn: true,
+    };
+
+    // First try with isWalkIn
+    try {
+      const { rows } = await pool.query(
+        `SELECT "firstName","lastName",email,"isWalkIn"
+           FROM clients
+          WHERE id = $1
+          LIMIT 1`,
+        [order.clientId]
+      );
+      if (rows[0]) client = rows[0] as any;
+    } catch (e: any) {
+      if (e?.code !== "42703") throw e; // rethrow other errors
+      // Fallback without isWalkIn (column missing)
+      const { rows } = await pool.query(
+        `SELECT "firstName","lastName",email
+           FROM clients
+          WHERE id = $1
+          LIMIT 1`,
+        [order.clientId]
+      );
+      if (rows[0]) {
+        const row = rows[0] as any;
+        const nameStr = [row.firstName, row.lastName].filter(Boolean).join(" ").toLowerCase();
+        const guessWalkIn = (!row.email && nameStr.includes("walk-in"));
+        client = { ...row, isWalkIn: guessWalkIn };
+      }
+    }
+
     const clientName =
-      [client.firstName, client.lastName].filter(Boolean).join(" ").trim() ||
-      "Customer";
+      [client.firstName, client.lastName].filter(Boolean).join(" ").trim() || "Customer";
 
     /* ── Parse channel → storeId/registerId if present ────────────────────── */
-    // channel looks like: "pos-<storeId>-<registerId>" or just "pos-"
     let storeIdFromChannel: string | null = null;
     let registerIdFromChannel: string | null = null;
     if (typeof order.channel === "string") {
@@ -172,16 +193,14 @@ export async function GET(
         [registerIdFromChannel, organizationId]
       );
       if (regRows.length) {
-        registerLabel = regRows[0].label ?? null;
-        storeName = regRows[0].storeName ?? null;
-        storeAddress = regRows[0].address ?? null;
-        // try currency from store metadata if available
-        if (regRows[0].metadata) {
+        registerLabel = (regRows as any)[0].label ?? null;
+        storeName = (regRows as any)[0].storeName ?? null;
+        storeAddress = (regRows as any)[0].address ?? null;
+        const m = (regRows as any)[0].metadata;
+        if (m) {
           try {
-            const m = typeof regRows[0].metadata === "string"
-              ? JSON.parse(regRows[0].metadata)
-              : regRows[0].metadata;
-            currency = m?.currency || currency;
+            const parsed = typeof m === "string" ? JSON.parse(m) : m;
+            currency = parsed?.currency || currency;
           } catch {}
         }
       }
@@ -194,13 +213,12 @@ export async function GET(
         [storeIdFromChannel, organizationId]
       );
       if (sRows.length) {
-        storeName = sRows[0].storeName ?? null;
-        storeAddress = sRows[0].address ?? null;
+        storeName = (sRows as any)[0].storeName ?? null;
+        storeAddress = (sRows as any)[0].address ?? null;
+        const m = (sRows as any)[0].metadata;
         try {
-          const m = typeof sRows[0].metadata === "string"
-            ? JSON.parse(sRows[0].metadata)
-            : sRows[0].metadata;
-          currency = m?.currency || currency;
+          const parsed = typeof m === "string" ? JSON.parse(m) : m;
+          currency = parsed?.currency || currency;
         } catch {}
       }
     }
@@ -238,7 +256,7 @@ export async function GET(
       rateByProduct[r.productId] = cur + Number(r.rate ?? 0);
     }
 
-    /* ── Recompute tax math (inclusive/exclusive) ─────────────────────────── */
+    /* ── Recompute tax math ───────────────────────────────────────────────── */
     const taxInclusive: boolean = !!order.taxInclusive;
     let subtotalNet = 0;
     let taxTotal = 0;
@@ -263,15 +281,7 @@ export async function GET(
       subtotalNet += lineNet;
       taxTotal += lineTax;
 
-      return {
-        ...l,
-        netUnit,
-        taxUnit,
-        taxRate: rate,
-        lineNet,
-        lineTax,
-        lineTotal,
-      };
+      return { ...l, netUnit, taxUnit, taxRate: rate, lineNet, lineTax, lineTotal };
     });
 
     /* ── Payments from orderPayments ──────────────────────────────────────── */
@@ -288,7 +298,6 @@ export async function GET(
       label: p.name || p.methodId || "Payment",
       amount: Number(p.amount || 0),
     }));
-
     const paid = payments.reduce((s, p) => s + p.amount, 0);
     const grandTotal = Number(order.totalAmount ?? subtotalNet + taxTotal);
     const change = Math.max(0, paid - grandTotal);
@@ -309,8 +318,8 @@ export async function GET(
       const lines = addressToLines(storeAddress);
       doc.font("Helvetica").fontSize(10);
       for (const line of lines) doc.text(line);
-      if (registerIdFromChannel) doc.text(`Register: ${registerIdFromChannel}`);
-      if (!registerIdFromChannel && storeIdFromChannel) doc.text(`Store ID: ${storeIdFromChannel}`);
+      if (registerLabel) doc.text(`Register: ${registerLabel}`);
+      else if (registerIdFromChannel) doc.text(`Register: ${registerIdFromChannel}`);
     }
 
     // Order meta
@@ -320,7 +329,12 @@ export async function GET(
     doc.text(`Date: ${createdAt.toLocaleString()}`);
     doc.text(`Tax Mode: ${taxInclusive ? "Tax Inclusive" : "Tax Exclusive"}`);
     if (clientName) doc.text(`Customer: ${clientName}`);
-    if (client?.isWalkIn !== true && client?.email) doc.text(`Email: ${client.email}`);
+
+    // We no longer rely on isWalkIn; show the email if we have it.
+    // If you *must* hide for walk-in, uncomment the heuristic below:
+    // const isWalkIn = client.isWalkIn ?? (!client.email && clientName.toLowerCase().includes("walk-in"));
+    // if (!isWalkIn && client.email) doc.text(`Email: ${client.email}`);
+    if (client.email) doc.text(`Email: ${client.email}`);
 
     // Table header
     doc.moveDown(0.75);
