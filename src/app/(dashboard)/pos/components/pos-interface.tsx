@@ -11,7 +11,6 @@ import { ReceiptOptionsDialog } from "./receipt-options-dialog"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { StoreRegisterSelector } from "./store-register-selector"
-import { Button } from "@/components/ui/button"
 
 import {
   AlertDialog,
@@ -55,8 +54,6 @@ export function POSInterface() {
   // store/outlet
   const [storeId, setStoreId] = useState<string | null>(null)
   const [outletId, setOutletId] = useState<string | null>(null)
-  // open the selector on demand (so we don't duplicate the component in the header)
-  const [selectorOpen, setSelectorOpen] = useState(false)
 
   // store/org meta used to resolve country for carts
   const [storeCountry, setStoreCountry] = useState<string | null>(null)
@@ -227,7 +224,7 @@ export function POSInterface() {
             variationId: p.variationId ? String(p.variationId) : null,
             title: p.title,
             image: p.image ?? null,
-            categoryIds: normalizeCatIds(p), // ✅ always string[]
+            categoryIds: normalizeCatIds(p),
             priceForDisplay: Number(price) || 0,
           } as GridProduct
         })
@@ -488,8 +485,6 @@ export function POSInterface() {
       localStorage.setItem(LS_KEYS.STORE, s)
       localStorage.setItem(LS_KEYS.OUTLET, o)
     }
-    // close the modal we opened manually
-    setSelectorOpen(false)
   }
 
   return (
@@ -510,20 +505,14 @@ export function POSInterface() {
             </div>
           </div>
 
-          {/* Removed StoreRegisterSelector from header to avoid duplication */}
           <div className="flex items-center gap-2">
-            {/* Small summary + a button to open the same selector modal */}
-            <div className="text-xs text-muted-foreground hidden sm:block">
-              {storeId && outletId ? (
-                <span>Store: {storeId} • Register: {outletId}</span>
-              ) : (
-                <span>No outlet selected</span>
-              )}
-            </div>
-            <Button variant="outline" size="sm" onClick={() => setSelectorOpen(true)}>
-              {storeId && outletId ? "Change outlet" : "Select outlet"}
-            </Button>
-
+            {/* Keep the selector in the header and force it open on first run */}
+            <StoreRegisterSelector
+              storeId={storeId}
+              outletId={outletId}
+              onChange={setStoreOutlet}
+              forceOpen={forceSelectDialog}        // ← forces modal on first load
+            />
             <CustomerSelector
               selectedCustomer={selectedCustomer}
               onSelectCustomer={(c) => {
@@ -580,13 +569,7 @@ export function POSInterface() {
         defaultEmail={receiptDlg?.email ?? ""}
       />
 
-      {/* Only one StoreRegisterSelector instance: the modal/inline one. */}
-      <StoreRegisterSelector
-        storeId={storeId}
-        outletId={outletId}
-        onChange={setStoreOutlet}
-        forceOpen={forceSelectDialog || selectorOpen}
-      />
+      {/* ⛔️ Removed the bottom-left StoreRegisterSelector instance entirely */}
 
       {/* Error dialog */}
       <AlertDialog open={!!error} onOpenChange={(o) => !o && setError(null)}>
