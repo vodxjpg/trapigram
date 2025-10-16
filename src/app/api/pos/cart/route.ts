@@ -176,15 +176,17 @@ export async function POST(req: NextRequest) {
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,true,NOW(),NOW(),$8,$9)
         RETURNING *`;
-      const vals = [
-        cartId,
-        clientId,
-        country,
-        emptyHash,
-        emptyHash,
-        organizationId,
-        channelVal,           // ✅ "pos-..." (or "pos-")
-      ];
+        const vals = [
+          cartId,         // $1 id
+          clientId,       // $2 "clientId"
+          country,        // $3 country
+          null,           // $4 "couponCode" -> NULL
+          null,           // $5 "shippingMethod" -> NULL (POS walk-in)
+          emptyHash,      // $6 "cartHash"
+          emptyHash,      // $7 "cartUpdatedHash"
+          organizationId, // $8 "organizationId"
+          channelVal,     // $9 channel (e.g., "pos-<store>-<register>" or "pos-")
+        ];
       const { rows: created } = await pool.query(insertSql, vals);
 
       return { status: 201, body: { newCart: created[0], reused: false } };
