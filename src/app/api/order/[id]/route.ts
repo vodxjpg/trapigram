@@ -26,7 +26,9 @@ function encryptSecretNode(plain: string): string {
   return cipher.update(plain, "utf8", "base64") + cipher.final("base64");
 }
 
-function decryptSecretNode(enc: string): string {
+// ✅ make decryption null-safe
+function decryptSecretNode(enc?: string | null): string {
+  if (!enc) return ""; // allow NULL/empty addresses (e.g., POS walk-in)
   const { key, iv } = getEncryptionKeyAndIv();
   const d = crypto.createDecipheriv("aes-256-cbc", key, iv);
   return d.update(enc, "base64", "utf8") + d.final("utf8");
