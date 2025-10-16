@@ -4,6 +4,8 @@ import { getContext } from "@/lib/context";
 import { pgPool as pool } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 
+export const runtime = "nodejs";
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -55,22 +57,49 @@ export async function POST(
       [client?.firstName, client?.lastName].filter(Boolean).join(" ").trim() || "there";
     const subject = `Receipt ${ord.orderKey ?? ord.id}`;
 
+    // Fetch the PDF so we can attach it
+    const pdfRes = await fetch(pdfUrl, {
+      // forward cookies so the PDF route can auth with the same session
+      headers: { Cookie: req.headers.get("cookie") ?? "" },
+    });
+    if (!pdfRes.ok) {
+      const msg = await pdfRes.text().catch(() => "");
+      throw new Error(`Failed to render receipt PDF (${pdfRes.status}): ${msg || "unknown error"}`);
+    }
+    const pdfBuf = Buffer.from(await pdfRes.arrayBuffer());
+
     const html = `
       <p>Hi ${name},</p>
-      <p>Thanks for your purchase. You can view or download your receipt here:</p>
-      <p><a href="${pdfUrl}">${pdfUrl}</a></p>
+      <p>Thanks for your purchase. Your receipt is attached as a PDF.</p>
+      <p>If you have trouble opening the attachment, you can also view it here:<br/>
+      <a href="${pdfUrl}">${pdfUrl}</a></p>
       <p>— ${process.env.NEXT_PUBLIC_APP_NAME || "Our Store"}</p>
     `;
     const text = `Hi ${name},
 
-Thanks for your purchase. Your receipt:
+Thanks for your purchase. Your receipt is attached as a PDF.
+
+If you have trouble opening the attachment, you can also view it here:
 ${pdfUrl}
 
 — ${process.env.NEXT_PUBLIC_APP_NAME || "Our Store"}
 `;
 
-    await sendEmail({ to, subject, text, html });
-    return NextResponse.json({ ok: true }, { status: 200 });
+    await sendEmail({
+      to,
+      subject,
+      text,
+      html,
+      attachments: [
+        {
+          filename: `receipt-${ord.orderKey ?? ord.id}.pdf`,
+          content: pdfBuf,
+          contentType: "application/pdf",
+        },
+      ],
+    });
+
+    return NextResponse.json({ ok: true, attached: true }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message ?? "Unable to send receipt" },

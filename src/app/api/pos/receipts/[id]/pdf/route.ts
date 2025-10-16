@@ -39,7 +39,6 @@ function drawRow(
 ) {
   const [wQty, wTitle, wUnit, wTax, wTotal] = widths;
   const font = options.bold ? "Helvetica-Bold" : "Helvetica";
-
   doc.font(font).fontSize(10);
 
   doc.text(String(cells[0] ?? ""), x, y, { width: wQty, align: "right" });
@@ -58,6 +57,18 @@ function collectStream(doc: PDFKit.PDFDocument): Promise<Buffer> {
   });
 }
 
+/** Try to read org/store metadata; fall back if tables/columns don’t exist */
+async function safeQuery<T = any>(sql: string, params: any[]) {
+  try {
+    const r = await pool.query<T>(sql, params);
+    return r.rows;
+  } catch (e: any) {
+    // If table/column doesn’t exist, just act like no rows
+    if (e?.code === "42P01" || e?.code === "42703") return [];
+    throw e;
+  }
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -68,57 +79,134 @@ export async function GET(
   const { id } = await params;
 
   try {
-    /* ── Load order (payments, totals, etc.) ───────────────────────────────── */
+    /* ── Load order ───────────────────────────────────────────────────────── */
     const { rows: orderRows } = await pool.query(
       `SELECT *
          FROM orders
-        WHERE id = $1 AND "organizationId" = $2`,
+        WHERE id = $1 AND "organizationId" = $2
+        LIMIT 1`,
       [id, organizationId]
     );
     if (!orderRows.length) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
-    const order = orderRows[0];
+    const order: any = orderRows[0];
 
-    /* ── Organization (name, currency, fallback address) ───────────────────── */
-    const { rows: orgRows } = await pool.query(
-      `SELECT name, metadata FROM organizations WHERE id = $1`,
-      [organizationId]
-    );
-    const org = orgRows[0] ?? { name: "Organization", metadata: {} };
-    const orgMeta = (org.metadata ?? {}) as any;
-    const currency = orgMeta.currency ?? "USD";
-    const orgAddr = orgMeta.address ?? null;
+    /* ── Organization (name/currency/address) — robust fallback ───────────── */
+    let orgName =
+      process.env.NEXT_PUBLIC_APP_NAME ||
+      process.env.APP_NAME ||
+      "Store";
+    let currency = process.env.NEXT_PUBLIC_DEFAULT_CURRENCY || "USD";
+    let orgAddr: any = null;
 
-    /* ── Client (suppress email for walk-in) ───────────────────────────────── */
+    // Try organizations table (may not exist in your prod)
+    {
+      const rows = await safeQuery(
+        `SELECT name, metadata FROM organizations WHERE id = $1 LIMIT 1`,
+        [organizationId]
+      );
+      if (rows.length) {
+        orgName = rows[0].name ?? orgName;
+        const meta = typeof rows[0].metadata === "string"
+          ? (() => { try { return JSON.parse(rows[0].metadata); } catch { return {}; } })()
+          : (rows[0].metadata ?? {});
+        currency = meta?.currency || currency;
+        orgAddr = meta?.address || orgAddr;
+      }
+    }
+
+    // Try tenants table if available (name/settings)
+    if (!orgAddr || currency === "USD") {
+      const rows = await safeQuery(
+        `SELECT name, settings FROM tenants WHERE id = $1 LIMIT 1`,
+        [organizationId]
+      );
+      if (rows.length) {
+        orgName = rows[0].name ?? orgName;
+        const settings = typeof (rows as any)[0]?.settings === "string"
+          ? (() => { try { return JSON.parse((rows as any)[0].settings); } catch { return {}; } })()
+          : ((rows as any)[0]?.settings ?? {});
+        currency = settings?.currency || currency;
+        orgAddr = orgAddr || settings?.address || null;
+      }
+    }
+
+    /* ── Client (prefer first/last; hide email for walk-in) ───────────────── */
     const { rows: clientRows } = await pool.query(
-      `SELECT id, name, email, "isWalkIn" FROM clients WHERE id = $1`,
+      `SELECT id, "firstName", "lastName", email, "isWalkIn"
+         FROM clients
+        WHERE id = $1
+        LIMIT 1`,
       [order.clientId]
     );
-    const client = clientRows[0] ?? { name: "Customer", email: null, isWalkIn: true };
+    const client = clientRows[0] ?? { firstName: null, lastName: null, email: null, isWalkIn: true };
+    const clientName =
+      [client.firstName, client.lastName].filter(Boolean).join(" ").trim() ||
+      "Customer";
 
-    /* ── Register + Store (address printed; fallback to org address) ───────── */
+    /* ── Parse channel → storeId/registerId if present ────────────────────── */
+    // channel looks like: "pos-<storeId>-<registerId>" or just "pos-"
+    let storeIdFromChannel: string | null = null;
+    let registerIdFromChannel: string | null = null;
+    if (typeof order.channel === "string") {
+      const m = /^pos-([^-\s]+)-([^-\s]+)$/i.exec(order.channel);
+      if (m) {
+        storeIdFromChannel = m[1] !== "na" ? m[1] : null;
+        registerIdFromChannel = m[2] !== "na" ? m[2] : null;
+      }
+    }
+
+    /* ── Register/Store (address printed; fallback to org address) ────────── */
     let storeName: string | null = null;
     let storeAddress: any = null;
     let registerLabel: string | null = null;
 
-    if (order.registerId) {
-      const { rows: regRows } = await pool.query(
-        `SELECT r.id, r.label, s.id AS "storeId", s.name AS "storeName", s.address
+    if (registerIdFromChannel) {
+      const regRows = await safeQuery(
+        `SELECT r.id, r.label, s.id AS "storeId", s.name AS "storeName", s.address, s.metadata
            FROM registers r
            LEFT JOIN stores s ON s.id = r."storeId"
-          WHERE r.id = $1 AND r."organizationId" = $2`,
-        [order.registerId, organizationId]
+          WHERE r.id = $1 AND r."organizationId" = $2
+          LIMIT 1`,
+        [registerIdFromChannel, organizationId]
       );
       if (regRows.length) {
         registerLabel = regRows[0].label ?? null;
         storeName = regRows[0].storeName ?? null;
         storeAddress = regRows[0].address ?? null;
+        // try currency from store metadata if available
+        if (regRows[0].metadata) {
+          try {
+            const m = typeof regRows[0].metadata === "string"
+              ? JSON.parse(regRows[0].metadata)
+              : regRows[0].metadata;
+            currency = m?.currency || currency;
+          } catch {}
+        }
+      }
+    } else if (storeIdFromChannel) {
+      const sRows = await safeQuery(
+        `SELECT s.id, s.name AS "storeName", s.address, s.metadata
+           FROM stores s
+          WHERE s.id = $1 AND s."organizationId" = $2
+          LIMIT 1`,
+        [storeIdFromChannel, organizationId]
+      );
+      if (sRows.length) {
+        storeName = sRows[0].storeName ?? null;
+        storeAddress = sRows[0].address ?? null;
+        try {
+          const m = typeof sRows[0].metadata === "string"
+            ? JSON.parse(sRows[0].metadata)
+            : sRows[0].metadata;
+          currency = m?.currency || currency;
+        } catch {}
       }
     }
     if (!storeAddress) storeAddress = orgAddr;
 
-    /* ── Lines: reconstruct from cartProducts (snapshot at checkout) ───────── */
+    /* ── Lines: snapshot from cartProducts ────────────────────────────────── */
     const { rows: linesDB } = await pool.query<LineDB>(
       `SELECT cp."productId", cp."variationId", cp.quantity, cp."unitPrice",
               p.title, p.sku
@@ -132,9 +220,9 @@ export async function GET(
       return NextResponse.json({ error: "No lines for order" }, { status: 404 });
     }
 
-    /* ── Tax rules per product (can be multiple -> additive) ───────────────── */
+    /* ── Tax rules per product (additive) ─────────────────────────────────── */
     const productIds = Array.from(new Set(linesDB.map((l) => l.productId)));
-    const { rows: taxRows } = await pool.query(
+    const taxRows = await safeQuery(
       `SELECT ptr."productId", tr.rate
          FROM "productTaxRules" ptr
          JOIN "taxRules" tr ON tr.id = ptr."taxRuleId"
@@ -145,12 +233,12 @@ export async function GET(
       [organizationId, productIds]
     );
     const rateByProduct: Record<string, number> = {};
-    for (const r of taxRows) {
+    for (const r of taxRows as any[]) {
       const cur = rateByProduct[r.productId] ?? 0;
-      rateByProduct[r.productId] = cur + Number(r.rate ?? 0); // rate as fraction (e.g., 0.10)
+      rateByProduct[r.productId] = cur + Number(r.rate ?? 0);
     }
 
-    /* ── Recompute tax math, mirroring /pos/checkout ───────────────────────── */
+    /* ── Recompute tax math (inclusive/exclusive) ─────────────────────────── */
     const taxInclusive: boolean = !!order.taxInclusive;
     let subtotalNet = 0;
     let taxTotal = 0;
@@ -186,17 +274,31 @@ export async function GET(
       };
     });
 
-    const payments = Array.isArray(order.payments) ? order.payments : [];
-    const paid = payments.reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
-    const grandTotal = Number(order.total ?? subtotalNet + taxTotal);
+    /* ── Payments from orderPayments ──────────────────────────────────────── */
+    const { rows: payRows } = await pool.query(
+      `SELECT op."methodId", op.amount, pm.name
+         FROM "orderPayments" op
+         LEFT JOIN "paymentMethods" pm ON pm.id = op."methodId"
+        WHERE op."orderId" = $1
+        ORDER BY op."createdAt" ASC NULLS LAST`,
+      [order.id]
+    );
+    const payments = (payRows || []).map((p: any) => ({
+      methodId: p.methodId,
+      label: p.name || p.methodId || "Payment",
+      amount: Number(p.amount || 0),
+    }));
+
+    const paid = payments.reduce((s, p) => s + p.amount, 0);
+    const grandTotal = Number(order.totalAmount ?? subtotalNet + taxTotal);
     const change = Math.max(0, paid - grandTotal);
 
-    /* ── Build PDF ─────────────────────────────────────────────────────────── */
+    /* ── Build PDF ────────────────────────────────────────────────────────── */
     const doc = new PDFDocument({ size: "A4", margin: 36 });
     const pdfBufferP = collectStream(doc);
 
     // Header
-    doc.font("Helvetica-Bold").fontSize(16).text(org.name ?? "Receipt", { align: "left" });
+    doc.font("Helvetica-Bold").fontSize(16).text(orgName, { align: "left" });
     doc.moveDown(0.25);
     doc.font("Helvetica").fontSize(10).text("POS Receipt", { align: "left" });
     doc.moveDown(0.5);
@@ -207,9 +309,8 @@ export async function GET(
       const lines = addressToLines(storeAddress);
       doc.font("Helvetica").fontSize(10);
       for (const line of lines) doc.text(line);
-      if (registerLabel) doc.text(`Register: ${registerLabel}`);
-    } else {
-      doc.font("Helvetica").fontSize(10).text("Register: N/A");
+      if (registerIdFromChannel) doc.text(`Register: ${registerIdFromChannel}`);
+      if (!registerIdFromChannel && storeIdFromChannel) doc.text(`Store ID: ${storeIdFromChannel}`);
     }
 
     // Order meta
@@ -218,9 +319,8 @@ export async function GET(
     doc.text(`Order ID: ${id}`);
     doc.text(`Date: ${createdAt.toLocaleString()}`);
     doc.text(`Tax Mode: ${taxInclusive ? "Tax Inclusive" : "Tax Exclusive"}`);
-    if (client?.name) doc.text(`Customer: ${client.name}`);
-    const showEmail = client && client.isWalkIn !== true;
-    if (showEmail && client.email) doc.text(`Email: ${client.email}`);
+    if (clientName) doc.text(`Customer: ${clientName}`);
+    if (client?.isWalkIn !== true && client?.email) doc.text(`Email: ${client.email}`);
 
     // Table header
     doc.moveDown(0.75);
@@ -288,15 +388,14 @@ export async function GET(
     doc.font("Helvetica-Bold").text("Payments", x, y);
     y += 14;
     doc.font("Helvetica");
-    if (Array.isArray(payments) && payments.length) {
+    if (payments.length) {
       for (const p of payments) {
-        const label = p.methodId ?? "Payment";
-        const amt = fmtCurrency(Number(p.amount ?? 0), currency);
+        const amt = fmtCurrency(p.amount, currency);
         if (y > maxY) {
           doc.addPage();
           y = doc.page.margins.top;
         }
-        doc.text(`${label}`, x, y, { width: 200, align: "left" });
+        doc.text(`${p.label}`, x, y, { width: 200, align: "left" });
         doc.text(amt, rightColX + 130, y, { width: 90, align: "right" });
         y += 14;
       }
@@ -333,10 +432,10 @@ export async function GET(
     doc.moveTo(x, y).lineTo(x + widths.reduce((a, b) => a + b, 0) + 32, y).strokeOpacity(0.2).stroke();
     doc.font("Helvetica").fontSize(9).fillOpacity(0.7);
     doc.text("Thank you for your purchase.", x, y + 8);
-    doc.text("No branding configured.", x, y + 22);
+    doc.text(orgName, x, y + 22);
 
     doc.end();
-    const pdf = await pdfBufferP;
+    const pdf = await collectStream(doc);
 
     return new NextResponse(pdf, {
       status: 200,
