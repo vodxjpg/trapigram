@@ -188,26 +188,25 @@ export async function POST(req: NextRequest) {
       RETURNING *`;
 
     const vals = [
-      orderId,
-      summary.clientId,
-      summary.cartId,
-      summary.country,
-      "paid",
-      primaryMethodId,
-      orderKey,
-      summary.cartUpdatedHash,
-      shippingTotal,
-      discountTotal,
-      totalAmount,
-      couponCode,
-      "-",              // POS: no carrier
-      new Date(),       // dateCreated
-      new Date(),       // datePaid
-      new Date(),       // dateCompleted
-      null,             // dateCancelled
-      organizationId,
-      orderChannel,
-      summary.channel,  // keep exact "pos-..." channel
+      orderId,                 // $1
+      summary.clientId,        // $2
+      summary.cartId,          // $3
+      summary.country,         // $4
+      "paid",                  // $5
+      primaryMethodId,         // $6
+      orderKey,                // $7
+      summary.cartUpdatedHash, // $8
+      shippingTotal,           // $9
+      discountTotal,           // $10
+      totalAmount,             // $11
+      couponCode,              // $12
+      "-",                     // $13 (POS: no carrier)
+      new Date(),              // $14 dateCreated
+      new Date(),              // $15 datePaid
+      new Date(),              // $16 dateCompleted
+      null,                    // $17 dateCancelled
+      organizationId,          // $18
+      orderChannel,            // $19 channel
     ];
 
     const tx = await pool.connect();
@@ -220,13 +219,10 @@ export async function POST(req: NextRequest) {
       for (const p of payments) {
         await tx.query(
           `INSERT INTO "orderPayments"(id,"orderId","methodId",amount)
-          VALUES ($1,$2,$3,$4)`,
+           VALUES ($1,$2,$3,$4)`,
           [uuidv4(), order.id, p.methodId, Number(p.amount)]
         );
       }
-
-
-      // Optional: insert each split into orderPayments here
 
       await tx.query(`UPDATE carts SET status = FALSE, "updatedAt" = NOW() WHERE id = $1`, [cartId]);
 

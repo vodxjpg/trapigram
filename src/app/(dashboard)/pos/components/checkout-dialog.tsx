@@ -35,7 +35,7 @@ type CheckoutDialogProps = {
 }
 
 export function CheckoutDialog(props: CheckoutDialogProps) {
-  const { open, onOpenChange, totalEstimate, cartId, clientId, registerId, onComplete } = props
+  const { open, onOpenChange, totalEstimate, cartId, clientId, registerId, storeId, onComplete } = props
 
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([])
   const [currentMethodId, setCurrentMethodId] = useState<string | null>(null)
@@ -99,11 +99,24 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
   const handleAddPayment = () => {
     const amount = Number.parseFloat(currentAmount)
     if (!currentMethodId) return
-    if (Number.isFinite(amount) && amount > 0 && amount <= remaining) {
-      setPayments(prev => [...prev, { methodId: currentMethodId, amount }])
-      setCurrentAmount("")
-      setCashReceived("")
-    }
+    if (!Number.isFinite(amount) || amount <= 0 || amount > remaining) return
+
+    // Merge duplicate methods: if the same method already exists, add to it
+    setPayments(prev => {
+      const idx = prev.findIndex(p => p.methodId === currentMethodId)
+      if (idx >= 0) {
+        const next = [...prev]
+        const updated = {
+          ...next[idx],
+          amount: Number((next[idx].amount + amount).toFixed(2)),
+        }
+        next[idx] = updated
+        return next
+      }
+      return [...prev, { methodId: currentMethodId, amount }]
+    })
+    setCurrentAmount("")
+    setCashReceived("")
   }
 
   const handleQuickAmount = (fraction: number) => {
@@ -122,7 +135,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     try {
       setBusy(true)
       const idem = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
-      const payload = { cartId, payments, storeId, registerId };
+      const payload = { cartId, payments, storeId, registerId }
       const res = await fetch("/api/pos/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
@@ -246,10 +259,10 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
             {/* List payments */}
             {payments.length > 0 && (
               <div className="space-y-2">
-                {payments.map((p, idx) => {
+                {payments.map((p) => {
                   const methodName = paymentMethods.find(pm => pm.id === p.methodId)?.name ?? p.methodId
                   return (
-                    <Card key={idx} className="p-3">
+                    <Card key={p.methodId} className="p-3">
                       <div className="flex items-center justify-between">
                         <span>{methodName}</span>
                         <span className="font-medium">${p.amount.toFixed(2)}</span>
