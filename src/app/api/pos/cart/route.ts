@@ -165,23 +165,7 @@ export async function POST(req: NextRequest) {
         return "US";
       })();
 
-      /* 6) POS shipping method must be '-' (FK must exist) */
-      const sm = await pool.query(
-        `SELECT id FROM "shippingMethods"
-          WHERE id='-'
-            AND ("organizationId"=$1 OR "organizationId" IS NULL)
-          LIMIT 1`,
-        [organizationId]
-      );
-      if (!sm.rowCount) {
-        return {
-          status: 400,
-          body: { error: "POS requires a shipping method with id '-' (e.g. 'POS — No Shipping')." },
-        };
-      }
-      const shippingMethodId = sm.rows[0].id; // '-'
-
-      /* 7) Create the cart */
+     /* 6) Create the cart (no shipping method for walk-in POS) */
       const cartId = uuidv4();
       const emptyHash = "e3b0c44298fc1c149afbf4c8996fb924";
       const insertSql = `
@@ -196,8 +180,6 @@ export async function POST(req: NextRequest) {
         cartId,
         clientId,
         country,
-        null,                 // couponCode
-        shippingMethodId,     // '-'
         emptyHash,
         emptyHash,
         organizationId,
