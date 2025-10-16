@@ -675,8 +675,161 @@ export async function POST(req: NextRequest) {
 
       await tx.query("COMMIT");
 
-      // ⬇️ NEW: create revenue for this POS order
+      // ⬇️ Create revenue for this POS order
       try { await getRevenue(order.id, organizationId); } catch (e) { console.warn("[POS checkout][revenue] failed", e); }
+
+      // ⬇️ Affiliate bonuses (referral + spending) for POS (mirrors change-status paid-like)
+      try {
+        // 1) settings
+        const { rows: [affSet] } = await pool.query(
+          `SELECT "pointsPerReferral",
+                  "spendingNeeded"    AS "spendingStep",
+                  "pointsPerSpending" AS "pointsPerSpendingStep"
+             FROM "affiliateSettings"
+            WHERE "organizationId" = $1
+            LIMIT 1`,
+          [organizationId],
+        );
+        const ptsPerReferral = Number(affSet?.pointsPerReferral || 0);
+        const stepEur        = Number(affSet?.spendingStep || 0);
+        const ptsPerStep     = Number(affSet?.pointsPerSpendingStep || 0);
+
+        // 2) one-time referral award to referrer (if any)
+        const { rows: [refFlag] } = await pool.query(
+          `SELECT COALESCE("referralAwarded",FALSE) AS awarded FROM orders WHERE id = $1`,
+          [order.id],
+        );
+        const { rows: [cli] } = await pool.query(
+          `SELECT "referredBy" FROM clients WHERE id = $1`,
+          [order.clientId],
+        );
+        if (!refFlag?.awarded && cli?.referredBy && ptsPerReferral > 0) {
+          await pool.query(
+            `INSERT INTO "affiliatePointLogs"
+               (id,"organizationId","clientId",points,action,description,"sourceClientId","createdAt","updatedAt")
+             VALUES ($1,$2,$3,$4,'referral_bonus','Bonus from referral order',$5,NOW(),NOW())`,
+            [uuidv4(), organizationId, cli.referredBy, ptsPerReferral, order.clientId],
+          );
+          await pool.query(
+            `INSERT INTO "affiliatePointBalances" AS b
+               ("clientId","organizationId","pointsCurrent","createdAt","updatedAt")
+             VALUES ($1,$2,$3,NOW(),NOW())
+             ON CONFLICT("clientId","organizationId") DO UPDATE
+               SET "pointsCurrent" = b."pointsCurrent" + EXCLUDED."pointsCurrent",
+                   "updatedAt"     = NOW()`,
+            [cli.referredBy, organizationId, ptsPerReferral],
+          );
+          await pool.query(
+            `UPDATE orders SET "referralAwarded" = TRUE, "updatedAt" = NOW() WHERE id = $1`,
+            [order.id],
+          );
+        }
+
+        // 3) spending milestone bonus for the BUYER
+        if (stepEur > 0 && ptsPerStep > 0) {
+          // previous lifetime EUR (exclude this new order)
+          const { rows: [prevSpent] } = await pool.query(
+            `SELECT COALESCE(SUM(r."EURtotal"),0) AS eur
+               FROM "orderRevenue" r
+               JOIN orders o ON o.id = r."orderId"
+              WHERE o."clientId"       = $1
+                AND o."organizationId" = $2
+                AND o.status IN ('paid','pending_payment','completed')
+                AND o.id <> $3`,
+            [order.clientId, organizationId, order.id],
+          );
+          const prevTotalEur = Number(prevSpent?.eur ?? 0);
+
+          // get latest FX (getRevenue just ensured a row exists)
+          const { rows: [fx] } = await pool.query(
+            `SELECT "EUR","GBP" FROM "exchangeRate" ORDER BY date DESC LIMIT 1`
+          );
+          let USDEUR = Number(fx?.EUR ?? 1);
+          let USDGBP = Number(fx?.GBP ?? 1);
+          if (!(USDEUR > 0)) USDEUR = 1;
+          if (!(USDGBP > 0)) USDGBP = 1;
+
+          // this order's EUR (from order total + FX)
+          const amt = Number(order.totalAmount ?? 0);
+          const ctry = String(order.country ?? "");
+          const thisOrderEur =
+            euroCountries.includes(ctry)
+              ? amt
+              : (ctry === "GB" ? amt * (USDEUR / USDGBP) : amt * USDEUR);
+
+          // points already granted for spending bonuses
+          const { rows: [prev] } = await pool.query(
+            `SELECT COALESCE(SUM(points),0) AS pts
+               FROM "affiliatePointLogs"
+              WHERE "organizationId" = $1
+                AND "clientId"       = $2
+                AND action           = 'spending_bonus'`,
+            [organizationId, order.clientId],
+          );
+
+          // how many steps did this order cross?
+          const stepsBefore = Math.floor(prevTotalEur / stepEur);
+          const stepsAfter  = Math.floor((prevTotalEur + thisOrderEur) / stepEur);
+          const stepsFromThisOrder = Math.max(0, stepsAfter - stepsBefore);
+
+          // per-order points multiplier from orderMeta (if any)
+          let maxMultiplier = 1.0;
+          try {
+            const { rows: [mrow] } = await pool.query(`SELECT "orderMeta" FROM orders WHERE id = $1`, [order.id]);
+            const raw = mrow?.orderMeta;
+            const meta = typeof raw === "string"
+              ? (raw.trim().startsWith("{") || raw.trim().startsWith("[")) ? JSON.parse(raw) : {}
+              : (raw ?? {});
+            if (meta && typeof meta === "object" && (meta as any).automation) {
+              const m = Number((meta as any).automation.maxPointsMultiplier);
+              if (Number.isFinite(m) && m > 1) maxMultiplier = m;
+              else if (Array.isArray((meta as any).automation.events)) {
+                for (const e of (meta as any).automation.events) {
+                  if (String(e?.event) === "points_multiplier") {
+                    const f = Number(e?.factor);
+                    if (Number.isFinite(f) && f > maxMultiplier) maxMultiplier = f;
+                  }
+                }
+              }
+            }
+            if (Array.isArray(meta)) {
+              for (const e of meta) {
+                if (String(e?.event) === "points_multiplier") {
+                  const f = Number(e?.factor);
+                  if (Number.isFinite(f) && f > maxMultiplier) maxMultiplier = f;
+                }
+              }
+            }
+          } catch { /* ignore */ }
+
+          // baseline catch-up + multiplier extras (only for steps caused by THIS order)
+          const shouldHave = stepsAfter * ptsPerStep;
+          const baselineDelta = shouldHave - Number(prev.pts);
+          const extraFromMult = Math.max(0, (maxMultiplier - 1) * stepsFromThisOrder * ptsPerStep);
+          const deltaRaw = Math.max(0, baselineDelta) + extraFromMult;
+          const delta = Math.round(deltaRaw * 10) / 10; // nearest 0.1
+
+          if (delta > 0) {
+            await pool.query(
+              `INSERT INTO "affiliatePointLogs"
+                 (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+               VALUES ($1,$2,$3,$4,'spending_bonus','Milestone spending bonus',NOW(),NOW())`,
+              [uuidv4(), organizationId, order.clientId, delta],
+            );
+            await pool.query(
+              `INSERT INTO "affiliatePointBalances" AS b
+                 ("clientId","organizationId","pointsCurrent","createdAt","updatedAt")
+               VALUES ($1,$2,$3,NOW(),NOW())
+               ON CONFLICT("clientId","organizationId") DO UPDATE
+                 SET "pointsCurrent" = b."pointsCurrent" + EXCLUDED."pointsCurrent",
+                     "updatedAt"     = NOW()`,
+              [order.clientId, organizationId, delta],
+            );
+          }
+        }
+      } catch (e) {
+        console.warn("[POS checkout][affiliate bonuses] failed", e);
+      }
 
       return NextResponse.json({ order }, { status: 201 });
     } catch (e) {
