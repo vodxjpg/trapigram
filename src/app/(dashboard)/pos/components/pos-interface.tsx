@@ -21,7 +21,7 @@ import {
   AlertDialogTitle
 } from "@/components/ui/alert-dialog"
 
-type Category = { id: string; name: string }
+type Category = { id: string; name: string; parentId: string | null }
 
 const LS_KEYS = {
   STORE: "pos.storeId",
@@ -175,21 +175,39 @@ export function POSInterface() {
     }
   }, [outletId])
 
-  // fetch categories
+  // fetch categories (→ normalize ids to strings, keep parentId)
   useEffect(() => {
     let ignore = false
     ;(async () => {
       try {
         const res = await fetch("/api/product-categories?all=1").then(r => r.json())
         if (ignore) return
-        const cats: Category[] = (res.categories || []).map((c: any) => ({ id: c.id, name: c.name }))
+        const cats: Category[] = (res.categories || []).map((c: any) => ({
+          id: String(c.id),
+          name: c.name,
+          parentId: c.parentId ? String(c.parentId) : null,
+        }))
         setCategories(cats)
       } catch {}
     })()
     return () => { ignore = true }
   }, [])
 
-  // fetch products page (flat variations)
+  // helper: normalize product category IDs to string[]
+  const normalizeCatIds = (p: any): string[] => {
+    const raw = p?.categoryIds ?? p?.categories ?? []
+    if (!Array.isArray(raw)) return []
+    return raw
+      .map((v: any) => {
+        if (v == null) return null
+        if (typeof v === "string" || typeof v === "number") return String(v)
+        if (typeof v === "object") return v.id ? String(v.id) : null
+        return null
+      })
+      .filter((x: any): x is string => !!x)
+  }
+
+  // fetch products page (flat variations) and normalize category IDs
   useEffect(() => {
     let ignore = false
     const params = new URLSearchParams({ pageSize: "200", page: "1" })
@@ -201,17 +219,17 @@ export function POSInterface() {
         const flat = (res.productsFlat || []).map((p: any) => {
           const price = p.maxSalePrice ?? p.maxRegularPrice ?? 0
           return {
-            id: p.id,
-            productId: p.productId,
-            variationId: p.variationId ?? null,
+            id: String(p.id),
+            productId: String(p.productId),
+            variationId: p.variationId ? String(p.variationId) : null,
             title: p.title,
             image: p.image ?? null,
-            categoryIds: p.categories ?? [],
+            categoryIds: normalizeCatIds(p), // ✅ always string[]
             priceForDisplay: Number(price) || 0,
           } as GridProduct
         })
         setProducts(flat)
-      } catch {}
+      } catch {/* ignore */}
     })()
     return () => { ignore = true }
   }, [debouncedSearch])
@@ -249,7 +267,7 @@ export function POSInterface() {
             body: JSON.stringify({
               username: `walkin-${Date.now()}`,
               firstName: "Walk-in",
-              lastName: "Customer",      // DB requires NOT NULL
+              lastName: "Customer",
               email: null,
               phoneNumber: null,
               country: null,
@@ -275,14 +293,33 @@ export function POSInterface() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCustomer])
 
+  // Build a parent map so selecting a parent category shows products in its descendants
+  const parentById = useMemo(() => {
+    const m = new Map<string, string | null>()
+    for (const c of categories) m.set(c.id, c.parentId ? String(c.parentId) : null)
+    return m
+  }, [categories])
+
+  const productMatchesCategory = (prodCatIds: string[], sel: string | null) => {
+    if (sel === null) return true
+    for (const cid of prodCatIds) {
+      let cur: string | null = cid
+      while (cur) {
+        if (cur === sel) return true
+        cur = parentById.get(cur) ?? null
+      }
+    }
+    return false
+  }
+
   const filteredProducts = useMemo(() => {
     const q = debouncedSearch.toLowerCase()
     return products.filter(p => {
-      const matchesCategory = selectedCategoryId === null || p.categoryIds.includes(selectedCategoryId)
+      const matchesCategory = productMatchesCategory(p.categoryIds, selectedCategoryId)
       const matchesSearch = !q || p.title.toLowerCase().includes(q)
       return matchesCategory && matchesSearch
     })
-  }, [products, selectedCategoryId, debouncedSearch])
+  }, [products, selectedCategoryId, debouncedSearch, parentById])
 
   const subtotalEstimate = useMemo(() => lines.reduce((s, l) => s + l.subtotal, 0), [lines])
 
@@ -300,7 +337,7 @@ export function POSInterface() {
       const idem = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
       const body = {
         clientId,
-        country: resolveCartCountry(),   // ✅ prevent NOT NULL violation
+        country: resolveCartCountry(),
         storeId,
         registerId: outletId,
       }
@@ -435,10 +472,7 @@ export function POSInterface() {
   }
 
   const onCompleteCheckout = (orderId: string) => {
-    // ✅ show a dialog with Print / Email / Both / Skip
     setReceiptDlg({ orderId, email: selectedCustomer?.email ?? null })
-
-    // clear local POS cart state
     if (outletId && typeof window !== "undefined") {
       localStorage.removeItem(LS_KEYS.CART(outletId))
     }
@@ -497,14 +531,14 @@ export function POSInterface() {
           {/* Products Section */}
           <div className="flex flex-1 flex-col overflow-hidden">
             <CategoryNav
-              categories={categories}
+              categories={categories.map(c => ({ id: c.id, name: c.name }))}
               selectedCategoryId={selectedCategoryId}
               onSelect={setSelectedCategoryId}
             />
             <ProductGrid products={filteredProducts} onAddToCart={addToCart} />
           </div>
 
-        {/* Cart Section */}
+          {/* Cart Section */}
           <Cart
             lines={lines}
             onInc={inc}

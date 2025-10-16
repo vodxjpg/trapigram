@@ -71,16 +71,12 @@ export async function POST(
     const html = `
       <p>Hi ${name},</p>
       <p>Thanks for your purchase. Your receipt is attached as a PDF.</p>
-      <p>If you have trouble opening the attachment, you can also view it here:<br/>
-      <a href="${pdfUrl}">${pdfUrl}</a></p>
-      <p>— ${process.env.NEXT_PUBLIC_APP_NAME || "Our Store"}</p>
+
     `;
     const text = `Hi ${name},
 
 Thanks for your purchase. Your receipt is attached as a PDF.
 
-If you have trouble opening the attachment, you can also view it here:
-${pdfUrl}
 
 — ${process.env.NEXT_PUBLIC_APP_NAME || "Our Store"}
 `;
