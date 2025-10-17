@@ -23,12 +23,18 @@ export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
+  // ⬇️ include template name directly
   const { rows } = await pool.query(
-    `SELECT * FROM stores WHERE "organizationId" = $1 ORDER BY "createdAt" DESC`,
+    `SELECT s.*, t.name AS "templateName"
+       FROM stores s
+       LEFT JOIN "posReceiptTemplates" t
+         ON t.id = s."defaultReceiptTemplateId"
+        AND t."organizationId" = s."organizationId"
+      WHERE s."organizationId" = $1
+      ORDER BY s."createdAt" DESC`,
     [ctx.organizationId]
   );
 
-  // Normalize address to object for the client
   const stores = rows.map((r: any) => ({
     ...r,
     address: parseJSONish(r.address),
@@ -57,17 +63,21 @@ export async function POST(req: NextRequest) {
     }
 
     const id = uuidv4();
-    const cleanAddress = parseJSONish(body.address) ?? {}; // store as whatever column type expects
+    const cleanAddress = parseJSONish(body.address) ?? {};
 
+    // ⬇️ return the templateName in one roundtrip
     const { rows } = await pool.query(
       `INSERT INTO stores
-        (id,"organizationId",name,address,"defaultReceiptTemplateId","createdAt","updatedAt")
+         (id,"organizationId",name,address,"defaultReceiptTemplateId","createdAt","updatedAt")
        VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
-       RETURNING *`,
+       RETURNING stores.*,
+         (SELECT name
+            FROM "posReceiptTemplates" t
+           WHERE t.id = stores."defaultReceiptTemplateId"
+             AND t."organizationId" = stores."organizationId") AS "templateName"`,
       [id, ctx.organizationId, body.name, cleanAddress, body.defaultReceiptTemplateId ?? null]
     );
 
-    // Normalize for response
     const store = { ...rows[0], address: parseJSONish(rows[0].address) };
     return NextResponse.json({ store }, { status: 201 });
   } catch (e: any) {
