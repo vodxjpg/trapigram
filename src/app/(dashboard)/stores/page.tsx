@@ -47,8 +47,14 @@ type Store = {
   id: string;
   name: string;
   address: Record<string, any> | null;
+  defaultReceiptTemplateId?: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+type ReceiptTemplate = {
+  id: string;
+  name: string;
 };
 
 function formatAddress(a?: Record<string, any> | null) {
@@ -81,6 +87,12 @@ export default function StoresPage() {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [deleteIds, setDeleteIds] = React.useState<string[]>([]);
 
+  // receipt templates
+  const [templates, setTemplates] = React.useState<ReceiptTemplate[]>([]);
+  const [formTemplateId, setFormTemplateId] = React.useState<string | null>(null);
+  const templateById = React.useMemo(
+    () => Object.fromEntries(templates.map(t => [t.id, t])), [templates]);
+
   // org countries for selector
   const [countryOptions, setCountryOptions] = React.useState<
     { value: string; label: string }[]
@@ -89,7 +101,15 @@ export default function StoresPage() {
   const load = React.useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/pos/stores");
+      const [tRes, sRes] = await Promise.all([
+        fetch("/api/pos/receipt-templates"),
+        fetch("/api/pos/stores"),
+      ]);
+      if (tRes.ok) {
+        const tj = await tRes.json();
+        setTemplates(tj.templates || []);
+      }
+      const res = sRes;
       if (!res.ok) throw new Error("Failed to load stores");
       const j = await res.json();
       setRows(j.stores || []);
@@ -184,6 +204,19 @@ export default function StoresPage() {
         ),
       },
       {
+        id: "template",
+        header: "Receipt template",
+        cell: ({ row }) => {
+          const tId = row.original.defaultReceiptTemplateId ?? null;
+          return (
+            <span className="text-muted-foreground">
+              {tId ? (templateById[tId]?.name ?? "—") : "—"}
+            </span>
+          );
+        },
+        size: 200,
+      },
+      {
         accessorKey: "createdAt",
         header: "Created",
         cell: ({ row }) => (
@@ -239,7 +272,7 @@ export default function StoresPage() {
   function openCreate() {
     setEditing(null);
     setFormName("");
-    setFormAddress({ street: "", city: "", state: "", zip: "", country: "" });
+    setFormTemplateId(null);
     setEditOpen(true);
   }
 
@@ -254,6 +287,7 @@ export default function StoresPage() {
       zip: a.zip || a.postalCode || "",
       country: a.country || "",
     });
+    setFormTemplateId(s.defaultReceiptTemplateId ?? null);
     setEditOpen(true);
   }
 
@@ -269,6 +303,7 @@ export default function StoresPage() {
           zip: formAddress.zip || undefined,
           country: formAddress.country || undefined, // ISO-2 from selector
         },
+        defaultReceiptTemplateId: formTemplateId ?? null,
       };
       if (!payload.name) throw new Error("Name is required.");
 
@@ -455,8 +490,8 @@ export default function StoresPage() {
                   value={
                     formAddress.country
                       ? countryOptions.find(
-                          (o) => o.value === formAddress.country
-                        ) || null
+                        (o) => o.value === formAddress.country
+                      ) || null
                       : null
                   }
                   onChange={(opt) =>
@@ -476,6 +511,24 @@ export default function StoresPage() {
                   Only countries your organization sells to.
                 </p>
               </div>
+                             {/* Default receipt template */}
+               <div className="space-y-2 sm:col-span-2">
+                 <Label>Default receipt template</Label>
+                 <Select
+                   isClearable
+                   options={templates.map(t => ({ value: t.id, label: t.name }))}
+                   value={
+                     formTemplateId
+                       ? { value: formTemplateId, label: templateById[formTemplateId]?.name ?? "Selected template" }
+                       : null
+                   }
+                   onChange={(opt: any) => setFormTemplateId(opt?.value ?? null)}
+                   placeholder="Use organization default / none"
+                 />
+                 <p className="text-xs text-muted-foreground">
+                   This template will be used by POS/receipts for this store by default. You can reuse a single template across many stores.
+                 </p>
+               </div>
             </div>
           </div>
 

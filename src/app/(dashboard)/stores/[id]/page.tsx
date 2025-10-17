@@ -29,8 +29,14 @@ type Store = {
   id: string;
   name: string;
   address: Record<string, any> | null;
+  defaultReceiptTemplateId?: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+type ReceiptTemplate = {
+  id: string;
+  name: string;
 };
 
 type Register = {
@@ -75,13 +81,19 @@ export default function StoreRegistersPage() {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [deleteIds, setDeleteIds] = React.useState<string[]>([]);
 
+    // templates
+  const [templates, setTemplates] = React.useState<ReceiptTemplate[]>([]);
+  const templateById = React.useMemo(() => Object.fromEntries(templates.map(t => [t.id, t])), [templates]);
+  const [savingTemplate, setSavingTemplate] = React.useState(false);
+
   const load = React.useCallback(async () => {
     setIsLoading(true);
     try {
-      const [sRes, rRes] = await Promise.all([
-        fetch(`/api/pos/stores/${storeId}`),
-        fetch(`/api/pos/registers?storeId=${encodeURIComponent(storeId)}`),
-      ]);
+     const [sRes, rRes, tRes] = await Promise.all([
+  fetch(`/api/pos/stores/${storeId}`),
+  fetch(`/api/pos/registers?storeId=${encodeURIComponent(storeId)}`),
+  fetch(`/api/pos/receipt-templates`),
+]);
       if (!sRes.ok) throw new Error("Failed to load store");
       const s = await sRes.json();
       setStore(s.store);
@@ -89,6 +101,10 @@ export default function StoreRegistersPage() {
       if (!rRes.ok) throw new Error("Failed to load registers");
       const r = await rRes.json();
       setRows(r.registers || []);
+       if (tRes.ok) {
+   const tj = await tRes.json();
+   setTemplates(tj.templates || []);
+ }
     } catch (e: any) {
       toast.error(e?.message || "Could not load data");
       router.replace("/stores");
@@ -359,6 +375,52 @@ export default function StoreRegistersPage() {
             <Plus className="h-4 w-4" />
             Add Register
           </Button>
+        </div>
+      </div>
+
+            {/* Store receipt template selector */}
+      <div className="rounded-lg border p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="font-medium">Default receipt template</div>
+            <p className="text-sm text-muted-foreground">
+              This template will be used by POS and receipt emails/PDF for this store.
+            </p>
+          </div>
+          <div className="min-w-[300px]">
+            <Select
+              isClearable
+              options={templates.map(t => ({ value: t.id, label: t.name }))}
+              value={
+                store?.defaultReceiptTemplateId
+                  ? {
+                      value: store.defaultReceiptTemplateId,
+                      label: templateById[store.defaultReceiptTemplateId!]?.name ?? "Selected template",
+                    }
+                  : null
+              }
+              placeholder="Use organization default / none"
+              onChange={async (opt: any) => {
+                try {
+                  setSavingTemplate(true);
+                  const res = await fetch(`/api/pos/stores/${storeId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ defaultReceiptTemplateId: opt?.value ?? null }),
+                  });
+                  if (!res.ok) throw new Error("Failed to update template");
+                  const j = await res.json();
+                  setStore(j.store);
+                  toast.success("Store template updated");
+                } catch (e: any) {
+                  toast.error(e?.message || "Update failed");
+                } finally {
+                  setSavingTemplate(false);
+                }
+              }}
+              isDisabled={savingTemplate || isLoading}
+            />
+          </div>
         </div>
       </div>
 
