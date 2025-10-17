@@ -7,9 +7,6 @@ import { v4 as uuidv4 } from "uuid";
 
 export const runtime = "nodejs";
 
-/* ──────────────────────────────────────────────────────────────────────
-   Zod schemas
-────────────────────────────────────────────────────────────────────── */
 const OptionsSchema = z.object({
   showLogo: z.boolean().default(true),
   showCompanyName: z.boolean().default(true),
@@ -33,7 +30,7 @@ const OptionsSchema = z.object({
     hideDiscountIfZero: z.boolean().default(true),
     printBarcode: z.boolean().default(true),
     showOrderKey: z.boolean().default(true),
-    showCashier: z.boolean().default(true), // employee name on receipt
+    showCashier: z.boolean().default(true),
   }).default({}),
 }).default({});
 
@@ -44,21 +41,6 @@ const CreateSchema = z.object({
   options: OptionsSchema.optional(),
 });
 
-const UpdateSchema = z.object({
-  name: z.string().min(1).optional(),
-  type: z.literal("receipt").optional(),
-  printFormat: z.enum(["thermal", "a4"]).optional(),
-  options: OptionsSchema.optional(),
-});
-
-/* ──────────────────────────────────────────────────────────────────────
-   GET /api/pos/receipt-templates
-   Query params:
-     - printFormat=thermal|a4  (optional filter)
-     - q=string                (optional name search)
-     - includeUsage=true       (include how many stores use each template)
-     - storeId=<uuid>          (when includeUsage, flags isDefaultForStore)
-────────────────────────────────────────────────────────────────────── */
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -86,12 +68,10 @@ export async function GET(req: NextRequest) {
 
   let sql: string;
   if (includeUsage) {
-    // Add LEFT JOIN to count how many stores reference each template
-    // and (optionally) whether a specific store uses it.
     const hasStoreCheck = !!storeId;
     let storeCheckFragment = "0";
     if (hasStoreCheck) {
-      where.push(`1=1`); // no-op to keep placeholder math simple
+      where.push(`1=1`);
       storeCheckFragment = `MAX(CASE WHEN s.id = $${vals.length + 1} THEN 1 ELSE 0 END)`;
       vals.push(storeId);
     }
@@ -133,9 +113,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/* ──────────────────────────────────────────────────────────────────────
-   POST /api/pos/receipt-templates
-────────────────────────────────────────────────────────────────────── */
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;

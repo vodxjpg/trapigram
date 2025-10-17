@@ -1,3 +1,4 @@
+// src/app/api/pos/receipt-templates/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
@@ -59,7 +60,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
-  // Unlink from stores first
   await pool.query(
     `UPDATE stores SET "defaultReceiptTemplateId" = NULL
       WHERE "organizationId" = $1 AND "defaultReceiptTemplateId" = $2`,

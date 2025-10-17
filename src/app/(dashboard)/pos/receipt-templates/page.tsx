@@ -1,98 +1,343 @@
 "use client";
 
 import * as React from "react";
-import { Input } from "@/components/ui/input";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ColumnDef, getCoreRowModel, useReactTable } from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
-import { Card } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
+import { MoreHorizontal, Pencil, Plus, Trash2, Search, Eye } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
+} from "@/components/ui/select";
 
-type Template = {
-  id?: string;
+type TemplateRow = {
+  id: string;
   name: string;
-  type: "receipt";
   printFormat: "thermal" | "a4";
-  options: any;
+  usageCount?: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
-const DEFAULT_TPL: Template = {
-  name: "Default Template",
-  type: "receipt",
-  printFormat: "thermal",
-  options: {
-    showLogo: false,
-    showCompanyName: true,
-    headerText: "",
-    showStoreAddress: true,
-    showCustomerAddress: false,
-    showCustomerDetailsTitle: false,
-    displayCompanyFirst: false,
-    labels: {
-      item: "Item",
-      price: "Price",
-      subtotal: "Subtotal",
-      discount: "Discount",
-      tax: "Tax",
-      total: "Total",
-      change: "Change",
-      outstanding: "Outstanding",
-      servedBy: "Served by",
-    },
-    flags: {
-      hideDiscountIfZero: true,
-      printBarcode: true,
-      showOrderKey: true,
-      showCashier: true,
-    },
-  },
-};
+export default function ReceiptTemplatesListPage() {
+  const router = useRouter();
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [rows, setRows] = React.useState<TemplateRow[]>([]);
+  const [query, setQuery] = React.useState("");
+  const [formatFilter, setFormatFilter] = React.useState<"" | "thermal" | "a4">("");
 
-export default function ReceiptTemplatesPage() {
-  const [tpl, setTpl] = React.useState<Template>(DEFAULT_TPL);
+  // add/edit dialog
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<TemplateRow | null>(null);
+  const [formName, setFormName] = React.useState("");
+  const [formFormat, setFormFormat] = React.useState<"thermal" | "a4">("thermal");
   const [saving, setSaving] = React.useState(false);
 
-  const save = async () => {
+  // delete
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [deleteIds, setDeleteIds] = React.useState<string[]>([]);
+
+  const load = React.useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("includeUsage", "true");
+      if (formatFilter) params.set("printFormat", formatFilter);
+      if (query.trim()) params.set("q", query.trim());
+      const res = await fetch(`/api/pos/receipt-templates?${params.toString()}`);
+      if (!res.ok) throw new Error("Failed to load templates");
+      const j = await res.json();
+      setRows(j.templates || []);
+    } catch (e: any) {
+      toast.error(e?.message || "Could not load templates");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [formatFilter, query]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  function openCreate() {
+    setEditing(null);
+    setFormName("");
+    setFormFormat("thermal");
+    setEditOpen(true);
+  }
+  function openEdit(t: TemplateRow) {
+    setEditing(t);
+    setFormName(t.name);
+    setFormFormat(t.printFormat);
+    setEditOpen(true);
+  }
+  async function saveTemplate() {
     setSaving(true);
     try {
-      const res = await fetch("/api/pos/receipt-templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(tpl),
-      });
-      if (!res.ok) throw new Error("Failed to save");
-      const j = await res.json();
-      setTpl(j.template);
-      toast.success("Template saved");
+      if (!formName.trim()) throw new Error("Name is required.");
+      if (editing) {
+        const res = await fetch(`/api/pos/receipt-templates/${editing.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: formName.trim(), printFormat: formFormat }),
+        });
+        if (!res.ok) throw new Error("Failed to update template");
+        toast.success("Template updated");
+      } else {
+        const res = await fetch(`/api/pos/receipt-templates`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+          },
+          body: JSON.stringify({
+            name: formName.trim(),
+            type: "receipt",
+            printFormat: formFormat,
+            options: {},
+          }),
+        });
+        if (!res.ok) throw new Error("Failed to create template");
+        toast.success("Template created");
+      }
+      setEditOpen(false);
+      await load();
     } catch (e: any) {
       toast.error(e?.message || "Save failed");
     } finally {
       setSaving(false);
     }
-  };
+  }
+
+  async function deleteNow(ids: string[]) {
+    await Promise.all(
+      ids.map(async (id) => {
+        const r = await fetch(`/api/pos/receipt-templates/${id}`, { method: "DELETE" });
+        if (!r.ok) throw new Error("Delete failed");
+      })
+    );
+  }
+  async function confirmBulkDelete() {
+    const ids =
+      deleteIds.length > 0
+        ? deleteIds
+        : table.getSelectedRowModel().rows.map((r) => r.original.id);
+    if (!ids.length) {
+      setConfirmOpen(false);
+      return;
+    }
+    try {
+      await deleteNow(ids);
+      toast.success(ids.length > 1 ? "Templates deleted" : "Template deleted");
+      setConfirmOpen(false);
+      setDeleteIds([]);
+      await load();
+    } catch {
+      toast.error("Failed to delete");
+    }
+  }
+
+  const filtered = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return rows.filter((t) => {
+      const matchQ = !q || t.name.toLowerCase().includes(q);
+      const matchFmt = !formatFilter || t.printFormat === formatFilter;
+      return matchQ && matchFmt;
+    });
+  }, [rows, query, formatFilter]);
+
+  const columns = React.useMemo<ColumnDef<TemplateRow>[]>(() => [
+    {
+      id: "select",
+      size: 30,
+      header: ({ table }) => (
+        <Checkbox
+          checked={table.getIsAllRowsSelected()}
+          onCheckedChange={(v) => table.toggleAllRowsSelected(!!v)}
+          aria-label="Select all"
+        />
+      ),
+      cell: ({ row }) => (
+        <Checkbox
+          checked={row.getIsSelected()}
+          onCheckedChange={(v) => row.toggleSelected(!!v)}
+          aria-label="Select row"
+        />
+      ),
+    },
+    {
+      accessorKey: "name",
+      header: "Template",
+      cell: ({ row }) => {
+        const t = row.original;
+        return (
+          <Link href={`/pos/receipt-templates/${t.id}`} className="font-medium text-primary hover:underline">
+            {t.name}
+          </Link>
+        );
+      },
+    },
+    {
+      accessorKey: "printFormat",
+      header: "Format",
+      size: 120,
+      cell: ({ row }) => (
+        <span className="text-muted-foreground uppercase">{row.original.printFormat}</span>
+      ),
+    },
+    {
+      accessorKey: "usageCount",
+      header: "Used by stores",
+      size: 140,
+      cell: ({ row }) => <span className="text-muted-foreground">{row.original.usageCount ?? 0}</span>,
+    },
+    {
+      accessorKey: "createdAt",
+      header: "Created",
+      size: 110,
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">
+          {new Date(row.original.createdAt).toLocaleDateString()}
+        </span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "",
+      size: 40,
+      cell: ({ row }) => {
+        const t = row.original;
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem className="gap-2" onClick={() => router.push(`/pos/receipt-templates/${t.id}`)}>
+                <Eye className="h-4 w-4" /> Open
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-2" onClick={() => openEdit(t)}>
+                <Pencil className="h-4 w-4" /> Quick edit
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="gap-2 text-destructive focus:text-destructive"
+                onClick={() => {
+                  setDeleteIds([t.id]);
+                  setConfirmOpen(true);
+                }}
+              >
+                <Trash2 className="h-4 w-4" /> Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+    },
+  ], [router]);
+
+  const table = useReactTable({
+    data: filtered,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    enableRowSelection: true,
+  });
+
+  const selectedCount = table.getSelectedRowModel().rows.length;
 
   return (
-    <div className="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-      {/* Editor */}
-      <div className="space-y-4">
-        <Card className="p-4 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <Label>Name</Label>
+    <div className="container mx-auto py-6 px-6 space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Receipt templates</h1>
+          <p className="text-muted-foreground">Manage POS receipt templates</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {selectedCount > 0 && (
+            <Button
+              variant="destructive"
+              className="gap-2"
+              onClick={() => {
+                setDeleteIds(table.getSelectedRowModel().rows.map((r) => r.original.id));
+                setConfirmOpen(true);
+              }}
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete selected ({selectedCount})
+            </Button>
+          )}
+          <Button className="gap-2" onClick={openCreate}>
+            <Plus className="h-4 w-4" />
+            Add Template
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <div className="relative w-full max-w-md">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search by name…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") load(); }}
+            className="pl-9"
+          />
+        </div>
+        <Select value={formatFilter} onValueChange={(v: any) => setFormatFilter(v)}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="All formats" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">All formats</SelectItem>
+            <SelectItem value="thermal">Thermal</SelectItem>
+            <SelectItem value="a4">A4</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button variant="outline" onClick={load}>Apply</Button>
+      </div>
+
+      <StandardDataTable
+        table={table}
+        columns={columns}
+        isLoading={isLoading}
+        emptyMessage="No receipt templates yet."
+      />
+
+      {/* Add/Edit dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editing ? "Edit template" : "Add template"}</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Name *</Label>
               <Input
-                value={tpl.name}
-                onChange={(e) => setTpl({ ...tpl, name: e.target.value })}
+                value={formName}
+                onChange={(e) => setFormName(e.target.value)}
                 placeholder="Default Template"
               />
             </div>
-            <div>
-              <Label>Print format</Label>
-              <Select
-                value={tpl.printFormat}
-                onValueChange={(v: "thermal" | "a4") => setTpl({ ...tpl, printFormat: v })}
-              >
+            <div className="space-y-2">
+              <Label>Print format *</Label>
+              <Select value={formFormat} onValueChange={(v: "thermal" | "a4") => setFormFormat(v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="thermal">Thermal (POS)</SelectItem>
@@ -102,116 +347,39 @@ export default function ReceiptTemplatesPage() {
             </div>
           </div>
 
-          <Separator />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button onClick={saveTemplate} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Header text</Label>
-              <Input
-                value={tpl.options.headerText ?? ""}
-                onChange={(e) => setTpl({ ...tpl, options: { ...tpl.options, headerText: e.target.value } })}
-                placeholder="Thanks for your purchase!"
-              />
-            </div>
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div className="text-sm">
-                <div className="font-medium">Show company name</div>
-                <div className="text-muted-foreground">Display company/store name on top</div>
-              </div>
-              <Switch
-                checked={!!tpl.options.showCompanyName}
-                onCheckedChange={(v) => setTpl({ ...tpl, options: { ...tpl.options, showCompanyName: v } })}
-              />
-            </div>
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div className="text-sm">
-                <div className="font-medium">Show store address</div>
-                <div className="text-muted-foreground">Print store address under header</div>
-              </div>
-              <Switch
-                checked={!!tpl.options.showStoreAddress}
-                onCheckedChange={(v) => setTpl({ ...tpl, options: { ...tpl.options, showStoreAddress: v } })}
-              />
-            </div>
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div className="text-sm">
-                <div className="font-medium">Show cashier</div>
-                <div className="text-muted-foreground">Include the employee who served the customer</div>
-              </div>
-              <Switch
-                checked={!!tpl.options?.flags?.showCashier}
-                onCheckedChange={(v) =>
-                  setTpl({ ...tpl, options: { ...tpl.options, flags: { ...tpl.options.flags, showCashier: v } } })
-                }
-              />
-            </div>
-          </div>
-
-          <Separator />
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {(["item","price","subtotal","discount","tax","total","change","servedBy"] as const).map((k) => (
-              <div key={k}>
-                <Label className="capitalize">{k}</Label>
-                <Input
-                  value={tpl.options.labels?.[k] ?? ""}
-                  onChange={(e) =>
-                    setTpl({
-                      ...tpl,
-                      options: { ...tpl.options, labels: { ...tpl.options.labels, [k]: e.target.value } },
-                    })
-                  }
-                />
-              </div>
-            ))}
-          </div>
-
-          <div className="flex justify-end">
-            <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save template"}</Button>
-          </div>
-        </Card>
-      </div>
-
-      {/* Live preview (HTML) */}
-      <div className="space-y-2">
-        <div className="text-sm text-muted-foreground">Preview</div>
-        <div
-          className={`bg-white border rounded-md p-4 mx-auto ${
-            tpl.printFormat === "thermal" ? "w-[80mm]" : "w-[650px]"
-          }`}
-        >
-          {tpl.options.showCompanyName && <div className="text-center font-semibold">My Store</div>}
-          {!!tpl.options.headerText && (
-            <div className="text-center text-sm text-muted-foreground mt-1">{tpl.options.headerText}</div>
-          )}
-          <div className="text-xs text-center text-muted-foreground mt-1">123 Main St, City</div>
-          <hr className="my-2" />
-          <div className="text-xs flex justify-between">
-            <span>Date</span><span>{new Date().toLocaleString()}</span>
-          </div>
-          <div className="text-xs flex justify-between">
-            <span>Receipt</span><span>000123</span>
-          </div>
-          <div className="text-xs flex justify-between">
-            <span>Customer</span><span>Walk-in</span>
-          </div>
-          {tpl.options.flags.showCashier && (
-            <div className="text-xs flex justify-between">
-              <span>{tpl.options.labels.servedBy || "Served by"}</span><span>Alex</span>
-            </div>
-          )}
-          <hr className="my-2" />
-          <div className="text-xs font-medium">{tpl.options.labels.item} / {tpl.options.labels.price}</div>
-          <div className="text-xs flex justify-between"><span>1 × Demo T-shirt</span><span>$20.00</span></div>
-          <div className="text-xs flex justify-between"><span>2 × Demo Jacket</span><span>$160.00</span></div>
-          <hr className="my-2" />
-          <div className="text-xs flex justify-between"><span>{tpl.options.labels.subtotal}</span><span>$180.00</span></div>
-          <div className="text-xs flex justify-between"><span>{tpl.options.labels.discount}</span><span>-$10.00</span></div>
-          <div className="text-xs flex justify-between"><span>{tpl.options.labels.tax}</span><span>$18.00</span></div>
-          <div className="text-sm flex justify-between font-semibold mt-1">
-            <span>{tpl.options.labels.total}</span><span>$188.00</span>
-          </div>
-        </div>
-      </div>
+      {/* Delete confirm */}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {deleteIds.length > 1 ? `${deleteIds.length} templates` : "template"}?
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This permanently removes the template{deleteIds.length > 1 ? "s" : ""}.
+          </p>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmBulkDelete}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
