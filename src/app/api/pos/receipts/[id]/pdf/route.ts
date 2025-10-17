@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 /* ──────────────────────────────────────────────────────────── */
 const A4 = { w: 595.28, h: 841.89 };
 const THERMAL_W = 226.77; // ~80mm
-const MARGIN = 18;
+const BASE_MARGIN = 18;
 
 function addressToLines(addr: any): string[] {
   if (!addr) return [];
@@ -70,7 +70,6 @@ export async function GET(
       const m = /^pos-([^-\s]+)-([^-\s]+)$/i.exec(order.channel);
       if (m) {
         storeIdFromChannel = m[1] !== "na" ? m[1] : null;
-        /* registerIdFromChannel exists but unused here */
       }
     }
 
@@ -103,7 +102,7 @@ export async function GET(
       printFormat: "thermal" as "thermal" | "a4",
       options: {
         showLogo: true,
-        logoUrl: null as string | null,        // NEW
+        logoUrl: null as string | null,
         showCompanyName: true,
         headerText: null as string | null,
         showStoreAddress: false,
@@ -123,7 +122,7 @@ export async function GET(
           printBarcode: true,
           showOrderKey: true,
           showCashier: true,
-          showSku: false,                       // NEW
+          showSku: false,
         },
       },
     };
@@ -164,33 +163,34 @@ export async function GET(
 
     /* ── PDF layout vars (smaller on 80mm) ─────────────────────── */
     const isThermal = tpl.printFormat === "thermal";
-    const BASE = isThermal ? 9 : 10;   // body
-    const SMALL = isThermal ? 8 : 9;   // aux
-    const BIG = isThermal ? 11 : 12;   // headings/totals
-    const LEAD = isThermal ? 3 : 4;    // line spacing
+    const margin = isThermal ? 12 : BASE_MARGIN;
+    const BASE = isThermal ? 8 : 10;   // body
+    const SMALL = isThermal ? 7 : 9;   // aux
+    const BIG = isThermal ? 10 : 12;   // headings/totals
+    const LEAD = isThermal ? 2.5 : 4;  // line spacing
 
     const pdf = await PDFDocument.create();
     const font = await pdf.embedFont(StandardFonts.Helvetica);
     const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
     const pageSize = isThermal ? [THERMAL_W, A4.h] : [A4.w, A4.h];
     const page = pdf.addPage(pageSize);
-    let y = page.getHeight() - MARGIN;
+    let y = page.getHeight() - margin;
 
     const draw = (t: string, size = BASE, b = false) => {
-      page.drawText(t, { x: MARGIN, y, size, font: b ? bold : font, color: rgb(0, 0, 0) });
+      page.drawText(t, { x: margin, y, size, font: b ? bold : font, color: rgb(0, 0, 0) });
       y -= size + LEAD;
     };
     const row = (l: string, r: string, size = BASE) => {
-      page.drawText(l, { x: MARGIN, y, size, font });
+      page.drawText(l, { x: margin, y, size, font });
       const w = font.widthOfTextAtSize(r, size);
-      page.drawText(r, { x: page.getWidth() - MARGIN - w, y, size, font });
+      page.drawText(r, { x: page.getWidth() - margin - w, y, size, font });
       y -= size + LEAD;
     };
     const rule = () => {
       y -= 2;
       page.drawLine({
-        start: { x: MARGIN, y },
-        end: { x: page.getWidth() - MARGIN, y },
+        start: { x: margin, y },
+        end:   { x: page.getWidth() - margin, y },
         thickness: 0.5,
         color: rgb(0.8, 0.8, 0.8),
       });
@@ -204,33 +204,50 @@ export async function GET(
         ? tpl.options.logoUrl
         : `${origin}${tpl.options.logoUrl}`;
       try {
-        const res = await fetch(src);
+        const res = await fetch(src, { cache: "no-store" });
         if (res.ok) {
           const bytes = new Uint8Array(await res.arrayBuffer());
           const ct = (res.headers.get("content-type") || "").toLowerCase();
+          const ext = (src.split(".").pop() || "").toLowerCase();
 
-          // pdf-lib supports PNG and JPEG. Skip others (e.g. webp/gif) gracefully.
           let img: any | null = null;
-          if (ct.includes("png")) img = await pdf.embedPng(bytes);
-          else if (ct.includes("jpeg") || ct.includes("jpg")) img = await pdf.embedJpg(bytes);
+
+          // Prefer content-type, fall back to extension, then brute-try PNG→JPG
+          const wantPng = ct.includes("png") || ext === "png";
+          const wantJpg = ct.includes("jpeg") || ct.includes("jpg") || ext === "jpg" || ext === "jpeg";
+
+          try {
+            if (wantPng) img = await pdf.embedPng(bytes);
+            else if (wantJpg) img = await pdf.embedJpg(bytes);
+            else {
+              // unknown type: try png then jpg
+              try { img = await pdf.embedPng(bytes); } catch { img = await pdf.embedJpg(bytes); }
+            }
+          } catch {
+            // last chance: try both
+            try { img = await pdf.embedPng(bytes); } catch { /* ignore */ }
+            if (!img) try { img = await pdf.embedJpg(bytes); } catch { /* ignore */ }
+          }
 
           if (img) {
-            const maxW = page.getWidth() - 2 * MARGIN;
-            const capH = isThermal ? 38 : 54;
+            const maxW = page.getWidth() - 2 * margin;
+            const capH = isThermal ? 36 : 54;
             const ratio = img.height / img.width;
             const drawW = Math.min(maxW, img.width);
             const drawH = Math.min(capH, drawW * ratio);
 
             page.drawImage(img, {
-              x: (page.getWidth() - drawH / ratio) / 2,
+              x: (page.getWidth() - drawW) / 2,
               y: y - drawH,
-              width: drawH / ratio,
+              width: drawW,
               height: drawH,
             });
             y -= drawH + 6;
           }
         }
-      } catch {/* ignore logo failures */}
+      } catch {
+        /* ignore logo failures */
+      }
     }
 
     /* ── Header / store info ───────────────────────────────────── */
@@ -270,7 +287,6 @@ export async function GET(
 
     /* ── Line items (respect flags.showSku) ────────────────────── */
     const showSku = !!(tpl.options?.flags?.showSku);
-
     const linesRes = await pool.query(
       `SELECT cp.quantity, cp."unitPrice", p.title, p.sku
          FROM "cartProducts" cp
@@ -286,14 +302,8 @@ export async function GET(
       return { qty, title: name, unit, total: unit * qty };
     });
 
-    draw(
-      `${tpl.options.labels?.item || "Item"}   ${tpl.options.labels?.price || "Price"}`,
-      BASE,
-      true
-    );
-    for (const l of lines) {
-      row(`${l.qty} × ${l.title}`, fmt(l.total, currency), BASE);
-    }
+    draw(`${tpl.options.labels?.item || "Item"}   ${tpl.options.labels?.price || "Price"}`, BASE, true);
+    for (const l of lines) row(`${l.qty} × ${l.title}`, fmt(l.total, currency), BASE);
     rule();
 
     /* ── Totals / payments ─────────────────────────────────────── */
@@ -321,9 +331,7 @@ export async function GET(
     if (paidRows.rowCount) {
       rule();
       draw("Payments", BASE, true);
-      for (const p of paidRows.rows) {
-        row(p.name, fmt(Number(p.amount || 0), currency), BASE);
-      }
+      for (const p of paidRows.rows) row(p.name, fmt(Number(p.amount || 0), currency), BASE);
     }
     const change = Math.max(0, paid - grand);
     if (change > 0) row(tpl.options.labels?.change || "Change", fmt(change, currency), BASE);
@@ -339,9 +347,6 @@ export async function GET(
     });
   } catch (err: any) {
     console.error("[receipt pdf]", err);
-    return NextResponse.json(
-      { error: err?.message ?? "Internal error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err?.message ?? "Internal error" }, { status: 500 });
   }
 }
