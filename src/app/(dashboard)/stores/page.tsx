@@ -91,7 +91,9 @@ export default function StoresPage() {
   const [templates, setTemplates] = React.useState<ReceiptTemplate[]>([]);
   const [formTemplateId, setFormTemplateId] = React.useState<string | null>(null);
   const templateById = React.useMemo(
-    () => Object.fromEntries(templates.map(t => [t.id, t])), [templates]);
+    () => Object.fromEntries(templates.map(t => [t.id, t])),
+    [templates]
+  );
 
   // org countries for selector
   const [countryOptions, setCountryOptions] = React.useState<
@@ -203,19 +205,19 @@ export default function StoresPage() {
           </span>
         ),
       },
-      {
-        id: "template",
-        header: "Receipt template",
-        cell: ({ row }) => {
-          const tId = row.original.defaultReceiptTemplateId ?? null;
-          return (
-            <span className="text-muted-foreground">
-              {tId ? (templateById[tId]?.name ?? "—") : "—"}
-            </span>
-          );
-        },
-        size: 200,
+        {
+      id: "template",
+      header: "Receipt template",
+      cell: ({ row }) => {
+        const tId = row.original.defaultReceiptTemplateId ?? null;
+        return (
+          <span className="text-muted-foreground">
+            {tId ? (templateById[tId]?.name ?? "—") : "—"}
+          </span>
+        );
       },
+      size: 200,
+    },
       {
         accessorKey: "createdAt",
         header: "Created",
