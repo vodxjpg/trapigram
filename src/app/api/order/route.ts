@@ -128,7 +128,11 @@ export async function GET(req: NextRequest) {
         FROM orders o
         JOIN clients c ON c.id = o."clientId"
            WHERE o."organizationId" = $1
-        AND (o."orderKey" = $2 OR o."orderKey" = ('S-' || $2))
+        AND (
+              o."orderKey" = $2
+          OR  o."orderKey" = ('S-'   || $2)   -- supplier ref
+          OR  o."orderKey" = ('POS-' || $2)   -- allow plain numeric lookups for POS-xxxx
+        )
        LIMIT 1
       `;
       const r = await pool.query(sql, [organizationId, filterOrderKey]);

@@ -655,7 +655,16 @@ export async function POST(req: NextRequest) {
     }
 
     const orderId = uuidv4();
-    const orderKey = "pos-" + crypto.randomBytes(6).toString("hex");
+    // Sequential POS order number: POS-0001, POS-0002, ...
+    // Reuse the global order_key_seq so numbers don't collide across channels.
+    await pool.query(
+      `CREATE SEQUENCE IF NOT EXISTS order_key_seq START 1 INCREMENT 1 OWNED BY NONE`
+    );
+    const { rows: seqRows } = await pool.query(
+      `SELECT nextval('order_key_seq') AS seq`
+    );
+    const seqNum = String(Number(seqRows[0].seq)).padStart(4, "0");
+    const orderKey = `POS-${seqNum}`;
     const primaryMethodId = payments[0].methodId;
 
     let orderChannel = summary.channel;
