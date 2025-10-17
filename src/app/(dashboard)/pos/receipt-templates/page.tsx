@@ -154,10 +154,10 @@ export default function ReceiptTemplatesListPage() {
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter((t) => {
-      const matchQ = !q || t.name.toLowerCase().includes(q);
-      const matchFmt = !formatFilter || t.printFormat === formatFilter;
-      return matchQ && matchFmt;
-    });
+       const matchQ = !q || t.name.toLowerCase().includes(q);
+       const matchFmt = formatFilter === "all" || t.printFormat === formatFilter;
+       return matchQ && matchFmt;
+     });
   }, [rows, query, formatFilter]);
 
   const columns = React.useMemo<ColumnDef<TemplateRow>[]>(() => [
@@ -230,10 +230,10 @@ export default function ReceiptTemplatesListPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem className="gap-2" onClick={() => router.push(`/pos/receipt-templates/${t.id}`)}>
-                <Eye className="h-4 w-4" /> Open
+                <Eye className="h-4 w-4" /> Edit
               </DropdownMenuItem>
               <DropdownMenuItem className="gap-2" onClick={() => openEdit(t)}>
-                <Pencil className="h-4 w-4" /> Quick edit
+                <Pencil className="h-4 w-4" /> Change template's name
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
