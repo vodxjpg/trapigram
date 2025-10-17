@@ -650,10 +650,12 @@ export async function sendNotification(params: SendNotificationParams) {
   if (channels.includes("telegram")) {
     const isTicket = type === "ticket_created" || type === "ticket_replied";
 
-    // For tickets: always target support groups (admin groups); for others follow trigger rules.
+    // For tickets: always target support groups (admin groups); for others follow template/trigger rules.
+    // FIX: Use finalAdminFanout (template-based) instead of requiring trigger === "admin_only",
+    // so statuses like order_placed also reach admin groups when an admin template exists.
     const wantAdminGroups = isTicket
       ? true
-      : (!isAutomation && effectiveTrigger === "admin_only" && finalAdminFanout);
+      : (!isAutomation && finalAdminFanout);
 
     const wantClientDM = finalUserFanout;
 
