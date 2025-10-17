@@ -542,6 +542,25 @@ const CheckoutCreateSchema = z.object({
   discount: DiscountSchema,
 });
 
+/* Resolve current user (cashier) from the same session */
+type MinimalUser = { id: string; name: string | null } | null;
+async function fetchCurrentUserFromSession(req: NextRequest): Promise<MinimalUser> {
+  try {
+    const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+    const res = await fetch(`${origin}/api/users/current`, {
+      headers: { cookie: req.headers.get("cookie") ?? "" },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => ({}));
+    const u = data?.user;
+    if (!u) return null;
+    return { id: u.id, name: u.name ?? null };
+  } catch {
+    return null;
+  }
+}
+
 /* GET: summary + ACTIVE payment methods */
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
@@ -637,9 +656,6 @@ export async function POST(req: NextRequest) {
 
     const orderId = uuidv4();
     const orderKey = "pos-" + crypto.randomBytes(6).toString("hex");
-
-
-
     const primaryMethodId = payments[0].methodId;
 
     let orderChannel = summary.channel;
@@ -648,14 +664,29 @@ export async function POST(req: NextRequest) {
       await pool.query(`UPDATE carts SET channel=$1 WHERE id=$2`, [orderChannel, cartId]);
     }
 
+
+    // Cashier meta event
+    const currentUser = await fetchCurrentUserFromSession(req);
+    const cashierEvent = {
+      event: "cashier",
+      type: "pos_checkout",
+      cashierId: currentUser?.id ?? (ctx as any).userId ?? null,
+      cashierName: currentUser?.name ?? null,
+      storeId: storeId ?? null,
+      registerId: registerId ?? null,
+      at: new Date().toISOString(),
+    };
+    const initialOrderMeta = JSON.stringify([cashierEvent]);
+
     const insertSql = `
       INSERT INTO orders (
         id, "clientId", "cartId", country, status,
         "paymentMethod", "orderKey", "cartHash",
-          "shippingTotal", "discountTotal", "totalAmount",
-  "couponCode", "couponType", "counponType", "discountValue",
-  "shippingService",
+        "shippingTotal", "discountTotal", "totalAmount",
+        "couponCode", "couponType", "counponType", "discountValue",
+        "shippingService",
         "dateCreated", "datePaid", "dateCompleted", "dateCancelled",
+        "orderMeta",
         "createdAt", "updatedAt", "organizationId", channel
       )
       VALUES (
@@ -665,7 +696,8 @@ export async function POST(req: NextRequest) {
         $12,$13,$14,$15,
         $16,
         $17,$18,$19,$20,
-        NOW(),NOW(),$21,$22
+        $21::jsonb,
+        NOW(),NOW(),$22,$23
       )
       RETURNING *`;
 
@@ -685,11 +717,12 @@ export async function POST(req: NextRequest) {
       couponType,                      // 'fixed' | 'percentage' | null
       couponType,                      // legacy misspelling
       discountValueArr,                // text[] e.g. ['10'] or ['5']
-      "-",
-      new Date(),      // dateCreated
-      new Date(),      // datePaid
-      new Date(),      // dateCompleted
-      null,            // dateCancelled
+      "-",                             // shippingService
+      new Date(),                      // dateCreated
+      new Date(),                      // datePaid
+      new Date(),                      // dateCompleted
+      null,                            // dateCancelled
+      initialOrderMeta,                // NEW: orderMeta
       organizationId,
       orderChannel,
     ];

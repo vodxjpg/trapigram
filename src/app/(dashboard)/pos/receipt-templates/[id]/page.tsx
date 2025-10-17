@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Upload, X } from "lucide-react";
 import {
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
 } from "@/components/ui/select";
@@ -31,7 +32,8 @@ const FALLBACK: Template = {
   type: "receipt",
   printFormat: "thermal",
   options: {
-    showLogo: false,
+    showLogo: true,
+    logoUrl: null,
     showCompanyName: true,
     headerText: "",
     showStoreAddress: true,
@@ -54,6 +56,7 @@ const FALLBACK: Template = {
       printBarcode: true,
       showOrderKey: true,
       showCashier: true,
+      showSku: false,
     },
   },
 };
@@ -63,6 +66,9 @@ export default function ReceiptTemplateDetailPage() {
   const [tpl, setTpl] = React.useState<Template>(FALLBACK);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+
+  // local preview for logo (from tpl.options.logoUrl)
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     (async () => {
@@ -98,6 +104,34 @@ export default function ReceiptTemplateDetailPage() {
       setSaving(false);
     }
   }
+
+  async function uploadLogo(file: File) {
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("Upload failed");
+      const { filePath } = await res.json();
+      setTpl((cur) => ({
+        ...cur,
+        options: { ...cur.options, logoUrl: filePath, showLogo: true },
+      }));
+      toast.success("Logo uploaded");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Upload failed");
+    }
+  }
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) uploadLogo(f);
+  };
+
+  const onDrop = (e: React.DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0];
+    if (f) uploadLogo(f);
+  };
 
   if (loading) {
     return (
@@ -158,6 +192,75 @@ export default function ReceiptTemplateDetailPage() {
 
             <Separator />
 
+            {/* Logo controls */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex items-center justify-between rounded-md border p-3 md:col-span-2">
+                <div className="text-sm">
+                  <div className="font-medium">Show company logo</div>
+                  <div className="text-muted-foreground">Display the uploaded logo at the top of the receipt</div>
+                </div>
+                <Switch
+                  checked={!!tpl.options.showLogo}
+                  onCheckedChange={(v) => setTpl({ ...tpl, options: { ...tpl.options, showLogo: v } })}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <Label>Logo image</Label>
+                <label
+                  htmlFor="logo-upload"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={onDrop}
+                  className="group relative mt-1 flex h-40 items-center justify-center rounded-md border border-dashed hover:border-primary/70 hover:bg-muted/50 transition-colors cursor-pointer"
+                >
+                  {tpl.options.logoUrl ? (
+                    <>
+                      {/* Next/Image works with local /uploads paths */}
+                      <Image
+                        src={tpl.options.logoUrl}
+                        alt="Company logo"
+                        fill
+                        className="object-contain p-4 rounded"
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-2 right-2 h-7 w-7"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setTpl((cur) => ({ ...cur, options: { ...cur.options, logoUrl: null } }));
+                          if (fileInputRef.current) fileInputRef.current.value = "";
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center text-center">
+                      <Upload className="h-8 w-8 text-muted-foreground group-hover:text-primary" />
+                      <span className="mt-2 text-sm text-muted-foreground">
+                        Click or drag an image here (PNG/JPG/WebP)
+                      </span>
+                    </div>
+                  )}
+                  <Input
+                    id="logo-upload"
+                    type="file"
+                    accept="image/*"
+                    ref={fileInputRef}
+                    onChange={onFileChange}
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                  />
+                </label>
+                {tpl.options.logoUrl && (
+                  <p className="text-xs text-muted-foreground mt-1 break-all">{tpl.options.logoUrl}</p>
+                )}
+              </div>
+            </div>
+
+            <Separator />
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Header text</Label>
@@ -167,6 +270,7 @@ export default function ReceiptTemplateDetailPage() {
                   placeholder="Thanks for your purchase!"
                 />
               </div>
+
               <div className="flex items-center justify-between rounded-md border p-3">
                 <div className="text-sm">
                   <div className="font-medium">Show company name</div>
@@ -177,6 +281,7 @@ export default function ReceiptTemplateDetailPage() {
                   onCheckedChange={(v) => setTpl({ ...tpl, options: { ...tpl.options, showCompanyName: v } })}
                 />
               </div>
+
               <div className="flex items-center justify-between rounded-md border p-3">
                 <div className="text-sm">
                   <div className="font-medium">Show store address</div>
@@ -187,6 +292,7 @@ export default function ReceiptTemplateDetailPage() {
                   onCheckedChange={(v) => setTpl({ ...tpl, options: { ...tpl.options, showStoreAddress: v } })}
                 />
               </div>
+
               <div className="flex items-center justify-between rounded-md border p-3">
                 <div className="text-sm">
                   <div className="font-medium">Show cashier</div>
@@ -196,6 +302,20 @@ export default function ReceiptTemplateDetailPage() {
                   checked={!!tpl.options?.flags?.showCashier}
                   onCheckedChange={(v) =>
                     setTpl({ ...tpl, options: { ...tpl.options, flags: { ...tpl.options.flags, showCashier: v } } })
+                  }
+                />
+              </div>
+
+              {/* NEW: show SKU */}
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <div className="text-sm">
+                  <div className="font-medium">Show product SKU</div>
+                  <div className="text-muted-foreground">Display SKU next to item titles</div>
+                </div>
+                <Switch
+                  checked={!!tpl.options?.flags?.showSku}
+                  onCheckedChange={(v) =>
+                    setTpl({ ...tpl, options: { ...tpl.options, flags: { ...tpl.options.flags, showSku: v } } })
                   }
                 />
               </div>
@@ -225,46 +345,86 @@ export default function ReceiptTemplateDetailPage() {
         <div className="space-y-2">
           <div className="text-sm text-muted-foreground">Preview</div>
           <div
-            className={`bg-white border rounded-md p-4 mx-auto ${
+            className={`receipt border rounded-md p-4 mx-auto bg-white ${
               tpl.printFormat === "thermal" ? "w-[80mm]" : "w-[650px]"
             }`}
           >
-            {tpl.options.showCompanyName && <div className="text-center font-semibold">My Store</div>}
+            {/* Logo & name */}
+            {tpl.options.showLogo && tpl.options.logoUrl && (
+              <div className="flex justify-center">
+                {/* Keep the logo small; print styles force max-height too */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={tpl.options.logoUrl}
+                  alt="Logo"
+                  className="max-h-12 object-contain mb-1"
+                />
+              </div>
+            )}
+            {tpl.options.showCompanyName && (
+              <div className="text-center font-semibold">Store</div>
+            )}
             {!!tpl.options.headerText && (
-              <div className="text-center text-sm text-muted-foreground mt-1">{tpl.options.headerText}</div>
+              <div className="text-center text-[11px] text-muted-foreground mt-1">{tpl.options.headerText}</div>
             )}
             {tpl.options.showStoreAddress && (
-              <div className="text-xs text-center text-muted-foreground mt-1">123 Main St, City</div>
+              <div className="text-[10px] text-center text-muted-foreground mt-1">123 Main St, City</div>
             )}
             <hr className="my-2" />
-            <div className="text-xs flex justify-between">
+            <div className="text-[10px] flex justify-between">
               <span>Date</span><span>{new Date().toLocaleString()}</span>
             </div>
-            <div className="text-xs flex justify-between">
-              <span>Receipt</span><span>000123</span>
+            <div className="text-[10px] flex justify-between">
+              <span>Receipt</span><span>pos-a7ae7cff8fdd</span>
             </div>
-            <div className="text-xs flex justify-between">
-              <span>Customer</span><span>Walk-in</span>
+            <div className="text-[10px] flex justify-between">
+              <span>Customer</span><span>Walk-in Customer</span>
             </div>
             {tpl.options.flags?.showCashier && (
-              <div className="text-xs flex justify-between">
+              <div className="text-[10px] flex justify-between">
                 <span>{tpl.options.labels?.servedBy || "Served by"}</span><span>Alex</span>
               </div>
             )}
             <hr className="my-2" />
-            <div className="text-xs font-medium">
-              {tpl.options.labels?.item ?? "Item"} / {tpl.options.labels?.price ?? "Price"}
+
+            <div className="text-[11px] font-medium">
+              {tpl.options.labels?.item ?? "Item"}&nbsp;&nbsp;/&nbsp;&nbsp;{tpl.options.labels?.price ?? "Price"}
             </div>
-            <div className="text-xs flex justify-between"><span>1 × Demo T-shirt</span><span>$20.00</span></div>
-            <div className="text-xs flex justify-between"><span>2 × Demo Jacket</span><span>$160.00</span></div>
+            {/* Sample lines (SKU shown when enabled) */}
+            <div className="text-[10px] flex justify-between">
+              <span>
+                1 × Variable product
+                {tpl.options.flags?.showSku && <span className="text-muted-foreground"> (SKU: ORG-f291ce3b)</span>}
+              </span>
+              <span>$50.00</span>
+            </div>
+
             <hr className="my-2" />
-            <div className="text-xs flex justify-between"><span>{tpl.options.labels?.subtotal ?? "Subtotal"}</span><span>$180.00</span></div>
-            <div className="text-xs flex justify-between"><span>{tpl.options.labels?.discount ?? "Discount"}</span><span>-$10.00</span></div>
-            <div className="text-xs flex justify-between"><span>{tpl.options.labels?.tax ?? "Tax"}</span><span>$18.00</span></div>
-            <div className="text-sm flex justify-between font-semibold mt-1">
-              <span>{tpl.options.labels?.total ?? "Total"}</span><span>$188.00</span>
+            <div className="text-[10px] flex justify-between"><span>{tpl.options.labels?.subtotal ?? "Subtotal"}</span><span>$50.00</span></div>
+            <div className="text-[10px] flex justify-between"><span>{tpl.options.labels?.tax ?? "Tax"}</span><span>$0.00</span></div>
+            <div className="text-[12px] flex justify-between font-semibold mt-1">
+              <span>{tpl.options.labels?.total ?? "Total"}</span><span>$50.00</span>
             </div>
+
+            <hr className="my-2" />
+            <div className="text-[11px] font-medium">Payments</div>
+            <div className="text-[10px] flex justify-between"><span>Card</span><span>$50.00</span></div>
           </div>
+
+          {/* Print sizing overrides */}
+          <style jsx global>{`
+            @media print {
+              @page { size: auto; margin: 0 }
+              .receipt {
+                width: 80mm !important;      /* force POS roll width */
+                font-size: 11px !important;  /* sane base size for thermal */
+                line-height: 1.25 !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+              .receipt img { max-height: 38px !important; }
+            }
+          `}</style>
         </div>
       </div>
     </div>

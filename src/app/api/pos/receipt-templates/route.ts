@@ -9,6 +9,8 @@ export const runtime = "nodejs";
 
 const OptionsSchema = z.object({
   showLogo: z.boolean().default(true),
+  /** public URL (eg. /uploads/tenants/... or blob URL) */
+  logoUrl: z.string().url().max(2000).nullable().optional(),
   showCompanyName: z.boolean().default(true),
   headerText: z.string().max(2000).nullable().optional(),
   showStoreAddress: z.boolean().default(false),
@@ -30,7 +32,9 @@ const OptionsSchema = z.object({
     hideDiscountIfZero: z.boolean().default(true),
     printBarcode: z.boolean().default(true),
     showOrderKey: z.boolean().default(true),
-    showCashier: z.boolean().default(true),
+    showCashier: z.boolean().default(true),   // employee name on receipt
+    /** NEW: show product SKU next to the line item name */
+    showSku: z.boolean().default(false),
   }).default({}),
 }).default({});
 
@@ -38,6 +42,13 @@ const CreateSchema = z.object({
   name: z.string().min(1),
   type: z.literal("receipt").default("receipt"),
   printFormat: z.enum(["thermal", "a4"]).default("thermal"),
+  options: OptionsSchema.optional(),
+});
+
+const UpdateSchema = z.object({
+  name: z.string().min(1).optional(),
+  type: z.literal("receipt").optional(),
+  printFormat: z.enum(["thermal", "a4"]).optional(),
   options: OptionsSchema.optional(),
 });
 
