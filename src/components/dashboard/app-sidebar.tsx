@@ -23,6 +23,7 @@ import {
   IconCreditCardPay,
   IconPackageImport,
   IconBuildingStore,
+  IconBrandShopee
 } from "@tabler/icons-react";
 
 import { NavOrganizations } from "@/components/dashboard/nav-organizations";
@@ -51,9 +52,19 @@ const data = {
       icon: IconDashboard,
     },
     {
-      title: "Shops",
+      title: "Organizations",
       url: "/organizations/",
       icon: IconBuildingStore,
+    },
+     {
+      title: "POS",
+      url: "/stores",
+      icon: IconBrandShopee,
+       items: [
+        { title: "Stores", url: "/stores" },
+        { title: "POS", url: "/pos" },
+        { title: "Receipt templates", url: "/pos/receipt-templates" },
+      ],
     },
     {
       title: "Inventory",
