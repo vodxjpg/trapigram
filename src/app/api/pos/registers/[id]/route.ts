@@ -1,4 +1,3 @@
-// src/app/api/pos/registers/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
@@ -7,9 +6,8 @@ import { getContext } from "@/lib/context";
 const UpdateSchema = z.object({
   name: z.string().min(1).optional(),
   active: z.boolean().optional(),
-  storeId: z.string().optional(),          // allow moving a register to a different store
-  walkInClientId: z.string().optional(),   // allow changing default walk-in client
-  receiptFooter: z.string().nullable().optional(),
+  storeId: z.string().optional(),        // allow moving a register to a different store
+  walkInClientId: z.string().optional(), // allow changing default walk-in client
 });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -71,9 +69,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     if (input.walkInClientId !== undefined) {
       fields.push(`"walkInClientId"=$${idx++}`); values.push(input.walkInClientId);
-    }
-    if (input.receiptFooter !== undefined) {
-      fields.push(`"receiptFooter"=$${idx++}`); values.push(input.receiptFooter ?? null);
     }
 
     if (!fields.length) return NextResponse.json({ ok: true }, { status: 200 });

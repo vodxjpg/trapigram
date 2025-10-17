@@ -1,3 +1,4 @@
+// src/app/(dashboard)/pos/components/receipt-options-dialog.tsx
 "use client"
 
 import { useState } from "react"
@@ -49,11 +50,6 @@ export function ReceiptOptionsDialog({ open, onOpenChange, orderId, defaultEmail
     }
   }
 
-  const doBoth = async () => {
-    doPrint()
-    await sendEmail()
-  }
-
   const close = () => {
     setError(null)
     setOkMsg(null)
@@ -84,15 +80,13 @@ export function ReceiptOptionsDialog({ open, onOpenChange, orderId, defaultEmail
           {error && <p className="text-sm text-destructive">{error}</p>}
           {okMsg && <p className="text-sm text-green-600">{okMsg}</p>}
 
-          <div className="grid grid-cols-2 gap-2">
+          {/* 3 buttons: Print, Email, Skip */}
+          <div className="grid grid-cols-3 gap-2">
             <Button variant="outline" onClick={doPrint} disabled={!orderId}>
               Print
             </Button>
             <Button onClick={sendEmail} disabled={!orderId || !email || sending}>
               {sending ? "Sending..." : "Email"}
-            </Button>
-            <Button onClick={doBoth} disabled={!orderId || !email || sending}>
-              {sending ? "Sending..." : "Both"}
             </Button>
             <Button variant="ghost" onClick={close}>
               Skip

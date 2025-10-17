@@ -1,4 +1,3 @@
-// src/app/api/pos/registers/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
@@ -64,7 +63,6 @@ const CreateSchema = z.object({
   name: z.string().min(1),
   walkInClientId: z.string().min(1),
   active: z.boolean().default(true),
-  receiptFooter: z.string().nullable().optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -120,8 +118,8 @@ export async function POST(req: NextRequest) {
       const id = uuidv4();
       const { rows } = await pool.query(
         `INSERT INTO registers
-          (id,"organizationId","storeId",name,"walkInClientId",active,"receiptFooter","createdAt","updatedAt")
-         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
+          (id,"organizationId","storeId",name,"walkInClientId",active,"createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
          RETURNING *`,
         [
           id,
@@ -130,7 +128,6 @@ export async function POST(req: NextRequest) {
           input.name,
           input.walkInClientId,
           input.active,
-          input.receiptFooter ?? null,
         ]
       );
       return { status: 201, body: { register: rows[0] } };

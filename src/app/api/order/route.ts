@@ -31,6 +31,30 @@ function encryptSecretNode(plain: string): string {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Current user (cashier) via users API                              */
+/* ------------------------------------------------------------------ */
+type MinimalUser = { id: string; name: string | null } | null;
+
+async function fetchCurrentUserFromSession(req: NextRequest): Promise<MinimalUser> {
+  try {
+    const origin =
+      process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+    const res = await fetch(`${origin}/api/users/current`, {
+      // forward cookies to keep the same session
+      headers: { cookie: req.headers.get("cookie") ?? "" },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => ({}));
+    const u = data?.user;
+    if (!u) return null;
+    return { id: u.id, name: u.name ?? null };
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Zod – order payload                                               */
 /* ------------------------------------------------------------------ */
 const orderSchema = z.object({
@@ -244,6 +268,17 @@ export async function POST(req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
+  /* cashier (session user) ------------------------------------------- */
+  const currentUser = await fetchCurrentUserFromSession(req);
+  const cashierEvent = {
+    type: "posCheckout" as const,
+    cashierId: currentUser?.id ?? ctx.userId ?? null,
+    cashierName: currentUser?.name ?? null,
+    at: new Date().toISOString(),
+  };
+  // If we fail to resolve user, we still store an event (IDs may be null).
+  const initialOrderMeta = [cashierEvent];
+
   let payload: OrderPayload;
   try {
     const body = await req.json();
@@ -340,7 +375,7 @@ export async function POST(req: NextRequest) {
   const cartHash = encryptSecretNode(JSON.stringify(baseValues));
   // Maintain NOT NULL invariant for carts.cartUpdatedHash as well
   const cartUpdatedHash = cartHash
-  const insertValues = [...baseValues, cartHash, orderKey];
+  const insertValues = [...baseValues, cartHash, JSON.stringify(initialOrderMeta), orderKey];
 
   const insertSQL = `
     INSERT INTO orders
@@ -356,8 +391,8 @@ export async function POST(req: NextRequest) {
        $10, $11, $12, $13,
        $14,$15,$16, $17, $18,
        $19,$20,$21,
-       '[]'::jsonb,
-       NOW(),NOW(),NOW(),$22)
+       $22::jsonb,
+        NOW(),NOW(),NOW(),$23)
     RETURNING *
   `;
 
@@ -420,14 +455,14 @@ export async function POST(req: NextRequest) {
 
     // hop(0): C’s product → B’s product
     async function firstHop(): Promise<MapItem[]> {
-  const out: MapItem[] = [];
-  // use C’s actual cart lines (each can have its own variation)
-  const { rows: cartLines } = await pool.query(
-    `SELECT "productId","variationId","quantity","affiliateProductId"
+      const out: MapItem[] = [];
+      // use C’s actual cart lines (each can have its own variation)
+      const { rows: cartLines } = await pool.query(
+        `SELECT "productId","variationId","quantity","affiliateProductId"
        FROM "cartProducts"
       WHERE "cartId" = $1`,
-    [oldOrder.rows[0].cartId],
-  );
+        [oldOrder.rows[0].cartId],
+      );
 
       for (const ln of cartLines) {
         if (!ln.productId) continue;

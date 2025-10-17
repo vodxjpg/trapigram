@@ -39,7 +39,6 @@ type Register = {
   name: string;
   walkInClientId: string;
   active: boolean;
-  receiptFooter: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -71,7 +70,6 @@ export default function StoreRegistersPage() {
   const [formName, setFormName] = React.useState("");
   const [formActive, setFormActive] = React.useState(true);
   const [formWalkInClientId, setFormWalkInClientId] = React.useState<string>("");
-  const [formReceiptFooter, setFormReceiptFooter] = React.useState<string>("");
   const [saving, setSaving] = React.useState(false);
 
   const [confirmOpen, setConfirmOpen] = React.useState(false);
@@ -133,7 +131,7 @@ export default function StoreRegistersPage() {
       list.find(c => lower(c.username) === "walk-in" || lower(c.username) === "walkin" || lower(c.username) === "walk_in") ||
       list.find(c => `${lower(c.firstName)} ${lower(c.lastName)}`.trim() === "walk in");
     return hit?.id || list[0]?.id || "";
-    }
+  }
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -233,9 +231,7 @@ export default function StoreRegistersPage() {
     setEditing(null);
     setFormName("");
     setFormActive(true);
-    setFormReceiptFooter("");
     setEditOpen(true);
-    // ensure clients loaded and pick a default walk-in
     (clients.length ? Promise.resolve(clients) : loadClients()).then((list) => {
       setFormWalkInClientId(guessWalkInId(list));
     });
@@ -245,7 +241,6 @@ export default function StoreRegistersPage() {
     setEditing(r);
     setFormName(r.name);
     setFormActive(Boolean(r.active));
-    setFormReceiptFooter(r.receiptFooter ?? "");
     setEditOpen(true);
     (clients.length ? Promise.resolve(clients) : loadClients()).then(() => {
       setFormWalkInClientId(r.walkInClientId);
@@ -266,7 +261,6 @@ export default function StoreRegistersPage() {
             name: formName.trim(),
             active: formActive,
             walkInClientId: formWalkInClientId,
-            receiptFooter: formReceiptFooter || null,
           }),
         });
         if (!res.ok) throw new Error("Failed to update register");
@@ -283,7 +277,6 @@ export default function StoreRegistersPage() {
             name: formName.trim(),
             walkInClientId: formWalkInClientId,
             active: formActive,
-            receiptFooter: formReceiptFooter || null,
           }),
         });
         if (!res.ok) throw new Error("Failed to create register");
@@ -427,7 +420,6 @@ export default function StoreRegistersPage() {
                     (c.firstName || c.lastName)
                       ? `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim()
                       : (c.username || c.email || c.id),
-                  subLabel: c.username || c.email,
                 }))}
                 value={
                   formWalkInClientId
@@ -447,17 +439,6 @@ export default function StoreRegistersPage() {
               <p className="text-xs text-muted-foreground">
                 This client will be preselected in POS as “Walk-in”.
               </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Receipt footer (optional)</Label>
-              <textarea
-                className="w-full rounded-md border bg-background p-2 text-sm outline-none"
-                rows={3}
-                placeholder="Thanks for shopping with us!"
-                value={formReceiptFooter}
-                onChange={(e) => setFormReceiptFooter(e.target.value)}
-              />
             </div>
           </div>
 
