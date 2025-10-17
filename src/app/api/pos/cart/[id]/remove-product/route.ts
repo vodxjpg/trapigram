@@ -67,6 +67,12 @@ const BodySchema = z.object({
   variationId: z.string().nullable().optional(),
 });
 
+function parseStoreIdFromChannel(channel: string | null): string | null {
+  if (!channel) return null;
+  const m = /^pos-([^-\s]+)-/i.exec(channel);
+  return m ? m[1] : null;
+}
+
 function pickTierForClient(
   tiers: Tier[],
   country: string,
@@ -149,20 +155,39 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // Context for stock + tier recompute
       const { rows: cRows } = await pool.query(
-        `SELECT ca.country, cl."levelId", ca."clientId"
+        `SELECT ca.country, ca.channel, cl."levelId", ca."clientId"
            FROM carts ca
            JOIN clients cl ON cl.id = ca."clientId"
           WHERE ca.id = $1`,
         [cartId]
       );
-      const country = cRows[0]?.country as string | undefined;
+      let country = cRows[0]?.country as string | undefined;
       const levelId = cRows[0]?.levelId as string | undefined;
       const clientId = cRows[0]?.clientId as string | undefined;
+      const channel = cRows[0]?.channel as string | undefined;
 
-      // Release stock
+      // Derive store country from channel
+      let storeCountry: string | null = null;
+      const storeId = parseStoreIdFromChannel(channel ?? null);
+      if (storeId) {
+        const { rows: sRows } = await pool.query(
+          `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
+          [storeId, ctx.organizationId]
+        );
+        if (sRows[0]?.address) {
+          try {
+            const addr = typeof sRows[0].address === "string" ? JSON.parse(sRows[0].address) : sRows[0].address;
+            if (addr?.country) storeCountry = String(addr.country).toUpperCase();
+          } catch { }
+        }
+      }
+
+      // Release stock (effective country)
       const releasedQty = Number(deleted.quantity ?? 0);
-      if (releasedQty && country) {
-        await adjustStock(pool as any, parsed.productId, normVariationId, country, +releasedQty);
+      if (releasedQty) {
+        const effCountry = (country ?? storeCountry ?? "US") as string;
+        await adjustStock(pool as any, parsed.productId, normVariationId, effCountry, +releasedQty);
+        country = effCountry;
       }
 
       // Tier re-evaluation ONLY for normal products
@@ -198,12 +223,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             );
 
             for (const line of lines) {
-              const { price } = await resolveUnitPrice(
-                line.productId,
-                (typeof line.variationId === "string" && line.variationId.trim().length > 0) ? line.variationId : null,
-                country,
-                levelId,
-              );
+              let effCountry = country as string;
+              let price: number;
+              try {
+                price = (await resolveUnitPrice(
+                  line.productId,
+                  (typeof line.variationId === "string" && line.variationId.trim().length > 0) ? line.variationId : null,
+                  effCountry,
+                  levelId as string,
+                )).price;
+              } catch (e: any) {
+                if (storeCountry && storeCountry !== effCountry) {
+                  effCountry = storeCountry;
+                  price = (await resolveUnitPrice(
+                    line.productId,
+                    (typeof line.variationId === "string" && line.variationId.trim().length > 0) ? line.variationId : null,
+                    effCountry,
+                    levelId as string,
+                  )).price;
+                  await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [effCountry, cartId]);
+                  country = effCountry;
+                } else {
+                  throw e;
+                }
+              }
               await pool.query(
                 `UPDATE "cartProducts"
                     SET "unitPrice"=$1, "updatedAt"=NOW()

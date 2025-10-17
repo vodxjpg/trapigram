@@ -75,7 +75,35 @@ export async function POST(req: NextRequest) {
       const { organizationId } = ctx;
       const input = CreateSchema.parse(await req.json());
 
-      /* 1) Resolve client (UI should have created/selected Walk-in already) */
+            /* 1) Resolve non-null desired country (payload → org settings → 'US') */
+      const desiredCountry = await (async () => {
+        if (input.country && input.country.length === 2) return input.country.toUpperCase();
+        const { rows: org } = await pool.query(
+          `SELECT countries, metadata FROM organizations WHERE id=$1`,
+          [organizationId]
+        );
+        if (org.length) {
+          const row = org[0];
+          let first: string | null = null;
+          if (Array.isArray(row.countries) && row.countries.length) first = row.countries[0];
+          else if (typeof row.countries === "string") {
+            try {
+              const parsed = JSON.parse(row.countries);
+              if (Array.isArray(parsed) && parsed.length) first = parsed[0];
+            } catch {}
+          }
+          if (!first && row.metadata) {
+            try {
+              const m = typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata;
+              first = m?.defaultCountry || m?.country || null;
+            } catch {}
+          }
+          if (first && typeof first === "string" && first.length === 2) return first.toUpperCase();
+        }
+        return "US";
+      })();
+
+      /* 2) Resolve client (UI should have created/selected Walk-in already) */
       let clientId = input.clientId ?? null;
       if (!clientId) {
         const { rows } = await pool.query(
@@ -114,7 +142,14 @@ export async function POST(req: NextRequest) {
             LIMIT 1`,
           [clientId, organizationId, channelVal]
         );
-        if (exact.length) return { status: 201, body: { newCart: exact[0], reused: true } };
+            if (exact.length) {
+      const cart = exact[0];
+      if ((cart.country || "").toUpperCase() !== desiredCountry) {
+        await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [desiredCountry, cart.id]);
+        cart.country = desiredCountry;
+      }
+      return { status: 201, body: { newCart: cart, reused: true } };
+    }
       }
 
      // 4) Fallback: reuse any active POS cart (channel LIKE 'pos-%')
@@ -133,37 +168,13 @@ export async function POST(req: NextRequest) {
           await pool.query(`UPDATE carts SET channel=$1 WHERE id=$2`, [channelVal, cart.id]);
           cart.channel = channelVal;
         }
-        return { status: 201, body: { newCart: cart, reused: true } };
+            if ((cart.country || "").toUpperCase() !== desiredCountry) {
+      await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [desiredCountry, cart.id]);
+      cart.country = desiredCountry;
+    }
+    return { status: 201, body: { newCart: cart, reused: true } };
     }
 
-
-      /* 5) Resolve non-null country (payload → org settings → 'US') */
-      const country = await (async () => {
-        if (input.country && input.country.length === 2) return input.country.toUpperCase();
-        const { rows: org } = await pool.query(
-          `SELECT countries, metadata FROM organizations WHERE id=$1`,
-          [organizationId]
-        );
-        if (org.length) {
-          const row = org[0];
-          let first: string | null = null;
-          if (Array.isArray(row.countries) && row.countries.length) first = row.countries[0];
-          else if (typeof row.countries === "string") {
-            try {
-              const parsed = JSON.parse(row.countries);
-              if (Array.isArray(parsed) && parsed.length) first = parsed[0];
-            } catch {}
-          }
-          if (!first && row.metadata) {
-            try {
-              const m = typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata;
-              first = m?.defaultCountry || m?.country || null;
-            } catch {}
-          }
-          if (first && typeof first === "string" && first.length === 2) return first.toUpperCase();
-        }
-        return "US";
-      })();
 
      /* 6) Create the cart (no shipping method for walk-in POS) */
       const cartId = uuidv4();
@@ -179,7 +190,7 @@ export async function POST(req: NextRequest) {
         const vals = [
           cartId,         // $1 id
           clientId,       // $2 "clientId"
-          country,        // $3 country
+          desiredCountry, // $3 country
           null,           // $4 "couponCode" -> NULL
           null,           // $5 "shippingMethod" -> NULL (POS walk-in)
           emptyHash,      // $6 "cartHash"

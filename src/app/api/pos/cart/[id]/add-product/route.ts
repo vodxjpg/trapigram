@@ -71,6 +71,13 @@ const BodySchema = z.object({
   quantity: z.number().int().positive(),
 });
 
+// helper to parse storeId from channel: "pos-<storeId>-<registerId>"
+function parseStoreIdFromChannel(channel: string | null): string | null {
+  if (!channel) return null;
+  const m = /^pos-([^-\s]+)-/i.exec(channel);
+  return m ? m[1] : null;
+}
+
 function findTier(
   tiers: Tier[],
   country: string,
@@ -155,26 +162,55 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ? body.variationId
           : null;
 
-      // use CART.country (never null)
+     // use CART.country (never null) and channel (to derive store)
       const { rows: cRows } = await pool.query(
-        `SELECT ca.country, cl."levelId", cl.id AS "clientId"
+         `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId"
            FROM carts ca
            JOIN clients cl ON cl.id = ca."clientId"
           WHERE ca.id = $1`,
         [cartId]
       );
       if (!cRows.length) return { status: 404, body: { error: "Cart or client not found" } };
-      const country: string = cRows[0].country;
+       let country: string = cRows[0].country;
+        const channel: string | null = cRows[0].channel ?? null;
       const levelId: string | null = cRows[0].levelId ?? null;
       const clientId: string = cRows[0].clientId;
 
-      // price resolution (+ affiliate flag)
-      const { price: basePrice, isAffiliate } = await resolveUnitPrice(
-        body.productId,
-        variationId,
-        country,
-        levelId ?? "default",
-      );
+        // derive store country from channel (pos-<storeId>-<registerId>)
+      let storeCountry: string | null = null;
+      const storeId = parseStoreIdFromChannel(channel);
+      if (storeId) {
+        const { rows: sRows } = await pool.query(
+          `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
+          [storeId, ctx.organizationId]
+        );
+        if (sRows[0]?.address) {
+          try {
+            const addr = typeof sRows[0].address === "string" ? JSON.parse(sRows[0].address) : sRows[0].address;
+            if (addr?.country && typeof addr.country === "string") {
+              storeCountry = String(addr.country).toUpperCase();
+            }
+          } catch {}
+        }
+      }
+
+      // price resolution (+ affiliate flag) with fallback to storeCountry
+      let basePrice: number, isAffiliate: boolean;
+      try {
+        const r = await resolveUnitPrice(body.productId, variationId, country, (levelId ?? "default") as string);
+        basePrice = r.price;
+        isAffiliate = r.isAffiliate;
+      } catch (e: any) {
+        if (storeCountry && storeCountry !== country) {
+          const r2 = await resolveUnitPrice(body.productId, variationId, storeCountry, (levelId ?? "default") as string);
+          basePrice = r2.price;
+          isAffiliate = r2.isAffiliate;
+          country = storeCountry; // adopt store country
+          await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [country, cartId]);
+        } else {
+          throw e;
+        }
+      }
 
       const client = await pool.connect();
       try {
@@ -293,7 +329,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           }
         }
 
-        // reserve stock
+        // reserve stock (effective country)
         await adjustStock(client, body.productId, variationId, country, -body.quantity);
 
         // update cart hash

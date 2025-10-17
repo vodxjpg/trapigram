@@ -105,19 +105,19 @@ export function POSInterface() {
   // fetch org allowed countries (for fallback)
   useEffect(() => {
     let ignore = false
-    ;(async () => {
-      try {
-        const res = await fetch("/api/organizations/countries", {
-          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
-        })
-        if (!res.ok) return
-        const j = await res.json()
-        const list: string[] = Array.isArray(j.countries)
-          ? j.countries
-          : JSON.parse(j.countries || "[]")
-        if (!ignore) setOrgCountries(list)
-      } catch {/* ignore */}
-    })()
+      ; (async () => {
+        try {
+          const res = await fetch("/api/organizations/countries", {
+            headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
+          })
+          if (!res.ok) return
+          const j = await res.json()
+          const list: string[] = Array.isArray(j.countries)
+            ? j.countries
+            : JSON.parse(j.countries || "[]")
+          if (!ignore) setOrgCountries(list)
+        } catch {/* ignore */ }
+      })()
     return () => { ignore = true }
   }, [])
 
@@ -128,15 +128,15 @@ export function POSInterface() {
       return
     }
     let ignore = false
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/pos/stores/${storeId}`)
-        if (!res.ok) return
-        const j = await res.json()
-        const c = j.store?.address?.country ?? null
-        if (!ignore) setStoreCountry(c || null)
-      } catch {/* ignore */}
-    })()
+      ; (async () => {
+        try {
+          const res = await fetch(`/api/pos/stores/${storeId}`)
+          if (!res.ok) return
+          const j = await res.json()
+          const c = j.store?.address?.country ?? null
+          if (!ignore) setStoreCountry(c || null)
+        } catch {/* ignore */ }
+      })()
     return () => { ignore = true }
   }, [storeId])
 
@@ -146,27 +146,39 @@ export function POSInterface() {
     const id = localStorage.getItem(LS_KEYS.CLIENT)
     if (!id) return
     let ignore = false
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/clients/${id}`)
-        if (ignore) return
-        if (res.ok) {
-          const j = await res.json()
-          const c = j.client ?? j
-          if (c?.id) {
-            setSelectedCustomer({
-              id: c.id,
-              name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.username || "Customer",
-              email: c.email ?? null,
-              phone: c.phoneNumber ?? null,
-            })
-            return
+      ; (async () => {
+        try {
+          const res = await fetch(`/api/clients/${id}`)
+          if (ignore) return
+          if (res.ok) {
+            const j = await res.json()
+            const c = j.client ?? j
+            if (c?.id) {
+              setSelectedCustomer({
+                id: c.id,
+                name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.username || "Customer",
+                email: c.email ?? null,
+                phone: c.phoneNumber ?? null,
+              })
+              return
+            }
           }
-        }
-      } catch {/* ignore */}
-    })()
+        } catch {/* ignore */ }
+      })()
     return () => { ignore = true }
   }, [])
+
+  // ⬇️ Reset cart whenever the selected customer changes (e.g., switching to Walk-in)
+  useEffect(() => {
+    if (!outletId) return
+    // clear the saved cart for this outlet so a fresh cart is created
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(LS_KEYS.CART(outletId))
+    }
+    // reset current cart state
+    setCartId(null)
+    setLines([])
+  }, [selectedCustomer?.id]) // NEW
 
   // First-run: require store→outlet selection
   const forceSelectDialog = !storeId || !outletId
@@ -194,18 +206,18 @@ export function POSInterface() {
   // fetch categories
   useEffect(() => {
     let ignore = false
-    ;(async () => {
-      try {
-        const res = await fetch("/api/product-categories?all=1").then(r => r.json())
-        if (ignore) return
-        const cats: Category[] = (res.categories || []).map((c: any) => ({
-          id: String(c.id),
-          name: c.name,
-          parentId: c.parentId ? String(c.parentId) : null,
-        }))
-        setCategories(cats)
-      } catch {}
-    })()
+      ; (async () => {
+        try {
+          const res = await fetch("/api/product-categories?all=1").then(r => r.json())
+          if (ignore) return
+          const cats: Category[] = (res.categories || []).map((c: any) => ({
+            id: String(c.id),
+            name: c.name,
+            parentId: c.parentId ? String(c.parentId) : null,
+          }))
+          setCategories(cats)
+        } catch { }
+      })()
     return () => { ignore = true }
   }, [])
 
@@ -228,25 +240,25 @@ export function POSInterface() {
     let ignore = false
     const params = new URLSearchParams({ pageSize: "200", page: "1" })
     if (debouncedSearch) params.set("search", debouncedSearch)
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/products?${params}`).then(r => r.json())
-        if (ignore) return
-        const flat = (res.productsFlat || []).map((p: any) => {
-          const price = p.maxSalePrice ?? p.maxRegularPrice ?? 0
-          return {
-            id: String(p.id),
-            productId: String(p.productId),
-            variationId: p.variationId ? String(p.variationId) : null,
-            title: p.title,
-            image: p.image ?? null,
-            categoryIds: normalizeCatIds(p),
-            priceForDisplay: Number(price) || 0,
-          } as GridProduct
-        })
-        setProducts(flat)
-      } catch {/* ignore */}
-    })()
+      ; (async () => {
+        try {
+          const res = await fetch(`/api/products?${params}`).then(r => r.json())
+          if (ignore) return
+          const flat = (res.productsFlat || []).map((p: any) => {
+            const price = p.maxSalePrice ?? p.maxRegularPrice ?? 0
+            return {
+              id: String(p.id),
+              productId: String(p.productId),
+              variationId: p.variationId ? String(p.variationId) : null,
+              title: p.title,
+              image: p.image ?? null,
+              categoryIds: normalizeCatIds(p),
+              priceForDisplay: Number(price) || 0,
+            } as GridProduct
+          })
+          setProducts(flat)
+        } catch {/* ignore */ }
+      })()
     return () => { ignore = true }
   }, [debouncedSearch])
 

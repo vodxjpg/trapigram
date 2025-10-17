@@ -70,6 +70,12 @@ const BodySchema = z.object({
   action: z.enum(["add", "subtract"]),
 });
 
+function parseStoreIdFromChannel(channel: string | null): string | null {
+  if (!channel) return null;
+  const m = /^pos-([^-\s]+)-/i.exec(channel);
+  return m ? m[1] : null;
+}
+
 function findTier(
   tiers: Tier[],
   country: string,
@@ -112,14 +118,15 @@ async function readInventory(
   async function safeQuery(sql: string, params: any[], sp: string) {
     await client.query(`SAVEPOINT ${sp}`);
     try { const r = await client.query(sql, params); await client.query(`RELEASE SAVEPOINT ${sp}`); return r; }
-    catch (e: any) { await client.query(`ROLLBACK TO SAVEPOINT ${sp}`); if (e?.code==="42703"||e?.code==="42P01") return { rows: [] }; throw e; }
+    catch (e: any) { await client.query(`ROLLBACK TO SAVEPOINT ${sp}`); if (e?.code === "42703" || e?.code === "42P01") return { rows: [] }; throw e; }
   }
-  { const { rows } = await safeQuery(
+  {
+    const { rows } = await safeQuery(
       `SELECT COALESCE("manageStock",false) AS manage,
               COALESCE("allowBackorder",COALESCE("backorderAllowed",false)) AS backorder,
               COALESCE("stockQuantity",COALESCE(stock,NULL)) AS stock
          FROM products WHERE id=$1 LIMIT 1`, [productId], "inv_p");
-    if (rows[0]) { manage=!!rows[0].manage; backorder=!!rows[0].backorder; if (rows[0].stock!=null) stock=Number(rows[0].stock); }
+    if (rows[0]) { manage = !!rows[0].manage; backorder = !!rows[0].backorder; if (rows[0].stock != null) stock = Number(rows[0].stock); }
   }
   if (variationId) {
     const { rows } = await safeQuery(
@@ -129,8 +136,8 @@ async function readInventory(
          FROM "productVariations" WHERE id=$1 LIMIT 1`, [variationId], "inv_v");
     if (rows[0]) {
       manage = !!rows[0].manage || manage;
-      if (rows[0].backorder!=null) backorder = !!rows[0].backorder;
-      if (rows[0].stock!=null) stock = Number(rows[0].stock);
+      if (rows[0].backorder != null) backorder = !!rows[0].backorder;
+      if (rows[0].stock != null) stock = Number(rows[0].stock);
     }
   }
   return { manage, backorder, stock };
@@ -156,7 +163,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
         // cart line + client context (support affiliate lines)
         const { rows: cRows } = await client.query(
-          `SELECT ca.country, cl."levelId", cl.id AS "clientId",
+          `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId",
                   cp.quantity, cp."affiliateProductId"
              FROM carts ca
              JOIN clients cl ON cl.id = ca."clientId"
@@ -170,8 +177,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           await client.query("ROLLBACK");
           return NextResponse.json({ error: "Cart item not found" }, { status: 404 });
         }
-        const { country, levelId, clientId, quantity: oldQty, affiliateProductId } = cRows[0];
+        let { country, levelId, clientId, quantity: oldQty, affiliateProductId, channel } = cRows[0] as any;
         const isAffiliate = Boolean(affiliateProductId);
+
+        // derive store country from channel
+        let storeCountry: string | null = null;
+        const storeId = parseStoreIdFromChannel(channel ?? null);
+        if (storeId) {
+          const { rows: sRows } = await client.query(
+            `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
+            [storeId, ctx.organizationId]
+          );
+          if (sRows[0]?.address) {
+            try {
+              const addr = typeof sRows[0].address === "string" ? JSON.parse(sRows[0].address) : sRows[0].address;
+              if (addr?.country && typeof addr.country === "string") {
+                storeCountry = String(addr.country).toUpperCase();
+              }
+            } catch { }
+          }
+        }
 
         // base price
         let basePrice: number;
@@ -187,11 +212,37 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             ap[0]?.regularPoints?.[lvl]?.[country] ??
             ap[0]?.regularPoints?.default?.[country] ?? 0;
           if (basePrice === 0) {
-            await client.query("ROLLBACK");
-            return NextResponse.json({ error: "No points price configured for this product" }, { status: 400 });
+            // fallback to store country for points
+            if (storeCountry && storeCountry !== country) {
+              basePrice =
+                ap[0]?.salePoints?.[lvl]?.[storeCountry] ??
+                ap[0]?.salePoints?.default?.[storeCountry] ??
+                ap[0]?.regularPoints?.[lvl]?.[storeCountry] ??
+                ap[0]?.regularPoints?.default?.[storeCountry] ?? 0;
+              if (basePrice > 0) {
+                country = storeCountry;
+                await client.query(`UPDATE carts SET country=$1 WHERE id=$2`, [country, cartId]);
+              } else {
+                await client.query("ROLLBACK");
+                return NextResponse.json({ error: "No points price configured for this product" }, { status: 400 });
+              }
+            } else {
+              await client.query("ROLLBACK");
+              return NextResponse.json({ error: "No points price configured for this product" }, { status: 400 });
+            }
           }
         } else {
-          basePrice = (await resolveUnitPrice(data.productId, variationId, country, (levelId ?? "default") as string)).price;
+          try {
+            basePrice = (await resolveUnitPrice(data.productId, variationId, country, (levelId ?? "default") as string)).price;
+          } catch (e: any) {
+            if (storeCountry && storeCountry !== country) {
+              basePrice = (await resolveUnitPrice(data.productId, variationId, storeCountry, (levelId ?? "default") as string)).price;
+              country = storeCountry;
+              await client.query(`UPDATE carts SET country=$1 WHERE id=$2`, [country, cartId]);
+            } else {
+              throw e;
+            }
+          }
         }
 
         // new quantity
@@ -318,7 +369,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
 
         // stock adjust
-        await adjustStock(client, data.productId, variationId, country, data.action === "add" ? -1 : 1);
+        await adjustStock(client, data.productId, variationId, country, data.action === "add" ? -1 : 1); // effective country
 
         // update cart hash
         const { rows: linesForHash } = await client.query(
