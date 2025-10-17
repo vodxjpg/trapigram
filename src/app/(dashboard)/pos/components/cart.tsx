@@ -1,3 +1,4 @@
+// src/app/(dashboard)/pos/components/cart.tsx
 "use client"
 
 import { Card } from "@/components/ui/card"
@@ -32,6 +33,8 @@ type CartProps = {
   subtotal: number
   discountAmount: number
   total: number
+  // NEW: layout variant
+  variant?: "inline" | "sheet"
 }
 
 function InitialsSquare({ text }: { text: string }) {
@@ -64,11 +67,15 @@ export function Cart({
   subtotal,
   discountAmount,
   total,
+  variant = "inline",
 }: CartProps) {
-  // subtotal/discount/total provided by parent
+  const wrapper =
+    variant === "inline"
+      ? "flex w-full flex-col border-l bg-card lg:w-96"
+      : "flex h-full w-full flex-col bg-card rounded-t-2xl"
 
   return (
-    <div className="flex w-full flex-col border-l bg-card lg:w-96">
+    <div className={wrapper}>
       {/* Header */}
       <div className="border-b p-4">
         <h2 className="text-lg font-semibold text-foreground">Current Order</h2>

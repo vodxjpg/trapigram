@@ -8,7 +8,7 @@ import { CategoryNav } from "./category-nav"
 import { CustomerSelector, type Customer } from "./customer-selector"
 import { CheckoutDialog } from "./checkout-dialog"
 import { ReceiptOptionsDialog } from "./receipt-options-dialog"
-import { Search } from "lucide-react"
+import { Search, ShoppingCart } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { StoreRegisterSelector } from "./store-register-selector"
 
@@ -20,6 +20,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from "@/components/ui/alert-dialog"
+
+// ⬇️ NEW: shadcn sheet for the mobile cart drawer
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger
+} from "@/components/ui/sheet"
 
 type Category = { id: string; name: string; parentId: string | null }
 
@@ -74,7 +83,10 @@ export function POSInterface() {
   const [error, setError] = useState<string | null>(null)
   const creatingCartRef = useRef(false)
 
-    // POS discount (coupon "POS")
+  // NEW: mobile cart drawer state
+  const [cartSheetOpen, setCartSheetOpen] = useState(false)
+
+  // POS discount (coupon "POS")
   const [discountType, setDiscountType] = useState<"fixed" | "percentage">("fixed")
   const [discountValue, setDiscountValue] = useState<string>("")
 
@@ -179,7 +191,7 @@ export function POSInterface() {
     }
   }, [outletId])
 
-  // fetch categories (→ normalize ids to strings, keep parentId)
+  // fetch categories
   useEffect(() => {
     let ignore = false
     ;(async () => {
@@ -211,7 +223,7 @@ export function POSInterface() {
       .filter((x: any): x is string => !!x)
   }
 
-  // fetch products page (flat variations) and normalize category IDs
+  // fetch products (flat variations)
   useEffect(() => {
     let ignore = false
     const params = new URLSearchParams({ pageSize: "200", page: "1" })
@@ -295,7 +307,7 @@ export function POSInterface() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCustomer])
 
-  // Build a parent map so selecting a parent category shows products in its descendants
+  // Category helpers
   const parentById = useMemo(() => {
     const m = new Map<string, string | null>()
     for (const c of categories) m.set(c.id, c.parentId ? String(c.parentId) : null)
@@ -323,6 +335,7 @@ export function POSInterface() {
     })
   }, [products, selectedCategoryId, debouncedSearch, parentById])
 
+  // totals
   const subtotalEstimate = useMemo(() => lines.reduce((s, l) => s + l.subtotal, 0), [lines])
   const discountAmount = useMemo(() => {
     const v = Number(discountValue)
@@ -335,8 +348,10 @@ export function POSInterface() {
   }, [discountType, discountValue, subtotalEstimate])
   const totalEstimate = Math.max(0, +(subtotalEstimate - discountAmount).toFixed(2))
 
-  const resolveCartCountry = () =>
-    storeCountry || orgCountries[0] || "US"
+  // NEW: total items for the mobile bar
+  const itemCount = useMemo(() => lines.reduce((n, l) => n + (l.quantity || 0), 0), [lines])
+
+  const resolveCartCountry = () => storeCountry || orgCountries[0] || "US"
 
   const ensureCart = async (clientId: string) => {
     if (cartId || creatingCartRef.current) return cartId
@@ -520,12 +535,11 @@ export function POSInterface() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Keep the selector in the header and force it open on first run */}
             <StoreRegisterSelector
               storeId={storeId}
               outletId={outletId}
               onChange={setStoreOutlet}
-              forceOpen={forceSelectDialog}        // ← forces modal on first load
+              forceOpen={forceSelectDialog}
             />
             <CustomerSelector
               selectedCustomer={selectedCustomer}
@@ -542,7 +556,7 @@ export function POSInterface() {
 
         {/* Main Content */}
         <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
-          {/* Products Section */}
+          {/* Products */}
           <div className="flex flex-1 flex-col overflow-hidden">
             <CategoryNav
               categories={categories.map(c => ({ id: c.id, name: c.name }))}
@@ -552,25 +566,74 @@ export function POSInterface() {
             <ProductGrid products={filteredProducts} onAddToCart={addToCart} />
           </div>
 
-          {/* Cart Section */}
-          <Cart
-            lines={lines}
-            onInc={inc}
-            onDec={dec}
-            onRemove={removeLine}
-            onCheckout={() => setCheckoutOpen(true)}
-            discountType={discountType}
-            discountValue={discountValue}
-            onDiscountType={setDiscountType}
-            onDiscountValue={(val) => {
-              // strip leading zeros like qty inputs (keep "0.", "")
-              const sanitized = val.replace(/^0+(?=\d)(?!\.)/, "")
-              setDiscountValue(sanitized)
-            }}
-            subtotal={subtotalEstimate}
-            discountAmount={discountAmount}
-            total={totalEstimate}
-          />
+          {/* Cart sidebar (desktop / landscape) */}
+          <div className="hidden lg:flex">
+            <Cart
+              variant="inline"
+              lines={lines}
+              onInc={inc}
+              onDec={dec}
+              onRemove={removeLine}
+              onCheckout={() => setCheckoutOpen(true)}
+              discountType={discountType}
+              discountValue={discountValue}
+              onDiscountType={setDiscountType}
+              onDiscountValue={(val) => {
+                const sanitized = val.replace(/^0+(?=\d)(?!\.)/, "")
+                setDiscountValue(sanitized)
+              }}
+              subtotal={subtotalEstimate}
+              discountAmount={discountAmount}
+              total={totalEstimate}
+            />
+          </div>
+        </div>
+
+        {/* Mobile bottom bar → opens cart drawer */}
+        <div className="lg:hidden sticky bottom-0 inset-x-0 border-t bg-card p-3">
+          <Sheet open={cartSheetOpen} onOpenChange={setCartSheetOpen}>
+            <SheetTrigger asChild>
+              <button className="flex w-full items-center justify-between rounded-md bg-primary px-4 py-3 text-primary-foreground">
+                <span className="flex items-center gap-2">
+                  <ShoppingCart className="h-4 w-4" />
+                  Cart • {itemCount}
+                </span>
+                <span>${totalEstimate.toFixed(2)}</span>
+              </button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="h-[85vh] p-0 rounded-t-2xl">
+              {/* little grab handle */}
+              <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-muted" />
+              <SheetHeader className="sr-only">
+                <SheetTitle>Cart</SheetTitle>
+              </SheetHeader>
+
+              {/* Make the cart fill the sheet */}
+              <div className="flex h-[calc(85vh-0.75rem)] flex-col">
+                <Cart
+                  variant="sheet"
+                  lines={lines}
+                  onInc={inc}
+                  onDec={dec}
+                  onRemove={removeLine}
+                  onCheckout={() => {
+                    setCartSheetOpen(false)
+                    setCheckoutOpen(true)
+                  }}
+                  discountType={discountType}
+                  discountValue={discountValue}
+                  onDiscountType={setDiscountType}
+                  onDiscountValue={(val) => {
+                    const sanitized = val.replace(/^0+(?=\d)(?!\.)/, "")
+                    setDiscountValue(sanitized)
+                  }}
+                  subtotal={subtotalEstimate}
+                  discountAmount={discountAmount}
+                  total={totalEstimate}
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
 
         {/* Checkout Dialog */}
@@ -597,8 +660,6 @@ export function POSInterface() {
         orderId={receiptDlg?.orderId ?? null}
         defaultEmail={receiptDlg?.email ?? ""}
       />
-
-      {/* ⛔️ Removed the bottom-left StoreRegisterSelector instance entirely */}
 
       {/* Error dialog */}
       <AlertDialog open={!!error} onOpenChange={(o) => !o && setError(null)}>
