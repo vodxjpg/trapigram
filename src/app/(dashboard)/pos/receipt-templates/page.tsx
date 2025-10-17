@@ -34,12 +34,13 @@ type TemplateRow = {
   updatedAt: string;
 };
 
+type FormatFilter = "all" | "thermal" | "a4";
 export default function ReceiptTemplatesListPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = React.useState(true);
   const [rows, setRows] = React.useState<TemplateRow[]>([]);
   const [query, setQuery] = React.useState("");
-  const [formatFilter, setFormatFilter] = React.useState<"" | "thermal" | "a4">("");
+  const [formatFilter, setFormatFilter] = React.useState<FormatFilter>("all");
 
   // add/edit dialog
   const [editOpen, setEditOpen] = React.useState(false);
@@ -57,7 +58,7 @@ export default function ReceiptTemplatesListPage() {
     try {
       const params = new URLSearchParams();
       params.set("includeUsage", "true");
-      if (formatFilter) params.set("printFormat", formatFilter);
+      if (formatFilter !== "all") params.set("printFormat", formatFilter);
       if (query.trim()) params.set("q", query.trim());
       const res = await fetch(`/api/pos/receipt-templates?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to load templates");
@@ -299,12 +300,12 @@ export default function ReceiptTemplatesListPage() {
             className="pl-9"
           />
         </div>
-        <Select value={formatFilter} onValueChange={(v: any) => setFormatFilter(v)}>
+        <Select value={formatFilter} onValueChange={(v: FormatFilter) => setFormatFilter(v)}>
           <SelectTrigger className="w-[160px]">
             <SelectValue placeholder="All formats" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All formats</SelectItem>
+           <SelectItem value="all">All formats</SelectItem>
             <SelectItem value="thermal">Thermal</SelectItem>
             <SelectItem value="a4">A4</SelectItem>
           </SelectContent>
