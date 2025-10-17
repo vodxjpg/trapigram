@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 /* ──────────────────────────────────────────────────────────── */
 const A4 = { w: 595.28, h: 841.89 };
 const THERMAL_W = 226.77; // ~80mm
-const BASE_MARGIN = 18;
+const BASE_MARGIN = 12;   // tighter top/side for thermal
 
 function addressToLines(addr: any): string[] {
   if (!addr) return [];
@@ -24,6 +24,51 @@ function fmt(amount: number, currency = "USD", locale = "en-US") {
 }
 function asArray(x: any) {
   try { return Array.isArray(x) ? x : JSON.parse(x); } catch { return []; }
+}
+function parseJSONish<T = any>(v: any): T | null {
+  if (v == null) return null;
+  if (typeof v === "string") { try { return JSON.parse(v) as T; } catch { return null; } }
+  if (typeof v === "object") return v as T;
+  return null;
+}
+
+/** Try to fetch and embed an image (PNG/JPG) – accepts absolute, relative, or data: URLs. */
+async function tryEmbedImage(pdf: PDFDocument, req: NextRequest, url: string) {
+  // Data URL?
+  if (/^data:image\/(png|jpe?g);base64,/i.test(url)) {
+    const b64 = url.split(",")[1];
+    const bytes = Uint8Array.from(Buffer.from(b64, "base64"));
+    try { return await pdf.embedPng(bytes); } catch {}
+    try { return await pdf.embedJpg(bytes); } catch {}
+    return null;
+  }
+
+  const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+  const src = /^https?:\/\//i.test(url) ? url : `${origin}${url}`;
+
+  try {
+    const res = await fetch(src, { cache: "no-store" });
+    if (!res.ok) return null;
+
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    const ext = (src.split(".").pop() || "").toLowerCase();
+
+    // prefer content-type; fall back to extension; finally brute-trial
+    const looksPng = ct.includes("png") || ext === "png";
+    const looksJpg = ct.includes("jpeg") || ct.includes("jpg") || ext === "jpg" || ext === "jpeg";
+
+    try {
+      if (looksPng) return await pdf.embedPng(bytes);
+      if (looksJpg) return await pdf.embedJpg(bytes);
+    } catch { /* fall through */ }
+
+    try { return await pdf.embedPng(bytes); } catch {}
+    try { return await pdf.embedJpg(bytes); } catch {}
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /* ──────────────────────────────────────────────────────────── */
@@ -64,13 +109,11 @@ export async function GET(
       }
     } catch {/* ignore */}
 
-    /* ── Parse channel → store/register ────────────────────────── */
+    /* ── Parse channel → store ─────────────────────────────────── */
     let storeIdFromChannel: string | null = null;
     if (typeof order.channel === "string") {
       const m = /^pos-([^-\s]+)-([^-\s]+)$/i.exec(order.channel);
-      if (m) {
-        storeIdFromChannel = m[1] !== "na" ? m[1] : null;
-      }
+      if (m) storeIdFromChannel = m[1] !== "na" ? m[1] : null;
     }
 
     /* ── Store + default template ──────────────────────────────── */
@@ -88,7 +131,7 @@ export async function GET(
       );
       if (s.rowCount) {
         storeName = s.rows[0].name ?? null;
-        storeAddress = s.rows[0].address ?? null;
+        storeAddress = parseJSONish(s.rows[0].address);
         defaultTemplateId = s.rows[0].defaultReceiptTemplateId ?? null;
       }
     }
@@ -96,7 +139,6 @@ export async function GET(
     /* ── Template (allow ?templateId= override) ────────────────── */
     const tplOverride = new URL(req.url).searchParams.get("templateId");
 
-    // defaults now include logoUrl + flags.showSku
     let tpl = {
       id: null as string | null,
       printFormat: "thermal" as "thermal" | "a4",
@@ -107,22 +149,13 @@ export async function GET(
         headerText: null as string | null,
         showStoreAddress: false,
         labels: {
-          item: "Item",
-          price: "Price",
-          subtotal: "Subtotal",
-          discount: "Discount",
-          tax: "Tax",
-          total: "Total",
-          change: "Change",
-          outstanding: "Outstanding",
+          item: "Item", price: "Price", subtotal: "Subtotal", discount: "Discount",
+          tax: "Tax", total: "Total", change: "Change", outstanding: "Outstanding",
           servedBy: "Served by",
         },
         flags: {
-          hideDiscountIfZero: true,
-          printBarcode: true,
-          showOrderKey: true,
-          showCashier: true,
-          showSku: false,
+          hideDiscountIfZero: true, printBarcode: true, showOrderKey: true,
+          showCashier: true, showSku: false,
         },
       },
     };
@@ -161,9 +194,9 @@ export async function GET(
       }
     } catch {/* ignore */}
 
-    /* ── PDF layout vars (smaller on 80mm) ─────────────────────── */
+    /* ── PDF layout vars (cleaner thermal) ─────────────────────── */
     const isThermal = tpl.printFormat === "thermal";
-    const margin = isThermal ? 12 : BASE_MARGIN;
+    const margin = isThermal ? BASE_MARGIN : 18;
     const BASE = isThermal ? 8 : 10;   // body
     const SMALL = isThermal ? 7 : 9;   // aux
     const BIG = isThermal ? 10 : 12;   // headings/totals
@@ -176,14 +209,22 @@ export async function GET(
     const page = pdf.addPage(pageSize);
     let y = page.getHeight() - margin;
 
-    const draw = (t: string, size = BASE, b = false) => {
-      page.drawText(t, { x: margin, y, size, font: b ? bold : font, color: rgb(0, 0, 0) });
+    const drawLeft = (t: string, size = BASE, b = false) => {
+      page.drawText(String(t), { x: margin, y, size, font: b ? bold : font, color: rgb(0, 0, 0) });
+      y -= size + LEAD;
+    };
+    const drawCenter = (t: string, size = BASE, b = false) => {
+      const w = (b ? bold : font).widthOfTextAtSize(String(t), size);
+      page.drawText(String(t), {
+        x: (page.getWidth() - w) / 2,
+        y, size, font: b ? bold : font, color: rgb(0, 0, 0)
+      });
       y -= size + LEAD;
     };
     const row = (l: string, r: string, size = BASE) => {
-      page.drawText(l, { x: margin, y, size, font });
-      const w = font.widthOfTextAtSize(r, size);
-      page.drawText(r, { x: page.getWidth() - margin - w, y, size, font });
+      page.drawText(String(l), { x: margin, y, size, font });
+      const w = font.widthOfTextAtSize(String(r), size);
+      page.drawText(String(r), { x: page.getWidth() - margin - w, y, size, font });
       y -= size + LEAD;
     };
     const rule = () => {
@@ -199,86 +240,44 @@ export async function GET(
 
     /* ── OPTIONAL LOGO (respects showLogo + logoUrl) ───────────── */
     if (tpl.options?.showLogo && tpl.options?.logoUrl) {
-      const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
-      const src = /^https?:\/\//i.test(tpl.options.logoUrl)
-        ? tpl.options.logoUrl
-        : `${origin}${tpl.options.logoUrl}`;
-      try {
-        const res = await fetch(src, { cache: "no-store" });
-        if (res.ok) {
-          const bytes = new Uint8Array(await res.arrayBuffer());
-          const ct = (res.headers.get("content-type") || "").toLowerCase();
-          const ext = (src.split(".").pop() || "").toLowerCase();
+      const img = await tryEmbedImage(pdf, req, tpl.options.logoUrl);
+      if (img) {
+        const maxW = page.getWidth() - 2 * margin;
+        const capH = isThermal ? 38 : 56; // a bit larger so it’s visible
+        const ratio = img.height / img.width;
+        const drawW = Math.min(maxW, img.width);
+        const drawH = Math.min(capH, drawW * ratio);
 
-          let img: any | null = null;
-
-          // Prefer content-type, fall back to extension, then brute-try PNG→JPG
-          const wantPng = ct.includes("png") || ext === "png";
-          const wantJpg = ct.includes("jpeg") || ct.includes("jpg") || ext === "jpg" || ext === "jpeg";
-
-          try {
-            if (wantPng) img = await pdf.embedPng(bytes);
-            else if (wantJpg) img = await pdf.embedJpg(bytes);
-            else {
-              // unknown type: try png then jpg
-              try { img = await pdf.embedPng(bytes); } catch { img = await pdf.embedJpg(bytes); }
-            }
-          } catch {
-            // last chance: try both
-            try { img = await pdf.embedPng(bytes); } catch { /* ignore */ }
-            if (!img) try { img = await pdf.embedJpg(bytes); } catch { /* ignore */ }
-          }
-
-          if (img) {
-            const maxW = page.getWidth() - 2 * margin;
-            const capH = isThermal ? 36 : 54;
-            const ratio = img.height / img.width;
-            const drawW = Math.min(maxW, img.width);
-            const drawH = Math.min(capH, drawW * ratio);
-
-            page.drawImage(img, {
-              x: (page.getWidth() - drawW) / 2,
-              y: y - drawH,
-              width: drawW,
-              height: drawH,
-            });
-            y -= drawH + 6;
-          }
-        }
-      } catch {
-        /* ignore logo failures */
+        page.drawImage(img, {
+          x: (page.getWidth() - drawW) / 2,
+          y: y - drawH,
+          width: drawW,
+          height: drawH,
+        });
+        y -= drawH + 6;
       }
     }
 
-    /* ── Header / store info ───────────────────────────────────── */
-    if (tpl.options.showCompanyName) draw(orgName, BIG, true);
-    if (tpl.options.headerText)      draw(String(tpl.options.headerText), SMALL);
-    if (storeName)                   draw(storeName, BASE, true);
+    /* ── Header / store info (centered) ───────────────────────── */
+    if (tpl.options.showCompanyName) drawCenter(orgName, BIG, true);
+    if (tpl.options.headerText)      drawCenter(String(tpl.options.headerText), SMALL);
+    if (storeName)                   drawCenter(storeName, BASE, true);
     if (tpl.options.showStoreAddress) {
-      for (const ln of addressToLines(storeAddress)) draw(ln, SMALL);
+      for (const ln of addressToLines(storeAddress)) drawCenter(ln, SMALL);
     }
     rule();
 
     /* ── Order meta ────────────────────────────────────────────── */
     row("Date", new Date(order.createdAt ?? order.dateCreated ?? Date.now()).toLocaleString(), BASE);
-    if (tpl.options.flags?.showOrderKey && order.orderKey)
-      row("Receipt", String(order.orderKey), BASE);
-
+    if (tpl.options.flags?.showOrderKey && order.orderKey) row("Receipt", String(order.orderKey), BASE);
     row("Customer", clientName, BASE);
 
     if (tpl.options.flags?.showCashier) {
       let cashierName: string | null = null;
-      const metaArr = asArray(order.orderMeta);
-      for (const m of metaArr) {
+      for (const m of asArray(order.orderMeta)) {
         if (m && typeof m === "object") {
-          if (typeof m.cashierName === "string" && m.cashierName.trim()) {
-            cashierName = m.cashierName.trim();
-            break;
-          }
-          if (m.type === "posCheckout" && m.user?.name) {
-            cashierName = String(m.user.name);
-            break;
-          }
+          if (typeof m.cashierName === "string" && m.cashierName.trim()) { cashierName = m.cashierName.trim(); break; }
+          if (m.type === "posCheckout" && m.user?.name) { cashierName = String(m.user.name); break; }
         }
       }
       if (cashierName) row(tpl.options.labels?.servedBy || "Served by", cashierName, BASE);
@@ -302,7 +301,7 @@ export async function GET(
       return { qty, title: name, unit, total: unit * qty };
     });
 
-    draw(`${tpl.options.labels?.item || "Item"}   ${tpl.options.labels?.price || "Price"}`, BASE, true);
+    drawLeft(`${tpl.options.labels?.item || "Item"}   ${tpl.options.labels?.price || "Price"}`, BASE, true);
     for (const l of lines) row(`${l.qty} × ${l.title}`, fmt(l.total, currency), BASE);
     rule();
 
@@ -317,7 +316,7 @@ export async function GET(
       row(tpl.options.labels?.discount || "Discount", `- ${fmt(discount, currency)}`, BASE);
     }
     row(tpl.options.labels?.tax || "Tax", fmt(tax, currency), BASE);
-    draw(`${tpl.options.labels?.total || "Total"}  ${fmt(grand, currency)}`, BIG, true);
+    drawLeft(`${tpl.options.labels?.total || "Total"}  ${fmt(grand, currency)}`, BIG, true);
 
     const paidRows = await pool.query(
       `SELECT op.amount, COALESCE(pm.name, op."methodId") AS name
@@ -330,7 +329,7 @@ export async function GET(
     const paid = paidRows.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
     if (paidRows.rowCount) {
       rule();
-      draw("Payments", BASE, true);
+      drawLeft("Payments", BASE, true);
       for (const p of paidRows.rows) row(p.name, fmt(Number(p.amount || 0), currency), BASE);
     }
     const change = Math.max(0, paid - grand);
