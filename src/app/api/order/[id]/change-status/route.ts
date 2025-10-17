@@ -195,43 +195,43 @@ async function getRevenue(id: string, organizationId: string) {
     const paymentType = String(order.paymentMethod ?? "").toLowerCase();
     const country: string = order.country;
 
-    
-      // 2) helpers: effective shared cost resolver with tiny caches (now variation-aware)
-  const mappingCache = new Map<
-    string,
-    { shareLinkId: string; sourceProductId: string } | null
-  >();
-  const varMapCache = new Map<
-    string,
-    string | null
-  >(); // key: shareLinkId|sourceProductId|targetProductId|targetVariationId → sourceVariationId|null
-  const costCache = new Map<string, number>();
 
-  async function mapTargetToSourceVariation(
-    shareLinkId: string,
-    sourceProductId: string,
-    targetProductId: string,
-    targetVariationId: string
-  ): Promise<string | null> {
-    const key = `${shareLinkId}|${sourceProductId}|${targetProductId}|${targetVariationId}`;
-    if (varMapCache.has(key)) return varMapCache.get(key)!;
-    const { rows } = await pool.query(
-      `SELECT "sourceVariationId"
+    // 2) helpers: effective shared cost resolver with tiny caches (now variation-aware)
+    const mappingCache = new Map<
+      string,
+      { shareLinkId: string; sourceProductId: string } | null
+    >();
+    const varMapCache = new Map<
+      string,
+      string | null
+    >(); // key: shareLinkId|sourceProductId|targetProductId|targetVariationId → sourceVariationId|null
+    const costCache = new Map<string, number>();
+
+    async function mapTargetToSourceVariation(
+      shareLinkId: string,
+      sourceProductId: string,
+      targetProductId: string,
+      targetVariationId: string
+    ): Promise<string | null> {
+      const key = `${shareLinkId}|${sourceProductId}|${targetProductId}|${targetVariationId}`;
+      if (varMapCache.has(key)) return varMapCache.get(key)!;
+      const { rows } = await pool.query(
+        `SELECT "sourceVariationId"
          FROM "sharedVariationMapping"
         WHERE "shareLinkId"       = $1
           AND "sourceProductId"   = $2
           AND "targetProductId"   = $3
           AND "targetVariationId" = $4
         LIMIT 1`,
-      [shareLinkId, sourceProductId, targetProductId, targetVariationId],
-    );
-    const srcVar = rows[0]?.sourceVariationId ?? null;
-    varMapCache.set(key, srcVar);
-    return srcVar;
-  }
+        [shareLinkId, sourceProductId, targetProductId, targetVariationId],
+      );
+      const srcVar = rows[0]?.sourceVariationId ?? null;
+      varMapCache.set(key, srcVar);
+      return srcVar;
+    }
 
-  async function resolveEffectiveCost(productId: string, variationId?: string | null): Promise<number> {
-    const cacheKey = `${productId}:${variationId ?? "-"}:${country}`;
+    async function resolveEffectiveCost(productId: string, variationId?: string | null): Promise<number> {
+      const cacheKey = `${productId}:${variationId ?? "-"}:${country}`;
       if (costCache.has(cacheKey)) return costCache.get(cacheKey)!;
 
       // find upstream mapping (if this is a shared clone)
@@ -248,53 +248,53 @@ async function getRevenue(id: string, organizationId: string) {
         mappingCache.set(productId, mapping);
       }
 
-         let eff = 0;
-   if (mapping) {
-     // If variation present, try to read source variation cost
-     let srcVarId: string | null = null;
-     if (variationId) {
-       srcVarId = await mapTargetToSourceVariation(
-         mapping.shareLinkId,
-         mapping.sourceProductId,
-         productId,
-         variationId,
-       );
-     }
-     if (srcVarId) {
-       // read cost from productVariations of the SOURCE product’s variation
-       const { rows: [pv] } = await pool.query(
-         `SELECT cost FROM "productVariations" WHERE id = $1 LIMIT 1`,
-         [srcVarId],
-       );
-       eff = Number((pv?.cost ?? {})[country] ?? 0);
-     }
-     if (!eff) {
-       // fallback: product-level shared cost
-       const { rows: [sp] } = await pool.query(
-         `SELECT cost
+      let eff = 0;
+      if (mapping) {
+        // If variation present, try to read source variation cost
+        let srcVarId: string | null = null;
+        if (variationId) {
+          srcVarId = await mapTargetToSourceVariation(
+            mapping.shareLinkId,
+            mapping.sourceProductId,
+            productId,
+            variationId,
+          );
+        }
+        if (srcVarId) {
+          // read cost from productVariations of the SOURCE product’s variation
+          const { rows: [pv] } = await pool.query(
+            `SELECT cost FROM "productVariations" WHERE id = $1 LIMIT 1`,
+            [srcVarId],
+          );
+          eff = Number((pv?.cost ?? {})[country] ?? 0);
+        }
+        if (!eff) {
+          // fallback: product-level shared cost
+          const { rows: [sp] } = await pool.query(
+            `SELECT cost
             FROM "sharedProduct"
            WHERE "shareLinkId" = $1 AND "productId" = $2
            LIMIT 1`,
-         [mapping.shareLinkId, mapping.sourceProductId],
-       );
-       eff = Number((sp?.cost ?? {})[country] ?? 0);
-     }
-   } else {
-     if (variationId) {
-       const { rows: [pv] } = await pool.query(
-         `SELECT cost FROM "productVariations" WHERE id = $1 LIMIT 1`,
-         [variationId],
-       );
-       eff = Number((pv?.cost ?? {})[country] ?? 0);
-     }
-     if (!eff) {
-       const { rows: [p] } = await pool.query(
-         `SELECT cost FROM products WHERE id = $1 LIMIT 1`,
-         [productId],
-       );
-       eff = Number((p?.cost ?? {})[country] ?? 0);
-     }
-   }
+            [mapping.shareLinkId, mapping.sourceProductId],
+          );
+          eff = Number((sp?.cost ?? {})[country] ?? 0);
+        }
+      } else {
+        if (variationId) {
+          const { rows: [pv] } = await pool.query(
+            `SELECT cost FROM "productVariations" WHERE id = $1 LIMIT 1`,
+            [variationId],
+          );
+          eff = Number((pv?.cost ?? {})[country] ?? 0);
+        }
+        if (!eff) {
+          const { rows: [p] } = await pool.query(
+            `SELECT cost FROM products WHERE id = $1 LIMIT 1`,
+            [productId],
+          );
+          eff = Number((p?.cost ?? {})[country] ?? 0);
+        }
+      }
 
       costCache.set(cacheKey, eff);
       return eff;
@@ -325,8 +325,8 @@ async function getRevenue(id: string, organizationId: string) {
     );
 
     // category breakdown for native products (affiliate lines are not categorised here)
-   const { rows: catRows } = await pool.query(
-  `SELECT cp.quantity, cp."unitPrice", cp."variationId",
+    const { rows: catRows } = await pool.query(
+      `SELECT cp.quantity, cp."unitPrice", cp."variationId",
           p."id" AS "productId", pc."categoryId"
          FROM "cartProducts" AS cp
          JOIN "products"  AS p  ON cp."productId" = p."id"
@@ -1131,6 +1131,74 @@ export async function PATCH(
     /* 2a️⃣ no-op guard: if status didn’t change, skip all side-effects.
        This prevents duplicate Coinx PATCHes and email spam on retries. */
     if (!statusChanged) {
+      // ✅ Special-case: still announce "order_placed" to buyer + admins on no-op OPEN
+      if (newStatus === "open" && ord.status === "open") {
+        try {
+          const productList = await buildProductListForCart(ord.cartId);
+          const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
+          const baseVars = {
+            product_list: productList,
+            order_number: ord.orderKey,
+            order_date: orderDate,
+            order_shipping_method: ord.shippingMethod ?? "-",
+            tracking_number: ord.trackingNumber ?? "",
+            shipping_company: ord.shippingService ?? "",
+          };
+          // Buyer-facing fanout (email + in_app + telegram)
+          await enqueueNotificationFanout({
+            organizationId,
+            orderId: id,
+            type: "order_placed",
+            trigger: "order_status_change",
+            channels: ["email", "in_app", "telegram"],
+            dedupeSalt: "buyer:open",
+            payload: {
+              orderId: id,
+              message: `Your order status is now <b>open</b><br>{product_list}`,
+              subject: `Order #${ord.orderKey} open`,
+              variables: baseVars,
+              country: ord.country,
+              clientId: ord.clientId,
+              userId: null,
+              url: `/orders/${id}`,
+            },
+          });
+          // Admin-facing fanout (in_app + telegram)
+          await enqueueNotificationFanout({
+            organizationId,
+            orderId: id,
+            type: "order_placed",
+            trigger: "admin_only",
+            channels: ["in_app", "telegram"],
+            dedupeSalt: `store_admin:open`,
+            payload: {
+              orderId: id,
+              message: `Order #${ord.orderKey} is now <b>open</b><br>{product_list}`,
+              subject: `Order #${ord.orderKey} open`,
+              variables: baseVars,
+              country: ord.country,
+              clientId: null,
+              userId: null,
+              url: `/orders/${id}`,
+            },
+          });
+          // Kick the outbox drain so Telegram sends immediately
+          try {
+            if (process.env.INTERNAL_API_SECRET) {
+              await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`, {
+                method: "POST",
+                headers: { "x-internal-secret": process.env.INTERNAL_API_SECRET, "x-vercel-background": "1", accept: "application/json" },
+                keepalive: true,
+              }).catch(() => { });
+            } else {
+              const { drainNotificationOutbox } = await import("@/lib/notification-outbox");
+              await drainNotificationOutbox(12);
+            }
+          } catch { /* best effort */ }
+        } catch (e) {
+          console.warn("[change-status][no-op OPEN] fanout failed", e);
+        }
+      }
       await client.query("ROLLBACK");
       if (!released) { client.release(); released = true; }
       return NextResponse.json({
@@ -1185,6 +1253,7 @@ export async function PATCH(
 
         // Notify on these status changes; outbox dedupe will prevent duplicates.
         const shouldNotify =
+          newStatus === "open" || // 🔔 include order_placed for merchant admins
           newStatus === "pending_payment" || newStatus === "paid" || newStatus === "completed" || newStatus === "cancelled" || newStatus === "refunded";
 
 
@@ -1892,7 +1961,7 @@ export async function PATCH(
 
       const orderDate = new Date(ord.dateCreated).toLocaleDateString("en-GB");
       // statuses that should alert store admins for buyer orders
-      const ADMIN_ALERT_STATUSES = new Set(["underpaid", "pending_payment", "paid", "completed", "cancelled", "refunded"]);
+      const ADMIN_ALERT_STATUSES = new Set(["open", "underpaid", "pending_payment", "paid", "completed", "cancelled", "refunded"]); // 👈 include open
       // keep “only-once” semantics for paid/completed
       const adminEligibleOnce =
         (newStatus === "paid" || newStatus === "completed") ? !ord.notifiedPaidOrCompleted : true;
