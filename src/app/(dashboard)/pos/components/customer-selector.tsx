@@ -1,3 +1,4 @@
+// src/app/(dashboard)/pos/components/customer-selector.tsx
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
@@ -8,7 +9,21 @@ import { Label } from "@/components/ui/label"
 import { User, UserPlus, X } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Card } from "@/components/ui/card"
-import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog"
+
+import Select from "react-select"
+import ReactCountryFlag from "react-country-flag"
+import countriesLib from "i18n-iso-countries"
+import enLocale from "i18n-iso-countries/langs/en.json"
+
+countriesLib.registerLocale(enLocale)
 
 export type Customer = {
   id: string
@@ -28,10 +43,10 @@ type NewCustomerForm = {
   lastName: string
   email: string
   phoneNumber: string
-  country: string
-  levelId: string
-  referredBy: string
+  country: string // ISO-2 code
 }
+
+type CountryOption = { value: string; label: React.ReactNode }
 
 export function CustomerSelector({ selectedCustomer, onSelectCustomer }: CustomerSelectorProps) {
   const [open, setOpen] = useState(false)
@@ -48,8 +63,6 @@ export function CustomerSelector({ selectedCustomer, onSelectCustomer }: Custome
     email: "",
     phoneNumber: "",
     country: "",
-    levelId: "",
-    referredBy: "",
   })
 
   const filtered = useMemo(() => {
@@ -91,6 +104,23 @@ export function CustomerSelector({ selectedCustomer, onSelectCustomer }: Custome
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, searchQuery])
 
+  // Country options (same approach as Clients form)
+  const countryOptions: CountryOption[] = useMemo(() => {
+    return Object.entries(countriesLib.getNames("en")).map(([code, name]) => ({
+      value: code,
+      label: (
+        <div className="flex items-center">
+          <ReactCountryFlag
+            countryCode={code}
+            svg
+            style={{ width: "1em", height: "1em", marginRight: 8 }}
+          />
+          {name}
+        </div>
+      ),
+    }))
+  }, [])
+
   const handleSelect = (c: Customer | null) => {
     onSelectCustomer(c)
     setOpen(false)
@@ -106,13 +136,11 @@ export function CustomerSelector({ selectedCustomer, onSelectCustomer }: Custome
       const body = {
         username: newCustomer.username,
         firstName: newCustomer.firstName,
-        // ✅ DB requires lastName NOT NULL; default if blank
+        // DB requires lastName NOT NULL; default if blank
         lastName: newCustomer.lastName?.trim() ? newCustomer.lastName : "Customer",
         email: newCustomer.email || null,
         phoneNumber: newCustomer.phoneNumber || null,
         country: newCustomer.country || null,
-        levelId: newCustomer.levelId || null,
-        referredBy: newCustomer.referredBy || null,
       }
       const res = await fetch("/api/clients", {
         method: "POST",
@@ -139,8 +167,6 @@ export function CustomerSelector({ selectedCustomer, onSelectCustomer }: Custome
         email: "",
         phoneNumber: "",
         country: "",
-        levelId: "",
-        referredBy: "",
       })
       setShowNewCustomer(false)
     } catch (e: any) {
@@ -153,12 +179,10 @@ export function CustomerSelector({ selectedCustomer, onSelectCustomer }: Custome
       const body = {
         username: `walkin-${Date.now()}`,
         firstName: "Walk-in",
-        lastName: "Customer",  // ✅ satisfy NOT NULL
+        lastName: "Customer",  // satisfy NOT NULL
         email: null,
         phoneNumber: null,
         country: null,
-        levelId: null,
-        referredBy: null,
       }
       const res = await fetch("/api/clients", {
         method: "POST",
@@ -295,26 +319,14 @@ export function CustomerSelector({ selectedCustomer, onSelectCustomer }: Custome
                 </div>
                 <div className="space-y-2">
                   <Label>Country</Label>
-                  <Input
-                    value={newCustomer.country}
-                    onChange={(e) => setNewCustomer({ ...newCustomer, country: e.target.value })}
-                    placeholder="US"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Level ID</Label>
-                  <Input
-                    value={newCustomer.levelId}
-                    onChange={(e) => setNewCustomer({ ...newCustomer, levelId: e.target.value })}
-                    placeholder="optional"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Referred By</Label>
-                  <Input
-                    value={newCustomer.referredBy}
-                    onChange={(e) => setNewCustomer({ ...newCustomer, referredBy: e.target.value })}
-                    placeholder="optional"
+                  <Select
+                    options={countryOptions}
+                    value={countryOptions.find((opt) => opt.value === newCustomer.country) || null}
+                    onChange={(opt) =>
+                      setNewCustomer({ ...newCustomer, country: opt ? String(opt.value) : "" })
+                    }
+                    placeholder="Select a country"
+                    isClearable
                   />
                 </div>
               </div>
