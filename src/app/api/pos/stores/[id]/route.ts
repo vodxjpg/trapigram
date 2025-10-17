@@ -5,9 +5,18 @@ import { getContext } from "@/lib/context";
 
 const UpdateSchema = z.object({
   name: z.string().min(1).optional(),
-  address: z.record(z.any()).optional(),
+  address: z.any().optional(), // accept object or string; we'll normalize
   defaultReceiptTemplateId: z.string().uuid().nullable().optional(),
 });
+
+function parseJSONish<T = any>(v: any): T | null {
+  if (v == null) return null;
+  if (typeof v === "string") {
+    try { return JSON.parse(v) as T; } catch { return null; }
+  }
+  if (typeof v === "object") return v as T;
+  return null;
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
@@ -19,7 +28,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     [id, ctx.organizationId]
   );
   if (!rows.length) return NextResponse.json({ error: "Store not found" }, { status: 404 });
-  return NextResponse.json({ store: rows[0] }, { status: 200 });
+
+  const store = { ...rows[0], address: parseJSONish(rows[0].address) };
+  return NextResponse.json({ store }, { status: 200 });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -45,8 +56,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const values: any[] = [];
     let i = 1;
 
-    if (body.name !== undefined) { fields.push(`name = $${i++}`); values.push(body.name); }
-    if (body.address !== undefined) { fields.push(`address = $${i++}`); values.push(body.address); }
+    if (body.name !== undefined) {
+      fields.push(`name = $${i++}`);
+      values.push(body.name);
+    }
+    if (body.address !== undefined) {
+      fields.push(`address = $${i++}`);
+      values.push(parseJSONish(body.address) ?? {}); // normalize before saving
+    }
     if (body.defaultReceiptTemplateId !== undefined) {
       fields.push(`"defaultReceiptTemplateId" = $${i++}`);
       values.push(body.defaultReceiptTemplateId);
@@ -61,7 +78,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const { rows } = await pool.query(sql, values);
     if (!rows.length) return NextResponse.json({ error: "Store not found" }, { status: 404 });
-    return NextResponse.json({ store: rows[0] }, { status: 200 });
+
+    const store = { ...rows[0], address: parseJSONish(rows[0].address) };
+    return NextResponse.json({ store }, { status: 200 });
   } catch (e: any) {
     if (e instanceof z.ZodError)
       return NextResponse.json({ error: e.errors }, { status: 400 });
