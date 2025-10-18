@@ -20,7 +20,6 @@ const NOTIF_TYPES: Readonly<NotificationType[]> = [
   "order_message",
 ] as const;
 
-
 const schema = z.object({
   type: z.enum(NOTIF_TYPES),
   role: z.enum(["admin", "user"]),
@@ -97,5 +96,5 @@ export async function DELETE(
     .where("organizationId", "=", ctx.organizationId)
     .executeTakeFirst();
 
-  return NextResponse.json({ ok: true }, { status: 204 });
+  return new NextResponse(null, { status: 204 });
 }

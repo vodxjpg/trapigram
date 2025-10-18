@@ -135,7 +135,6 @@ export function NotificationTemplatesTable() {
           throw new Error(err.error || "Fetch failed");
         }
         const data = (await r.json()) as (TemplateRow & {
-          // API already parses countries to array
           countries: string[] | string;
         })[];
         const normalized = data.map((d) => ({
@@ -190,7 +189,8 @@ export function NotificationTemplatesTable() {
   /* ────────────── Columns ────────────── */
   const columnHelper = createColumnHelper<TemplateRow>();
 
-  const columns = React.useMemo<ColumnDef<TemplateRow, unknown>[]>(
+  // NOTE: Use ColumnDef<TemplateRow, any>[] to avoid NotificationType vs unknown mismatch.
+  const columns = React.useMemo<ColumnDef<TemplateRow, any>[]>(
     () => [
       columnHelper.accessor("type", {
         header: "Type",
@@ -225,7 +225,8 @@ export function NotificationTemplatesTable() {
         header: "Countries",
         cell: ({ row }) => {
           const countries = row.original.countries || [];
-          if (!countries.length) return <span className="text-muted-foreground">Global</span>;
+          if (!countries.length)
+            return <span className="text-muted-foreground">Global</span>;
 
           const firstTwo = countries.slice(0, 2);
           const rest = countries.slice(2);
@@ -255,7 +256,10 @@ export function NotificationTemplatesTable() {
                         <div className="text-xs font-medium">More countries</div>
                         <div className="text-xs text-muted-foreground">
                           {rest
-                            .map((cc) => `${ccToFlag(cc)} ${regionName(cc)} (${cc.toUpperCase()})`)
+                            .map(
+                              (cc) =>
+                                `${ccToFlag(cc)} ${regionName(cc)} (${cc.toUpperCase()})`,
+                            )
                             .join(", ")}
                         </div>
                       </div>

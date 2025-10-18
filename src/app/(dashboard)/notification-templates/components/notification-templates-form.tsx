@@ -16,7 +16,6 @@ import {
   FormDescription,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
   TooltipContent,
@@ -52,7 +51,7 @@ const NOTIF_TYPES = [
   "order_cancelled",
   "order_refunded",
   "order_partially_paid",
-  "order_shipped",          // ✅ present in API; add here for parity
+  "order_shipped", // parity with API
   "ticket_created",
   "ticket_replied",
   "order_message",
@@ -137,13 +136,7 @@ function TypeBadge({ type }: { type: NotifType }) {
   );
 }
 
-function CopyChip({
-  token,
-  label,
-}: {
-  token: string;
-  label: string;
-}) {
+function CopyChip({ token, label }: { token: string; label: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -279,36 +272,20 @@ export function NotificationTemplateForm({ id, initial }: Props) {
     [],
   );
 
-  /* ---------- placeholders (copy chips) ---------- */
+  /* ---------- placeholders (copy chips + descriptions) ---------- */
   const PLACEHOLDERS: { token: string; label: string; desc: string }[] = [
-    { token: "{product_list}", label: "Product list", desc: "Order items" },
-    { token: "{order_number}", label: "Order number", desc: "Order code" },
-    { token: "{order_date}", label: "Order date", desc: "Placed at" },
-    {
-      token: "{order_shipping_method}",
-      label: "Shipping method",
-      desc: "Carrier/method",
-    },
-    {
-      token: "{tracking_number}",
-      label: "Tracking number",
-      desc: "Includes a link",
-    },
-    {
-      token: "{shipping_company}",
-      label: "Shipping company",
-      desc: "Logistics company",
-    },
-    {
-      token: "{expected_amt}",
-      label: "Crypto expected",
-      desc: "Coinslick",
-    },
-    { token: "{received_amt}", label: "Crypto received", desc: "Coinslick" },
-    { token: "{pending_amt}", label: "Crypto pending", desc: "Coinslick" },
-    { token: "{asset}", label: "Crypto asset", desc: "Coinslick" },
-    { token: "{ticket_number}", label: "Ticket number", desc: "Support" },
-    { token: "{ticket_content}", label: "Ticket content", desc: "Support" },
+    { token: "{product_list}", label: "Product list", desc: "Output order's product list" },
+    { token: "{order_number}", label: "Order number", desc: "Output order's number" },
+    { token: "{order_date}", label: "Order date", desc: "Output order's date" },
+    { token: "{order_shipping_method}", label: "Shipping method", desc: "Output order's shipping method" },
+    { token: "{tracking_number}", label: "Tracking number", desc: "Output order's tracking number (with link)" },
+    { token: "{shipping_company}", label: "Shipping company", desc: "Output order's shipping company" },
+    { token: "{expected_amt}", label: "Crypto expected", desc: "Output expected crypto amount (Coinslick)" },
+    { token: "{received_amt}", label: "Crypto received", desc: "Output received crypto amount (Coinslick)" },
+    { token: "{pending_amt}", label: "Crypto pending", desc: "Output pending crypto amount (Coinslick)" },
+    { token: "{asset}", label: "Crypto asset", desc: "Output crypto asset (Coinslick)" },
+    { token: "{ticket_number}", label: "Ticket number", desc: "Output support ticket number" },
+    { token: "{ticket_content}", label: "Ticket content", desc: "Output support ticket message content" },
   ];
 
   /* ---------- render ---------- */
@@ -324,19 +301,23 @@ export function NotificationTemplateForm({ id, initial }: Props) {
               render={({ field }) => {
                 const selected = field.value as NotifType;
                 const badgeClass = TYPE_BADGE_BG[selected] ?? "bg-gray-500";
-                const label = TYPE_LABEL[selected] ?? selected?.replace(/_/g, " ");
                 return (
                   <FormItem>
                     <FormLabel>Notification Type *</FormLabel>
-                    <div className="flex items-center gap-3">
+
+                    {/* On mobile: badge above select; on >=sm: inline */}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                       {/* Live color/label preview */}
-                      <TypeBadge type={selected || "order_placed"} />
+                      <div>
+                        <TypeBadge type={selected} />
+                      </div>
+
                       <FormControl>
                         <ShadSelect
                           value={field.value}
                           onValueChange={field.onChange}
                         >
-                          <SelectTrigger className="w-[280px]">
+                          <SelectTrigger className="w-full sm:w-[320px]">
                             <div className="flex items-center gap-2">
                               <ColorDot className={badgeClass} />
                               <SelectValue placeholder="Choose a type" />
@@ -352,6 +333,7 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                         </ShadSelect>
                       </FormControl>
                     </div>
+
                     <FormDescription>
                       Types use the same colors as the orders table for quick scanning.
                     </FormDescription>
@@ -373,7 +355,7 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                       value={field.value}
                       onValueChange={field.onChange}
                     >
-                      <SelectTrigger className="w-[280px]">
+                      <SelectTrigger className="w-full sm:w-[280px]">
                         <SelectValue placeholder="Select role" />
                       </SelectTrigger>
                       <SelectContent>
@@ -437,7 +419,7 @@ export function NotificationTemplateForm({ id, initial }: Props) {
               )}
             />
 
-            {/* Body + copyable placeholders */}
+            {/* Body + copyable placeholders + descriptions */}
             <FormField
               control={form.control}
               name="message"
@@ -445,16 +427,24 @@ export function NotificationTemplateForm({ id, initial }: Props) {
                 <FormItem>
                   <FormLabel>Body *</FormLabel>
 
-                  {/* Copy chips */}
+                  {/* Copy chips with descriptive text (restored) */}
                   <div className="mb-2">
-                    <div className="mb-1 text-sm text-muted-foreground">
+                    <div className="mb-2 text-sm text-muted-foreground">
                       Available placeholders (click to copy):
                     </div>
-                    <div className="flex flex-wrap gap-2">
+
+                    <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {PLACEHOLDERS.map((p) => (
-                        <CopyChip key={p.token} token={p.token} label={p.label} />
+                        <li key={p.token} className="flex items-start gap-2">
+                          <CopyChip token={p.token} label={p.label} />
+                          <div className="leading-tight">
+                            <div className="text-xs font-medium">{p.label}</div>
+                            <div className="text-[11px] text-muted-foreground">{p.desc}</div>
+                          </div>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
+
                     <div className="mt-2 text-[11px] text-muted-foreground">
                       Note: In e-mails, <code>{`{product_list}`}</code> is hidden for privacy;
                       the order details page and Telegram message include items.
