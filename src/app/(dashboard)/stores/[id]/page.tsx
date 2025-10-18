@@ -1,3 +1,4 @@
+// src/app/(dashboard)/stores/[id]/page.tsx
 "use client";
 
 import * as React from "react";
@@ -10,19 +11,39 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogClose, // ← so "Got it" can close the dialog
 } from "@/components/ui/dialog";
 import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
-  AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { MoreHorizontal, Pencil, Plus, Trash2, ArrowLeft, Search } from "lucide-react";
+import { MoreHorizontal, Pencil, Plus, Trash2, ArrowLeft, Search, Info } from "lucide-react";
 import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipProvider,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import Select from "react-select";
 
 type Store = {
@@ -77,19 +98,22 @@ export default function StoreRegistersPage() {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [deleteIds, setDeleteIds] = React.useState<string[]>([]);
 
-    // templates
+  // templates
   const [templates, setTemplates] = React.useState<ReceiptTemplate[]>([]);
-  const templateById = React.useMemo(() => Object.fromEntries(templates.map(t => [t.id, t])), [templates]);
+  const templateById = React.useMemo(
+    () => Object.fromEntries(templates.map((t) => [t.id, t])),
+    [templates],
+  );
   const [savingTemplate, setSavingTemplate] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setIsLoading(true);
     try {
-     const [sRes, rRes, tRes] = await Promise.all([
-  fetch(`/api/pos/stores/${storeId}`),
-  fetch(`/api/pos/registers?storeId=${encodeURIComponent(storeId)}`),
-  fetch(`/api/pos/receipt-templates`),
-]);
+      const [sRes, rRes, tRes] = await Promise.all([
+        fetch(`/api/pos/stores/${storeId}`),
+        fetch(`/api/pos/registers?storeId=${encodeURIComponent(storeId)}`),
+        fetch(`/api/pos/receipt-templates`),
+      ]);
       if (!sRes.ok) throw new Error("Failed to load store");
       const s = await sRes.json();
       setStore(s.store);
@@ -97,10 +121,11 @@ export default function StoreRegistersPage() {
       if (!rRes.ok) throw new Error("Failed to load registers");
       const r = await rRes.json();
       setRows(r.registers || []);
-       if (tRes.ok) {
-   const tj = await tRes.json();
-   setTemplates(tj.templates || []);
- }
+
+      if (tRes.ok) {
+        const tj = await tRes.json();
+        setTemplates(tj.templates || []);
+      }
     } catch (e: any) {
       toast.error(e?.message || "Could not load data");
       router.replace("/stores");
@@ -109,7 +134,9 @@ export default function StoreRegistersPage() {
     }
   }, [storeId, router]);
 
-  React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => {
+    load();
+  }, [load]);
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -117,7 +144,8 @@ export default function StoreRegistersPage() {
     return rows.filter((r) => r.name.toLowerCase().includes(q));
   }, [rows, query]);
 
-  const columns = React.useMemo<ColumnDef<Register>[]>(() => [
+  // NOTE: use ColumnDef<Register, any>[] for smooth compatibility with StandardDataTable
+  const columns = React.useMemo<ColumnDef<Register, any>[]>(() => [
     {
       id: "select",
       header: ({ table }) => (
@@ -149,7 +177,9 @@ export default function StoreRegistersPage() {
         row.original.active ? (
           <Badge variant="default">Active</Badge>
         ) : (
-          <Badge variant="secondary" className="bg-muted text-foreground">Inactive</Badge>
+          <Badge variant="secondary" className="bg-muted text-foreground">
+            Inactive
+          </Badge>
         ),
     },
     {
@@ -240,7 +270,7 @@ export default function StoreRegistersPage() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Idempotency-Key": crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+            "Idempotency-Key": (crypto as any).randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
           },
           body: JSON.stringify({
             storeId,
@@ -265,7 +295,7 @@ export default function StoreRegistersPage() {
       ids.map(async (id) => {
         const r = await fetch(`/api/pos/registers/${id}`, { method: "DELETE" });
         if (!r.ok) throw new Error("Delete failed");
-      })
+      }),
     );
   }
 
@@ -302,11 +332,57 @@ export default function StoreRegistersPage() {
               Back
             </Button>
           </Link>
+
           <div>
             <h1 className="text-2xl font-bold tracking-tight">
               {store ? store.name : "Store"}
             </h1>
-            <p className="text-muted-foreground">Registers</p>
+
+            {/* Subtitle + info tooltip/dialog */}
+            <div className="flex items-center gap-1 text-muted-foreground">
+              <p>Registers</p>
+
+              <Dialog>
+                <TooltipProvider>
+                  <Tooltip>
+                    <DialogTrigger asChild>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5 p-0"
+                          aria-label="What are registers?"
+                        >
+                          <Info className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                    </DialogTrigger>
+                    <TooltipContent>What are registers?</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>About registers</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-3 text-sm">
+                    <p>
+                      <strong>Registers</strong> are the POS endpoints inside this store (e.g.
+                      “Front Counter”, “Pickup Desk”). You can add multiple registers per store.
+                    </p>
+                    <p>
+                      Toggle a register’s <strong>Active</strong> state to hide/show it in the POS selector.
+                      Use the actions menu to rename or delete a register.
+                    </p>
+                  </div>
+                  <DialogFooter>
+                    <DialogClose asChild>
+                      <Button type="button">Got it</Button>
+                    </DialogClose>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
           </div>
         </div>
 
@@ -331,7 +407,7 @@ export default function StoreRegistersPage() {
         </div>
       </div>
 
-            {/* Store receipt template selector */}
+      {/* Store receipt template selector */}
       <div className="rounded-lg border p-4">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -343,12 +419,14 @@ export default function StoreRegistersPage() {
           <div className="min-w-[300px]">
             <Select
               isClearable
-              options={templates.map(t => ({ value: t.id, label: t.name }))}
+              options={templates.map((t) => ({ value: t.id, label: t.name }))}
               value={
                 store?.defaultReceiptTemplateId
                   ? {
                       value: store.defaultReceiptTemplateId,
-                      label: templateById[store.defaultReceiptTemplateId!]?.name ?? "Selected template",
+                      label:
+                        templateById[store.defaultReceiptTemplateId!]?.name ??
+                        "Selected template",
                     }
                   : null
               }
@@ -359,7 +437,9 @@ export default function StoreRegistersPage() {
                   const res = await fetch(`/api/pos/stores/${storeId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ defaultReceiptTemplateId: opt?.value ?? null }),
+                    body: JSON.stringify({
+                      defaultReceiptTemplateId: opt?.value ?? null,
+                    }),
                   });
                   if (!res.ok) throw new Error("Failed to update template");
                   const j = await res.json();
@@ -418,7 +498,7 @@ export default function StoreRegistersPage() {
                 <div>
                   <Label className="mb-0">Active</Label>
                   <p className="text-xs text-muted-foreground">
-                    Inactive registers are hidden in POS outlet selector.
+                    Inactive registers are hidden in the POS outlet selector.
                   </p>
                 </div>
                 <Switch checked={formActive} onCheckedChange={setFormActive} />
@@ -430,7 +510,7 @@ export default function StoreRegistersPage() {
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>
               Cancel
             </Button>
-             <Button onClick={saveRegister} disabled={saving}>
+            <Button onClick={saveRegister} disabled={saving}>
               {saving ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
