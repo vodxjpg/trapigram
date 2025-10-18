@@ -243,10 +243,7 @@ export default function OrderReport() {
     const names = selectedShops.map(id => storeNameById[id] ?? id);
     return names.length <= 2 ? names.join(", ") : `${names.length} selected`;
   }, [selectedShops, storeNameById]);
-  const posCashierSummary = useMemo(() => {
-    if (selectedCashiers.length === 0) return "All cashiers";
-    return selectedCashiers.length <= 2 ? selectedCashiers.join(", ") : `${selectedCashiers.length} selected`;
-  }, [selectedCashiers]);
+
 
   const [totals, setTotals] = useState<Totals | null>(null);
 
@@ -398,6 +395,19 @@ export default function OrderReport() {
     });
     return Array.from(m.entries()).map(([id, label]) => ({ id, label }));
   }, [orders]);
+
+  /* ─────────────────────────────────────────────────────────────
+   Cashier summary should show NAMES (not ids) in the trigger
+───────────────────────────────────────────────────────────── */
+  const cashierNameById = useMemo(
+    () => Object.fromEntries(posCashiers.map(c => [c.id, c.label])),
+    [posCashiers]
+  );
+  const posCashierSummary = useMemo(() => {
+    if (selectedCashiers.length === 0) return "All cashiers";
+    const names = selectedCashiers.map(id => cashierNameById[id] ?? id);
+    return names.length <= 2 ? names.join(", ") : `${names.length} selected`;
+  }, [selectedCashiers, cashierNameById]);
 
   const dropshipperSummary = useMemo(() => {
     if (sellerFilter === "retailers") return "Retailers";
@@ -797,146 +807,142 @@ export default function OrderReport() {
                 </Button>
               </div>
 
-              {/* Seller filter: Retailers or Dropshippers (dropdown + dropdown) */}
-              <div className="flex flex-wrap items-center gap-2 w-full">
-                {/* Orders: All vs POS-only */}
-                <span className="text-sm font-medium">Orders</span>
-                <Select value={orderKind} onValueChange={(v) => setOrderKind(v as "all" | "pos")}>
-                  <SelectTrigger size="sm" className="w-full sm:w-[160px]">
-                    <SelectValue placeholder="Order type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="pos">POS only</SelectItem>
-                  </SelectContent>
-                </Select>
 
-                {/* POS shop & cashier filters (appear like dropshipper filters) */}
-                {orderKind === "pos" && (
-                  <>
-                    {/* Shop */}
-                    <Popover open={shopPopoverOpen} onOpenChange={setShopPopoverOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="justify-start w-full sm:w-[220px]"
-                          aria-haspopup="listbox"
-                          aria-expanded={shopPopoverOpen}
-                        >
-                          {posShopSummary}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="p-0 w-[260px] sm:w-[340px]" align="start">
-                        <Command>
-                          <div className="px-3 pt-3">
-                            <CommandInput placeholder="Search shop..." />
-                          </div>
-                          <CommandList>
-                            <CommandEmpty>No shop found.</CommandEmpty>
-                            <CommandGroup heading="Shops">
-                              {posShops.map((s) => {
-                                const checked = selectedShops.includes(s.id);
-                                return (
-                                  <CommandItem
-                                    key={s.id}
-                                    value={s.label}
-                                    onSelect={() =>
-                                      setSelectedShops((prev) =>
-                                        prev.includes(s.id)
-                                          ? prev.filter((x) => x !== s.id)
-                                          : [...prev, s.id]
-                                      )
-                                    }
-                                    className="flex items-center"
-                                  >
-                                    <Check className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"}`} />
-                                    <span>{s.label}</span>
-                                  </CommandItem>
-                                );
-                              })}
-                            </CommandGroup>
-                            <CommandSeparator />
-                            <div className="flex items-center justify-between gap-2 p-2">
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => setSelectedShops(posShops.map((d) => d.id))}
-                              >
-                                Select all
-                              </Button>
-                              <Button size="sm" variant="ghost" onClick={() => setSelectedShops([])}>
-                                Deselect all
-                              </Button>
+              {/* Orders + POS filters stacked left, seller filter right */}
+              <div className="flex flex-wrap items-start gap-4 w-full">
+                {/* LEFT: Orders -> Shop -> Cashier (stacked) */}
+                <div className="w-full sm:w-[260px]">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">Orders</span>
+                      <Select value={orderKind} onValueChange={(v) => setOrderKind(v as "all" | "pos")}>
+                        <SelectTrigger size="sm" className="w-full">
+                          <SelectValue placeholder="Order type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All</SelectItem>
+                          <SelectItem value="pos">POS only</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {/* Shop under Orders */}
+                    {orderKind === "pos" && (
+                      <Popover open={shopPopoverOpen} onOpenChange={setShopPopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full justify-between"
+                            aria-haspopup="listbox"
+                            aria-expanded={shopPopoverOpen}
+                          >
+                            {posShopSummary}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent side="bottom" align="start" sideOffset={4} className="p-0 w-[260px]">
+                          <Command>
+                            <div className="px-3 pt-3">
+                              <CommandInput placeholder="Search shop..." />
                             </div>
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
-
-                    {/* Cashier */}
-                    <Popover open={cashierPopoverOpen} onOpenChange={setCashierPopoverOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="justify-start w-full sm:w-[220px]"
-                          aria-haspopup="listbox"
-                          aria-expanded={cashierPopoverOpen}
-                        >
-                          {posCashierSummary}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="p-0 w-[260px] sm:w-[340px]" align="start">
-                        <Command>
-                          <div className="px-3 pt-3">
-                            <CommandInput placeholder="Search cashier..." />
-                          </div>
-                          <CommandList>
-                            <CommandEmpty>No cashier found.</CommandEmpty>
-                            <CommandGroup heading="Cashiers">
-                              {posCashiers.map((c) => {
-                                const checked = selectedCashiers.includes(c.id);
-                                return (
-                                  <CommandItem
-                                    key={c.id}
-                                    value={c.label}
-                                    onSelect={() =>
-                                      setSelectedCashiers((prev) =>
-                                        prev.includes(c.id)
-                                          ? prev.filter((x) => x !== c.id)
-                                          : [...prev, c.id]
-                                      )
-                                    }
-                                    className="flex items-center"
-                                  >
-                                    <Check className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"}`} />
-                                    <span>{c.label}</span>
-                                  </CommandItem>
-                                );
-                              })}
-                            </CommandGroup>
-                            <CommandSeparator />
-                            <div className="flex items-center justify-between gap-2 p-2">
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => setSelectedCashiers(posCashiers.map((d) => d.id))}
-                              >
-                                Select all
-                              </Button>
-                              <Button size="sm" variant="ghost" onClick={() => setSelectedCashiers([])}>
-                                Deselect all
-                              </Button>
+                            <CommandList>
+                              <CommandEmpty>No shop found.</CommandEmpty>
+                              <CommandGroup heading="Shops">
+                                {posShops.map((s) => {
+                                  const checked = selectedShops.includes(s.id);
+                                  return (
+                                    <CommandItem
+                                      key={s.id}
+                                      value={s.label}
+                                      onSelect={() =>
+                                        setSelectedShops((prev) =>
+                                          prev.includes(s.id)
+                                            ? prev.filter((x) => x !== s.id)
+                                            : [...prev, s.id]
+                                        )
+                                      }
+                                      className="flex items-center"
+                                    >
+                                      <Check className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"}`} />
+                                      <span>{s.label}</span>
+                                    </CommandItem>
+                                  );
+                                })}
+                              </CommandGroup>
+                              <CommandSeparator />
+                              <div className="flex items-center justify-between gap-2 p-2">
+                                <Button size="sm" variant="secondary" onClick={() => setSelectedShops(posShops.map((d) => d.id))}>
+                                  Select all
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => setSelectedShops([])}>
+                                  Deselect all
+                                </Button>
+                              </div>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                    {/* Cashier under Shop */}
+                    {orderKind === "pos" && (
+                      <Popover open={cashierPopoverOpen} onOpenChange={setCashierPopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full justify-between"
+                            aria-haspopup="listbox"
+                            aria-expanded={cashierPopoverOpen}
+                          >
+                            {posCashierSummary}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent side="bottom" align="start" sideOffset={4} className="p-0 w-[260px]">
+                          <Command>
+                            <div className="px-3 pt-3">
+                              <CommandInput placeholder="Search cashier..." />
                             </div>
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
-                  </>
-                )}
+                            <CommandList>
+                              <CommandEmpty>No cashier found.</CommandEmpty>
+                              <CommandGroup heading="Cashiers">
+                                {posCashiers.map((c) => {
+                                  const checked = selectedCashiers.includes(c.id);
+                                  return (
+                                    <CommandItem
+                                      key={c.id}
+                                      value={c.label}
+                                      onSelect={() =>
+                                        setSelectedCashiers((prev) =>
+                                          prev.includes(c.id)
+                                            ? prev.filter((x) => x !== c.id)
+                                            : [...prev, c.id]
+                                        )
+                                      }
+                                      className="flex items-center"
+                                    >
+                                      <Check className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"}`} />
+                                      <span>{c.label}</span>
+                                    </CommandItem>
+                                  );
+                                })}
+                              </CommandGroup>
+                              <CommandSeparator />
+                              <div className="flex items-center justify-between gap-2 p-2">
+                                <Button size="sm" variant="secondary" onClick={() => setSelectedCashiers(posCashiers.map((d) => d.id))}>
+                                  Select all
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => setSelectedCashiers([])}>
+                                  Deselect all
+                                </Button>
+                              </div>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                  </div>
+                </div>
 
-                {/* Seller filter (hidden in POS-only mode) */}
+                {/* RIGHT: Seller filter (hidden in POS-only mode) */}
                 {orderKind !== "pos" && (
                   <>
                     <span className="text-sm font-medium">Filter by</span>
@@ -966,7 +972,7 @@ export default function OrderReport() {
                             {dropshipperSummary}
                           </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="p-0 w-[260px] sm:w-[340px]" align="start">
+                        <PopoverContent side="bottom" align="start" sideOffset={4} className="p-0 w-[260px]">
                           <Command>
                             <div className="px-3 pt-3">
                               <CommandInput placeholder="Search dropshipper..." />
