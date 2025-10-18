@@ -16,7 +16,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
-  DialogClose, // ← so "Got it" can close the dialog
+  DialogTrigger,
+  DialogClose,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,

@@ -10,8 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-  DialogClose, // ← NEW
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
+  DialogClose,
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { MoreHorizontal, Pencil, Plus, Trash2, Search, Info } from "lucide-react"; // ← Info added
+import { MoreHorizontal, Pencil, Plus, Trash2, Search, Info } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
