@@ -67,10 +67,6 @@ export default function StoreRegistersPage() {
   const [rows, setRows] = React.useState<Register[]>([]);
   const [query, setQuery] = React.useState("");
 
-  // clients for walk-in selector
-  const [clients, setClients] = React.useState<Client[]>([]);
-  const [clientsLoading, setClientsLoading] = React.useState(false);
-
   const [editOpen, setEditOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Register | null>(null);
   const [formName, setFormName] = React.useState("");
@@ -114,40 +110,6 @@ export default function StoreRegistersPage() {
   }, [storeId, router]);
 
   React.useEffect(() => { load(); }, [load]);
-
-  // Load clients for selector (reused by create/edit)
-  const loadClients = React.useCallback(async () => {
-    setClientsLoading(true);
-    try {
-      const res = await fetch(`/api/clients`);
-      if (!res.ok) throw new Error("Failed to load clients");
-      const data = await res.json();
-      const list: Client[] = (data.clients ?? data?.rows ?? []).map((c: any) => ({
-        id: c.id,
-        username: c.username ?? null,
-        firstName: c.firstName ?? null,
-        lastName: c.lastName ?? null,
-        email: c.email ?? null,
-      }));
-      setClients(list);
-      return list;
-    } catch (e: any) {
-      toast.error(e?.message || "Could not load clients");
-      setClients([]);
-      return [];
-    } finally {
-      setClientsLoading(false);
-    }
-  }, []);
-
-  // Try to guess a Walk-in client from list
-  function guessWalkInId(list: Client[]) {
-    const lower = (s?: string | null) => (s || "").toLowerCase();
-    const hit =
-      list.find(c => lower(c.username) === "walk-in" || lower(c.username) === "walkin" || lower(c.username) === "walk_in") ||
-      list.find(c => `${lower(c.firstName)} ${lower(c.lastName)}`.trim() === "walk in");
-    return hit?.id || list[0]?.id || "";
-  }
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -248,9 +210,6 @@ export default function StoreRegistersPage() {
     setFormName("");
     setFormActive(true);
     setEditOpen(true);
-    (clients.length ? Promise.resolve(clients) : loadClients()).then((list) => {
-      setFormWalkInClientId(guessWalkInId(list));
-    });
   }
 
   function openEdit(r: Register) {
@@ -258,16 +217,12 @@ export default function StoreRegistersPage() {
     setFormName(r.name);
     setFormActive(Boolean(r.active));
     setEditOpen(true);
-    (clients.length ? Promise.resolve(clients) : loadClients()).then(() => {
-      setFormWalkInClientId(r.walkInClientId);
-    });
   }
 
   async function saveRegister() {
     setSaving(true);
     try {
       if (!formName.trim()) throw new Error("Name is required.");
-      if (!formWalkInClientId) throw new Error("Walk-in customer is required.");
 
       if (editing) {
         const res = await fetch(`/api/pos/registers/${editing.id}`, {
@@ -276,7 +231,6 @@ export default function StoreRegistersPage() {
           body: JSON.stringify({
             name: formName.trim(),
             active: formActive,
-            walkInClientId: formWalkInClientId,
           }),
         });
         if (!res.ok) throw new Error("Failed to update register");
@@ -291,7 +245,6 @@ export default function StoreRegistersPage() {
           body: JSON.stringify({
             storeId,
             name: formName.trim(),
-            walkInClientId: formWalkInClientId,
             active: formActive,
           }),
         });
@@ -471,44 +424,13 @@ export default function StoreRegistersPage() {
                 <Switch checked={formActive} onCheckedChange={setFormActive} />
               </div>
             </div>
-
-            <div className="space-y-2">
-              <Label>Walk-in customer *</Label>
-              <Select
-                isLoading={clientsLoading}
-                options={clients.map((c) => ({
-                  value: c.id,
-                  label:
-                    (c.firstName || c.lastName)
-                      ? `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim()
-                      : (c.username || c.email || c.id),
-                }))}
-                value={
-                  formWalkInClientId
-                    ? {
-                        value: formWalkInClientId,
-                        label:
-                          clients.find((c) => c.id === formWalkInClientId)?.firstName ||
-                          clients.find((c) => c.id === formWalkInClientId)?.username ||
-                          "Selected client",
-                      }
-                    : null
-                }
-                onChange={(opt: any) => setFormWalkInClientId(opt?.value || "")}
-                placeholder="Select a default walk-in customer"
-                noOptionsMessage={() => "No clients"}
-              />
-              <p className="text-xs text-muted-foreground">
-                This client will be preselected in POS as “Walk-in”.
-              </p>
-            </div>
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>
               Cancel
             </Button>
-            <Button onClick={saveRegister} disabled={saving || clientsLoading}>
+             <Button onClick={saveRegister} disabled={saving}>
               {saving ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>

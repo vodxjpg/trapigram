@@ -7,7 +7,6 @@ const UpdateSchema = z.object({
   name: z.string().min(1).optional(),
   active: z.boolean().optional(),
   storeId: z.string().optional(),        // allow moving a register to a different store
-  walkInClientId: z.string().optional(), // allow changing default walk-in client
 });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -46,13 +45,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       );
       if (!s.length) return NextResponse.json({ error: "Store not found" }, { status: 404 });
     }
-    if (input.walkInClientId) {
-      const { rows: c } = await pool.query(
-        `SELECT id FROM clients WHERE id=$1 AND "organizationId"=$2`,
-        [input.walkInClientId, organizationId]
-      );
-      if (!c.length) return NextResponse.json({ error: "Client not found" }, { status: 404 });
-    }
 
     const fields: string[] = [];
     const values: any[] = [];
@@ -67,10 +59,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (input.storeId !== undefined) {
       fields.push(`"storeId"=$${idx++}`); values.push(input.storeId);
     }
-    if (input.walkInClientId !== undefined) {
-      fields.push(`"walkInClientId"=$${idx++}`); values.push(input.walkInClientId);
-    }
-
     if (!fields.length) return NextResponse.json({ ok: true }, { status: 200 });
 
     const sql = `UPDATE registers SET ${fields.join(", ")}, "updatedAt"=NOW()

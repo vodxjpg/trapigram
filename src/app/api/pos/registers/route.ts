@@ -61,7 +61,6 @@ async function withIdempotency(
 const CreateSchema = z.object({
   storeId: z.string().min(1),
   name: z.string().min(1),
-  walkInClientId: z.string().min(1),
   active: z.boolean().default(true),
 });
 
@@ -108,25 +107,17 @@ export async function POST(req: NextRequest) {
       );
       if (!s.length) return { status: 404, body: { error: "Store not found" } };
 
-      // Validate client ownership
-      const { rows: c } = await pool.query(
-        `SELECT id FROM clients WHERE id=$1 AND "organizationId"=$2`,
-        [input.walkInClientId, organizationId]
-      );
-      if (!c.length) return { status: 404, body: { error: "Client not found" } };
-
       const id = uuidv4();
       const { rows } = await pool.query(
-        `INSERT INTO registers
-          (id,"organizationId","storeId",name,"walkInClientId",active,"createdAt","updatedAt")
-         VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
-         RETURNING *`,
+       `INSERT INTO registers
+          (id,"organizationId","storeId",name,active,"createdAt","updatedAt")
+        VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+        RETURNING *`,
         [
           id,
           organizationId,
           input.storeId,
           input.name,
-          input.walkInClientId,
           input.active,
         ]
       );
