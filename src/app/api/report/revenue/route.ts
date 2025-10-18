@@ -219,6 +219,7 @@ export async function GET(req: NextRequest) {
           r.cancelled, r.refunded,
           o."orderMeta"   AS asset,
           o.status        AS status
+          ,o.channel      AS channel
       FROM "orderRevenue" r
       JOIN orders o
         ON r."orderId" = o.id
@@ -298,6 +299,8 @@ export async function GET(req: NextRequest) {
 
         m.dropshipperOrgId = dsOrgId ?? null;
         m.dropshipperLabel = dsLabel ?? null;
+        // channel is passed straight through so the client can parse POS shop/register
+
 
         if (m.dropshipperOrgId && m.dropshipperLabel) {
           dropshipperMap.set(m.dropshipperOrgId, m.dropshipperLabel);

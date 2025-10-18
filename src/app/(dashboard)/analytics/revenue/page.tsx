@@ -136,6 +136,13 @@ export default function OrderReport() {
   const { hasPermission: canExportRevenue, isLoading: exportLoading } =
     useHasPermission(orgId, { revenue: ["export"] });
 
+  /* ─────────────────────────────────────────────────────────────
+   POS stores (for “shop” names in filters)
+  ───────────────────────────────────────────────────────────── */
+  type Store = { id: string; name: string };
+  const [stores, setStores] = useState<Store[]>([]);
+  const storeNameById = useMemo(() => Object.fromEntries(stores.map(s => [s.id, s.name])), [stores]);
+
   useEffect(() => {
     if (!viewLoading && !canViewRevenue) router.replace("/analytics");
   }, [viewLoading, canViewRevenue, router]);
@@ -233,8 +240,9 @@ export default function OrderReport() {
 
   const posShopSummary = useMemo(() => {
     if (selectedShops.length === 0) return "All shops";
-    return selectedShops.length <= 2 ? selectedShops.join(", ") : `${selectedShops.length} selected`;
-  }, [selectedShops]);
+    const names = selectedShops.map(id => storeNameById[id] ?? id);
+    return names.length <= 2 ? names.join(", ") : `${names.length} selected`;
+  }, [selectedShops, storeNameById]);
   const posCashierSummary = useMemo(() => {
     if (selectedCashiers.length === 0) return "All cashiers";
     return selectedCashiers.length <= 2 ? selectedCashiers.join(", ") : `${selectedCashiers.length} selected`;
@@ -248,6 +256,24 @@ export default function OrderReport() {
   const isMobile = useIsMobile();
 
   const rowsPerPage = 25;
+
+  // Fetch store names (for POS "shop" filter)
+  useEffect(() => {
+    if (!canShow) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/pos/stores", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = Array.isArray(data?.stores)
+          ? data.stores.map((s: any) => ({ id: s.id, name: s.name }))
+          : [];
+        setStores(list);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [canShow]);
 
   // fetch data (no country/dropshipper param; filtering is client-side)
   useEffect(() => {
@@ -303,7 +329,7 @@ export default function OrderReport() {
     ],
     [countryOptions]
   );
-  const filteredData = chartData;
+  // chart data will be derived from filtered orders below
 
   // ── Helpers to read POS signals from orderNumber / channel / orderMeta ──
   function parseOrderMeta(meta: any): any[] {
@@ -356,18 +382,19 @@ export default function OrderReport() {
     orders.forEach((o) => {
       const p = extractPOS(o);
       if (!p.isPOS || !p.storeId) return;
-      // label: keep it simple & readable
-      const label = p.storeId;
+      // label is store NAME (fallback to id if unknown)
+      const label = storeNameById[p.storeId] ?? p.storeId;
       m.set(p.storeId, label);
     });
     return Array.from(m.entries()).map(([id, label]) => ({ id, label }));
-  }, [orders]);
+  }, [orders, storeNameById]);
   const posCashiers = useMemo(() => {
     const m = new Map<string, string>(); // id -> label
     orders.forEach((o) => {
       const p = extractPOS(o);
       if (!p.isPOS || !p.cashierId) return;
-      m.set(p.cashierId, p.cashierName ? `${p.cashierName} (${p.cashierId})` : p.cashierId);
+      // label is cashier NAME only (no id in UI)
+      m.set(p.cashierId, p.cashierName ?? p.cashierId);
     });
     return Array.from(m.entries()).map(([id, label]) => ({ id, label }));
   }, [orders]);
@@ -382,6 +409,8 @@ export default function OrderReport() {
   }, [sellerFilter, selectedDropshippers, dropshipperOptions]);
 
   const filteredOrders = useMemo(() => {
+    // Hide seller filtering when viewing POS only
+    const ignoreSeller = orderKind === "pos";
 
     const matchesPosKind = (o: Order) => {
       if (orderKind === "all") return true;
@@ -420,7 +449,7 @@ export default function OrderReport() {
 
     const matchesSeller = (o: Order) => {
       const ds = o.dropshipperOrgId ?? null;
-      if (sellerFilter === "retailers") {
+      if (ignoreSeller || sellerFilter === "retailers") {
         return !ds; // show orders that don't come from a dropshipper
       }
       // dropshippers
@@ -452,6 +481,51 @@ export default function OrderReport() {
     selectedShops,
     selectedCashiers,
   ]);
+
+  // Totals and chart derived from the *filtered* orders
+  const derivedTotals: Totals = useMemo(() => {
+    const toNum = (x: unknown) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+    const all = filteredOrders.reduce(
+      (acc, o) => {
+        const t = toNum(o.totalPrice), s = toNum(o.shippingCost), d = toNum(o.discount), c = toNum(o.cost);
+        acc.totalPrice += t; acc.shippingCost += s; acc.discount += d; acc.cost += c; acc.netProfit += t - d - s - c;
+        return acc;
+      },
+      { totalPrice: 0, shippingCost: 0, discount: 0, cost: 0, netProfit: 0 }
+    );
+    const paid = filteredOrders.reduce(
+      (acc, o) => {
+        if (o.status !== "paid") return acc;
+        const t = toNum(o.totalPrice), s = toNum(o.shippingCost), d = toNum(o.discount), c = toNum(o.cost);
+        acc.totalPrice += t; acc.shippingCost += s; acc.discount += d; acc.cost += c; acc.revenue += t - d - s - c;
+        return acc;
+      },
+      { totalPrice: 0, shippingCost: 0, discount: 0, cost: 0, revenue: 0 }
+    );
+    return { currency, all, paid };
+  }, [filteredOrders, currency]);
+
+  const filteredData = useMemo(() => {
+    const map: Record<string, { total: number; revenue: number }> = {};
+    for (const o of filteredOrders) {
+      if (o.status !== "paid") continue;
+      const key = new Date(o.datePaid).toISOString().split("T")[0];
+      const t = Number(o.totalPrice) || 0;
+      const r = t - (Number(o.discount) || 0) - (Number(o.shippingCost) || 0) - (Number(o.cost) || 0);
+      map[key] ??= { total: 0, revenue: 0 };
+      map[key].total += t; map[key].revenue += r;
+    }
+    // Fill across the selected date range so the chart has flat zeroes
+    const out: { date: string; total: number; revenue: number }[] = [];
+    const cur = new Date(dateRange.from); cur.setHours(0, 0, 0, 0);
+    const end = new Date(dateRange.to); end.setHours(0, 0, 0, 0);
+    while (cur <= end) {
+      const key = cur.toISOString().split("T")[0];
+      out.push({ date: key, total: map[key]?.total ?? 0, revenue: map[key]?.revenue ?? 0 });
+      cur.setDate(cur.getDate() + 1);
+    }
+    return out;
+  }, [filteredOrders, dateRange]);
 
   const totalPages = Math.ceil(filteredOrders.length / rowsPerPage);
   const startIndex = (currentPage - 1) * rowsPerPage;
@@ -727,10 +801,7 @@ export default function OrderReport() {
               <div className="flex flex-wrap items-center gap-2 w-full">
                 {/* Orders: All vs POS-only */}
                 <span className="text-sm font-medium">Orders</span>
-                <Select
-                  value={orderKind}
-                  onValueChange={(v) => setOrderKind(v as "all" | "pos")}
-                >
+                <Select value={orderKind} onValueChange={(v) => setOrderKind(v as "all" | "pos")}>
                   <SelectTrigger size="sm" className="w-full sm:w-[160px]">
                     <SelectValue placeholder="Order type" />
                   </SelectTrigger>
@@ -740,10 +811,10 @@ export default function OrderReport() {
                   </SelectContent>
                 </Select>
 
-                {/* When POS, show Shop + Cashier popovers mirroring dropshipper UI */}
+                {/* POS shop & cashier filters (appear like dropshipper filters) */}
                 {orderKind === "pos" && (
                   <>
-                    {/* Shop filter */}
+                    {/* Shop */}
                     <Popover open={shopPopoverOpen} onOpenChange={setShopPopoverOpen}>
                       <PopoverTrigger asChild>
                         <Button
@@ -762,7 +833,7 @@ export default function OrderReport() {
                             <CommandInput placeholder="Search shop..." />
                           </div>
                           <CommandList>
-                            <CommandEmpty>No Shop found.</CommandEmpty>
+                            <CommandEmpty>No shop found.</CommandEmpty>
                             <CommandGroup heading="Shops">
                               {posShops.map((s) => {
                                 const checked = selectedShops.includes(s.id);
@@ -770,13 +841,13 @@ export default function OrderReport() {
                                   <CommandItem
                                     key={s.id}
                                     value={s.label}
-                                    onSelect={() => {
+                                    onSelect={() =>
                                       setSelectedShops((prev) =>
                                         prev.includes(s.id)
                                           ? prev.filter((x) => x !== s.id)
                                           : [...prev, s.id]
-                                      );
-                                    }}
+                                      )
+                                    }
                                     className="flex items-center"
                                   >
                                     <Check className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"}`} />
@@ -803,7 +874,7 @@ export default function OrderReport() {
                       </PopoverContent>
                     </Popover>
 
-                    {/* Cashier filter */}
+                    {/* Cashier */}
                     <Popover open={cashierPopoverOpen} onOpenChange={setCashierPopoverOpen}>
                       <PopoverTrigger asChild>
                         <Button
@@ -822,7 +893,7 @@ export default function OrderReport() {
                             <CommandInput placeholder="Search cashier..." />
                           </div>
                           <CommandList>
-                            <CommandEmpty>No Cashier found.</CommandEmpty>
+                            <CommandEmpty>No cashier found.</CommandEmpty>
                             <CommandGroup heading="Cashiers">
                               {posCashiers.map((c) => {
                                 const checked = selectedCashiers.includes(c.id);
@@ -830,13 +901,13 @@ export default function OrderReport() {
                                   <CommandItem
                                     key={c.id}
                                     value={c.label}
-                                    onSelect={() => {
+                                    onSelect={() =>
                                       setSelectedCashiers((prev) =>
                                         prev.includes(c.id)
                                           ? prev.filter((x) => x !== c.id)
                                           : [...prev, c.id]
-                                      );
-                                    }}
+                                      )
+                                    }
                                     className="flex items-center"
                                   >
                                     <Check className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"}`} />
@@ -864,94 +935,88 @@ export default function OrderReport() {
                     </Popover>
                   </>
                 )}
-                <span className="text-sm font-medium">Filter by</span>
-                <Select
-                  value={sellerFilter}
-                  onValueChange={(v) =>
-                    setSellerFilter(v as "retailers" | "dropshippers")
-                  }
-                >
-                  <SelectTrigger size="sm" className="w-full sm:w-[160px]">
-                    <SelectValue placeholder="Seller type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="retailers">Retailers</SelectItem>
-                    <SelectItem value="dropshippers">Dropshipper</SelectItem>
-                  </SelectContent>
-                </Select>
 
-                {sellerFilter === "dropshippers" && (
-                  <Popover open={dsPopoverOpen} onOpenChange={setDsPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="justify-start w-full sm:w-[220px]"
-                        aria-haspopup="listbox"
-                        aria-expanded={dsPopoverOpen}
-                      >
-                        {dropshipperSummary}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="p-0 w-[260px] sm:w-[340px]" align="start">
-                      <Command>
-                        <div className="px-3 pt-3">
-                          <CommandInput placeholder="Search dropshipper..." />
-                        </div>
-                        <CommandList>
-                          <CommandEmpty>No Dropshipper found.</CommandEmpty>
-                          <CommandGroup heading="Dropshippers">
-                            {dropshipperOptions.map((d) => {
-                              const checked = selectedDropshippers.includes(d.orgId);
-                              return (
-                                <CommandItem
-                                  key={d.orgId}
-                                  value={d.label}
-                                  onSelect={() => {
-                                    setSelectedDropshippers((prev) =>
-                                      prev.includes(d.orgId)
-                                        ? prev.filter((x) => x !== d.orgId)
-                                        : [...prev, d.orgId]
-                                    );
-                                  }}
-                                  className="flex items-center"
+                {/* Seller filter (hidden in POS-only mode) */}
+                {orderKind !== "pos" && (
+                  <>
+                    <span className="text-sm font-medium">Filter by</span>
+                    <Select
+                      value={sellerFilter}
+                      onValueChange={(v) => setSellerFilter(v as "retailers" | "dropshippers")}
+                    >
+                      <SelectTrigger size="sm" className="w-full sm:w-[160px]">
+                        <SelectValue placeholder="Seller type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="retailers">Retailers</SelectItem>
+                        <SelectItem value="dropshippers">Dropshipper</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    {sellerFilter === "dropshippers" && (
+                      <Popover open={dsPopoverOpen} onOpenChange={setDsPopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="justify-start w-full sm:w-[220px]"
+                            aria-haspopup="listbox"
+                            aria-expanded={dsPopoverOpen}
+                          >
+                            {dropshipperSummary}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="p-0 w-[260px] sm:w-[340px]" align="start">
+                          <Command>
+                            <div className="px-3 pt-3">
+                              <CommandInput placeholder="Search dropshipper..." />
+                            </div>
+                            <CommandList>
+                              <CommandEmpty>No Dropshipper found.</CommandEmpty>
+                              <CommandGroup heading="Dropshippers">
+                                {dropshipperOptions.map((d) => {
+                                  const checked = selectedDropshippers.includes(d.orgId);
+                                  return (
+                                    <CommandItem
+                                      key={d.orgId}
+                                      value={d.label}
+                                      onSelect={() =>
+                                        setSelectedDropshippers((prev) =>
+                                          prev.includes(d.orgId)
+                                            ? prev.filter((x) => x !== d.orgId)
+                                            : [...prev, d.orgId]
+                                        )
+                                      }
+                                      className="flex items-center"
+                                    >
+                                      <Check className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"}`} />
+                                      <span>{d.label}</span>
+                                    </CommandItem>
+                                  );
+                                })}
+                              </CommandGroup>
+                              <CommandSeparator />
+                              <div className="flex items-center justify-between gap-2 p-2">
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => setSelectedDropshippers(dropshipperOptions.map((d) => d.orgId))}
                                 >
-                                  <Check
-                                    className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"
-                                      }`}
-                                  />
-                                  <span>{d.label}</span>
-                                </CommandItem>
-                              );
-                            })}
-                          </CommandGroup>
-                          <CommandSeparator />
-                          <div className="flex items-center justify-between gap-2 p-2">
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() =>
-                                setSelectedDropshippers(
-                                  dropshipperOptions.map((d) => d.orgId)
-                                )
-                              }
-                            >
-                              Select all
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setSelectedDropshippers([])}
-                            >
-                              Deselect all
-                            </Button>
-                          </div>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
+                                  Select all
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => setSelectedDropshippers([])}>
+                                  Deselect all
+                                </Button>
+                              </div>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                  </>
                 )}
               </div>
+
             </div>
 
             {/* New Row: Countries multi-select (matches Coupon styling) */}
@@ -1022,7 +1087,7 @@ export default function OrderReport() {
                 />
               </div>
             </div>
-            {totals && (
+            {derivedTotals && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
                 {/* Paid (chart-aligned) */}
                 <div className="rounded-md border p-4">
@@ -1030,7 +1095,7 @@ export default function OrderReport() {
                     Paid Total (Gross)
                   </div>
                   <div className="text-xl font-semibold">
-                    {fmtMoney(totals.paid.totalPrice)}
+                    {fmtMoney(derivedTotals.paid.totalPrice)}
                   </div>
                 </div>
                 <div className="rounded-md border p-4">
@@ -1038,7 +1103,7 @@ export default function OrderReport() {
                     Paid Revenue
                   </div>
                   <div className="text-xl font-semibold">
-                    {fmtMoney(totals.paid.revenue)}
+                    {fmtMoney(derivedTotals.paid.revenue)}
                   </div>
                 </div>
 
@@ -1048,7 +1113,7 @@ export default function OrderReport() {
                     All Orders Total
                   </div>
                   <div className="text-xl font-semibold">
-                    {fmtMoney(totals.all.totalPrice)}
+                    {fmtMoney(derivedTotals.all.totalPrice)}
                   </div>
                 </div>
               </div>
