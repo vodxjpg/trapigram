@@ -158,6 +158,8 @@ export default function OrderReport() {
     | "last-year"
     | "custom";
 
+  const DEFAULT_PRESET: DatePreset = "this-month";
+
   function getPresetRange(preset: DatePreset): { from: Date; to: Date } {
     const now = new Date();
     switch (preset) {
@@ -189,11 +191,11 @@ export default function OrderReport() {
     }
   }
 
-  const [datePreset, setDatePreset] = useState<DatePreset>("last-month");
+ const [datePreset, setDatePreset] = useState<DatePreset>(DEFAULT_PRESET);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [dateRange, setDateRange] = useState<CustomDateRange>(
-    getPresetRange("last-month")
+    getPresetRange(DEFAULT_PRESET)
   );
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const [tempDateRange, setTempDateRange] = useState<DateRange | undefined>({

@@ -409,6 +409,9 @@ export default function StoresPage() {
                 <DialogTitle>About registers</DialogTitle>
               </DialogHeader>
               <div className="space-y-3 text-sm">
+                 <p>
+                  <strong>Stores</strong> allow you to sell throughout a POS terminals in physical locations.
+                </p>
                 <p>
                   <strong>Registers</strong> are the POS terminals inside a store (e.g. “Front Counter”, “Back Office”).
                   A store can have multiple registers, each with its own status.
