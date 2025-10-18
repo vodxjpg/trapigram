@@ -113,7 +113,7 @@ export function StockManagementDataTable() {
         if (!mounted) return;
         setCategoryOptions(categories ?? []);
       })
-      .catch(() => { });
+      .catch(() => {});
 
     fetch("/api/product-attributes?page=1&pageSize=1000", {
       headers: {
@@ -125,7 +125,7 @@ export function StockManagementDataTable() {
         if (!mounted) return;
         setAttributeOptions(attributes ?? []);
       })
-      .catch(() => { });
+      .catch(() => {});
 
     return () => {
       mounted = false;
@@ -156,7 +156,7 @@ export function StockManagementDataTable() {
         const { terms } = await res.json();
         setTermOptions(terms ?? []);
         setAttributeTermFilter("");
-      } catch { }
+      } catch {}
     })();
     return () => controller.abort();
   }, [attributeFilter]);
@@ -175,6 +175,10 @@ export function StockManagementDataTable() {
     fetcher
   );
   const warehouses = whData?.warehouses || [];
+
+  // Helpers for safe numeric reduce
+  const num = (v: unknown) =>
+    typeof v === "number" && Number.isFinite(v) ? v : Number.isFinite(Number(v)) ? Number(v) : 0;
 
   // 5) Columns
   const columns: ColumnDef<Product>[] = [
@@ -224,7 +228,8 @@ export function StockManagementDataTable() {
       accessorFn: (row) =>
         Object.values(row.stockData || {}).reduce(
           (sum, byCountry) =>
-            sum + Object.values(byCountry).reduce((s, q) => s + Number(q), 0),
+            sum +
+            Object.values(byCountry).reduce((s, q) => s + num(q), 0),
           0
         ),
       cell: ({ row }) => (
@@ -446,45 +451,64 @@ function StockDrawer({
 }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // NOTE: allow "blank" in UI (no default 0). We keep NaN/undefined for blanks.
   const [editable, setEditable] = useState<
-    Record<string, Record<string, number>>
+    Record<string, Record<string, number | undefined>>
   >({});
 
-  // Initialize editable map from product.stockData
+  // Initialize editable map from product.stockData — do NOT fill with 0
   useEffect(() => {
-    const norm: Record<string, Record<string, number>> = {};
+    const norm: Record<string, Record<string, number | undefined>> = {};
     for (const [wid, countries] of Object.entries(product.stockData || {})) {
       norm[wid] = {};
       for (const [c, q] of Object.entries(countries)) {
-        norm[wid][c] = Number(q ?? 0);
+        const n = Number(q);
+        norm[wid][c] = Number.isFinite(n) ? n : undefined;
       }
     }
-    // Ensure every warehouse/country combo is present so inputs always show
+    // Ensure every warehouse/country combo exists so inputs show, but keep blanks undefined
     for (const w of warehouses) {
       if (!norm[w.id]) norm[w.id] = {};
       for (const c of w.countries) {
-        if (norm[w.id][c] === undefined) norm[w.id][c] = 0;
+        if (norm[w.id][c] === undefined) norm[w.id][c] = undefined;
       }
     }
     setEditable(norm);
   }, [product.stockData, warehouses]);
 
+  const safeNum = (v: number | undefined) =>
+    typeof v === "number" && Number.isFinite(v) ? v : 0;
+
   const totalQty = useMemo(
     () =>
       Object.values(editable).reduce(
         (sum, byCountry) =>
-          sum + Object.values(byCountry).reduce((s, q) => s + q, 0),
+          sum + Object.values(byCountry).reduce((s, q) => s + safeNum(q), 0),
         0
       ),
     [editable]
   );
 
-  const handleChange = (wid: string, country: string, qty: number) => {
+  // Convert raw input into state value: "" -> undefined (blank), else clamp >= 0
+  const setCell = (wid: string, country: string, raw: string) => {
+    const isBlank = raw.trim() === "";
+    const parsed = isBlank ? NaN : Number(raw);
     setEditable((prev) => ({
       ...prev,
-      [wid]: { ...(prev[wid] || {}), [country]: qty },
+      [wid]: {
+        ...(prev[wid] ?? {}),
+        [country]: isBlank
+          ? undefined
+          : Number.isFinite(parsed)
+          ? Math.max(0, parsed)
+          : undefined,
+      },
     }));
   };
+
+  const toInputValue = (v: number | undefined) =>
+    v === undefined || Number.isNaN(v) ? "" : String(v);
 
   const blurActiveElement = () => {
     if (typeof document !== "undefined") {
@@ -497,6 +521,7 @@ function StockDrawer({
     if (!canUpdate || saving) return;
     setSaving(true);
 
+    // Persist blanks as 0 to the API (or adjust if your API supports null/undefined)
     const warehouseStock = Object.entries(editable).flatMap(
       ([warehouseId, countries]) =>
         Object.entries(countries).map(([country, quantity]) => ({
@@ -504,9 +529,10 @@ function StockDrawer({
           productId: product.id,
           variationId: product.variationId,
           country,
-          quantity,
+          quantity: safeNum(quantity),
         }))
     );
+
     try {
       await fetch(`/api/products/${product.id}`, {
         method: "PATCH",
@@ -543,7 +569,7 @@ function StockDrawer({
         </Button>
       </DrawerTrigger>
 
-      {/* Force bottom-sheet on ALL breakpoints with height & rounded top */}
+      {/* Bottom-sheet */}
       <DrawerContent
         className="
           fixed inset-x-0 bottom-0 top-auto w-full
@@ -575,9 +601,7 @@ function StockDrawer({
         {/* Scrollable content area */}
         <div className="overflow-y-auto px-6 py-4 h-[calc(85vh-9rem)] sm:h-[calc(85vh-9rem)]">
           {warehouses.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No warehouses found.
-            </p>
+            <p className="text-sm text-muted-foreground">No warehouses found.</p>
           ) : (
             <div className="space-y-6">
               {warehouses.map((w) => (
@@ -592,7 +616,7 @@ function StockDrawer({
                           setEditable((prev) => {
                             const next = { ...prev };
                             const block = { ...(next[w.id] || {}) };
-                            w.countries.forEach((c) => (block[c] = 0));
+                            w.countries.forEach((c) => (block[c] = undefined));
                             next[w.id] = block;
                             return next;
                           })
@@ -615,14 +639,9 @@ function StockDrawer({
                           type="number"
                           min={0}
                           className="ml-3 w-24"
-                          value={editable[w.id]?.[c] ?? 0}
-                          onChange={(e) =>
-                            handleChange(
-                              w.id,
-                              c,
-                              Number.parseInt(e.target.value, 10) || 0
-                            )
-                          }
+                          value={toInputValue(editable[w.id]?.[c])}
+                          onChange={(e) => setCell(w.id, c, e.target.value)}
+                          placeholder="e.g. 12"
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();

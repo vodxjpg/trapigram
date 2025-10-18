@@ -23,10 +23,10 @@ import {
    Types
 ------------------------------------------------------------------ */
 export interface PriceMap {
-  [country: string]: { regular: number; sale: number | null };
+  [country: string]: { regular?: number; sale?: number | null };
 }
 export interface CostMap {
-  [country: string]: number;
+  [country: string]: number | undefined;
 }
 
 interface Props {
@@ -56,34 +56,48 @@ export function PriceManagement({
   const [onlyEmpty, setOnlyEmpty] = useState<boolean>(false);
 
   /* ---------- helpers ---------- */
-  const patchPrice = (
-    country: string,
-    patch: Partial<(typeof priceData)[string]>
-  ) =>
-    onPriceChange({
-      ...priceData,
-      [country]: {
-        regular: 0,
-        sale: null,
-        ...(priceData[country] || {}),
-        ...patch,
-      },
-    });
+  const setPriceField = (country: string, patch: Partial<NonNullable<PriceMap[string]>>) => {
+    const next: PriceMap = { ...priceData };
+    const cur = next[country] ?? {};
+    next[country] = { ...cur, ...patch };
+    // If both fields are effectively empty, drop the country entry to avoid phantom zeros
+    const n = next[country];
+    const noRegular = n.regular === undefined || Number.isNaN(n.regular as any);
+    const noSale = n.sale === undefined || n.sale === null || Number.isNaN(n.sale as any);
+    if (noRegular && noSale) {
+      delete next[country];
+    }
+    onPriceChange(next);
+  };
 
-  const patchCost = (country: string, cost: number) =>
-    onCostChange({ ...costData, [country]: cost });
+  const setCostField = (country: string, raw: string) => {
+    if (raw.trim() === "") {
+      const next: CostMap = { ...costData };
+      delete next[country];
+      onCostChange(next);
+      return;
+    }
+    const n = Number.parseFloat(raw);
+    const next: CostMap = { ...costData, [country]: Number.isFinite(n) ? n : undefined };
+    onCostChange(next);
+  };
 
-    const parsedBulk = useMemo(() => {
+  const parsedBulk = useMemo(() => {
     const toNum = (s: string) => {
+      if (s.trim() === "") return null;
       const n = Number.parseFloat(s);
       return Number.isFinite(n) ? n : null;
     };
     return {
       cost: toNum(bulkCost),
       regular: toNum(bulkRegular),
-      sale: bulkSale.trim() === "" ? null : toNum(bulkSale),
+      // empty string means “leave as is”; use `undefined` to represent that
+      sale: bulkSale.trim() === "" ? undefined : toNum(bulkSale),
     };
   }, [bulkCost, bulkRegular, bulkSale]);
+
+  const isEmptyNumber = (v: unknown) =>
+    v === undefined || v === null || Number.isNaN(v as any);
 
   const applyBulk = () => {
     const nextPrices: PriceMap = { ...priceData };
@@ -92,26 +106,31 @@ export function PriceManagement({
     countries.forEach((c) => {
       // cost
       if (parsedBulk.cost !== null) {
-        const should = !onlyEmpty || (onlyEmpty && (!Number.isFinite(nextCosts[c]) || (nextCosts[c] ?? 0) === 0));
+        const should =
+          !onlyEmpty || (onlyEmpty && isEmptyNumber(nextCosts[c]));
         if (should) nextCosts[c] = parsedBulk.cost!;
       }
       // regular price
       if (parsedBulk.regular !== null) {
-        const cur = nextPrices[c] || { regular: 0, sale: null };
-        const should = !onlyEmpty || (onlyEmpty && (!Number.isFinite(cur.regular) || cur.regular === 0));
-        nextPrices[c] = {
-          ...cur,
-          regular: should ? parsedBulk.regular! : cur.regular,
-        };
+        const cur = nextPrices[c] ?? {};
+        const should =
+          !onlyEmpty || (onlyEmpty && isEmptyNumber(cur.regular));
+        nextPrices[c] = { ...cur, regular: should ? parsedBulk.regular! : cur.regular };
       }
-      // sale price
+      // sale price (undefined → leave, null → clear)
       if (parsedBulk.sale !== undefined) {
-        const cur = nextPrices[c] || { regular: 0, sale: null };
-        const should = !onlyEmpty || (onlyEmpty && (cur.sale == null || cur.sale === 0));
-        nextPrices[c] = {
-          ...cur,
-          sale: should ? parsedBulk.sale : cur.sale,
-        };
+        const cur = nextPrices[c] ?? {};
+        const should =
+          !onlyEmpty || (onlyEmpty && (cur.sale == null || isEmptyNumber(cur.sale)));
+        nextPrices[c] = { ...cur, sale: should ? parsedBulk.sale : cur.sale };
+      }
+
+      // cleanup empty entries
+      const entry = nextPrices[c];
+      if (entry) {
+        const noRegular = isEmptyNumber(entry.regular);
+        const noSale = entry.sale === undefined || entry.sale === null || isEmptyNumber(entry.sale);
+        if (noRegular && noSale) delete nextPrices[c];
       }
     });
 
@@ -122,8 +141,13 @@ export function PriceManagement({
   const clearSaleForAll = () => {
     const next: PriceMap = { ...priceData };
     countries.forEach((c) => {
-      const cur = next[c] || { regular: 0, sale: null };
+      const cur = next[c] ?? {};
       next[c] = { ...cur, sale: null };
+      // if regular missing too, delete entirely
+      const n = next[c];
+      if (isEmptyNumber(n.regular) && (n.sale === null || n.sale === undefined)) {
+        delete next[c];
+      }
     });
     onPriceChange(next);
   };
@@ -136,16 +160,12 @@ export function PriceManagement({
         className="cursor-pointer flex items-center justify-between py-3 px-4"
       >
         <CardTitle className="text-base">{title}</CardTitle>
-        {open ? (
-          <ChevronUp className="h-4 w-4" />
-        ) : (
-          <ChevronDown className="h-4 w-4" />
-        )}
+        {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
       </CardHeader>
 
       {open && (
         <CardContent>
-                    {/* Bulk row ---------------------------------------------------- */}
+          {/* Bulk row ---------------------------------------------------- */}
           <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-12">
             <div className="md:col-span-3">
               <label className="block text-xs mb-1">Bulk Cost (all countries)</label>
@@ -209,6 +229,7 @@ export function PriceManagement({
               </Button>
             </div>
           </div>
+
           {/* horizontal scroll on small screens */}
           <div className="overflow-x-auto">
             <Table className="min-w-[520px]">
@@ -216,77 +237,78 @@ export function PriceManagement({
                 <TableRow>
                   <TableHead>Country</TableHead>
                   <TableHead className="w-[120px] text-right">Cost</TableHead>
-                  <TableHead className="w-[120px] text-right">
-                    Regular price
-                  </TableHead>
-                  <TableHead className="w-[120px] text-right">
-                    Sale price (opt.)
-                  </TableHead>
+                  <TableHead className="w-[120px] text-right">Regular price</TableHead>
+                  <TableHead className="w-[120px] text-right">Sale price (opt.)</TableHead>
                 </TableRow>
               </TableHeader>
 
               <TableBody>
-                {countries.map((c) => (
-                  <TableRow key={c}>
-                    <TableCell>{c}</TableCell>
+                {countries.map((c) => {
+                  const costVal = costData[c];
+                  const regVal = priceData[c]?.regular;
+                  const saleVal = priceData[c]?.sale;
 
-                    {/* Cost */}
-                    <TableCell className="text-right">
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={costData[c] ?? 0}
-                        onFocus={(e) => {
-                          // select current value so typing replaces it
-                          e.currentTarget.select();
-                        }}
-                        onChange={(e) =>
-                          patchCost(c, Number.parseFloat(e.target.value) || 0)
-                        }
-                      />
-                    </TableCell>
+                  return (
+                    <TableRow key={c}>
+                      <TableCell>{c}</TableCell>
 
-                    {/* Regular price */}
-                    <TableCell className="text-right">
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={priceData[c]?.regular ?? 0}
-                        onFocus={(e) => {
-                          e.currentTarget.select();
-                        }}
-                        onChange={(e) =>
-                          patchPrice(c, {
-                            regular: Number.parseFloat(e.target.value) || 0,
-                          })
-                        }
-                      />
-                    </TableCell>
+                      {/* Cost */}
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          // show empty string instead of 0/undefined so users don't see a leading 0
+                          value={costVal ?? ""}
+                          onChange={(e) => setCostField(c, e.target.value)}
+                          placeholder="0.00"
+                        />
+                      </TableCell>
 
-                    {/* Sale price */}
-                    <TableCell className="text-right">
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={priceData[c]?.sale ?? ""}
-                        onFocus={(e) => {
-                          e.currentTarget.select();
-                        }}
-                        onChange={(e) =>
-                          patchPrice(c, {
-                            sale:
-                              e.target.value.trim() === ""
-                                ? null
-                                : Number.parseFloat(e.target.value) || 0,
-                          })
-                        }
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      {/* Regular price */}
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={regVal ?? ""}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw.trim() === "") {
+                              // remove regular (keep sale if any)
+                              setPriceField(c, { regular: undefined });
+                              return;
+                            }
+                            const n = Number.parseFloat(raw);
+                            setPriceField(c, { regular: Number.isFinite(n) ? n : undefined });
+                          }}
+                          placeholder="0.00"
+                        />
+                      </TableCell>
+
+                      {/* Sale price */}
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={saleVal ?? ""}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw.trim() === "") {
+                              // empty input means “no sale”
+                              setPriceField(c, { sale: null });
+                              return;
+                            }
+                            const n = Number.parseFloat(raw);
+                            setPriceField(c, { sale: Number.isFinite(n) ? n : null });
+                          }}
+                          placeholder="0.00"
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
