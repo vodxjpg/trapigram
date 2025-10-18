@@ -1,5 +1,4 @@
 // src/app/(dashboard)/report/order-report.tsx
-// OrderReport page – full file with Countries moved to a new row under Currency/Status/Export
 "use client";
 
 import Link from "next/link";
@@ -98,6 +97,7 @@ type Order = {
   netProfit: number;
   dropshipperOrgId?: string | null;
   dropshipperLabel?: string | null;
+  channel?: string | null;
 };
 
 type Totals = {
@@ -191,7 +191,7 @@ export default function OrderReport() {
     }
   }
 
- const [datePreset, setDatePreset] = useState<DatePreset>(DEFAULT_PRESET);
+  const [datePreset, setDatePreset] = useState<DatePreset>(DEFAULT_PRESET);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [dateRange, setDateRange] = useState<CustomDateRange>(
@@ -223,6 +223,22 @@ export default function OrderReport() {
   const [dropshipperOptions, setDropshipperOptions] = useState<
     Array<{ orgId: string; label: string }>
   >([]);
+
+  // ── POS Filters (mirrors dropshipper UI) ──────────────────────────
+  const [orderKind, setOrderKind] = useState<"all" | "pos">("all");
+  const [shopPopoverOpen, setShopPopoverOpen] = useState(false);
+  const [cashierPopoverOpen, setCashierPopoverOpen] = useState(false);
+  const [selectedShops, setSelectedShops] = useState<string[]>([]);
+  const [selectedCashiers, setSelectedCashiers] = useState<string[]>([]);
+
+  const posShopSummary = useMemo(() => {
+    if (selectedShops.length === 0) return "All shops";
+    return selectedShops.length <= 2 ? selectedShops.join(", ") : `${selectedShops.length} selected`;
+  }, [selectedShops]);
+  const posCashierSummary = useMemo(() => {
+    if (selectedCashiers.length === 0) return "All cashiers";
+    return selectedCashiers.length <= 2 ? selectedCashiers.join(", ") : `${selectedCashiers.length} selected`;
+  }, [selectedCashiers]);
 
   const [totals, setTotals] = useState<Totals | null>(null);
 
@@ -289,6 +305,73 @@ export default function OrderReport() {
   );
   const filteredData = chartData;
 
+  // ── Helpers to read POS signals from orderNumber / channel / orderMeta ──
+  function parseOrderMeta(meta: any): any[] {
+    if (!meta) return [];
+    if (Array.isArray(meta)) return meta;
+    if (typeof meta === "string") {
+      try { const p = JSON.parse(meta); return Array.isArray(p) ? p : []; } catch { return []; }
+    }
+    return [];
+  }
+  function extractPOS(o: Order): {
+    isPOS: boolean;
+    storeId: string | null;
+    registerId: string | null;
+    cashierId: string | null;
+    cashierName: string | null;
+  } {
+    const orderKey = o.orderNumber || "";
+    const channel = (o.channel || "") as string;
+    let isPOS = typeof orderKey === "string" && orderKey.startsWith("POS-");
+    if (!isPOS && typeof channel === "string" && channel.startsWith("pos-")) isPOS = true;
+
+    let storeId: string | null = null;
+    let registerId: string | null = null;
+    if (typeof channel === "string") {
+      const m = channel.match(/^pos-([0-9a-fA-F-]{36})-([0-9a-fA-F-]{36})$/);
+      if (m) { storeId = m[1]; registerId = m[2]; }
+    }
+
+    let cashierId: string | null = null;
+    let cashierName: string | null = null;
+    const metaArr = parseOrderMeta((o as any).asset);
+    for (let i = metaArr.length - 1; i >= 0; i--) {
+      const ev = metaArr[i];
+      const type = (ev?.type ?? "").toString().toLowerCase();
+      // accept several shapes: "posCheckout", "pos_checkout", or anything with cashier fields
+      if (type.includes("pos") || ev?.cashierId || ev?.event === "cashier") {
+        cashierId = ev?.cashierId ?? cashierId ?? null;
+        cashierName = ev?.cashierName ?? cashierName ?? null;
+        storeId = ev?.storeId ?? storeId ?? null;
+        registerId = ev?.registerId ?? registerId ?? null;
+        break;
+      }
+    }
+    return { isPOS, storeId, registerId, cashierId, cashierName };
+  }
+
+  const posShops = useMemo(() => {
+    const m = new Map<string, string>(); // id -> label
+    orders.forEach((o) => {
+      const p = extractPOS(o);
+      if (!p.isPOS || !p.storeId) return;
+      // label: keep it simple & readable
+      const label = p.storeId;
+      m.set(p.storeId, label);
+    });
+    return Array.from(m.entries()).map(([id, label]) => ({ id, label }));
+  }, [orders]);
+  const posCashiers = useMemo(() => {
+    const m = new Map<string, string>(); // id -> label
+    orders.forEach((o) => {
+      const p = extractPOS(o);
+      if (!p.isPOS || !p.cashierId) return;
+      m.set(p.cashierId, p.cashierName ? `${p.cashierName} (${p.cashierId})` : p.cashierId);
+    });
+    return Array.from(m.entries()).map(([id, label]) => ({ id, label }));
+  }, [orders]);
+
   const dropshipperSummary = useMemo(() => {
     if (sellerFilter === "retailers") return "Retailers";
     if (selectedDropshippers.length === 0) return "All dropshippers";
@@ -299,6 +382,22 @@ export default function OrderReport() {
   }, [sellerFilter, selectedDropshippers, dropshipperOptions]);
 
   const filteredOrders = useMemo(() => {
+
+    const matchesPosKind = (o: Order) => {
+      if (orderKind === "all") return true;
+      const p = extractPOS(o);
+      return p.isPOS;
+    };
+    const matchesShop = (o: Order) => {
+      if (orderKind !== "pos" || selectedShops.length === 0) return true;
+      const p = extractPOS(o);
+      return p.storeId ? selectedShops.includes(p.storeId) : false;
+    };
+    const matchesCashier = (o: Order) => {
+      if (orderKind !== "pos" || selectedCashiers.length === 0) return true;
+      const p = extractPOS(o);
+      return p.cashierId ? selectedCashiers.includes(p.cashierId) : false;
+    };
     const matchesStatus = (o: Order) => {
       switch (status) {
         case "paid":
@@ -332,12 +431,27 @@ export default function OrderReport() {
     };
 
     const list = orders.filter(
-      (o) => matchesStatus(o) && matchesCountries(o) && matchesSeller(o)
+      (o) =>
+        matchesPosKind(o) &&
+        matchesStatus(o) &&
+        matchesCountries(o) &&
+        matchesSeller(o) &&
+        matchesShop(o) &&
+        matchesCashier(o)
     );
     return list.sort(
       (a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime()
     );
-  }, [orders, status, selectedCountries, sellerFilter, selectedDropshippers]);
+  }, [
+    orders,
+    orderKind,
+    status,
+    selectedCountries,
+    sellerFilter,
+    selectedDropshippers,
+    selectedShops,
+    selectedCashiers,
+  ]);
 
   const totalPages = Math.ceil(filteredOrders.length / rowsPerPage);
   const startIndex = (currentPage - 1) * rowsPerPage;
@@ -399,10 +513,10 @@ export default function OrderReport() {
         o.cancelled === true
           ? "Cancelled"
           : o.refunded === true
-          ? "Refunded"
-          : o.status === "pending_payment"
-          ? "Pending Payment"
-          : "Paid";
+            ? "Refunded"
+            : o.status === "pending_payment"
+              ? "Pending Payment"
+              : "Paid";
       return {
         "Paid At": format(new Date(o.datePaid), "yyyy-MM-dd HH:mm"),
         "Order Number": o.orderNumber,
@@ -453,10 +567,10 @@ export default function OrderReport() {
             <CardTitle>Order Report</CardTitle>
           </CardHeader>
           <CardContent>
-                  {/* Top Controls: responsive grid so mobile doesn't look squished */}
-       <div className="grid gap-3 mb-3 items-start sm:grid-cols-2 lg:grid-cols-3">
-         {/* Date preset + (custom picker) */}
-         <div className="flex flex-wrap items-center gap-2 w-full">
+            {/* Top Controls: responsive grid so mobile doesn't look squished */}
+            <div className="grid gap-3 mb-3 items-start sm:grid-cols-2 lg:grid-cols-3">
+              {/* Date preset + (custom picker) */}
+              <div className="flex flex-wrap items-center gap-2 w-full">
                 <span className="text-sm font-medium">Date</span>
                 <Select
                   value={datePreset}
@@ -493,9 +607,9 @@ export default function OrderReport() {
                   >
                     <PopoverTrigger asChild>
                       <Button
-                      variant="outline"
-                       size="sm"
-                       className="justify-start text-left w-full sm:min-w-[240px] bg-transparent"
+                        variant="outline"
+                        size="sm"
+                        className="justify-start text-left w-full sm:min-w-[240px] bg-transparent"
                       >
                         <CalendarIcon className="mr-2 h-4 w-4" />
                         {dateRange?.from && dateRange?.to ? (
@@ -522,9 +636,9 @@ export default function OrderReport() {
                           <div className="text-sm text-muted-foreground">
                             {tempDateRange?.from && tempDateRange?.to
                               ? `${format(tempDateRange.from, "MMM dd, yyyy")} - ${format(
-                                  tempDateRange.to,
-                                  "MMM dd, yyyy"
-                                )}`
+                                tempDateRange.to,
+                                "MMM dd, yyyy"
+                              )}`
                               : "Select date range"}
                           </div>
                           <div className="flex gap-2">
@@ -611,6 +725,145 @@ export default function OrderReport() {
 
               {/* Seller filter: Retailers or Dropshippers (dropdown + dropdown) */}
               <div className="flex flex-wrap items-center gap-2 w-full">
+                {/* Orders: All vs POS-only */}
+                <span className="text-sm font-medium">Orders</span>
+                <Select
+                  value={orderKind}
+                  onValueChange={(v) => setOrderKind(v as "all" | "pos")}
+                >
+                  <SelectTrigger size="sm" className="w-full sm:w-[160px]">
+                    <SelectValue placeholder="Order type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="pos">POS only</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* When POS, show Shop + Cashier popovers mirroring dropshipper UI */}
+                {orderKind === "pos" && (
+                  <>
+                    {/* Shop filter */}
+                    <Popover open={shopPopoverOpen} onOpenChange={setShopPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="justify-start w-full sm:w-[220px]"
+                          aria-haspopup="listbox"
+                          aria-expanded={shopPopoverOpen}
+                        >
+                          {posShopSummary}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="p-0 w-[260px] sm:w-[340px]" align="start">
+                        <Command>
+                          <div className="px-3 pt-3">
+                            <CommandInput placeholder="Search shop..." />
+                          </div>
+                          <CommandList>
+                            <CommandEmpty>No Shop found.</CommandEmpty>
+                            <CommandGroup heading="Shops">
+                              {posShops.map((s) => {
+                                const checked = selectedShops.includes(s.id);
+                                return (
+                                  <CommandItem
+                                    key={s.id}
+                                    value={s.label}
+                                    onSelect={() => {
+                                      setSelectedShops((prev) =>
+                                        prev.includes(s.id)
+                                          ? prev.filter((x) => x !== s.id)
+                                          : [...prev, s.id]
+                                      );
+                                    }}
+                                    className="flex items-center"
+                                  >
+                                    <Check className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"}`} />
+                                    <span>{s.label}</span>
+                                  </CommandItem>
+                                );
+                              })}
+                            </CommandGroup>
+                            <CommandSeparator />
+                            <div className="flex items-center justify-between gap-2 p-2">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => setSelectedShops(posShops.map((d) => d.id))}
+                              >
+                                Select all
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setSelectedShops([])}>
+                                Deselect all
+                              </Button>
+                            </div>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+
+                    {/* Cashier filter */}
+                    <Popover open={cashierPopoverOpen} onOpenChange={setCashierPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="justify-start w-full sm:w-[220px]"
+                          aria-haspopup="listbox"
+                          aria-expanded={cashierPopoverOpen}
+                        >
+                          {posCashierSummary}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="p-0 w-[260px] sm:w-[340px]" align="start">
+                        <Command>
+                          <div className="px-3 pt-3">
+                            <CommandInput placeholder="Search cashier..." />
+                          </div>
+                          <CommandList>
+                            <CommandEmpty>No Cashier found.</CommandEmpty>
+                            <CommandGroup heading="Cashiers">
+                              {posCashiers.map((c) => {
+                                const checked = selectedCashiers.includes(c.id);
+                                return (
+                                  <CommandItem
+                                    key={c.id}
+                                    value={c.label}
+                                    onSelect={() => {
+                                      setSelectedCashiers((prev) =>
+                                        prev.includes(c.id)
+                                          ? prev.filter((x) => x !== c.id)
+                                          : [...prev, c.id]
+                                      );
+                                    }}
+                                    className="flex items-center"
+                                  >
+                                    <Check className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"}`} />
+                                    <span>{c.label}</span>
+                                  </CommandItem>
+                                );
+                              })}
+                            </CommandGroup>
+                            <CommandSeparator />
+                            <div className="flex items-center justify-between gap-2 p-2">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => setSelectedCashiers(posCashiers.map((d) => d.id))}
+                              >
+                                Select all
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setSelectedCashiers([])}>
+                                Deselect all
+                              </Button>
+                            </div>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </>
+                )}
                 <span className="text-sm font-medium">Filter by</span>
                 <Select
                   value={sellerFilter}
@@ -664,9 +917,8 @@ export default function OrderReport() {
                                   className="flex items-center"
                                 >
                                   <Check
-                                    className={`mr-2 h-4 w-4 ${
-                                      checked ? "opacity-100" : "opacity-0"
-                                    }`}
+                                    className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"
+                                      }`}
                                   />
                                   <span>{d.label}</span>
                                 </CommandItem>
@@ -878,10 +1130,10 @@ export default function OrderReport() {
                               {o.cancelled
                                 ? "Cancelled"
                                 : o.refunded
-                                ? "Refunded"
-                                : o.status === "pending_payment"
-                                ? "Pending Payment"
-                                : "Paid"}
+                                  ? "Refunded"
+                                  : o.status === "pending_payment"
+                                    ? "Pending Payment"
+                                    : "Paid"}
                             </TableCell>
                             <TableCell>
                               <Link href={`/clients/${o.userId || o.id}/info`}>
@@ -895,58 +1147,52 @@ export default function OrderReport() {
 
                             <TableCell>{o.country}</TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
-                                  ? "text-red-600"
-                                  : ""
-                              }`}
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                                ? "text-red-600"
+                                : ""
+                                }`}
                             >
                               {fmtMoney(o.totalPrice)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
-                                  ? "text-red-600"
-                                  : ""
-                              }`}
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                                ? "text-red-600"
+                                : ""
+                                }`}
                             >
                               {fmtMoney(o.shippingCost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
-                                  ? "text-red-600"
-                                  : ""
-                              }`}
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                                ? "text-red-600"
+                                : ""
+                                }`}
                             >
                               {fmtMoney(o.discount)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
-                                  ? "text-red-600"
-                                  : ""
-                              }`}
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                                ? "text-red-600"
+                                : ""
+                                }`}
                             >
                               {fmtMoney(o.cost)}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled === true || o.refunded === true
-                                  ? "text-red-600"
-                                  : ""
-                              }`}
+                              className={`text-right font-medium ${o.cancelled === true || o.refunded === true
+                                ? "text-red-600"
+                                : ""
+                                }`}
                             >
                               {o.coin}
                             </TableCell>
                             <TableCell
-                              className={`text-right font-medium ${
-                                o.cancelled || o.refunded
-                                  ? "text-red-600"
-                                  : o.netProfit >= 0
+                              className={`text-right font-medium ${o.cancelled || o.refunded
+                                ? "text-red-600"
+                                : o.netProfit >= 0
                                   ? "text-green-600"
                                   : "text-red-600"
-                              }`}
+                                }`}
                             >
                               {o.cancelled
                                 ? fmtMoney(0)
@@ -985,10 +1231,10 @@ export default function OrderReport() {
                               totalPages <= 5
                                 ? i + 1
                                 : currentPage <= 3
-                                ? i + 1
-                                : currentPage >= totalPages - 2
-                                ? totalPages - 4 + i
-                                : currentPage - 2 + i;
+                                  ? i + 1
+                                  : currentPage >= totalPages - 2
+                                    ? totalPages - 4 + i
+                                    : currentPage - 2 + i;
                             return (
                               <Button
                                 key={num}
