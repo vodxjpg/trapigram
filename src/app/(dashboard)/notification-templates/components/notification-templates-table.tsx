@@ -29,6 +29,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { NotificationType } from "@/lib/notifications";
 
 /* ───────────────── Types ───────────────── */
@@ -119,6 +127,14 @@ export function NotificationTemplatesTable() {
   const [rows, setRows] = React.useState<TemplateRow[]>([]);
   const [loading, setLoading] = React.useState(true);
 
+  // delete dialog state
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const [deleteId, setDeleteId] = React.useState<string | null>(null);
+  const [deleteMeta, setDeleteMeta] = React.useState<
+    { type: NotificationType; role: "admin" | "user"; subject: string | null } | null
+  >(null);
+  const [deleting, setDeleting] = React.useState(false);
+
   // fetch only if allowed to view
   React.useEffect(() => {
     if (!canView) return;
@@ -152,9 +168,16 @@ export function NotificationTemplatesTable() {
     })();
   }, [canView]);
 
+  const openDeleteDialog = (row: TemplateRow) => {
+    if (!canDelete) return;
+    setDeleteId(row.id);
+    setDeleteMeta({ type: row.type, role: row.role, subject: row.subject });
+    setDeleteOpen(true);
+  };
+
   const handleDelete = async (id: string) => {
     if (!canDelete) return;
-    if (!confirm("Delete this template? This cannot be undone.")) return;
+    setDeleting(true);
     try {
       const r = await fetch(`/api/notification-templates/${id}`, {
         method: "DELETE",
@@ -169,8 +192,13 @@ export function NotificationTemplatesTable() {
       }
       setRows((prev) => prev.filter((t) => t.id !== id));
       toast.success("Template deleted");
+      setDeleteOpen(false);
+      setDeleteId(null);
+      setDeleteMeta(null);
     } catch (err: any) {
       toast.error(err.message || "Delete failed");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -298,7 +326,10 @@ export function NotificationTemplatesTable() {
                       )}
                       {canDelete && !deleteLoading && (
                         <DropdownMenuItem
-                          onSelect={() => handleDelete(row.original.id)}
+                          onSelect={(e) => {
+                            e.preventDefault();
+                            openDeleteDialog(row.original);
+                          }}
                           className="text-destructive"
                         >
                           Delete
@@ -334,6 +365,65 @@ export function NotificationTemplatesTable() {
           className="rounded-none border-0"
         />
       </CardContent>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete notification template</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  This action cannot be undone. This will permanently delete the
+                  selected template.
+                </p>
+                {deleteMeta && (
+                  <div className="text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={[
+                          "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium text-white",
+                          TYPE_BADGE_BG[deleteMeta.type] ?? "bg-gray-500",
+                        ].join(" ")}
+                      >
+                        {TYPE_LABEL[deleteMeta.type] ??
+                          String(deleteMeta.type).replace(/_/g, " ")}
+                      </span>
+                      <Badge variant="secondary" className="capitalize">
+                        {deleteMeta.role}
+                      </Badge>
+                      {deleteMeta.subject && (
+                        <span className="text-muted-foreground">
+                          “{deleteMeta.subject}”
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteOpen(false)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => deleteId && handleDelete(deleteId)}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

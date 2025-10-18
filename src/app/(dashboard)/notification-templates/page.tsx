@@ -25,6 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogClose, // ✅ import DialogClose to close on click
 } from "@/components/ui/dialog";
 
 export default function NotificationTemplatesPage() {
@@ -124,7 +125,10 @@ export default function NotificationTemplatesPage() {
                   </DialogDescription>
                 </DialogHeader>
                 <DialogFooter>
-                  <Button type="button">Got it</Button>
+                  {/* ✅ This closes the dialog when clicked */}
+                  <DialogClose asChild>
+                    <Button type="button">Got it</Button>
+                  </DialogClose>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
