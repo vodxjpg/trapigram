@@ -58,7 +58,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
   const [error, setError] = useState<string | null>(null)
 
   const totalPaid = useMemo(() => payments.reduce((s, p) => s + p.amount, 0), [payments])
-  const remaining = Math.max(0, totalEstimate - totalPaid)
+  const remaining = Math.max(0, +(totalEstimate - totalPaid).toFixed(2))
 
   // Heuristic: show cash-received UI if selected method name contains "cash"
   const currentIsCash = useMemo(() => {
@@ -70,7 +70,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     ? Math.max(0, Number.parseFloat(cashReceived) - (Number.parseFloat(currentAmount || "0")))
     : 0
 
-  // Reset on close
+  // Reset on close (keep methods cached)
   useEffect(() => {
     if (!open) {
       setPayments([])
@@ -78,7 +78,6 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
       setCashReceived("")
       setBusy(false)
       setError(null)
-      // keep payment methods cached
     }
   }, [open])
 
@@ -89,11 +88,9 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     ;(async () => {
       try {
         const res = await fetch(`/api/pos/checkout?cartId=${encodeURIComponent(cartId)}`)
-        if (!res.ok) {
-          const e = await res.json().catch(() => ({}))
-          throw new Error(e?.error || "Failed to load payment methods")
-        }
-        const j = await res.json()
+        const j = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(j?.error || "Failed to load payment methods")
+
         const methods: PaymentMethodRow[] = j.paymentMethods || []
         if (!ignore) {
           setPaymentMethods(methods)
@@ -117,14 +114,13 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
       const idx = prev.findIndex(p => p.methodId === currentMethodId)
       if (idx >= 0) {
         const next = [...prev]
-        const updated = {
+        next[idx] = {
           ...next[idx],
           amount: Number((next[idx].amount + amount).toFixed(2)),
         }
-        next[idx] = updated
         return next
       }
-      return [...prev, { methodId: currentMethodId, amount }]
+      return [...prev, { methodId: currentMethodId, amount: Number(amount.toFixed(2)) }]
     })
     setCurrentAmount("")
     setCashReceived("")
@@ -137,55 +133,52 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
   }
 
   const submitParkedCheckout = async () => {
-  if (!cartId || !clientId || !registerId) {
-    setError("Missing cart, customer or outlet.")
-    return
+    if (!cartId || !clientId || !registerId) {
+      setError("Missing cart, customer or outlet.")
+      return
+    }
+    try {
+      setBusy(true)
+      const idem =
+        (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string
+
+      const payload: {
+        cartId: string
+        payments: Payment[]
+        storeId: string | null
+        registerId: string | null
+        discount?: DiscountPayload
+        parked: boolean
+      } = {
+        cartId,
+        payments,              // may be empty or partial
+        storeId,
+        registerId,
+        parked: true,
+      }
+
+      if (discount && Number.isFinite(discount.value) && discount.value > 0) {
+        payload.discount = discount
+      }
+
+      const res = await fetch("/api/pos/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || "Parking the order failed")
+
+      const orderId = data?.order?.id || data?.orderId
+      if (!orderId) throw new Error("No order id returned")
+      onComplete(orderId, true)  // parked
+      onOpenChange(false)
+    } catch (e: any) {
+      setError(e?.message || "Parking the order failed")
+    } finally {
+      setBusy(false)
+    }
   }
-  try {
-    setBusy(true)
-    const idem =
-      (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string
-
-    const payload: {
-      cartId: string
-      payments: Payment[]
-      storeId: string | null
-      registerId: string | null
-      discount?: DiscountPayload
-      parked: boolean
-    } = {
-      cartId,
-      payments,              // may be empty or partial
-      storeId,
-      registerId,
-      parked: true,          // NEW
-    }
-
-    if (discount && Number.isFinite(discount.value) && discount.value > 0) {
-      payload.discount = discount
-    }
-
-    const res = await fetch("/api/pos/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
-      body: JSON.stringify(payload),
-    })
-    if (!res.ok) {
-      const e = await res.json().catch(() => ({}))
-      throw new Error(e?.error || "Parking the order failed")
-    }
-    const data = await res.json()
-    const orderId = data?.order?.id || data?.orderId
-    if (!orderId) throw new Error("No order id returned")
-    onComplete(orderId, true)  // tell parent this was parked
-    onOpenChange(false)
-  } catch (e: any) {
-    setError(e?.message || "Parking the order failed")
-  } finally {
-    setBusy(false)
-  }
-}
-
 
   const submitCheckout = async () => {
     if (!cartId || !clientId || !registerId) {
@@ -212,7 +205,6 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         registerId,
       }
 
-      // Only send discount if it’s meaningful (> 0)
       if (discount && Number.isFinite(discount.value) && discount.value > 0) {
         payload.discount = discount
       }
@@ -222,11 +214,9 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
         body: JSON.stringify(payload),
       })
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}))
-        throw new Error(e?.error || "Checkout failed")
-      }
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || "Checkout failed")
+
       const orderId = data?.order?.id || data?.orderId
       if (!orderId) throw new Error("No order id returned")
       onComplete(orderId)
@@ -237,6 +227,9 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
       setBusy(false)
     }
   }
+
+  const canPark = !!cartId && !!clientId && !!registerId && !busy
+  const canComplete = remaining === 0 && !busy
 
   return (
     <>
@@ -282,7 +275,9 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                   >
                     <div className="flex flex-col items-center gap-1">
                       <span className="font-medium">{m.name}</span>
-                      {m.description && <span className="text-xs text-muted-foreground">{m.description}</span>}
+                      {m.description && (
+                        <span className="text-xs text-muted-foreground">{m.description}</span>
+                      )}
                     </div>
                   </Card>
                 ))}
@@ -331,7 +326,11 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                   </div>
                 )}
 
-                <Button className="w-full" onClick={handleAddPayment} disabled={!currentAmount || !currentMethodId || Number.parseFloat(currentAmount) <= 0}>
+                <Button
+                  className="w-full"
+                  onClick={handleAddPayment}
+                  disabled={!currentAmount || !currentMethodId || Number.parseFloat(currentAmount) <= 0}
+                >
                   Add Payment
                 </Button>
               </>
@@ -354,44 +353,50 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
               </div>
             )}
 
-           {/* Actions */}
-            <div className="flex gap-2">
+            {/* Actions */}
+            <div className="flex flex-col sm:flex-row gap-2">
               {payments.length > 0 && (
                 <Button
                   variant="outline"
                   onClick={() => { setPayments([]); setCurrentAmount(""); setCashReceived("") }}
                   disabled={busy}
+                  className="w-full sm:w-auto"
                 >
                   Reset
                 </Button>
               )}
-              {/* Park order */}
-                <Button
-                  type="button"
-                  variant="default"          // more contrast than "secondary"
-                  className="w-full sm:flex-1"
-                  onClick={submitParkedCheckout}
-                  disabled={busy}
-                >
-                  <PauseCircle className="h-4 w-4" />
-                  Park Order
-                </Button>
 
-                {/* Complete */}
-                <Button
-                  className="w-full sm:flex-1"
-                  onClick={submitCheckout}
-                  disabled={remaining > 0 || busy}
-                >
-                  <Check className="h-4 w-4" />
-                  Complete Transaction
-                </Button>
+              {/* Park order (distinct amber style + tooltip) */}
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      aria-label="Park order (save as pending payment)"
+                      variant="outline"
+                      className={cn(
+                        "w-full sm:flex-1 border-amber-500 text-amber-700 hover:bg-amber-50",
+                        "dark:border-amber-400 dark:text-amber-300 dark:hover:bg-amber-950"
+                      )}
+                      onClick={submitParkedCheckout}
+                      disabled={!canPark}
+                    >
+                      <PauseCircle className="h-4 w-4" />
+                      Park Order
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="start" className="max-w-xs">
+                    Save this sale as <b>Pending Payment</b> and finish later.
+                    Any partial payments are recorded; the remaining balance stays due.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
 
-              {/* Complete Transaction */}
+              {/* Complete Transaction (primary) */}
               <Button
-                className="flex-1 gap-2"
+                className="w-full sm:flex-1"
                 onClick={submitCheckout}
-                disabled={remaining > 0 || busy}
+                disabled={!canComplete}
               >
                 <Check className="h-4 w-4" />
                 Complete Transaction

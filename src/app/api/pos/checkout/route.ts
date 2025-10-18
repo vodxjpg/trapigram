@@ -5,7 +5,7 @@ import { pgPool as pool } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
-
+import { enqueueNotificationFanout } from "@/lib/notification-outbox";
 /* ========= Revenue helpers (inlined) ========= */
 
 // Small helper: fetch with timeout + JSON parse
@@ -527,6 +527,44 @@ async function activePaymentMethods(tenantId: string) {
   return rows;
 }
 
+async function buildProductListForCart(cartId: string) {
+  const { rows } = await pool.query(
+    `
+      SELECT
+           cp.quantity,
+           COALESCE(
+             CASE
+               WHEN cp."variationId" IS NOT NULL THEN
+                 p.title || ' — ' || 'SKU:' || COALESCE(pv.sku, '')
+               ELSE p.title
+             END,
+             ap.title
+           ) AS title,
+           COALESCE(cat.name, 'Uncategorised') AS category
+      FROM "cartProducts" cp
+      LEFT JOIN products p              ON p.id  = cp."productId"
+      LEFT JOIN "affiliateProducts" ap  ON ap.id = cp."affiliateProductId"
+      LEFT JOIN "productVariations" pv  ON pv.id = cp."variationId"
+      LEFT JOIN "productCategory" pc    ON pc."productId" = COALESCE(p.id, ap.id)
+      LEFT JOIN "productCategories" cat ON cat.id = pc."categoryId"
+     WHERE cp."cartId" = $1
+     ORDER BY category, title
+    `,
+    [cartId],
+  );
+  const grouped: Record<string, { q: number; t: string }[]> = {};
+  for (const r of rows) {
+    (grouped[r.category] ??= []).push({ q: r.quantity, t: r.title });
+  }
+  return Object.entries(grouped)
+    .map(([cat, items]) => {
+      const lines = items.map((it) => `${it.t} - x${it.q}`).join("<br>");
+      return `<b>${cat.toUpperCase()}</b><br><br>${lines}`;
+    })
+    .join("<br><br>");
+}
+
+
 /* -------- schemas -------- */
 
 const DiscountSchema = z.object({
@@ -650,7 +688,7 @@ export async function POST(req: NextRequest) {
     const totalAmount = +(subtotal + shippingTotal - discountTotal).toFixed(2);
     const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
     const epsilon = 0.01;
-    
+
     if (!isParked) {
       if (Math.abs(paid - totalAmount) > epsilon) {
         return NextResponse.json(
@@ -782,7 +820,28 @@ export async function POST(req: NextRequest) {
       await tx.query("COMMIT");
 
       // ⬇️ Create revenue for this POS order
+      await tx.query("COMMIT");
+
+      // ⬇️ Create revenue for this POS order
       try { await getRevenue(order.id, organizationId); } catch (e) { console.warn("[POS checkout][revenue] failed", e); }
+
+      // ⬇️ Capture platform fee for this POS order (since it begins as "paid")
+      try {
+        const feesUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/internal/order-fees`;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (process.env.INTERNAL_API_SECRET) headers["x-internal-secret"] = process.env.INTERNAL_API_SECRET;
+        else headers["x-local-invoke"] = "1"; // dev/staging fallback (matches change-status)
+        const res = await fetch(feesUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ orderId: order.id }),
+        });
+        if (!res.ok) {
+          console.error(`[fees][pos] ${res.status} ${res.statusText}`, await res.text().catch(() => ""));
+        }
+      } catch (e) {
+        console.warn("[POS checkout][fees] failed", e);
+      }
 
       // ⬇️ Affiliate bonuses (referral + spending) for POS (mirrors change-status paid-like)
       try {
@@ -936,6 +995,92 @@ export async function POST(req: NextRequest) {
       } catch (e) {
         console.warn("[POS checkout][affiliate bonuses] failed", e);
       }
+
+      // ⬇️ POS status notifications (match normal orders)
+      try {
+        const status = isParked ? "pending_payment" : "paid";
+        const notifType = isParked ? "order_pending_payment" : "order_paid";
+
+        const productList = await buildProductListForCart(order.cartId);
+        const orderDate = new Date(order.dateCreated).toLocaleDateString("en-GB");
+        const vars = {
+          product_list: productList,
+          order_number: order.orderKey,
+          order_date: orderDate,
+          order_shipping_method: order.shippingMethod ?? "-",
+          tracking_number: order.trackingNumber ?? "",
+          shipping_company: order.shippingService ?? "",
+        };
+
+        // Buyer fanout (email + in_app + telegram)
+        await enqueueNotificationFanout({
+          organizationId,
+          orderId: order.id,
+          type: notifType,
+          trigger: "order_status_change",
+          channels: ["email", "in_app", "telegram"],
+          dedupeSalt: `buyer:${status}`,
+          payload: {
+            orderId: order.id,
+            message: `Your order status is now <b>${status}</b><br>{product_list}`,
+            subject: `Order #${order.orderKey} ${status}`,
+            variables: vars,
+            country: order.country,
+            clientId: order.clientId,
+            userId: null,
+            url: `/orders/${order.id}`,
+          },
+        });
+
+        // Admin fanout (in_app + telegram)
+        await enqueueNotificationFanout({
+          organizationId,
+          orderId: order.id,
+          type: notifType,
+          trigger: "admin_only",
+          channels: ["in_app", "telegram"],
+          dedupeSalt: `store_admin:${status}`,
+          payload: {
+            orderId: order.id,
+            message: `Order #${order.orderKey} is now <b>${status}</b><br>{product_list}`,
+            subject: `Order #${order.orderKey} ${status}`,
+            variables: vars,
+            country: order.country,
+            clientId: null,
+            userId: null,
+            url: `/orders/${order.id}`,
+          },
+        });
+
+        // If immediately paid, mark single-fire flag so "paid" won’t double notify later
+        if (!isParked) {
+          await pool.query(
+            `UPDATE orders
+          SET "notifiedPaidOrCompleted" = TRUE,
+              "updatedAt" = NOW()
+        WHERE id = $1
+          AND COALESCE("notifiedPaidOrCompleted", FALSE) = FALSE`,
+            [order.id],
+          );
+        }
+
+        // Kick the outbox so Telegram/in-app send immediately
+        try {
+          if (process.env.INTERNAL_API_SECRET) {
+            await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`, {
+              method: "POST",
+              headers: { "x-internal-secret": process.env.INTERNAL_API_SECRET, "x-vercel-background": "1", accept: "application/json" },
+              keepalive: true,
+            }).catch(() => { });
+          } else {
+            const { drainNotificationOutbox } = await import("@/lib/notification-outbox");
+            await drainNotificationOutbox(12);
+          }
+        } catch { }
+      } catch (e) {
+        console.warn("[POS checkout][notify] failed", e);
+      }
+
 
       return NextResponse.json({ order }, { status: 201 });
     } catch (e) {
