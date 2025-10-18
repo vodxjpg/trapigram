@@ -109,11 +109,11 @@ export default function NotificationTemplatesPage() {
                         group and send:
                       </p>
                       <pre className="rounded-md bg-muted p-3 text-sm">
-                        /notification_group COUNTRY_CODE
+                        /notification_group add COUNTRY_CODE
                       </pre>
                       <p className="text-sm text-muted-foreground">
-                        Example: <code>/notification_group IT</code> to receive
-                        Italian notifications in that group.
+                        Example: <code>/notification_group add IT</code> to receive
+                        Italian order notifications in that group.
                       </p>
                       <p className="text-sm text-muted-foreground">
                         You can configure template bodies per role (admin/user)
