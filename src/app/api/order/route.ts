@@ -9,6 +9,7 @@ import { getContext } from "@/lib/context";
 import { requireOrgPermission } from "@/lib/perm-server";
 import { adjustStock } from "@/lib/stock";
 import { sendNotification } from "@/lib/notifications";
+import { enqueueNotificationFanout } from "@/lib/notification-outbox";
 
 
 /* ------------------------------------------------------------------ */
@@ -29,6 +30,46 @@ function encryptSecretNode(plain: string): string {
   const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
   return cipher.update(plain, "utf8", "base64") + cipher.final("base64");
 }
+
+
+async function buildProductListForCart(cartId: string) {
+  const { rows } = await pool.query(
+    `
+      SELECT
+           cp.quantity,
+           COALESCE(
+             CASE
+               WHEN cp."variationId" IS NOT NULL THEN
+                 p.title || ' — ' || 'SKU:' || COALESCE(pv.sku, '')
+               ELSE p.title
+             END,
+             ap.title
+           ) AS title,
+           COALESCE(cat.name, 'Uncategorised') AS category
+      FROM "cartProducts" cp
+      LEFT JOIN products p              ON p.id  = cp."productId"
+      LEFT JOIN "affiliateProducts" ap  ON ap.id = cp."affiliateProductId"
+      LEFT JOIN "productVariations" pv  ON pv.id = cp."variationId"
+      LEFT JOIN "productCategory" pc    ON pc."productId" = COALESCE(p.id, ap.id)
+      LEFT JOIN "productCategories" cat ON cat.id = pc."categoryId"
+     WHERE cp."cartId" = $1
+     ORDER BY category, title
+    `,
+    [cartId],
+  );
+  const grouped: Record<string, { q: number; t: string }[]> = {};
+  for (const r of rows) {
+    grouped[r.category] ??= [];
+    grouped[r.category].push({ q: r.quantity, t: r.title });
+  }
+  return Object.entries(grouped)
+    .map(([cat, items]) => {
+      const lines = items.map((it) => `${it.t} - x${it.q}`).join("<br>");
+      return `<b>${cat.toUpperCase()}</b><br><br>${lines}`;
+    })
+    .join("<br><br>");
+}
+
 
 /* ------------------------------------------------------------------ */
 /*  Current user (cashier) via users API                              */
@@ -419,6 +460,77 @@ export async function POST(req: NextRequest) {
 
     const r = await pool.query(insertSQL, insertValues);
     await pool.query("COMMIT");
+
+    // ── Creation-time notification (order just created as OPEN) ──────────
+    try {
+      const created = r.rows[0];
+      const productList = await buildProductListForCart(created.cartId);
+      const orderDate = new Date(created.dateCreated).toLocaleDateString("en-GB");
+      const vars = {
+        product_list: productList,
+        order_number: created.orderKey,
+        order_date: orderDate,
+        order_shipping_method: created.shippingMethod ?? "-",
+        tracking_number: created.trackingNumber ?? "",
+        shipping_company: created.shippingService ?? "",
+      };
+
+      // Buyer fanout
+      await enqueueNotificationFanout({
+        organizationId,
+        orderId: created.id,
+        type: "order_placed",
+        trigger: "order_status_change",
+        channels: ["email", "in_app", "telegram"],
+        dedupeSalt: "buyer:open",
+        payload: {
+          orderId: created.id,
+          message: `Your order status is now <b>open</b><br>{product_list}`,
+          subject: `Order #${created.orderKey} open`,
+          variables: vars,
+          country: created.country,
+          clientId: created.clientId,
+          userId: null,
+          url: `/orders/${created.id}`,
+        },
+      });
+
+      // Admin fanout
+      await enqueueNotificationFanout({
+        organizationId,
+        orderId: created.id,
+        type: "order_placed",
+        trigger: "admin_only",
+        channels: ["in_app", "telegram"],
+        dedupeSalt: "store_admin:open",
+        payload: {
+          orderId: created.id,
+          message: `Order #${created.orderKey} is now <b>open</b><br>{product_list}`,
+          subject: `Order #${created.orderKey} open`,
+          variables: vars,
+          country: created.country,
+          clientId: null,
+          userId: null,
+          url: `/orders/${created.id}`,
+        },
+      });
+
+      // Kick the outbox so Telegram/in-app send immediately
+      try {
+        if (process.env.INTERNAL_API_SECRET) {
+          await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/internal/notifications/drain?limit=12`, {
+            method: "POST",
+            headers: { "x-internal-secret": process.env.INTERNAL_API_SECRET, "x-vercel-background": "1", accept: "application/json" },
+            keepalive: true,
+          }).catch(() => {});
+        } else {
+          const { drainNotificationOutbox } = await import("@/lib/notification-outbox");
+          await drainNotificationOutbox(12);
+        }
+      } catch {}
+    } catch (e) {
+      console.warn("[order:POST] creation fanout failed", e);
+    }
 
     // ────────────────────────────────────────────────────────────────
     // Split the order into supplier orders based on sharedProductMapping.
