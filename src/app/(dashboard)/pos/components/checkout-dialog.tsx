@@ -133,6 +133,11 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
   }
 
   const submitParkedCheckout = async () => {
+
+    // Parked orders must also be fully covered (no remaining)
+    if (remaining > 0) {
+      return;
+    }
     if (!cartId || !clientId || !registerId) {
       setError("Missing cart, customer or outlet.")
       return
@@ -228,7 +233,8 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     }
   }
 
-  const canPark = !!cartId && !!clientId && !!registerId && !busy
+  // NEW: Parking is only allowed when payments cover 100% (same as complete)
+  const canPark = !!cartId && !!clientId && !!registerId && remaining === 0 && !busy
   const canComplete = remaining === 0 && !busy
 
   return (
@@ -385,10 +391,9 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                       Park Order
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="top" align="start" className="max-w-xs">
-                    Save this sale as <b>Pending Payment</b> and finish later.
-                    Any partial payments are recorded; the remaining balance stays due.
-                  </TooltipContent>
+                    <TooltipContent side="top" align="start" className="max-w-xs">
+                      Save this sale to finish later. <b>No pending balance</b> is allowed — payments must cover 100%.
+                     </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
 

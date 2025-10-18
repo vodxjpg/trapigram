@@ -689,20 +689,12 @@ export async function POST(req: NextRequest) {
     const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
     const epsilon = 0.01;
 
-    if (!isParked) {
-      if (Math.abs(paid - totalAmount) > epsilon) {
-        return NextResponse.json(
-          { error: `Paid amount ${paid.toFixed(2)} does not match total ${totalAmount.toFixed(2)}` },
-          { status: 400 }
-        );
-      }
-    } else {
-      if (paid - totalAmount > epsilon) {
-        return NextResponse.json(
-          { error: `Paid amount ${paid.toFixed(2)} exceeds total ${totalAmount.toFixed(2)} for a parked order` },
-          { status: 400 }
-        );
-      }
+    // For BOTH normal and parked, payments must cover 100% (within epsilon)
+    if (Math.abs(paid - totalAmount) > epsilon) {
+      return NextResponse.json(
+        { error: `Selected payments (${paid.toFixed(2)}) must equal the total (${totalAmount.toFixed(2)}).` },
+        { status: 400 }
+      );
     }
 
     const orderId = uuidv4();
