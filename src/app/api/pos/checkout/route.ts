@@ -536,10 +536,13 @@ const DiscountSchema = z.object({
 
 const CheckoutCreateSchema = z.object({
   cartId: z.string().min(1),
-  payments: z.array(z.object({ methodId: z.string().min(1), amount: z.number().positive() })).min(1),
+  payments: z.array(
+    z.object({ methodId: z.string().min(1), amount: z.number().positive() })
+  ).default([]),
   storeId: z.string().optional(),
   registerId: z.string().optional(),
   discount: DiscountSchema,
+  parked: z.boolean().optional(),
 });
 
 /* Resolve current user (cashier) from the same session */
@@ -591,8 +594,9 @@ export async function POST(req: NextRequest) {
 
   const { tenantId, organizationId } = ctx as { tenantId: string | null; organizationId: string };
   try {
-    const { cartId, payments, storeId, registerId, discount } =
+    const { cartId, payments, storeId, registerId, discount, parked } =
       CheckoutCreateSchema.parse(await req.json());
+    const isParked = Boolean(parked);
     if (!tenantId) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
     const summary = await loadCartSummary(cartId);
@@ -644,14 +648,23 @@ export async function POST(req: NextRequest) {
     }
 
     const totalAmount = +(subtotal + shippingTotal - discountTotal).toFixed(2);
-
     const paid = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
     const epsilon = 0.01;
-    if (Math.abs(paid - totalAmount) > epsilon) {
-      return NextResponse.json(
-        { error: `Paid amount ${paid.toFixed(2)} does not match total ${totalAmount.toFixed(2)}` },
-        { status: 400 }
-      );
+    
+    if (!isParked) {
+      if (Math.abs(paid - totalAmount) > epsilon) {
+        return NextResponse.json(
+          { error: `Paid amount ${paid.toFixed(2)} does not match total ${totalAmount.toFixed(2)}` },
+          { status: 400 }
+        );
+      }
+    } else {
+      if (paid - totalAmount > epsilon) {
+        return NextResponse.json(
+          { error: `Paid amount ${paid.toFixed(2)} exceeds total ${totalAmount.toFixed(2)} for a parked order` },
+          { status: 400 }
+        );
+      }
     }
 
     const orderId = uuidv4();
@@ -665,7 +678,7 @@ export async function POST(req: NextRequest) {
     );
     const seqNum = String(Number(seqRows[0].seq)).padStart(4, "0");
     const orderKey = `POS-${seqNum}`;
-    const primaryMethodId = payments[0].methodId;
+    const primaryMethodId = payments[0]?.methodId ?? (methods[0]?.id ?? null)
 
     let orderChannel = summary.channel;
     if (orderChannel === "pos-" && (storeId || registerId)) {
@@ -685,7 +698,21 @@ export async function POST(req: NextRequest) {
       registerId: registerId ?? null,
       at: new Date().toISOString(),
     };
-    const initialOrderMeta = JSON.stringify([cashierEvent]);
+    const metaArr: any[] = [cashierEvent];
+    if (isParked) {
+      metaArr.push({
+        event: "parked",
+        remaining: +(totalAmount - paid).toFixed(2),
+        total: totalAmount,
+        paid: +paid.toFixed(2),
+        at: new Date().toISOString(),
+      });
+    }
+    const initialOrderMeta = JSON.stringify(metaArr);
+
+    const orderStatus = isParked ? "pending_payment" : "paid";
+    const datePaid = isParked ? null : new Date();
+    const dateCompleted = isParked ? null : new Date();
 
     const insertSql = `
       INSERT INTO orders (
@@ -697,8 +724,7 @@ export async function POST(req: NextRequest) {
         "dateCreated", "datePaid", "dateCompleted", "dateCancelled",
         "orderMeta",
         "createdAt", "updatedAt", "organizationId", channel
-      )
-      VALUES (
+      ) VALUES (
         $1,$2,$3,$4,$5,
         $6,$7,$8,
         $9,$10,$11,
@@ -715,23 +741,23 @@ export async function POST(req: NextRequest) {
       summary.clientId,
       summary.cartId,
       summary.country,
-      "paid",
-      primaryMethodId,
+      orderStatus,                 //  "paid" or "pending payment"
+      primaryMethodId,             // may be null → ensure column allows it; otherwise keep methods[0].id
       orderKey,
       summary.cartUpdatedHash,
       shippingTotal,
       discountTotal,
       totalAmount,
-      couponCode,                      // 'POS' or null
-      couponType,                      // 'fixed' | 'percentage' | null
-      couponType,                      // legacy misspelling
-      discountValueArr,                // text[] e.g. ['10'] or ['5']
-      "-",                             // shippingService
-      new Date(),                      // dateCreated
-      new Date(),                      // datePaid
-      new Date(),                      // dateCompleted
-      null,                            // dateCancelled
-      initialOrderMeta,                // NEW: orderMeta
+      couponCode,
+      couponType,
+      couponType,
+      discountValueArr,
+      "-",
+      new Date(),                  // dateCreated
+      datePaid,                    // NEW
+      dateCompleted,               // NEW
+      null,                        // dateCancelled
+      initialOrderMeta,
       organizationId,
       orderChannel,
     ];

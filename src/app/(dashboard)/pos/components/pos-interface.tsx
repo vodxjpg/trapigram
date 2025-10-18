@@ -510,13 +510,18 @@ export function POSInterface() {
     await refreshCart(cartId)
   }
 
-  const onCompleteCheckout = (orderId: string) => {
-    setReceiptDlg({ orderId, email: selectedCustomer?.email ?? null })
+  const onCompleteCheckout = (orderId: string, parked?: boolean) => {
+    // Clear cart in both cases
     if (outletId && typeof window !== "undefined") {
       localStorage.removeItem(LS_KEYS.CART(outletId))
     }
     setCartId(null)
     setLines([])
+
+    // Only show receipt flow for fully paid orders
+    if (!parked) {
+      setReceiptDlg({ orderId, email: selectedCustomer?.email ?? null })
+    }
   }
 
   const setStoreOutlet = ({ storeId: s, outletId: o }: { storeId: string; outletId: string }) => {
