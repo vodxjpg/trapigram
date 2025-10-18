@@ -7,7 +7,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card } from "@/components/ui/card"
-import { Check } from "lucide-react"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from "@/components/ui/tooltip"
+import { PauseCircle, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   AlertDialog, AlertDialogAction, AlertDialogContent,
@@ -32,7 +38,7 @@ type CheckoutDialogProps = {
   clientId: string | null
   registerId: string | null
   storeId: string | null
-  onComplete: (orderId: string) => void
+  onComplete: (orderId: string, parked?: boolean) => void
   /** Optional POS discount to apply as coupon "POS" */
   discount?: DiscountPayload
 }
@@ -129,6 +135,57 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     setCurrentAmount(v.toFixed(2))
     if (currentIsCash) setCashReceived(v.toFixed(2))
   }
+
+  const submitParkedCheckout = async () => {
+  if (!cartId || !clientId || !registerId) {
+    setError("Missing cart, customer or outlet.")
+    return
+  }
+  try {
+    setBusy(true)
+    const idem =
+      (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string
+
+    const payload: {
+      cartId: string
+      payments: Payment[]
+      storeId: string | null
+      registerId: string | null
+      discount?: DiscountPayload
+      parked: boolean
+    } = {
+      cartId,
+      payments,              // may be empty or partial
+      storeId,
+      registerId,
+      parked: true,          // NEW
+    }
+
+    if (discount && Number.isFinite(discount.value) && discount.value > 0) {
+      payload.discount = discount
+    }
+
+    const res = await fetch("/api/pos/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}))
+      throw new Error(e?.error || "Parking the order failed")
+    }
+    const data = await res.json()
+    const orderId = data?.order?.id || data?.orderId
+    if (!orderId) throw new Error("No order id returned")
+    onComplete(orderId, true)  // tell parent this was parked
+    onOpenChange(false)
+  } catch (e: any) {
+    setError(e?.message || "Parking the order failed")
+  } finally {
+    setBusy(false)
+  }
+}
+
 
   const submitCheckout = async () => {
     if (!cartId || !clientId || !registerId) {
@@ -297,14 +354,45 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
               </div>
             )}
 
-            {/* Actions */}
+           {/* Actions */}
             <div className="flex gap-2">
               {payments.length > 0 && (
-                <Button variant="outline" onClick={() => { setPayments([]); setCurrentAmount(""); setCashReceived("") }}>
+                <Button
+                  variant="outline"
+                  onClick={() => { setPayments([]); setCurrentAmount(""); setCashReceived("") }}
+                  disabled={busy}
+                >
                   Reset
                 </Button>
               )}
-              <Button className="flex-1 gap-2" onClick={submitCheckout} disabled={remaining > 0 || busy}>
+              {/* Park order */}
+                <Button
+                  type="button"
+                  variant="default"          // more contrast than "secondary"
+                  className="w-full sm:flex-1"
+                  onClick={submitParkedCheckout}
+                  disabled={busy}
+                >
+                  <PauseCircle className="h-4 w-4" />
+                  Park Order
+                </Button>
+
+                {/* Complete */}
+                <Button
+                  className="w-full sm:flex-1"
+                  onClick={submitCheckout}
+                  disabled={remaining > 0 || busy}
+                >
+                  <Check className="h-4 w-4" />
+                  Complete Transaction
+                </Button>
+
+              {/* Complete Transaction */}
+              <Button
+                className="flex-1 gap-2"
+                onClick={submitCheckout}
+                disabled={remaining > 0 || busy}
+              >
                 <Check className="h-4 w-4" />
                 Complete Transaction
               </Button>
