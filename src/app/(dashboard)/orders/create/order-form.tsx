@@ -1,59 +1,40 @@
+// order-form.tsx
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 
-import {
-  CreditCard,
-  Package,
-  Minus,
-  Plus,
-  Trash2,
-  User,
-  Tag,
-  DollarSign,
-  Truck,
-  Search,
-} from "lucide-react";
+import { CreditCard, Tag, DollarSign, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  SelectGroup,
-  SelectLabel,
-  SelectSeparator,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/currency";
+
+import ClientSelect from "./components/client-select";
+import ProductSelect from "./components/product-select";
+import DiscountCoupon from "./components/discount-coupon";
+import ShippingAddress from "./components/shipping-address";
+import ShippingOptions from "./components/shipping-options";
+import PaymentMethod from "./components/payment-method";
+import OrderSummary from "./components/order-summary"; // ← NEW
 /* ─── constants ──────────────────────────────────────────────── */
 // If the env-var is set use it, otherwise fall back to the public endpoint.
-const NIFTIPAY_BASE = (
-  process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com"
-).replace(/\/+$/, "");
+const NIFTIPAY_BASE = (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com").replace(
+  /\/+$/,
+  ""
+);
 
 type NiftipayNet = { chain: string; asset: string; label: string };
 
 async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
   const r = await fetch("/api/niftipay/payment-methods");
-  if (!r.ok)
-    throw new Error(await r.text().catch(() => "Niftipay methods failed"));
+  if (!r.ok) throw new Error(await r.text().catch(() => "Niftipay methods failed"));
   const { methods } = await r.json();
   return (methods || []).map((m: any) => ({
     chain: m.chain,
@@ -158,33 +139,7 @@ function showFriendlyCreateOrderError(raw?: string | null): boolean {
 
 /* ─── currency map helpers ─────────────────────────────────────── */
 const EU_COUNTRIES = new Set([
-  "AT",
-  "BE",
-  "BG",
-  "HR",
-  "CY",
-  "CZ",
-  "DK",
-  "EE",
-  "FI",
-  "FR",
-  "DE",
-  "GR",
-  "HU",
-  "IE",
-  "IT",
-  "LV",
-  "LT",
-  "LU",
-  "MT",
-  "NL",
-  "PL",
-  "PT",
-  "RO",
-  "SK",
-  "SI",
-  "ES",
-  "SE",
+  "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
 ]);
 
 function countryToFiat(c: string): string {
@@ -552,7 +507,7 @@ export default function OrderForm() {
           },
         });
         if (!compRes.ok) throw new Error("Failed to fetch shipping companies");
-        const comps: any = await compRes.json();
+        const comps: any = await res.json();
         // Some backends use {shippingMethods:[...]} for companies (legacy). Support both.
         const companies: ShippingCompany[] =
           comps?.companies ?? comps?.shippingMethods ?? [];
@@ -576,7 +531,7 @@ export default function OrderForm() {
   };
 
   // Sum stock across all warehouses for a specific country code
-  const stockForCountry = (p: Product, country: string): number =>
+  const stockForCountryLocal = (p: Product, country: string): number =>
     Object.values(p.stockData || {}).reduce(
       (sum, wh) => sum + (wh?.[country] ?? 0),
       0
@@ -918,7 +873,7 @@ export default function OrderForm() {
     const remaining = hasFiniteStock
       ? Math.max(
         0,
-        stockForCountry(product, clientCountry) -
+        stockForCountryLocal(product, clientCountry) -
         inCartQty(product.id, product.variationId ?? null, orderItems)
       )
       : Infinity;
@@ -1210,7 +1165,7 @@ export default function OrderForm() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET!,
+          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SITECRET!,
         },
         body: JSON.stringify({
           clientId: selectedClient,
@@ -1432,761 +1387,126 @@ export default function OrderForm() {
     }
   };
 
+  const clientEmail =
+    clients.find((c) => c.id === selectedClient)?.email;
+
+  const createDisabled =
+    !orderGenerated ||
+    orderItems.length === 0 ||
+    !selectedPaymentMethod ||
+    // 🔧 only force a network when Niftipay is selected *and* configured
+    (mustChooseNiftipayNetwork ? !selectedNiftipay : false) ||
+    !selectedShippingMethod ||
+    !selectedShippingCompany;
+
   return (
     <div className="container mx-auto py-6">
       <h1 className="text-3xl font-bold mb-6">Create New Order</h1>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT COLUMN */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Client Selection */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <User className="h-5 w-5" /> Client Selection
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col sm:flex-row gap-4">
-              <div className="flex-1">
-                <Label>Select Client</Label>
-                <Select
-                  value={selectedClient}
-                  onValueChange={(val) => {
-                    const obj = [...clients, ...searchResults].find(
-                      (c) => c.id === val
-                    );
-                    if (obj) pickClient(val, obj);
-                  }}
-                  disabled={clientsLoading || orderGenerated}
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={
-                        clientsLoading ? "Loading…" : "Select or search client"
-                      }
-                    />
-                  </SelectTrigger>
-
-                  <SelectContent className="w-[450px]">
-                    {/* Search bar ------------------------------------------------ */}
-                    <div className="p-3 border-b flex items-center gap-2">
-                      <Search className="h-4 w-4 text-muted-foreground" />
-                      <Input
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        placeholder="Search (min 3 chars)"
-                        className="h-8"
-                      />
-                    </div>
-
-                    <ScrollArea className="max-h-72">
-                      {/* Local clients first */}
-                      {filteredClients.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.firstName} {c.lastName} — {c.username} ({c.email})
-                        </SelectItem>
-                      ))}
-
-                      {/* Divider only if we have results */}
-                      {searchResults.length > 0 && (
-                        <Separator className="my-2" />
-                      )}
-
-                      {/* Remote search results (exclude already-listed ids) */}
-                      {searchResults
-                        .filter((c) => !clients.some((lc) => lc.id === c.id))
-                        .map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.firstName} {c.lastName} — {c.username} ({c.email}
-                            )
-                            <span className="ml-1 text-xs text-muted-foreground">
-                              (remote)
-                            </span>
-                          </SelectItem>
-                        ))}
-                      {searching && (
-                        <div className="px-3 py-2 text-sm text-muted-foreground">
-                          Searching…
-                        </div>
-                      )}
-                      {!searching &&
-                        searchTerm &&
-                        searchResults.length === 0 && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">
-                            No matches
-                          </div>
-                        )}
-                    </ScrollArea>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex items-end">
-                <Button
-                  onClick={generateOrder}
-                  disabled={!selectedClient || orderGenerated}
-                >
-                  Generate Order
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
+          {/* Client Selection (now fully inside the component) */}
+          <ClientSelect
+            selectedClient={selectedClient}
+            clientsLoading={clientsLoading}
+            orderGenerated={orderGenerated}
+            clients={clients}
+            filteredClients={filteredClients}
+            searchResults={searchResults}
+            searching={searching}
+            searchTerm={searchTerm}
+            setSearchTerm={setSearchTerm}
+            pickClient={pickClient}
+            onGenerateOrder={generateOrder}
+          />
           {/* Product Selection */}
 
-          <Card
-            className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
-          >
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Package className="h-5 w-5" /> Product Selection
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {orderItems.length > 0 && (
-                <div className="space-y-4 mb-4">
-                  {orderItems.map(({ product, quantity }, idx) => {
-                    const price = product.price;
-                    // NEW
-                    const finite = Object.keys(product.stockData || {}).length > 0;
-                    const base = stockForCountry(product, clientCountry);
-                    const used = inCartQty(product.id, product.variationId ?? null, orderItems);
-                    const remaining = Math.max(0, base - used);
-                    const disablePlus = finite && !product.allowBackorders && remaining === 0;
+          <ProductSelect
+            orderGenerated={orderGenerated}
+            orderItems={orderItems}
+            clientCountry={clientCountry}
+            stockErrors={stockErrors}
+            removeProduct={removeProduct}
+            updateQuantity={updateQuantity}
+            addProduct={addProduct}
+            productsLoading={productsLoading}
+            selectedProduct={selectedProduct}
+            prodTerm={prodTerm}
+            setProdTerm={setProdTerm}
+            filteredProducts={filteredProducts}
+            prodResults={prodResults}
+            prodSearching={prodSearching}
+            products={products}
+            pickProduct={pickProduct}
+            groupByCategory={groupByCategory}
+            quantityText={quantityText}
+            setQuantityText={setQuantityText}
+            parseQty={parseQty}
+          />
 
-                    return (
-                      <div
-                        key={idx}
-                        className={
-                          "flex items-center gap-4 p-4 border rounded-lg" +
-                          (stockErrors[product.id] ? " border-red-500" : "")
-                        }
-                      >
-                        <Image
-                          src={product.image}
-                          alt={product.title}
-                          width={80}
-                          height={80}
-                          className="rounded-md"
-                        />
-                        <div className="flex-1">
-                          <div className="flex justify-between">
-                            <h3 className="font-medium">{product.title}</h3>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() =>
-                                removeProduct(product.id, product.variationId ?? null, idx)
-                              }
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                          <p className="text-sm text-muted-foreground">
-                            SKU: {product.sku}
-                          </p>
-                          <div
-                            className="text-sm"
-                            dangerouslySetInnerHTML={{
-                              __html: product.description,
-                            }}
-                          />
-                          <div className="flex items-center gap-2 mt-2">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() =>
-                                updateQuantity(product.id, product.variationId ?? null, "subtract")
-                              }
-                            >
-                              <Minus className="h-4 w-4" />
-                            </Button>
-                            <span className="font-medium">{quantity}</span>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => updateQuantity(product.id, product.variationId ?? null, "add")}
-                              disabled={disablePlus}
-                              aria-disabled={disablePlus}
-                              title={disablePlus ? "Out of stock" : undefined}
-                            >
-                              <Plus className="h-4 w-4" />
-                            </Button>
+          {/* Discount Coupon (moved into its own component) */}
+          <DiscountCoupon
+            orderGenerated={orderGenerated}
+            appliedCodes={appliedCodes}
+            discountTotal={discountTotal}
+            clientCountry={clientCountry}
+            couponCode={couponCode}
+            setCouponCode={setCouponCode}
+            couponBreakdown={couponBreakdown}
+            applyCoupon={applyCoupon}
+          />
 
-                          </div>
-                          {stockErrors[product.id] && (
-                            <p className="text-red-600 text-sm mt-1">
-                              Only {stockErrors[product.id]} available
-                            </p>
-                          )}
-                          <div className="flex justify-between mt-2">
-                            <span className="font-medium">
-                              Unit Price: {formatCurrency(price, clientCountry)}
-                            </span>
-                            <span className="font-medium">
-                              {formatCurrency(product.subtotal ?? price * quantity, clientCountry)}
-                            </span>
-                          </div>
-                          {/* Stock (client country), decreased by qty already in cart */}
-                          {Object.keys(product.stockData || {}).length > 0 && (
-                            <div className="mt-1 text-xs text-muted-foreground">
-                              {(() => {
-                                const base = stockForCountry(product, clientCountry);
-                                const used = inCartQty(product.id, product.variationId ?? null, orderItems);
-                                const remaining = Math.max(0, base - used);
-                                return (
-                                  <>
-                                    Stock in {clientCountry || "country"}: {remaining}
-                                    {remaining === 0 && product.allowBackorders ? " (backorder allowed)" : ""}
-                                  </>
-                                );
-                              })()}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  <Label>Select Product</Label>
-                  <Select
-                    value={selectedProduct}
-                    onValueChange={(val) => {
-                      // val is "productId:variationId" (or "productId:base")
-                      const { productId, variationId } = parseToken(val);
-
-                      const obj =
-                        [...products, ...prodResults].find(
-                          (row) =>
-                            row.id === productId &&
-                            (row.variationId ?? null) === (variationId ?? null)
-                        ) || null;
-
-                      if (!obj) return;
-
-                      const hasFiniteStock = Object.keys(obj.stockData || {}).length > 0;
-                      const remaining = hasFiniteStock
-                        ? Math.max(
-                          0,
-                          stockForCountry(obj, clientCountry) -
-                          inCartQty(productId, variationId ?? null, orderItems) // ← variation-aware
-                        )
-                        : Infinity;
-
-                      if (hasFiniteStock && remaining === 0 && !obj.allowBackorders) {
-                        toast.error("This product is out of stock for the selected country.");
-                        return;
-                      }
-                      pickProduct(val, obj);
-                    }}
-                    disabled={productsLoading}
-                  >
-
-
-                    <SelectTrigger>
-                      <SelectValue
-                        placeholder={
-                          productsLoading ? "Loading…" : "Select a product"
-                        }
-                      />
-                    </SelectTrigger>
-                    <SelectContent className="w-[500px]">
-                      {/* search bar */}
-                      <div className="p-3 border-b flex items-center gap-2">
-                        <Search className="h-4 w-4 text-muted-foreground" />
-                        <Input
-                          value={prodTerm}
-                          onChange={(e) => setProdTerm(e.target.value)}
-                          placeholder="Search products (min 3 chars)"
-                          className="h-8"
-                        />
-                      </div>
-                      <ScrollArea className="max-h-72">
-                        {/* ─── Local grouped (shop) products ─── */}
-                        {groupByCategory(filteredProducts.filter((p) => !p.isAffiliate)).map(
-                          ([label, items]) => (
-                            <SelectGroup key={label}>
-                              <SelectLabel>{label}</SelectLabel>
-                              {items.map((p) => {
-                                const price = p.regularPrice[clientCountry] ?? p.price;
-                                const hasFiniteStock = Object.keys(p.stockData || {}).length > 0;
-                                const remaining = hasFiniteStock
-                                  ? Math.max(
-                                    0,
-                                    stockForCountry(p, clientCountry) -
-                                    inCartQty(p.id, p.variationId ?? null, orderItems)  // 👈 add varId
-                                  )
-                                  : Infinity;
-                                const shouldDisable = hasFiniteStock
-                                  ? remaining === 0 && !p.allowBackorders
-                                  : false;
-
-                                return (
-                                  <SelectItem key={tokenOf(p)} value={tokenOf(p)} disabled={shouldDisable}>
-                                    <span className="block max-w-[420px] truncate">
-                                      {p.title} — ${price}
-                                      {hasFiniteStock && (
-                                        <span className="ml-2 text-xs text-muted-foreground">
-                                          Stock: {remaining}
-                                          {remaining === 0 && p.allowBackorders ? " (backorder)" : ""}
-                                          {shouldDisable ? " (out of stock)" : ""}
-                                        </span>
-                                      )}
-                                    </span>
-                                  </SelectItem>
-                                );
-                              })}
-                              <SelectSeparator />
-                            </SelectGroup>
-                          )
-                        )}
-
-                        {/* ─── Local affiliate products ─── */}
-                        {filteredProducts.some((p) => p.isAffiliate) && (
-                          <SelectGroup>
-                            <SelectLabel>Affiliate</SelectLabel>
-                            {filteredProducts
-                              .filter((p) => p.isAffiliate)
-                              .map((p) => (
-                                <SelectItem key={tokenOf(p)} value={tokenOf(p)}>
-                                  {p.title} — {p.price} pts
-                                </SelectItem>
-                              ))}
-                            <SelectSeparator />
-                          </SelectGroup>
-                        )}
-
-                        {/* ─── Remote results (not yet cached) ─── */}
-                        {prodResults.length > 0 && (
-                          <>
-                            {/* Group remote shop results by category too */}
-                            {groupByCategory(
-                              prodResults.filter((p) => !p.isAffiliate && !products.some((lp) => tokenOf(lp) === tokenOf(p)))
-                            ).map(([label, items]) => (
-                              <SelectGroup key={`remote-${label}`}>
-                                <SelectLabel>{label} — search</SelectLabel>
-                                {items.map((p) => {
-                                  const price = p.regularPrice?.[clientCountry] ?? p.price;
-                                  const hasFiniteStock = Object.keys(p.stockData || {}).length > 0;
-                                  const remaining = hasFiniteStock
-                                    ? Math.max(
-                                      0,
-                                      stockForCountry(p, clientCountry) -
-                                      inCartQty(p.id, p.variationId ?? null, orderItems)  // 👈 add varId
-                                    )
-                                    : Infinity;
-                                  const shouldDisable = hasFiniteStock
-                                    ? remaining === 0 && !p.allowBackorders
-                                    : false;
-
-                                  return (
-                                    <SelectItem key={tokenOf(p)} value={tokenOf(p)} disabled={shouldDisable}>
-                                      <span className="block max-w-[420px] truncate">
-                                        {p.title} — ${price}
-                                        <span className="ml-2 text-xs text-muted-foreground">
-                                          {hasFiniteStock ? (
-                                            <>
-                                              Stock: {remaining}
-                                              {remaining === 0 && p.allowBackorders ? " (backorder)" : ""}
-                                              {shouldDisable ? " (out of stock)" : ""}
-                                            </>
-                                          ) : (
-                                            "remote"
-                                          )}
-                                        </span>
-                                      </span>
-                                    </SelectItem>
-                                  );
-                                })}
-                                <SelectSeparator />
-                              </SelectGroup>
-                            ))}
-
-                            {/* Remote affiliate results */}
-                            {prodResults.some((p) => p.isAffiliate && !products.some((lp) => lp.id === p.id)) && (
-                              <SelectGroup>
-                                <SelectLabel>Affiliate — search</SelectLabel>
-                                {prodResults
-                                  .filter((p) => p.isAffiliate && !products.some((lp) => tokenOf(lp) === tokenOf(p)))
-                                  .map((p) => (
-                                    <SelectItem key={tokenOf(p)} value={tokenOf(p)}>
-                                      {p.title} — {p.price} pts
-                                      <span className="ml-1 text-xs text-muted-foreground">
-                                        (remote)
-                                      </span>
-                                    </SelectItem>
-                                  ))}
-                              </SelectGroup>
-                            )}
-                          </>
-                        )}
-
-                        {prodSearching && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
-                        )}
-                        {!prodSearching && prodTerm && prodResults.length === 0 && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
-                        )}
-                      </ScrollArea>
-
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="w-24">
-                  <Label>Quantity</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={quantityText}
-                    onChange={(e) => {
-                      // allow empty while typing; strip non-digits
-                      const v = e.target.value.replace(/[^0-9]/g, "");
-                      setQuantityText(v);
-                    }}
-                    onBlur={() => setQuantityText(String(parseQty(quantityText)))}
-                  />
-                </div>
-
-                <div className="flex items-end">
-                  <Button onClick={addProduct} disabled={!selectedProduct}>
-                    <Plus className="h-4 w-4 mr-2" /> Add Product
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Discount Coupon */}
-
-          <Card
-            className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
-          >
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Tag className="h-5 w-5" /> Discount Coupon
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              {/* Applied codes badges */}
-              {appliedCodes.length > 0 && discountTotal > 0 && (
-                <div className="flex justify-between text-green-600">
-                  <span>Discount (coupons):</span>
-                  <span className="font-medium">
-                    –{formatCurrency(discountTotal, clientCountry)}
-                  </span>
-                </div>
-              )}
-
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  <Label>Coupon Code</Label>
-                  <Input
-                    value={couponCode}
-                    onChange={(e) => setCouponCode(e.target.value)}
-                    placeholder="Enter coupon code"
-                  />
-                </div>
-                <div className="flex items-end">
-                  <Button onClick={applyCoupon} disabled={!couponCode}>
-                    {appliedCodes.length ? "Apply Another" : "Apply Coupon"}
-                  </Button>
-                </div>
-              </div>
-
-              {/* Optional: show breakdown lines */}
-              {couponBreakdown.length > 0 && (
-                <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-                  {couponBreakdown.map((b, i) => (
-                    <div
-                      key={`${b.code}-${i}`}
-                      className="flex justify-between"
-                    >
-                      <span>
-                        {b.code} —{" "}
-                        {b.discountType === "percentage"
-                          ? `${b.discountValue}%`
-                          : `-${formatCurrency(b.discountAmount, clientCountry)}`}
-                      </span>
-                      <span>
-                        Subtotal:{" "}
-                        {formatCurrency(b.subtotalAfter, clientCountry)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Addresses Section */}
-
-          {orderGenerated && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Truck className="h-5 w-5" /> Shipping Address
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {addresses.length > 0 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {addresses.map((addr) => (
-                      <label key={addr.id} className="flex items-center gap-2">
-                        <input
-                          type="radio"
-                          name="address"
-                          className="h-4 w-4"
-                          value={addr.id}
-                          checked={selectedAddressId === addr.id}
-                          onChange={() => setSelectedAddressId(addr.id)}
-                        />
-                        <span className="font-medium">{addr.address}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-
-                <Separator className="my-4" />
-
-                <div className="flex gap-4">
-                  <div className="flex-1">
-                    <Label>Address</Label>
-                    <Input
-                      value={newAddress}
-                      onChange={(e) => setNewAddress(e.target.value)}
-                      placeholder="123 Main St."
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <Button onClick={addAddress} disabled={!newAddress}>
-                      Add Address
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          {/* Shipping Address (moved into its own component) */}
+          <ShippingAddress
+            orderGenerated={orderGenerated}
+            addresses={addresses}
+            selectedAddressId={selectedAddressId}
+            setSelectedAddressId={setSelectedAddressId}
+            newAddress={newAddress}
+            setNewAddress={setNewAddress}
+            addAddress={addAddress}
+          />
 
           {/* Shipping Section */}
-
-          <Card
-            className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
-          >
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Truck className="h-5 w-5" /> Shipping
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Method */}
-                <div>
-                  <Label>Method</Label>
-                  <Select
-                    value={selectedShippingMethod}
-                    onValueChange={setSelectedShippingMethod}
-                    disabled={!orderGenerated || shippingLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue
-                        placeholder={
-                          shippingLoading ? "Loading…" : "Select method"
-                        }
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {shippingMethods.map((m) => {
-                        const tier = m.costs.find(
-                          ({ minOrderCost, maxOrderCost }) =>
-                            totalBeforeShipping >= minOrderCost &&
-                            (maxOrderCost === 0 ||
-                              totalBeforeShipping <= maxOrderCost)
-                        );
-                        const cost = tier ? tier.shipmentCost : 0;
-
-                        return (
-                          <SelectItem key={m.id} value={m.id}>
-                            {/* max-w keeps the item from being absurdly wide in very big menus */}
-                            <span className="block max-w-[280px] truncate">
-                              {m.title} — {m.description} — ${cost.toFixed(2)}
-                            </span>
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {/* Company */}
-                <div>
-                  <Label>Company</Label>
-                  <Select
-                    value={selectedShippingCompany}
-                    onValueChange={setSelectedShippingCompany}
-                    disabled={!orderGenerated || shippingLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue
-                        placeholder={
-                          shippingLoading ? "Loading…" : "Select company"
-                        }
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {shippingCompanies.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <ShippingOptions
+            orderGenerated={orderGenerated}
+            shippingLoading={shippingLoading}
+            shippingMethods={shippingMethods}
+            selectedShippingMethod={selectedShippingMethod}
+            setSelectedShippingMethod={setSelectedShippingMethod}
+            shippingCompanies={shippingCompanies}
+            selectedShippingCompany={selectedShippingCompany}
+            setSelectedShippingCompany={setSelectedShippingCompany}
+            totalBeforeShipping={totalBeforeShipping}
+          />
 
           {/* Payment Methods */}
-
-          <Card
-            className={!orderGenerated ? "opacity-50 pointer-events-none" : ""}
-          >
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CreditCard className="h-5 w-5" /> Payment Method
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Label htmlFor="payment">Select Payment Method</Label>
-              <Select
-                value={selectedPaymentMethod}
-                onValueChange={setSelectedPaymentMethod}
-                disabled={!orderGenerated}
-              >
-                <SelectTrigger id="payment">
-                  <SelectValue placeholder="Select a payment method" />
-                </SelectTrigger>
-                <SelectContent>
-                  {paymentMethods.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.name}
-                      {m.active === false ? " (inactive)" : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {/* ▼ Niftipay network selector */}
-              {paymentMethods.find(
-                (p) =>
-                  p.id === selectedPaymentMethod &&
-                  p.name.toLowerCase() === "niftipay"
-              ) && (
-                  <div className="mt-4">
-                    <Label>Select Crypto Network</Label>
-                    <Select
-                      value={selectedNiftipay}
-                      onValueChange={setSelectedNiftipay}
-                      disabled={niftipayLoading}
-                    >
-                      <SelectTrigger>
-                        <SelectValue
-                          placeholder={
-                            niftipayLoading ? "Loading…" : "Select network"
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {niftipayNetworks.map((n) => (
-                          <SelectItem
-                            key={`${n.chain}:${n.asset}`}
-                            value={`${n.chain}:${n.asset}`}
-                          >
-                            {n.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-            </CardContent>
-          </Card>
+          <PaymentMethod
+            orderGenerated={orderGenerated}
+            paymentMethods={paymentMethods}
+            selectedPaymentMethod={selectedPaymentMethod}
+            setSelectedPaymentMethod={setSelectedPaymentMethod}
+            niftipayNetworks={niftipayNetworks}
+            niftipayLoading={niftipayLoading}
+            selectedNiftipay={selectedNiftipay}
+            setSelectedNiftipay={setSelectedNiftipay}
+          />
         </div>
 
-        {/* RIGHT COLUMN: Order Summary */}
-
+        {/* RIGHT COLUMN: Order Summary (moved into its own component) */}
         <div className="lg:col-span-1">
-          <Card className="sticky top-6">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <DollarSign className="h-5 w-5" /> Order Summary
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {orderGenerated ? (
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <span>Client:</span>
-                    <span className="font-medium">
-                      {clients.find((c) => c.id === selectedClient)?.email}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Items:</span>
-                    <span className="font-medium">{orderItems.length}</span>
-                  </div>
-                  {/* Discount from coupons */}
-                  {discountTotal > 0 && (
-                    <div className="flex justify-between text-green-600">
-                      <span>Discount (coupons):</span>
-                      <span className="font-medium">
-                        –{formatCurrency(discountTotal, clientCountry)}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Shipping */}
-                  <div className="flex justify-between">
-                    <span>Shipping:</span>
-                    <span className="font-medium">
-                      {formatCurrency(shippingCost, clientCountry)}
-                    </span>
-                  </div>
-
-                  <Separator />
-
-                  {/* Final total */}
-                  <div className="flex justify-between text-lg font-bold">
-                    <span>Total:</span>
-                    <span>{formatCurrency(total, clientCountry)}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-6 text-muted-foreground">
-                  Select a client and generate an order to see the summary
-                </div>
-              )}
-            </CardContent>
-            <CardFooter className="flex flex-col gap-3">
-              <Button
-                onClick={createOrder}
-                disabled={
-                  !orderGenerated ||
-                  orderItems.length === 0 ||
-                  !selectedPaymentMethod ||
-                  // 🔧 only force a network when Niftipay is selected *and* configured
-                  (mustChooseNiftipayNetwork ? !selectedNiftipay : false) ||
-                  !selectedShippingMethod ||
-                  !selectedShippingCompany
-                }
-                className="w-full"
-              >
-                Create Order
-              </Button>
-            </CardFooter>
-          </Card>
+          <OrderSummary
+            orderGenerated={orderGenerated}
+            clientEmail={clientEmail}
+            itemsCount={orderItems.length}
+            itemsSubtotal={itemsSubtotal}        // NEW: show subtotal
+            discountTotal={discountTotal}
+            shippingCost={shippingCost}
+            total={total}
+            clientCountry={clientCountry}
+            createDisabled={createDisabled}
+            onCreateOrder={createOrder}
+          />
         </div>
       </div>
     </div>
