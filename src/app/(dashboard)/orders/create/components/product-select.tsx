@@ -203,6 +203,7 @@ export default function ProductSelect(props: ProductSelectProps) {
                 {orderItems.length > 0 && (
                     <div className="space-y-4 mb-4">
                         {orderItems.map(({ product, quantity }, idx) => {
+                            console.log(product)
                             const price = product.price;
                             const finite = Object.keys(product.stockData || {}).length > 0;
                             const base = stockForCountry(product, clientCountry);
