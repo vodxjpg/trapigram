@@ -747,24 +747,24 @@ export async function POST(req: NextRequest) {
     const dateCompleted = isParked ? null : new Date();
 
     const insertSql = `
-      INSERT INTO orders (
-        id, "clientId", "cartId", country, status,
-        "paymentMethod", "orderKey", "cartHash",
-        "shippingTotal", "discountTotal", "totalAmount",
-        "couponCode", "couponType", "counponType", "discountValue",
+     INSERT INTO orders (
+        id,"clientId","cartId",country,status,
+        "paymentMethod","orderKey","cartHash",
+        "shippingTotal","discountTotal","totalAmount",
+        "couponCode","couponType","discountValue",
         "shippingService",
-        "dateCreated", "datePaid", "dateCompleted", "dateCancelled",
+        "dateCreated","datePaid","dateCompleted","dateCancelled",
         "orderMeta",
-        "createdAt", "updatedAt", "organizationId", channel
+        "createdAt","updatedAt","organizationId",channel
       ) VALUES (
         $1,$2,$3,$4,$5,
         $6,$7,$8,
         $9,$10,$11,
-        $12,$13,$14,$15,
-        $16,
-        $17,$18,$19,$20,
-        $21::jsonb,
-        NOW(),NOW(),$22,$23
+        $12,$13,$14,
+        $15,
+        $16,$17,$18,$19,
+        $20::jsonb,
+        NOW(),NOW(),$21,$22
       )
       RETURNING *`;
 
@@ -781,7 +781,6 @@ export async function POST(req: NextRequest) {
       discountTotal,
       totalAmount,
       couponCode,
-      couponType,
       couponType,
       discountValueArr,
       "-",
@@ -811,7 +810,6 @@ export async function POST(req: NextRequest) {
 
       await tx.query(`UPDATE carts SET status = FALSE, "updatedAt" = NOW() WHERE id = $1`, [cartId]);
 
-      await tx.query("COMMIT");
 
       // ⬇️ Create revenue for this POS order
       await tx.query("COMMIT");
