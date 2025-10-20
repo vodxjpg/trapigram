@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -24,18 +25,17 @@ function Money({ n }: { n: number }) {
   return <span>${n.toFixed(2)}</span>;
 }
 
-export default function CustomerDisplayPortal() {
-  const sp = useSearchParams();
-  const accessKey = sp.get("accessKey") || "";
+function CustomerDisplayInner() {
+  const sp = useSearchParams(); // OK inside Suspense
+  // If you later use accessKey, it's available here:
+  // const accessKey = sp.get("accessKey") || "";
 
   const [stage, setStage] = React.useState<"pair"|"live">("pair");
   const [pairCode, setPairCode] = React.useState("");
   const [registerId, setRegisterId] = React.useState<string>("");
   const [sessionId, setSessionId] = React.useState<string>("");
-  const [slides] = React.useState<string[]>([]);
   const [last, setLast] = React.useState<EventPayload | null>(null);
 
-  // Pair by code
   async function pair() {
     const r = await fetch("/api/pos/display/pair", {
       method: "POST",
@@ -49,38 +49,36 @@ export default function CustomerDisplayPortal() {
     setStage("live");
   }
 
-  // Open SSE when live
-React.useEffect(() => {
-  if (stage !== "live" || !registerId || !sessionId) return;
+  React.useEffect(() => {
+    if (stage !== "live" || !registerId || !sessionId) return;
 
-  const p = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
-    cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
-    authEndpoint: "/api/pos/display/pusher-auth",
-    auth: { params: { registerId, sessionId } },
-  });
+    const p = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
+      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
+      authEndpoint: "/api/pos/display/pusher-auth",
+      auth: { params: { registerId, sessionId } },
+    });
 
-  const chName = `private-cd.${registerId}.${sessionId}`;
-  const ch = p.subscribe(chName);
+    const chName = `private-cd.${registerId}.${sessionId}`;
+    const ch = p.subscribe(chName);
 
-  ch.bind("event", (data: any) => {
-    if (data?.type !== "ping" && data?.type !== "hello") setLast(data);
-  });
+    ch.bind("event", (data: any) => {
+      if (data?.type !== "ping" && data?.type !== "hello") setLast(data);
+    });
 
-  // optional: quick catch-up from Upstash
-  (async () => {
-    try {
-      const r = await fetch(`/api/pos/registers/${registerId}/customer-display/recent?limit=1`, { cache: "no-store" });
-      const j = await r.json();
-      if (Array.isArray(j.events) && j.events[0]) setLast(j.events[0]);
-    } catch {}
-  })();
+    (async () => {
+      try {
+        const r = await fetch(`/api/pos/registers/${registerId}/customer-display/recent?limit=1`, { cache: "no-store" });
+        const j = await r.json();
+        if (Array.isArray(j.events) && j.events[0]) setLast(j.events[0]);
+      } catch {}
+    })();
 
-  return () => {
-    ch.unbind_all();
-    p.unsubscribe(chName);
-    p.disconnect();
-  };
-}, [stage, registerId, sessionId]);
+    return () => {
+      ch.unbind_all();
+      p.unsubscribe(chName);
+      p.disconnect();
+    };
+  }, [stage, registerId, sessionId]);
 
   return (
     <div className="min-h-screen bg-muted/30 grid place-items-center p-6">
@@ -108,7 +106,6 @@ React.useEffect(() => {
         </Card>
       ) : (
         <div className="w-full grid grid-cols-12 gap-6">
-          {/* Left rail: email / promo (optional – keep simple) */}
           <Card className="col-span-4 p-6 flex flex-col items-center justify-between">
             <div className="text-center">
               <div className="text-xs tracking-widest text-muted-foreground mb-2">GET YOUR RECEIPT</div>
@@ -118,7 +115,6 @@ React.useEffect(() => {
             <div className="opacity-80 text-xs">Powered by Trapigram</div>
           </Card>
 
-          {/* Right rail: live cart */}
           <Card className="col-span-8 p-6">
             {!last || last.type === "idle" ? (
               <div className="h-[520px] grid place-items-center text-muted-foreground">
@@ -157,9 +153,7 @@ React.useEffect(() => {
                   <div className="text-sm text-muted-foreground">
                     Send {last.amount} {last.asset} on {last.network}
                   </div>
-                  {/* If server sent a data: URL QR, show it. Otherwise render text only. */}
                   {last.qr ? (
-                    // eslint-disable-next-line @next/next/no-img-element
                     <img alt="QR" src={last.qr} className="h-44 w-44 mx-auto" />
                   ) : null}
                   <div className="font-mono text-xs break-all">{last.address}</div>
@@ -170,5 +164,13 @@ React.useEffect(() => {
         </div>
       )}
     </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<div className="min-h-screen grid place-items-center p-8">Loading…</div>}>
+      <CustomerDisplayInner />
+    </Suspense>
   );
 }
