@@ -1,3 +1,4 @@
+// src/app/(dashboard)/pos/display/page.tsx
 "use client";
 
 import * as React from "react";
@@ -11,14 +12,34 @@ import { Separator } from "@/components/ui/separator";
 import Pusher from "pusher-js";
 
 type CartLine = {
-  title: string; quantity: number; unitPrice: number; sku?: string | null;
-  subtotal: number; image?: string | null;
+  title: string;
+  quantity: number;
+  unitPrice: number;
+  sku?: string | null;
+  subtotal: number;
+  image?: string | null;
 };
 
 type EventPayload =
   | { type: "hello" | "ping" }
-  | { type: "cart"; cartId: string; lines: CartLine[]; subtotal: number; discount: number; shipping: number; total: number; notes?: string }
-  | { type: "niftipay"; asset: string; network: string; amount: number; address: string; qr?: string }
+  | {
+      type: "cart";
+      cartId: string;
+      lines: CartLine[];
+      subtotal: number;
+      discount: number;
+      shipping: number;
+      total: number;
+      notes?: string;
+    }
+  | {
+      type: "niftipay";
+      asset: string;
+      network: string;
+      amount: number;
+      address: string;
+      qr?: string;
+    }
   | { type: "idle" };
 
 function Money({ n }: { n: number }) {
@@ -26,15 +47,20 @@ function Money({ n }: { n: number }) {
 }
 
 function CustomerDisplayInner() {
-  const sp = useSearchParams(); // OK inside Suspense
-  // If you later use accessKey, it's available here:
+  const sp = useSearchParams(); // okay inside Suspense
+  // If you later need it:
   // const accessKey = sp.get("accessKey") || "";
 
-  const [stage, setStage] = React.useState<"pair"|"live">("pair");
+  const [stage, setStage] = React.useState<"pair" | "live">("pair");
   const [pairCode, setPairCode] = React.useState("");
   const [registerId, setRegisterId] = React.useState<string>("");
   const [sessionId, setSessionId] = React.useState<string>("");
   const [last, setLast] = React.useState<EventPayload | null>(null);
+  const [connectedVia, setConnectedVia] = React.useState<"pusher" | "sse" | null>(null);
+
+  // Public env vars are inlined at build time; guard their absence.
+  const PUSHER_KEY = process.env.NEXT_PUBLIC_PUSHER_KEY;
+  const PUSHER_CLUSTER = process.env.NEXT_PUBLIC_PUSHER_CLUSTER;
 
   async function pair() {
     const r = await fetch("/api/pos/display/pair", {
@@ -42,42 +68,82 @@ function CustomerDisplayInner() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: pairCode.trim() }),
     });
-    if (!r.ok) { alert("Invalid or expired code"); return; }
+    if (!r.ok) {
+      alert("Invalid or expired code");
+      return;
+    }
     const j = await r.json();
     setRegisterId(j.registerId);
     setSessionId(j.sessionId);
     setStage("live");
   }
 
+  // Open realtime connection when live
   React.useEffect(() => {
     if (stage !== "live" || !registerId || !sessionId) return;
 
-    const p = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
-      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
-      authEndpoint: "/api/pos/display/pusher-auth",
-      auth: { params: { registerId, sessionId } },
-    });
-
-    const chName = `private-cd.${registerId}.${sessionId}`;
-    const ch = p.subscribe(chName);
-
-    ch.bind("event", (data: any) => {
-      if (data?.type !== "ping" && data?.type !== "hello") setLast(data);
-    });
-
+    // Always do a quick catch-up from Upstash
     (async () => {
       try {
-        const r = await fetch(`/api/pos/registers/${registerId}/customer-display/recent?limit=1`, { cache: "no-store" });
+        const r = await fetch(
+          `/api/pos/registers/${registerId}/customer-display/recent?limit=1`,
+          { cache: "no-store" }
+        );
         const j = await r.json();
         if (Array.isArray(j.events) && j.events[0]) setLast(j.events[0]);
-      } catch {}
+      } catch {
+        /* ignore */
+      }
     })();
 
-    return () => {
-      ch.unbind_all();
-      p.unsubscribe(chName);
-      p.disconnect();
-    };
+    // If public pusher credentials exist, use Pusher; else fall back to SSE.
+    if (PUSHER_KEY && PUSHER_CLUSTER) {
+      const p = new Pusher(PUSHER_KEY, {
+        cluster: PUSHER_CLUSTER,
+        authEndpoint: "/api/pos/display/pusher-auth",
+        auth: { params: { registerId, sessionId } },
+      });
+
+      const chName = `private-cd.${registerId}.${sessionId}`;
+      const ch = p.subscribe(chName);
+
+      const handler = (data: any) => {
+        if (data?.type !== "ping" && data?.type !== "hello") setLast(data);
+      };
+      ch.bind("event", handler);
+      setConnectedVia("pusher");
+
+      return () => {
+        ch.unbind("event", handler);
+        p.unsubscribe(chName);
+        p.disconnect();
+      };
+    } else {
+      // SSE fallback (works when Pusher isn't configured on the client)
+      const url = `/api/pos/registers/${registerId}/customer-display/stream?sessionId=${encodeURIComponent(
+        sessionId
+      )}`;
+      const es = new EventSource(url);
+      const onMsg = (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data?.type !== "ping" && data?.type !== "hello") setLast(data);
+        } catch {
+          /* ignore */
+        }
+      };
+      es.onmessage = onMsg;
+      es.onerror = () => {
+        // Keep connection state visible; the server may close with 410 if Pusher is configured.
+        // In that case, provide a minimal fallback UI but don't spam errors.
+      };
+      setConnectedVia("sse");
+
+      return () => {
+        es.close();
+      };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, registerId, sessionId]);
 
   return (
@@ -92,29 +158,44 @@ function CustomerDisplayInner() {
             <div className="col-span-4">
               <Label>6-digit pairing code</Label>
               <Input
-                inputMode="numeric" maxLength={6}
+                inputMode="numeric"
+                maxLength={6}
                 value={pairCode}
-                onChange={(e) => setPairCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                onChange={(e) =>
+                  setPairCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+                }
                 className="text-2xl text-center tracking-widest font-mono"
                 placeholder="••••••"
               />
             </div>
             <div className="flex items-end">
-              <Button className="w-full" onClick={pair} disabled={pairCode.length !== 6}>Pair</Button>
+              <Button
+                className="w-full"
+                onClick={pair}
+                disabled={pairCode.length !== 6}
+              >
+                Pair
+              </Button>
             </div>
           </div>
         </Card>
       ) : (
         <div className="w-full grid grid-cols-12 gap-6">
+          {/* Left rail: email / promo (optional) */}
           <Card className="col-span-4 p-6 flex flex-col items-center justify-between">
             <div className="text-center">
-              <div className="text-xs tracking-widest text-muted-foreground mb-2">GET YOUR RECEIPT</div>
+              <div className="text-xs tracking-widest text-muted-foreground mb-2">
+                GET YOUR RECEIPT
+              </div>
               <Input placeholder="Enter email address" />
               <Button className="mt-3 w-full">Add details</Button>
             </div>
-            <div className="opacity-80 text-xs">Powered by Trapigram</div>
+            <div className="opacity-80 text-[11px]">
+              {connectedVia ? `Connected via ${connectedVia.toUpperCase()}` : "Connecting…"}
+            </div>
           </Card>
 
+          {/* Right rail: live cart */}
           <Card className="col-span-8 p-6">
             {!last || last.type === "idle" ? (
               <div className="h-[520px] grid place-items-center text-muted-foreground">
@@ -129,20 +210,38 @@ function CustomerDisplayInner() {
                   {(last.lines || []).map((l, i) => (
                     <div key={i} className="flex items-center justify-between">
                       <div className="min-w-0">
-                        <div className="truncate">{l.quantity} × {l.title}</div>
-                        {l.sku && <div className="text-xs text-muted-foreground">SKU: {l.sku}</div>}
+                        <div className="truncate">
+                          {l.quantity} × {l.title}
+                        </div>
+                        {l.sku && (
+                          <div className="text-xs text-muted-foreground">
+                            SKU: {l.sku}
+                          </div>
+                        )}
                       </div>
-                      <div className="font-medium"><Money n={l.subtotal} /></div>
+                      <div className="font-medium">
+                        <Money n={l.subtotal} />
+                      </div>
                     </div>
                   ))}
                 </div>
                 <Separator className="my-3" />
                 <div className="space-y-1 text-sm">
-                  <div className="flex justify-between"><span>Subtotal</span><Money n={last.subtotal} /></div>
-                  <div className="flex justify-between"><span>Discount</span><Money n={last.discount} /></div>
-                  <div className="flex justify-between"><span>Shipping</span><Money n={last.shipping} /></div>
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <Money n={last.subtotal} />
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Discount</span>
+                    <Money n={last.discount} />
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Shipping</span>
+                    <Money n={last.shipping} />
+                  </div>
                   <div className="flex justify-between text-base font-semibold">
-                    <span>Total</span><Money n={last.total} />
+                    <span>Total</span>
+                    <Money n={last.total} />
                   </div>
                 </div>
               </div>
@@ -154,6 +253,7 @@ function CustomerDisplayInner() {
                     Send {last.amount} {last.asset} on {last.network}
                   </div>
                   {last.qr ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img alt="QR" src={last.qr} className="h-44 w-44 mx-auto" />
                   ) : null}
                   <div className="font-mono text-xs break-all">{last.address}</div>
@@ -169,7 +269,9 @@ function CustomerDisplayInner() {
 
 export default function Page() {
   return (
-    <Suspense fallback={<div className="min-h-screen grid place-items-center p-8">Loading…</div>}>
+    <Suspense
+      fallback={<div className="min-h-screen grid place-items-center p-8">Loading…</div>}
+    >
       <CustomerDisplayInner />
     </Suspense>
   );
