@@ -785,8 +785,8 @@ export async function POST(req: NextRequest) {
       discountValueArr,
       "-",
       new Date(),                  // dateCreated
-      datePaid,                    // NEW
-      dateCompleted,               // NEW
+      datePaid,     
+      dateCompleted,
       null,                        // dateCancelled
       initialOrderMeta,
       organizationId,
