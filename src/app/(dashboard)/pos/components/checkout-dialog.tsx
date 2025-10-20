@@ -1,428 +1,246 @@
-// src/app/(dashboard)/pos/components/checkout-dialog.tsx
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Card } from "@/components/ui/card"
+import * as React from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger
-} from "@/components/ui/tooltip"
-import { PauseCircle, Check } from "lucide-react"
-import { cn } from "@/lib/utils"
-import {
-  AlertDialog, AlertDialogAction, AlertDialogContent,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
-} from "@/components/ui/alert-dialog"
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card } from "@/components/ui/card";
+import { toast } from "sonner";
 
-type PaymentMethodRow = {
-  id: string
-  name: string
-  description?: string | null
-  instructions?: string | null
-}
+type Props = {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  orderId: string | null;
+  defaultEmail?: string;
+};
 
-type Payment = { methodId: string; amount: number }
-type DiscountPayload = { type: "fixed" | "percentage"; value: number }
+export default function ReceiptOptionsDialog({
+  open,
+  onOpenChange,
+  orderId,
+  defaultEmail,
+}: Props) {
+  const [email, setEmail] = useState(defaultEmail || "");
+  const [sending, setSending] = useState(false);
+  const [order, setOrder] = useState<any | null>(null);
 
-type CheckoutDialogProps = {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  totalEstimate: number
-  cartId: string | null
-  clientId: string | null
-  registerId: string | null
-  storeId: string | null
-  onComplete: (orderId: string, parked?: boolean) => void
-  /** Optional POS discount to apply as coupon "POS" */
-  discount?: DiscountPayload
-}
-
-export function CheckoutDialog(props: CheckoutDialogProps) {
-  const {
-    open, onOpenChange, totalEstimate, cartId, clientId, registerId, storeId, onComplete, discount
-  } = props
-
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([])
-  const [currentMethodId, setCurrentMethodId] = useState<string | null>(null)
-
-  const [payments, setPayments] = useState<Payment[]>([])
-  const [currentAmount, setCurrentAmount] = useState("")
-  const [cashReceived, setCashReceived] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const totalPaid = useMemo(() => payments.reduce((s, p) => s + p.amount, 0), [payments])
-  const remaining = Math.max(0, +(totalEstimate - totalPaid).toFixed(2))
-
-  // Heuristic: show cash-received UI if selected method name contains "cash"
-  const currentIsCash = useMemo(() => {
-    const m = paymentMethods.find(pm => pm.id === currentMethodId)
-    return (m?.name || "").toLowerCase().includes("cash")
-  }, [paymentMethods, currentMethodId])
-
-  const change = currentIsCash && cashReceived
-    ? Math.max(0, Number.parseFloat(cashReceived) - (Number.parseFloat(currentAmount || "0")))
-    : 0
-
-  // Reset on close (keep methods cached)
+  // fetch order (for payment.splits + niftipay meta)
   useEffect(() => {
-    if (!open) {
-      setPayments([])
-      setCurrentAmount("")
-      setCashReceived("")
-      setBusy(false)
-      setError(null)
-    }
-  }, [open])
-
-  // Load active payment methods from server when dialog opens
-  useEffect(() => {
-    if (!open || !cartId) return
-    let ignore = false
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/pos/checkout?cartId=${encodeURIComponent(cartId)}`)
-        const j = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(j?.error || "Failed to load payment methods")
-
-        const methods: PaymentMethodRow[] = j.paymentMethods || []
-        if (!ignore) {
-          setPaymentMethods(methods)
-          if (!currentMethodId && methods[0]) setCurrentMethodId(methods[0].id)
-        }
-      } catch (e: any) {
-        if (!ignore) setError(e?.message || "Failed to load payment methods")
-      }
-    })()
-    return () => { ignore = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, cartId])
-
-  const handleAddPayment = () => {
-    const amount = Number.parseFloat(currentAmount)
-    if (!currentMethodId) return
-    if (!Number.isFinite(amount) || amount <= 0 || amount > remaining) return
-
-    // Merge duplicate methods: if the same method already exists, add to it
-    setPayments(prev => {
-      const idx = prev.findIndex(p => p.methodId === currentMethodId)
-      if (idx >= 0) {
-        const next = [...prev]
-        next[idx] = {
-          ...next[idx],
-          amount: Number((next[idx].amount + amount).toFixed(2)),
-        }
-        return next
-      }
-      return [...prev, { methodId: currentMethodId, amount: Number(amount.toFixed(2)) }]
-    })
-    setCurrentAmount("")
-    setCashReceived("")
-  }
-
-  const handleQuickAmount = (fraction: number) => {
-    const v = Math.max(0, remaining * fraction)
-    setCurrentAmount(v.toFixed(2))
-    if (currentIsCash) setCashReceived(v.toFixed(2))
-  }
-
-  const submitParkedCheckout = async () => {
-
-    // Parked orders must also be fully covered (no remaining)
-    if (remaining > 0) {
+    let ignore = false;
+    if (!open || !orderId) {
+      setOrder(null);
       return;
     }
-    if (!cartId || !clientId || !registerId) {
-      setError("Missing cart, customer or outlet.")
-      return
-    }
+    (async () => {
+      try {
+        const r = await fetch(`/api/order/${orderId}`);
+        const j = await r.json();
+        if (!ignore) setOrder(j);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, [open, orderId]);
+
+  /* ─────────────────────────────────────────────────────────────
+   * Extract Niftipay meta + match to Niftipay splits by amount
+   * (one QR/address block per split)
+   * ──────────────────────────────────────────────────────────── */
+  type NiftiView = {
+    amount: number;
+    asset?: string | null;
+    chain?: string | null;
+    address?: string | null;
+    qr?: string | null; // url or data-uri
+  };
+
+  const niftiBlocks = useMemo(() => {
+    if (!order) return [] as Array<NiftiView & { idx: number }>;
+
+    const splits: Array<{ name: string; amount: number }> =
+      order?.payment?.splits || [];
+    const niftiSplits = splits
+      .filter((s) => /niftipay/i.test(s.name || ""))
+      .map((s) => ({ amount: Number(s.amount || 0) }));
+
+    const metas: NiftiView[] = (() => {
+      const arr: any[] = Array.isArray(order.orderMeta) ? order.orderMeta : [];
+      const out: NiftiView[] = [];
+      for (const m of arr) {
+        // accept either a root object or an { order: {...} } envelope
+        const node = m?.order ?? m ?? {};
+        const amount = Number(node.amount ?? node.total ?? node.value ?? NaN);
+        const asset = node.asset ?? node.assetSymbol ?? node.coin ?? null;
+        const chain = node.network ?? node.chain ?? null;
+        const address =
+          node.walletAddress ??
+          node.address ??
+          node.publicAddress ??
+          node.payToAddress ??
+          null;
+        const qr =
+          node.qr ?? node.qrUrl ?? node.qrImageUrl ?? node.qrCodeUrl ?? null;
+
+        if (Number.isFinite(amount) && (address || qr)) {
+          out.push({ amount, asset, chain, address, qr });
+        }
+      }
+      return out;
+    })();
+
+    // greedy match by amount so we show exactly one block per split
+    const used = new Array(metas.length).fill(false);
+    const blocks: Array<NiftiView & { idx: number }> = [];
+    niftiSplits.forEach((s, idx) => {
+      let pick = -1;
+      for (let i = 0; i < metas.length; i++) {
+        if (!used[i] && Math.abs(metas[i].amount - s.amount) < 0.0001) {
+          pick = i;
+          break;
+        }
+      }
+      if (pick >= 0) {
+        used[pick] = true;
+        blocks.push({ ...metas[pick], idx });
+      }
+    });
+    return blocks;
+  }, [order]);
+
+  /* ─────────────────────────────────────────────────────────────
+   * Print / Email actions
+   * ──────────────────────────────────────────────────────────── */
+  const doPrint = async () => {
     try {
-      setBusy(true)
-      const idem =
-        (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string
-
-      const payload: {
-        cartId: string
-        payments: Payment[]
-        storeId: string | null
-        registerId: string | null
-        discount?: DiscountPayload
-        parked: boolean
-      } = {
-        cartId,
-        payments,              // may be empty or partial
-        storeId,
-        registerId,
-        parked: true,
-      }
-
-      if (discount && Number.isFinite(discount.value) && discount.value > 0) {
-        payload.discount = discount
-      }
-
-      const res = await fetch("/api/pos/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
-        body: JSON.stringify(payload),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error || "Parking the order failed")
-
-      const orderId = data?.order?.id || data?.orderId
-      if (!orderId) throw new Error("No order id returned")
-      onComplete(orderId, true)  // parked
-      onOpenChange(false)
-    } catch (e: any) {
-      setError(e?.message || "Parking the order failed")
-    } finally {
-      setBusy(false)
+      // Many setups just open a printable route; adjust if needed
+      window.open(`/pos/receipt/${orderId}?print=1`, "_blank", "noopener");
+    } catch {
+      toast.error("Unable to open printer view");
     }
-  }
+  };
 
-  const submitCheckout = async () => {
-    if (!cartId || !clientId || !registerId) {
-      setError("Missing cart, customer or outlet.")
-      return
+  const sendEmail = async () => {
+    if (!orderId) return;
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+      toast.error("Enter a valid email");
+      return;
     }
-    if (remaining > 0) return
-
+    setSending(true);
     try {
-      setBusy(true)
-      const idem =
-        (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string
-
-      const payload: {
-        cartId: string
-        payments: Payment[]
-        storeId: string | null
-        registerId: string | null
-        discount?: DiscountPayload
-      } = {
-        cartId,
-        payments,
-        storeId,
-        registerId,
-      }
-
-      if (discount && Number.isFinite(discount.value) && discount.value > 0) {
-        payload.discount = discount
-      }
-
-      const res = await fetch("/api/pos/checkout", {
+      const r = await fetch(`/api/receipts/email`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
-        body: JSON.stringify(payload),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error || "Checkout failed")
-
-      const orderId = data?.order?.id || data?.orderId
-      if (!orderId) throw new Error("No order id returned")
-      onComplete(orderId)
-      onOpenChange(false)
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, email }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j?.error || j?.message || "Failed to email receipt");
+      }
+      toast.success("Receipt sent");
     } catch (e: any) {
-      setError(e?.message || "Checkout failed")
+      toast.error(e?.message || "Failed to email receipt");
     } finally {
-      setBusy(false)
+      setSending(false);
     }
-  }
+  };
 
-  // NEW: Parking is only allowed when payments cover 100% (same as complete)
-  const canPark = !!cartId && !!clientId && !!registerId && remaining === 0 && !busy
-  const canComplete = remaining === 0 && !busy
+  const close = () => onOpenChange(false);
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Could not copy");
+    }
+  };
 
   return (
-    <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Checkout</DialogTitle>
-          </DialogHeader>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Receipt options</DialogTitle>
+        </DialogHeader>
 
-          <div className="space-y-6">
-            {/* Totals */}
-            <div className="space-y-2">
-              <div className="flex justify-between text-lg">
-                <span className="font-medium">Estimated Total</span>
-                <span className="font-bold text-primary">${totalEstimate.toFixed(2)}</span>
-              </div>
-              {payments.length > 0 && (
-                <>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Paid</span>
-                    <span className="text-accent">${totalPaid.toFixed(2)}</span>
+        <div className="space-y-4">
+          {/* Niftipay QR/address blocks – one per split */}
+          {niftiBlocks.length > 0 && (
+            <div className="space-y-3">
+              {niftiBlocks.map((b) => (
+                <Card key={`nifti-${b.idx}`} className="p-3 space-y-2">
+                  <div className="text-sm font-medium">
+                    {b.asset ? `${b.asset}` : "Crypto"}
+                    {b.chain ? ` on ${b.chain}` : ""} — {b.amount}
                   </div>
-                  <div className="flex justify-between text-lg">
-                    <span className="font-medium">Remaining</span>
-                    <span className="font-bold">${remaining.toFixed(2)}</span>
-                  </div>
-                </>
-              )}
-            </div>
 
-            {/* Active payment methods */}
-            <div className="space-y-2">
-              <Label>Payment Method</Label>
-              <div className="grid grid-cols-2 gap-3">
-                {paymentMethods.map((m) => (
-                  <Card
-                    key={m.id}
-                    className={cn(
-                      "p-4 cursor-pointer transition-all hover:border-primary",
-                      currentMethodId === m.id && "border-primary bg-primary/5"
-                    )}
-                    onClick={() => setCurrentMethodId(m.id)}
-                  >
-                    <div className="flex flex-col items-center gap-1">
-                      <span className="font-medium">{m.name}</span>
-                      {m.description && (
-                        <span className="text-xs text-muted-foreground">{m.description}</span>
-                      )}
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            </div>
-
-            {/* Amount */}
-            {remaining > 0 && (
-              <>
-                <div className="space-y-2">
-                  <Label>Amount</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max={remaining}
-                    value={currentAmount}
-                    onChange={(e) => setCurrentAmount(e.target.value)}
-                    placeholder="0.00"
-                  />
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.25)}>25%</Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.5)}>50%</Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.75)}>75%</Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(1)}>Full</Button>
-                  </div>
-                </div>
-
-                {/* Cash-only helper */}
-                {currentIsCash && (
-                  <div className="space-y-2">
-                    <Label>Cash Received</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={cashReceived}
-                      onChange={(e) => setCashReceived(e.target.value)}
-                      placeholder={currentAmount || "0.00"}
+                  {b.qr && (
+                    <img
+                      src={b.qr}
+                      alt="Payment QR"
+                      className="mx-auto h-40 w-40 object-contain"
                     />
-                    {change > 0 && (
-                      <p className="text-sm">
-                        Change: <span className="font-bold text-accent">${change.toFixed(2)}</span>
-                      </p>
-                    )}
-                  </div>
-                )}
+                  )}
 
-                <Button
-                  className="w-full"
-                  onClick={handleAddPayment}
-                  disabled={!currentAmount || !currentMethodId || Number.parseFloat(currentAmount) <= 0}
-                >
-                  Add Payment
-                </Button>
-              </>
-            )}
+                  {b.address && (
+                    <div className="text-xs break-all rounded bg-muted p-2 font-mono">
+                      {b.address}
+                    </div>
+                  )}
 
-            {/* List payments */}
-            {payments.length > 0 && (
-              <div className="space-y-2">
-                {payments.map((p) => {
-                  const methodName = paymentMethods.find(pm => pm.id === p.methodId)?.name ?? p.methodId
-                  return (
-                    <Card key={p.methodId} className="p-3">
-                      <div className="flex items-center justify-between">
-                        <span>{methodName}</span>
-                        <span className="font-medium">${p.amount.toFixed(2)}</span>
-                      </div>
-                    </Card>
-                  )
-                })}
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex flex-col sm:flex-row gap-2">
-              {payments.length > 0 && (
-                <Button
-                  variant="outline"
-                  onClick={() => { setPayments([]); setCurrentAmount(""); setCashReceived("") }}
-                  disabled={busy}
-                  className="w-full sm:w-auto"
-                >
-                  Reset
-                </Button>
-              )}
-
-              {/* Park order (distinct amber style + tooltip) */}
-              <TooltipProvider>
-                <Tooltip delayDuration={200}>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      aria-label="Park order (save as pending payment)"
-                      variant="outline"
-                      className={cn(
-                        "w-full sm:flex-1 border-amber-500 text-amber-700 hover:bg-amber-50",
-                        "dark:border-amber-400 dark:text-amber-300 dark:hover:bg-amber-950"
-                      )}
-                      onClick={submitParkedCheckout}
-                      disabled={!canPark}
-                    >
-                      <PauseCircle className="h-4 w-4" />
-                      Park Order
-                    </Button>
-                  </TooltipTrigger>
-                    <TooltipContent side="top" align="start" className="max-w-xs">
-                      Save this sale to finish later. <b>No pending balance</b> is allowed — payments must cover 100%.
-                     </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-
-              {/* Complete Transaction (primary) */}
-              <Button
-                className="w-full sm:flex-1"
-                onClick={submitCheckout}
-                disabled={!canComplete}
-              >
-                <Check className="h-4 w-4" />
-                Complete Transaction
-              </Button>
+                  {b.address && (
+                    <div className="flex justify-end">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => copy(b.address!)}
+                      >
+                        Copy address
+                      </Button>
+                    </div>
+                  )}
+                </Card>
+              ))}
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+          )}
 
-      {/* Error dialog */}
-      <AlertDialog open={!!error} onOpenChange={(o) => !o && setError(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Checkout error</AlertDialogTitle>
-          </AlertDialogHeader>
-          <div className="text-sm text-muted-foreground">{error}</div>
-          <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setError(null)}>OK</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
-  )
+          {/* Email field */}
+          <div className="space-y-2">
+            <Label htmlFor="receipt-email">Email (optional)</Label>
+            <Input
+              id="receipt-email"
+              placeholder="customer@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              We’ll email a link to the receipt PDF. Leave blank to skip email.
+            </p>
+          </div>
+
+          {/* Actions */}
+          <div className="grid grid-cols-3 gap-2">
+            <Button variant="outline" onClick={doPrint} disabled={!orderId}>
+              Print
+            </Button>
+            <Button onClick={sendEmail} disabled={!orderId || !email || sending}>
+              {sending ? "Sending…" : "Email"}
+            </Button>
+            <Button variant="ghost" onClick={close}>
+              Skip
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
