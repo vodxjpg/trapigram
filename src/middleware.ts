@@ -94,7 +94,7 @@ export async function middleware(req: NextRequest) {
   const lower = pathname.toLowerCase();
   const PUBLIC = [
     "/", "/robots.txt", "/sitemap.xml", "/sitemap.xsl", "/blog", "/blog/", "/login", "/sign-up", "/forgot-password", "/verify-email",
-    "/check-email", "/accept-invitation/", "/impor-products/", "/import-products"
+    "/check-email", "/accept-invitation/", "/impor-products/", "/import-products", "/customer-display",
   ];
   const isPublic = PUBLIC.some(p =>
     p === "/" ? lower === "/" : p.endsWith("/") ? lower.startsWith(p) : lower === p,

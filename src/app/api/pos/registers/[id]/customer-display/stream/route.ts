@@ -1,4 +1,4 @@
-// /app/api/pos/registers/[id]/customer-display/stream/route.ts
+// src/app/api/pos/registers/[id]/customer-display/stream/route.ts
 import { NextRequest } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { subscribeLocal } from "@/lib/customer-display-bus";
@@ -21,28 +21,18 @@ export async function GET(
   );
   if (!rows.length) return new Response("Forbidden", { status: 403 });
 
-  // If Pusher is configured, don't allow SSE
-  if (
-    process.env.PUSHER_APP_ID &&
-    process.env.PUSHER_KEY &&
-    process.env.PUSHER_SECRET &&
-    process.env.PUSHER_CLUSTER
-  ) {
-    return new Response("Use Pusher client instead of SSE", { status: 410 });
-  }
-
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     start(controller) {
-      const send = (event: any) =>
+      const send = (event: unknown) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
 
       // hello + keepalive
       send({ type: "hello" });
       const ping = setInterval(() => send({ type: "ping", t: Date.now() }), 15000);
 
-      // Subscribe to local in-memory bus
+      // Subscribe to in-memory bus
       const unsub = subscribeLocal(registerId, sessionId, (data) => send(data));
 
       // Close on client disconnect

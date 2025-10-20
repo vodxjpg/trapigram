@@ -1,4 +1,4 @@
-// src/app/(dashboard)/pos/display/page.tsx
+// src/app/customer-display/page.tsx
 "use client";
 
 import * as React from "react";
@@ -12,53 +12,27 @@ import { Separator } from "@/components/ui/separator";
 import Pusher from "pusher-js";
 
 type CartLine = {
-  title: string;
-  quantity: number;
-  unitPrice: number;
-  sku?: string | null;
-  subtotal: number;
-  image?: string | null;
+  title: string; quantity: number; unitPrice: number; sku?: string | null;
+  subtotal: number; image?: string | null;
 };
 
 type EventPayload =
   | { type: "hello" | "ping" }
-  | {
-      type: "cart";
-      cartId: string;
-      lines: CartLine[];
-      subtotal: number;
-      discount: number;
-      shipping: number;
-      total: number;
-      notes?: string;
-    }
-  | {
-      type: "niftipay";
-      asset: string;
-      network: string;
-      amount: number;
-      address: string;
-      qr?: string;
-    }
+  | { type: "cart"; cartId: string; lines: CartLine[]; subtotal: number; discount: number; shipping: number; total: number; notes?: string }
+  | { type: "niftipay"; asset: string; network: string; amount: number; address: string; qr?: string }
   | { type: "idle" };
 
-function Money({ n }: { n: number }) {
-  return <span>${n.toFixed(2)}</span>;
-}
+function Money({ n }: { n: number }) { return <span>${n.toFixed(2)}</span>; }
 
-function CustomerDisplayInner() {
-  const sp = useSearchParams(); // okay inside Suspense
-  // If you later need it:
-  // const accessKey = sp.get("accessKey") || "";
-
-  const [stage, setStage] = React.useState<"pair" | "live">("pair");
+function Inner() {
+  const _sp = useSearchParams(); // reserved if you later use ?accessKey=
+  const [stage, setStage] = React.useState<"pair"|"live">("pair");
   const [pairCode, setPairCode] = React.useState("");
-  const [registerId, setRegisterId] = React.useState<string>("");
-  const [sessionId, setSessionId] = React.useState<string>("");
+  const [registerId, setRegisterId] = React.useState("");
+  const [sessionId, setSessionId] = React.useState("");
   const [last, setLast] = React.useState<EventPayload | null>(null);
-  const [connectedVia, setConnectedVia] = React.useState<"pusher" | "sse" | null>(null);
+  const [connectedVia, setConnectedVia] = React.useState<"pusher"|"sse" | null>(null);
 
-  // Public env vars are inlined at build time; guard their absence.
   const PUSHER_KEY = process.env.NEXT_PUBLIC_PUSHER_KEY;
   const PUSHER_CLUSTER = process.env.NEXT_PUBLIC_PUSHER_CLUSTER;
 
@@ -68,92 +42,60 @@ function CustomerDisplayInner() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: pairCode.trim() }),
     });
-    if (!r.ok) {
-      alert("Invalid or expired code");
-      return;
-    }
+    if (!r.ok) { alert("Invalid code"); return; }
     const j = await r.json();
     setRegisterId(j.registerId);
     setSessionId(j.sessionId);
     setStage("live");
   }
 
-  // Open realtime connection when live
   React.useEffect(() => {
     if (stage !== "live" || !registerId || !sessionId) return;
 
-    // Always do a quick catch-up from Upstash
+    // warm start from Upstash
     (async () => {
       try {
-        const r = await fetch(
-          `/api/pos/registers/${registerId}/customer-display/recent?limit=1`,
-          { cache: "no-store" }
-        );
+        const r = await fetch(`/api/pos/registers/${registerId}/customer-display/recent?limit=1`, { cache: "no-store" });
         const j = await r.json();
         if (Array.isArray(j.events) && j.events[0]) setLast(j.events[0]);
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     })();
 
-    // If public pusher credentials exist, use Pusher; else fall back to SSE.
     if (PUSHER_KEY && PUSHER_CLUSTER) {
       const p = new Pusher(PUSHER_KEY, {
         cluster: PUSHER_CLUSTER,
         authEndpoint: "/api/pos/display/pusher-auth",
         auth: { params: { registerId, sessionId } },
       });
-
       const chName = `private-cd.${registerId}.${sessionId}`;
       const ch = p.subscribe(chName);
-
       const handler = (data: any) => {
         if (data?.type !== "ping" && data?.type !== "hello") setLast(data);
       };
       ch.bind("event", handler);
       setConnectedVia("pusher");
-
-      return () => {
-        ch.unbind("event", handler);
-        p.unsubscribe(chName);
-        p.disconnect();
-      };
+      return () => { ch.unbind("event", handler); p.unsubscribe(chName); p.disconnect(); };
     } else {
-      // SSE fallback (works when Pusher isn't configured on the client)
-      const url = `/api/pos/registers/${registerId}/customer-display/stream?sessionId=${encodeURIComponent(
-        sessionId
-      )}`;
+      const url = `/api/pos/registers/${registerId}/customer-display/stream?sessionId=${encodeURIComponent(sessionId)}`;
       const es = new EventSource(url);
-      const onMsg = (e: MessageEvent) => {
+      es.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
           if (data?.type !== "ping" && data?.type !== "hello") setLast(data);
-        } catch {
-          /* ignore */
-        }
+        } catch {}
       };
-      es.onmessage = onMsg;
-      es.onerror = () => {
-        // Keep connection state visible; the server may close with 410 if Pusher is configured.
-        // In that case, provide a minimal fallback UI but don't spam errors.
-      };
+      es.onerror = () => { /* optional logging */ };
       setConnectedVia("sse");
-
-      return () => {
-        es.close();
-      };
+      return () => es.close();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, registerId, sessionId]);
+  }, [stage, registerId, sessionId, PUSHER_KEY, PUSHER_CLUSTER]);
 
   return (
     <div className="min-h-screen bg-muted/30 grid place-items-center p-6">
       {stage === "pair" ? (
         <Card className="w-full max-w-xl p-6 space-y-4 text-center">
           <h1 className="text-3xl font-bold">Customer Display</h1>
-          <p className="text-muted-foreground">
-            Enter the 6-digit code shown on the POS register to pair this screen.
-          </p>
+          <p className="text-muted-foreground">Enter the 6-digit code shown on the POS register.</p>
           <div className="grid grid-cols-5 gap-2">
             <div className="col-span-4">
               <Label>6-digit pairing code</Label>
@@ -161,32 +103,21 @@ function CustomerDisplayInner() {
                 inputMode="numeric"
                 maxLength={6}
                 value={pairCode}
-                onChange={(e) =>
-                  setPairCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-                }
+                onChange={(e) => setPairCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 className="text-2xl text-center tracking-widest font-mono"
                 placeholder="••••••"
               />
             </div>
             <div className="flex items-end">
-              <Button
-                className="w-full"
-                onClick={pair}
-                disabled={pairCode.length !== 6}
-              >
-                Pair
-              </Button>
+              <Button className="w-full" onClick={pair} disabled={pairCode.length !== 6}>Pair</Button>
             </div>
           </div>
         </Card>
       ) : (
         <div className="w-full grid grid-cols-12 gap-6">
-          {/* Left rail: email / promo (optional) */}
           <Card className="col-span-4 p-6 flex flex-col items-center justify-between">
             <div className="text-center">
-              <div className="text-xs tracking-widest text-muted-foreground mb-2">
-                GET YOUR RECEIPT
-              </div>
+              <div className="text-xs tracking-widest text-muted-foreground mb-2">GET YOUR RECEIPT</div>
               <Input placeholder="Enter email address" />
               <Button className="mt-3 w-full">Add details</Button>
             </div>
@@ -195,7 +126,6 @@ function CustomerDisplayInner() {
             </div>
           </Card>
 
-          {/* Right rail: live cart */}
           <Card className="col-span-8 p-6">
             {!last || last.type === "idle" ? (
               <div className="h-[520px] grid place-items-center text-muted-foreground">
@@ -210,38 +140,20 @@ function CustomerDisplayInner() {
                   {(last.lines || []).map((l, i) => (
                     <div key={i} className="flex items-center justify-between">
                       <div className="min-w-0">
-                        <div className="truncate">
-                          {l.quantity} × {l.title}
-                        </div>
-                        {l.sku && (
-                          <div className="text-xs text-muted-foreground">
-                            SKU: {l.sku}
-                          </div>
-                        )}
+                        <div className="truncate">{l.quantity} × {l.title}</div>
+                        {l.sku && <div className="text-xs text-muted-foreground">SKU: {l.sku}</div>}
                       </div>
-                      <div className="font-medium">
-                        <Money n={l.subtotal} />
-                      </div>
+                      <div className="font-medium"><Money n={l.subtotal} /></div>
                     </div>
                   ))}
                 </div>
                 <Separator className="my-3" />
                 <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span>Subtotal</span>
-                    <Money n={last.subtotal} />
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Discount</span>
-                    <Money n={last.discount} />
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Shipping</span>
-                    <Money n={last.shipping} />
-                  </div>
+                  <div className="flex justify-between"><span>Subtotal</span><Money n={last.subtotal} /></div>
+                  <div className="flex justify-between"><span>Discount</span><Money n={last.discount} /></div>
+                  <div className="flex justify-between"><span>Shipping</span><Money n={last.shipping} /></div>
                   <div className="flex justify-between text-base font-semibold">
-                    <span>Total</span>
-                    <Money n={last.total} />
+                    <span>Total</span><Money n={last.total} />
                   </div>
                 </div>
               </div>
@@ -252,10 +164,7 @@ function CustomerDisplayInner() {
                   <div className="text-sm text-muted-foreground">
                     Send {last.amount} {last.asset} on {last.network}
                   </div>
-                  {last.qr ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img alt="QR" src={last.qr} className="h-44 w-44 mx-auto" />
-                  ) : null}
+                  {last.qr ? (<img alt="QR" src={last.qr} className="h-44 w-44 mx-auto" />) : null}
                   <div className="font-mono text-xs break-all">{last.address}</div>
                 </div>
               </div>
@@ -269,10 +178,8 @@ function CustomerDisplayInner() {
 
 export default function Page() {
   return (
-    <Suspense
-      fallback={<div className="min-h-screen grid place-items-center p-8">Loading…</div>}
-    >
-      <CustomerDisplayInner />
+    <Suspense fallback={<div className="min-h-screen grid place-items-center p-8">Loading…</div>}>
+      <Inner />
     </Suspense>
   );
 }
