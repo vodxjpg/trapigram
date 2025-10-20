@@ -112,7 +112,7 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
       return NextResponse.json({ error: "Cart line not found" }, { status: 404 });
     }
 
-    /* country + level lookup – used for stock + tier recompute */
+   /* country + level + client lookup – used for stock + tier recompute and affiliate refunds */
     const { rows: cRows } = await pool.query(
       `SELECT cl.country, cl."levelId", ca."clientId"
          FROM carts ca
@@ -123,6 +123,41 @@ async function handleRemove(req: NextRequest, params: { id: string }) {
     const country = cRows[0]?.country as string | undefined;
     const levelId = cRows[0]?.levelId as string | undefined;
     const clientId = cRows[0]?.clientId as string | undefined;
+
+    /* 🔁 Refund affiliate points if the removed line was an affiliate reward */
+    if (deleted.affiliateProductId) {
+      // Points per unit are stored in unitPrice for affiliate lines
+      const qty = Number(deleted.quantity ?? 0);
+      const unitPts = Number(deleted.unitPrice ?? 0);
+      const pointsRefund = qty > 0 && unitPts > 0 ? qty * unitPts : 0;
+
+      if (pointsRefund > 0 && clientId) {
+        // Add points back to balance and reduce pointsSpent (never below zero)
+        await pool.query(
+          `UPDATE "affiliatePointBalances"
+              SET "pointsCurrent" = "pointsCurrent" + $1,
+                  "pointsSpent"   = GREATEST("pointsSpent" - $1, 0),
+                  "updatedAt"     = NOW()
+            WHERE "organizationId" = $2
+              AND "clientId"      = $3`,
+          [pointsRefund, ctx.organizationId, clientId],
+        );
+
+        // Log the refund event for auditability
+        await pool.query(
+          `INSERT INTO "affiliatePointLogs"
+             (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+           VALUES (gen_random_uuid(),
+                   $1,
+                   $2,
+                   $3,
+                   'refund',
+                   'remove from cart',
+                   NOW(), NOW())`,
+          [ctx.organizationId, clientId, pointsRefund],
+        );
+      }
+    }
 
     /* Stock release */
     const releasedQty = Number(deleted.quantity ?? 0);
