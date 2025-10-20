@@ -167,6 +167,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const clientId = cRows[0]?.clientId as string | undefined;
       const channel = cRows[0]?.channel as string | undefined;
 
+      // 🔁 Refund affiliate points if we removed an affiliate product (same as web cart)
+      if (deleted.affiliateProductId && clientId) {
+        const qty = Number(deleted.quantity ?? 0);
+        const unitPts = Number(deleted.unitPrice ?? 0); // affiliate lines store points-per-unit in unitPrice
+        const pointsRefund = qty > 0 && unitPts > 0 ? qty * unitPts : 0;
+        if (pointsRefund > 0) {
+          // Add points back and decrease pointsSpent (not below zero)
+          await pool.query(
+            `UPDATE "affiliatePointBalances"
+                SET "pointsCurrent" = "pointsCurrent" + $1,
+                    "pointsSpent"   = GREATEST("pointsSpent" - $1, 0),
+                    "updatedAt"     = NOW()
+              WHERE "organizationId" = $2
+                AND "clientId"      = $3`,
+            [pointsRefund, ctx.organizationId, clientId],
+          );
+          // Audit log
+          await pool.query(
+            `INSERT INTO "affiliatePointLogs"
+               (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+             VALUES (gen_random_uuid(),$1,$2,$3,'refund','remove from pos cart',NOW(),NOW())`,
+            [ctx.organizationId, clientId, pointsRefund],
+          );
+        }
+      }
+
       // Derive store country from channel
       let storeCountry: string | null = null;
       const storeId = parseStoreIdFromChannel(channel ?? null);
