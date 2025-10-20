@@ -6,6 +6,8 @@ import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { getContext } from "@/lib/context";
 import { enqueueNotificationFanout } from "@/lib/notification-outbox";
+import { emitIdleForCart } from "@/lib/customer-display-emit";
+
 /* ========= Revenue helpers (inlined) ========= */
 
 // Small helper: fetch with timeout + JSON parse
@@ -813,6 +815,9 @@ export async function POST(req: NextRequest) {
 
       // ⬇️ Create revenue for this POS order
       await tx.query("COMMIT");
+
+            // clear the paired customer display now that the cart is closed
+      try { await emitIdleForCart(cartId); } catch (e) { console.warn("[cd][checkout->idle] emit failed", e); }
 
       // ⬇️ Create revenue for this POS order
       try { await getRevenue(order.id, organizationId); } catch (e) { console.warn("[POS checkout][revenue] failed", e); }

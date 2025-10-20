@@ -14,6 +14,7 @@ const hasUpstash =
   !!process.env.UPSTASH_REDIS_REST_URL &&
   !!process.env.UPSTASH_REDIS_REST_TOKEN;
 
+// single in-process emitter for local dev / fallback
 const local = (() => {
   const _g = globalThis as any;
   return (_g.__cd_local_bus ||= new EventEmitter());
@@ -55,28 +56,30 @@ export function replayKey(registerId: string) {
   return `cd:recent:${registerId}`;
 }
 
-/** Fanout + cache (called by POS) */
+/** Fanout + cache (called by POS). No-ops if missing ids. */
 export async function publishDisplayEvent(
   registerId: string,
-  sessionId: string,
+  sessionId: string | null | undefined,
   evt: DisplayEvent
 ) {
-  // 1) Pusher fanout
+  if (!registerId || !sessionId) return;
+
+  const ch = channelName(registerId, sessionId);
+
+  // 1) Pusher fanout (or local fallback)
   if (hasPusher) {
     try {
-      await pusher.trigger(channelName(registerId, sessionId), "event", evt);
+      await pusher.trigger(ch, "event", evt);
     } catch (e) {
       console.error("[cd-bus] pusher.trigger failed", e);
     }
   } else {
-    // local dev bus
-    local.emit(channelName(registerId, sessionId), evt);
+    local.emit(ch, evt);
   }
 
-  // 2) Short replay buffer (optional)
+  // 2) Short replay buffer (optional) — keep last 50 per register
   if (hasUpstash) {
     try {
-      // keep last 50 per register (session-agnostic)
       await lpushRecent(replayKey(registerId), evt, 50, 7 * 24 * 3600);
     } catch (e) {
       console.error("[cd-bus] upstash lpushRecent failed", e);
@@ -84,12 +87,13 @@ export async function publishDisplayEvent(
   }
 }
 
-/** Local fallback subscribe for dev (SSE kept working if no Pusher) */
+/** Local fallback subscribe for dev (SSE keeps working if no Pusher) */
 export function subscribeLocal(
   registerId: string,
-  sessionId: string,
+  sessionId: string | null | undefined,
   cb: (e: DisplayEvent) => void
 ) {
+  if (!registerId || !sessionId) return () => {};
   const ch = channelName(registerId, sessionId);
   const h = (e: DisplayEvent) => cb(e);
   local.on(ch, h);

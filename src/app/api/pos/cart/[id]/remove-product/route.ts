@@ -7,6 +7,7 @@ import { getContext } from "@/lib/context";
 import { adjustStock } from "@/lib/stock";
 import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
 import { resolveUnitPrice } from "@/lib/pricing";
+import { emitCartToDisplay } from "@/lib/customer-display-emit";
 
 /** Idempotency helper */
 async function withIdempotency(
@@ -276,7 +277,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         [newHash, cartId],
       );
 
+            // broadcast latest cart to the paired customer display
+      try { await emitCartToDisplay(cartId); } catch (e) { console.warn("[cd][remove] emit failed", e); }
       return { status: 200, body: deleted };
+
     } catch (err: any) {
       console.error("[POS POST /pos/cart/:id/remove-product]", err);
       if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };

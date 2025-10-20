@@ -8,7 +8,7 @@ import crypto from "crypto";
 import { resolveUnitPrice } from "@/lib/pricing";
 import { adjustStock } from "@/lib/stock";
 import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
-
+import { emitCartToDisplay } from "@/lib/customer-display-emit";
 /* ───────────────────────────────────────────────────────────── */
 
 async function withIdempotency(
@@ -366,6 +366,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           subtotal: Number(unitPrice) * quantity,
         };
 
+                // broadcast latest cart to the paired customer display
+        try { await emitCartToDisplay(cartId); } catch (e) { console.warn("[cd][add] emit failed", e); }
         return { status: 201, body: { product, quantity } };
       } catch (e) {
         await client.query("ROLLBACK");

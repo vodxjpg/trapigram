@@ -7,6 +7,7 @@ import crypto from "crypto";
 import { adjustStock } from "@/lib/stock";
 import { resolveUnitPrice } from "@/lib/pricing";
 import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
+import { emitCartToDisplay } from "@/lib/customer-display-emit";
 
 /* ───────────────────────────────────────────────────────────── */
 
@@ -384,6 +385,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         );
 
         await client.query("COMMIT");
+
+        // broadcast latest cart to the paired customer display
+try { await emitCartToDisplay(cartId); } catch (e) { console.warn("[cd][update] emit failed", e); }
 
         // snapshot (merge normal + affiliate like web cart)
         const [pRows, aRows] = await Promise.all([
