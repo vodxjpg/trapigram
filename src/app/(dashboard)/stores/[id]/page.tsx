@@ -40,6 +40,8 @@ import {
   Search,
   Info,
   Monitor,
+  RefreshCw,
+  Link2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -56,9 +58,7 @@ import {
 } from "@/components/ui/tooltip";
 import Select from "react-select";
 
-// NEW: customer display status manager
-import CustomerDisplayStatus from "@/app/(dashboard)/pos/components/CustomerDisplayStatus";
-
+/* ───────────────────────── Types ───────────────────────── */
 type Store = {
   id: string;
   name: string;
@@ -81,8 +81,177 @@ type Register = {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+
+  // NEW: customer display fields (fetched via /api/pos/registers/:id)
+  displaySessionId?: string | null;
+  displayPairedAt?: string | null;
 };
 
+/* ───────────────────────── Helpers ───────────────────────── */
+function buildPortalUrl(origin: string) {
+  // Public page that requires no auth (you created /customer-display)
+  return `${origin.replace(/\/$/, "")}/customer-display`;
+}
+
+function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a className="underline underline-offset-2" href={href} target="_blank" rel="noreferrer">
+      {children}
+    </a>
+  );
+}
+
+/* ─────────────────── Inline Manage Display Panel ───────────────────
+   This replaces the old CustomerDisplayStatus and removes all expiry UX.
+   It shows:
+     • Current status (Paired / Not paired)
+     • Generate 6-digit code (non-expiring UX)
+     • Unpair
+     • Portal URL + quick QR
+*/
+function ManageCustomerDisplay({ registerId, onChanged }: { registerId: string; onChanged?: () => void }) {
+  const [loading, setLoading] = React.useState(false);
+  const [statusLoading, setStatusLoading] = React.useState(true);
+  const [paired, setPaired] = React.useState<boolean>(false);
+  const [pairedAt, setPairedAt] = React.useState<string | null>(null);
+  const [code, setCode] = React.useState<string | null>(null);
+  const [portalUrl, setPortalUrl] = React.useState<string | null>(null);
+
+  const refreshStatus = React.useCallback(async () => {
+    setStatusLoading(true);
+    try {
+      const r = await fetch(`/api/pos/registers/${registerId}`);
+      if (!r.ok) throw new Error("Failed to load register");
+      const j = await r.json();
+      const reg = j.register || j;
+      setPaired(Boolean(reg?.displaySessionId));
+      setPairedAt(reg?.displayPairedAt ?? null);
+    } catch (e: any) {
+      toast.error(e?.message || "Could not load display status");
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [registerId]);
+
+  React.useEffect(() => {
+    // initial status + compute default portal url
+    refreshStatus();
+    if (typeof window !== "undefined") {
+      setPortalUrl(buildPortalUrl(window.location.origin));
+    }
+  }, [refreshStatus]);
+
+  async function gen() {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/pos/registers/${registerId}/customer-display/code`, { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+
+      // The backend may return portalUrl; if not, fallback to our computed one.
+      setCode(j.code);
+      setPortalUrl(j.portalUrl || (typeof window !== "undefined" ? buildPortalUrl(window.location.origin) : null));
+
+      toast.success("Pairing code generated");
+      // NOTE: No expiry text — by policy, the code is reusable until unpaired/rotated.
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to generate code");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function unpair() {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/pos/registers/${registerId}/customer-display/unpair`, { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+      toast.success("Customer display unpaired");
+      setPaired(false);
+      setPairedAt(null);
+      setCode(null);
+      onChanged?.();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to unpair");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="font-medium">Status</div>
+        <div className="text-xs text-muted-foreground">
+          {statusLoading ? "Loading…" : paired ? "Paired" : "Not paired"}
+        </div>
+      </div>
+
+      {paired && (
+        <div className="rounded-md border p-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium">Paired</div>
+              {pairedAt && (
+                <div className="text-xs text-muted-foreground">
+                  Since {new Date(pairedAt).toLocaleString()}
+                </div>
+              )}
+            </div>
+            <Button variant="outline" onClick={unpair} disabled={loading}>
+              Unpair
+            </Button>
+          </div>
+          {portalUrl && (
+            <div className="mt-3 text-xs">
+              Open display at: <ExternalLink href={portalUrl}>{portalUrl}</ExternalLink>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!paired && (
+        <div className="rounded-md border p-3 space-y-3">
+          <div className="text-sm">
+            Generate a 6-digit code to pair a screen. The pairing remains active until you unpair.
+          </div>
+          <div className="flex items-center gap-2">
+            <Button onClick={gen} disabled={loading}>Generate code</Button>
+            <Button variant="outline" onClick={refreshStatus}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh status
+            </Button>
+          </div>
+
+          {!!code && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+              <div className="md:col-span-2">
+                <Label>6-digit pairing code</Label>
+                <Input readOnly value={code} className="text-2xl tracking-widest text-center font-mono" />
+                {portalUrl && (
+                  <p className="text-xs mt-1">
+                    Open customer screen at:&nbsp;
+                    <ExternalLink href={portalUrl}>{portalUrl}</ExternalLink>
+                  </p>
+                )}
+              </div>
+              {portalUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  alt="Portal QR"
+                  className="mx-auto h-32 w-32"
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(portalUrl)}`}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ───────────────────────── Main Page ───────────────────────── */
 export default function StoreRegistersPage() {
   const params = useParams() as { id: string };
   const router = useRouter();
@@ -110,7 +279,7 @@ export default function StoreRegistersPage() {
   );
   const [savingTemplate, setSavingTemplate] = React.useState(false);
 
-  // NEW: customer display dialog state
+  // Manage display dialog
   const [displayOpen, setDisplayOpen] = React.useState(false);
   const [displayRegisterId, setDisplayRegisterId] = React.useState<string | null>(null);
 
@@ -128,7 +297,28 @@ export default function StoreRegistersPage() {
 
       if (!rRes.ok) throw new Error("Failed to load registers");
       const r = await rRes.json();
-      setRows(r.registers || []);
+      const base: Register[] = r.registers || [];
+
+      // Fetch display status for each register so table shows Paired/Not paired after refresh
+      const withStatus = await Promise.all(
+        base.map(async (reg) => {
+          try {
+            const res = await fetch(`/api/pos/registers/${reg.id}`);
+            if (!res.ok) return reg;
+            const j = await res.json();
+            const details = j.register || j;
+            return {
+              ...reg,
+              displaySessionId: details?.displaySessionId ?? null,
+              displayPairedAt: details?.displayPairedAt ?? null,
+            } as Register;
+          } catch {
+            return reg;
+          }
+        })
+      );
+
+      setRows(withStatus);
 
       if (tRes.ok) {
         const tj = await tRes.json();
@@ -152,7 +342,7 @@ export default function StoreRegistersPage() {
     return rows.filter((r) => r.name.toLowerCase().includes(q));
   }, [rows, query]);
 
-  // columns
+  /* ─────────────────── Table Columns ─────────────────── */
   const columns = React.useMemo<ColumnDef<Register, any>[]>(() => [
     {
       id: "select",
@@ -190,6 +380,36 @@ export default function StoreRegistersPage() {
           </Badge>
         ),
     },
+    // NEW: Customer Display status
+    {
+      id: "display",
+      header: "Customer display",
+      size: 220,
+      cell: ({ row }) => {
+        const r = row.original;
+        const paired = Boolean(r.displaySessionId);
+        return (
+          <div className="flex items-center gap-2">
+            <Badge variant={paired ? "default" : "secondary"}>
+              {paired ? "Paired" : "Not paired"}
+            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 gap-2"
+              onClick={() => {
+                setDisplayRegisterId(r.id);
+                setDisplayOpen(true);
+              }}
+              title="Manage customer display"
+            >
+              <Monitor className="h-4 w-4" />
+              Manage
+            </Button>
+          </div>
+        );
+      },
+    },
     {
       accessorKey: "createdAt",
       header: "Created",
@@ -200,32 +420,6 @@ export default function StoreRegistersPage() {
         </span>
       ),
     },
-
-    // NEW: Customer Display manage button
-    {
-      id: "display",
-      header: "Customer display",
-      size: 170,
-      cell: ({ row }) => {
-        const r = row.original;
-        return (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 px-2 gap-2"
-            onClick={() => {
-              setDisplayRegisterId(r.id);
-              setDisplayOpen(true);
-            }}
-            title="Manage customer display"
-          >
-            <Monitor className="h-4 w-4" />
-            Manage
-          </Button>
-        );
-      },
-    },
-
     {
       id: "actions",
       header: "",
@@ -269,6 +463,7 @@ export default function StoreRegistersPage() {
     enableRowSelection: true,
   });
 
+  /* ─────────────────── Create / Edit ─────────────────── */
   function openCreate() {
     setEditing(null);
     setFormName("");
@@ -325,6 +520,7 @@ export default function StoreRegistersPage() {
     }
   }
 
+  /* ─────────────────── Delete ─────────────────── */
   async function deleteNow(ids: string[]) {
     await Promise.all(
       ids.map(async (id) => {
@@ -357,6 +553,7 @@ export default function StoreRegistersPage() {
 
   const selectedCount = table.getSelectedRowModel().rows.length;
 
+  /* ─────────────────── Render ─────────────────── */
   return (
     <div className="container mx-auto py-6 px-6 space-y-6">
       <div className="flex items-center justify-between gap-3">
@@ -408,6 +605,10 @@ export default function StoreRegistersPage() {
                     <p>
                       Toggle a register’s <strong>Active</strong> state to hide/show it in the POS selector.
                       Use the actions menu to rename or delete a register.
+                    </p>
+                    <p className="flex items-center gap-1">
+                      <Link2 className="h-3.5 w-3.5" />
+                      Pair a dedicated screen from the new <strong>Customer display</strong> column.
                     </p>
                   </div>
                   <DialogFooter>
@@ -552,14 +753,20 @@ export default function StoreRegistersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Customer Display manage dialog */}
+      {/* Manage Customer Display */}
       <Dialog open={displayOpen} onOpenChange={setDisplayOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Customer display</DialogTitle>
           </DialogHeader>
           {displayRegisterId ? (
-            <CustomerDisplayStatus registerId={displayRegisterId} />
+            <ManageCustomerDisplay
+              registerId={displayRegisterId}
+              onChanged={async () => {
+                // After unpair or actions, refresh table so the paired badge updates
+                await load();
+              }}
+            />
           ) : null}
         </DialogContent>
       </Dialog>
