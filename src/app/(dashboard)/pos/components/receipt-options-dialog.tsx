@@ -1,3 +1,4 @@
+// src/app/(dashboard)/pos/components/receipt-options-dialog.tsx
 "use client";
 
 import * as React from "react";
@@ -21,6 +22,18 @@ type Props = {
   defaultEmail?: string;
 };
 
+type NiftiView = {
+  amount: number;
+  asset?: string | null;
+  chain?: string | null;
+  address?: string | null;
+  qr?: string | null; // url or data-uri
+};
+
+function looksNiftipayName(s?: string | null) {
+  return !!s && /niftipay/i.test(s);
+}
+
 export default function ReceiptOptionsDialog({
   open,
   onOpenChange,
@@ -29,22 +42,49 @@ export default function ReceiptOptionsDialog({
 }: Props) {
   const [email, setEmail] = useState(defaultEmail || "");
   const [sending, setSending] = useState(false);
+
+  // we keep both the raw payload and a normalized "order-ish" object
+  const [raw, setRaw] = useState<any | null>(null);
   const [order, setOrder] = useState<any | null>(null);
 
-  // fetch order (for payment.splits + niftipay meta)
+  // fetch order (for payments + niftipay meta)
   useEffect(() => {
     let ignore = false;
     if (!open || !orderId) {
+      setRaw(null);
       setOrder(null);
       return;
     }
     (async () => {
       try {
-        const r = await fetch(`/api/order/${orderId}`);
-        const j = await r.json();
-        if (!ignore) setOrder(j);
+        // Most backends expose /api/orders/:id (plural). Fall back to /api/order/:id if needed.
+        const endpoints = [`/api/orders/${orderId}`, `/api/order/${orderId}`];
+        let data: any = null;
+        for (const url of endpoints) {
+          try {
+            const r = await fetch(url, { cache: "no-store" });
+            if (r.ok) {
+              data = await r.json().catch(() => ({}));
+              break;
+            }
+          } catch { /* try next */ }
+        }
+        if (!data) throw new Error("Could not load order");
+        if (ignore) return;
+
+        // Accept a few common shapes: { order, payment }, { order }, or the order itself.
+        const ord =
+          data?.order ??
+          data?.data ??
+          (data?.id ? data : null);
+
+        setRaw(data);
+        setOrder(ord);
       } catch {
-        // ignore
+        if (!ignore) {
+          setRaw(null);
+          setOrder(null);
+        }
       }
     })();
     return () => {
@@ -54,76 +94,114 @@ export default function ReceiptOptionsDialog({
 
   /* ─────────────────────────────────────────────────────────────
    * Extract Niftipay meta + match to Niftipay splits by amount
-   * (one QR/address block per split)
+   *  - We’re generous with shapes so it “just works”.
+   *  - If no splits are found, we’ll still show all meta blocks.
    * ──────────────────────────────────────────────────────────── */
-  type NiftiView = {
-    amount: number;
-    asset?: string | null;
-    chain?: string | null;
-    address?: string | null;
-    qr?: string | null; // url or data-uri
-  };
-
   const niftiBlocks = useMemo(() => {
-    if (!order) return [] as Array<NiftiView & { idx: number }>;
+    if (!raw && !order) return [] as Array<NiftiView & { idx: number }>;
 
-    const splits: Array<{ name: string; amount: number }> =
-      order?.payment?.splits || [];
-    const niftiSplits = splits
-      .filter((s) => /niftipay/i.test(s.name || ""))
-      .map((s) => ({ amount: Number(s.amount || 0) }));
+    // 1) find splits from a few likely places
+    const splitsFromRaw =
+      raw?.payment?.splits ??
+      raw?.order?.payment?.splits ??
+      raw?.orderPayments ??
+      raw?.payments ??
+      [];
 
-    const metas: NiftiView[] = (() => {
-      const arr: any[] = Array.isArray(order.orderMeta) ? order.orderMeta : [];
-      const out: NiftiView[] = [];
-      for (const m of arr) {
-        // accept either a root object or an { order: {...} } envelope
-        const node = m?.order ?? m ?? {};
-        const amount = Number(node.amount ?? node.total ?? node.value ?? NaN);
-        const asset = node.asset ?? node.assetSymbol ?? node.coin ?? null;
-        const chain = node.network ?? node.chain ?? null;
-        const address =
-          node.walletAddress ??
-          node.address ??
-          node.publicAddress ??
-          node.payToAddress ??
-          null;
-        const qr =
-          node.qr ?? node.qrUrl ?? node.qrImageUrl ?? node.qrCodeUrl ?? null;
+    const splitsFromOrder =
+      order?.payment?.splits ??
+      order?.orderPayments ??
+      order?.payments ??
+      [];
 
-        if (Number.isFinite(amount) && (address || qr)) {
-          out.push({ amount, asset, chain, address, qr });
+    // normalize splits to { name?: string; amount: number }
+    const toSplit = (x: any) => {
+      if (!x) return null;
+      const name =
+        x.name ?? x.methodName ?? x.method ?? x.methodId ?? x.id ?? null;
+      const amount = Number(x.amount ?? x.value ?? x.total ?? NaN);
+      if (!Number.isFinite(amount)) return null;
+      return { name: name ? String(name) : null, amount };
+    };
+
+    const splits = [...splitsFromRaw, ...splitsFromOrder]
+      .map(toSplit)
+      .filter(Boolean) as { name: string | null; amount: number }[];
+
+    const niftiSplits =
+      splits.filter((s) => looksNiftipayName(s.name)) ||
+      [];
+
+    // 2) extract niftipay-ish meta from orderMeta in a forgiving way
+    const metaArray: any[] = Array.isArray(order?.orderMeta)
+      ? order!.orderMeta
+      : Array.isArray(raw?.orderMeta)
+      ? raw!.orderMeta
+      : Array.isArray(raw?.order?.orderMeta)
+      ? raw!.order.orderMeta
+      : [];
+
+    const metas: NiftiView[] = [];
+    for (const m of metaArray) {
+      // accept root or { order: ... }
+      const node = m?.order ?? m ?? {};
+      // accept a few common keys
+      const amount = Number(node.amount ?? node.total ?? node.value ?? NaN);
+      const asset = node.asset ?? node.assetSymbol ?? node.coin ?? null;
+      const chain = node.network ?? node.chain ?? null;
+      const address =
+        node.walletAddress ??
+        node.address ??
+        node.publicAddress ??
+        node.payToAddress ??
+        null;
+      const qr =
+        node.qr ??
+        node.qrUrl ??
+        node.qrImageUrl ??
+        node.qrCodeUrl ??
+        null;
+
+      // If this meta has something we can display, keep it.
+      if (Number.isFinite(amount) && (address || qr)) {
+        metas.push({ amount, asset, chain, address, qr });
+      }
+    }
+
+    if (!metas.length) return [];
+
+    // 3) If we have niftipay splits, greedily match by amount (so exactly one block per split).
+    if (niftiSplits.length) {
+      const used = new Array(metas.length).fill(false);
+      const out: Array<NiftiView & { idx: number }> = [];
+      niftiSplits.forEach((s, idx) => {
+        let pick = -1;
+        for (let i = 0; i < metas.length; i++) {
+          if (!used[i] && Math.abs(metas[i].amount - s.amount) < 0.0001) {
+            pick = i;
+            break;
+          }
         }
-      }
-      return out;
-    })();
-
-    // greedy match by amount so we show exactly one block per split
-    const used = new Array(metas.length).fill(false);
-    const blocks: Array<NiftiView & { idx: number }> = [];
-    niftiSplits.forEach((s, idx) => {
-      let pick = -1;
-      for (let i = 0; i < metas.length; i++) {
-        if (!used[i] && Math.abs(metas[i].amount - s.amount) < 0.0001) {
-          pick = i;
-          break;
+        if (pick >= 0) {
+          used[pick] = true;
+          out.push({ ...metas[pick], idx });
         }
-      }
-      if (pick >= 0) {
-        used[pick] = true;
-        blocks.push({ ...metas[pick], idx });
-      }
-    });
-    return blocks;
-  }, [order]);
+      });
+      if (out.length) return out;
+    }
+
+    // 4) Fallback: show all niftipay-looking meta blocks (even if we can’t see splits)
+    return metas.map((m, i) => ({ ...m, idx: i }));
+  }, [raw, order]);
 
   /* ─────────────────────────────────────────────────────────────
    * Print / Email actions
    * ──────────────────────────────────────────────────────────── */
   const doPrint = async () => {
     try {
-      // Many setups just open a printable route; adjust if needed
-      window.open(`/pos/receipt/${orderId}?print=1`, "_blank", "noopener");
+      if (!orderId) return;
+      // Open the actual PDF API route (the previous page URL was 404)
+      window.open(`/api/pos/receipts/${orderId}/pdf`, "_blank", "noopener");
     } catch {
       toast.error("Unable to open printer view");
     }
@@ -173,7 +251,7 @@ export default function ReceiptOptionsDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Niftipay QR/address blocks – one per split */}
+          {/* Niftipay QR/address blocks – robust extraction */}
           {niftiBlocks.length > 0 && (
             <div className="space-y-3">
               {niftiBlocks.map((b) => (
@@ -184,6 +262,7 @@ export default function ReceiptOptionsDialog({
                   </div>
 
                   {b.qr && (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={b.qr}
                       alt="Payment QR"
