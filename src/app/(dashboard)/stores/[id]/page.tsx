@@ -31,7 +31,16 @@ import {
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { MoreHorizontal, Pencil, Plus, Trash2, ArrowLeft, Search, Info } from "lucide-react";
+import {
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Trash2,
+  ArrowLeft,
+  Search,
+  Info,
+  Monitor,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -46,6 +55,9 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import Select from "react-select";
+
+// NEW: customer display status manager
+import CustomerDisplayStatus from "@/app/(dashboard)/pos/components/CustomerDisplayStatus";
 
 type Store = {
   id: string;
@@ -71,14 +83,6 @@ type Register = {
   updatedAt: string;
 };
 
-type Client = {
-  id: string;
-  username?: string | null;
-  firstName?: string | null;
-  lastName?: string | null;
-  email?: string | null;
-};
-
 export default function StoreRegistersPage() {
   const params = useParams() as { id: string };
   const router = useRouter();
@@ -93,7 +97,6 @@ export default function StoreRegistersPage() {
   const [editing, setEditing] = React.useState<Register | null>(null);
   const [formName, setFormName] = React.useState("");
   const [formActive, setFormActive] = React.useState(true);
-  const [formWalkInClientId, setFormWalkInClientId] = React.useState<string>("");
   const [saving, setSaving] = React.useState(false);
 
   const [confirmOpen, setConfirmOpen] = React.useState(false);
@@ -106,6 +109,10 @@ export default function StoreRegistersPage() {
     [templates],
   );
   const [savingTemplate, setSavingTemplate] = React.useState(false);
+
+  // NEW: customer display dialog state
+  const [displayOpen, setDisplayOpen] = React.useState(false);
+  const [displayRegisterId, setDisplayRegisterId] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setIsLoading(true);
@@ -145,7 +152,7 @@ export default function StoreRegistersPage() {
     return rows.filter((r) => r.name.toLowerCase().includes(q));
   }, [rows, query]);
 
-  // NOTE: use ColumnDef<Register, any>[] for smooth compatibility with StandardDataTable
+  // columns
   const columns = React.useMemo<ColumnDef<Register, any>[]>(() => [
     {
       id: "select",
@@ -193,6 +200,32 @@ export default function StoreRegistersPage() {
         </span>
       ),
     },
+
+    // NEW: Customer Display manage button
+    {
+      id: "display",
+      header: "Customer display",
+      size: 170,
+      cell: ({ row }) => {
+        const r = row.original;
+        return (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 gap-2"
+            onClick={() => {
+              setDisplayRegisterId(r.id);
+              setDisplayOpen(true);
+            }}
+            title="Manage customer display"
+          >
+            <Monitor className="h-4 w-4" />
+            Manage
+          </Button>
+        );
+      },
+    },
+
     {
       id: "actions",
       header: "",
@@ -271,7 +304,8 @@ export default function StoreRegistersPage() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Idempotency-Key": (crypto as any).randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+            "Idempotency-Key":
+              (crypto as any).randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
           },
           body: JSON.stringify({
             storeId,
@@ -368,8 +402,8 @@ export default function StoreRegistersPage() {
                   </DialogHeader>
                   <div className="space-y-3 text-sm">
                     <p>
-                      <strong>Registers</strong> are the POS endpoints inside this store (e.g.
-                      “Front Counter”, “Pickup Desk”). You can add multiple registers per store.
+                      <strong>Registers</strong> are the POS endpoints inside this store
+                      (e.g. “Front Counter”, “Pickup Desk”). You can add multiple registers per store.
                     </p>
                     <p>
                       Toggle a register’s <strong>Active</strong> state to hide/show it in the POS selector.
@@ -515,6 +549,18 @@ export default function StoreRegistersPage() {
               {saving ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Customer Display manage dialog */}
+      <Dialog open={displayOpen} onOpenChange={setDisplayOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Customer display</DialogTitle>
+          </DialogHeader>
+          {displayRegisterId ? (
+            <CustomerDisplayStatus registerId={displayRegisterId} />
+          ) : null}
         </DialogContent>
       </Dialog>
 
