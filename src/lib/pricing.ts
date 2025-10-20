@@ -24,7 +24,7 @@ function parseMap<T extends object>(m: any): T {
 export async function computeMoneyPrice(product: any, country: string) {
   const sale = parseMap<Record<string, number>>(product.salePrice)[country];
   const regular = parseMap<Record<string, number>>(product.regularPrice)[country];
-  const price = sale ?? regular;
+  const price = sale === undefined || sale === 0 ? regular : sale;
   if (price == null) {
     throw new Error(`No money price for ${country}`);
   }
