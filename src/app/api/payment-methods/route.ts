@@ -9,6 +9,7 @@ import { getContext } from "@/lib/context";
 const paymentCreateSchema = z.object({
   name: z.string().min(1, { message: "Name is required." }),
   active: z.boolean().optional().default(true),
+  posVisible: z.boolean().optional().default(true),
   apiKey: z.string().optional().nullable(),
   secretKey: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
@@ -18,9 +19,10 @@ const paymentCreateSchema = z.object({
 
 /* =========================================================
    GET /api/payment-methods
-   query params: page, pageSize, search, active
-   - active=true  -> only return active methods
-   - active absent -> return all methods
+   query params: page, pageSize, search, active, posVisible
+   - active=true/false       -> filter by activity
+   - posVisible=true/false   -> filter by POS visibility
+   - active/posVisible absent -> no filter
    ========================================================= */
 export async function GET(req: NextRequest) {
   const ctx = await getContext(req);
@@ -39,69 +41,96 @@ export async function GET(req: NextRequest) {
   const pageSize = Math.min(100, Number(searchParams.get("pageSize")) || 10);
   const search = (searchParams.get("search") || "").trim();
 
-  // optional filter: only active methods when active=true
-  const activeParam = searchParams.get("active");
-  const filterActive = activeParam === "true";
+  // Parse boolean filters (allow "true"/"false"; anything else -> no filter)
+  const parseBoolParam = (v: string | null): boolean | null => {
+    if (v === "true") return true;
+    if (v === "false") return false;
+    return null;
+  };
+  const filterActive = parseBoolParam(searchParams.get("active"));
+  const filterPos = parseBoolParam(searchParams.get("posVisible"));
 
-  // count
-  let countSql = `SELECT COUNT(*) FROM "paymentMethods" WHERE "tenantId" = $1`;
-  const countVals: any[] = [tenantId];
+  // -------- COUNT --------
+  {
+    const where: string[] = [`"tenantId" = $1`];
+    const vals: any[] = [tenantId];
+    let i = 2;
 
-  if (filterActive) {
-    countSql += ` AND active = TRUE`;
+    if (filterActive !== null) {
+      where.push(`active = $${i++}`);
+      vals.push(filterActive);
+    }
+    if (filterPos !== null) {
+      where.push(`COALESCE("posVisible", TRUE) = $${i++}`);
+      vals.push(filterPos);
+    }
+    if (search) {
+      where.push(
+        `(
+          name ILIKE $${i}
+          OR CAST(active AS TEXT) ILIKE $${i}
+          OR CAST("default" AS TEXT) ILIKE $${i}
+          OR CAST("posVisible" AS TEXT) ILIKE $${i}
+          OR COALESCE(description,'') ILIKE $${i}
+          OR COALESCE(instructions,'') ILIKE $${i}
+        )`
+      );
+      vals.push(`%${search}%`);
+      i++;
+    }
+
+    const countSql = `SELECT COUNT(*) FROM "paymentMethods" WHERE ${where.join(" AND ")}`;
+    try {
+      const [{ count }] = (await pool.query(countSql, vals)).rows as { count: string }[];
+      var totalRows = Number(count);
+    } catch (error) {
+      console.error("[GET /api/payment-methods][count] error:", error);
+      return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    }
   }
 
+  // -------- DATA --------
+  const where: string[] = [`"tenantId" = $1`];
+  const dataVals: any[] = [tenantId];
+  let j = 2;
+
+  if (filterActive !== null) {
+    where.push(`active = $${j++}`);
+    dataVals.push(filterActive);
+  }
+  if (filterPos !== null) {
+    where.push(`COALESCE("posVisible", TRUE) = $${j++}`);
+    dataVals.push(filterPos);
+  }
   if (search) {
-    // NOTE: $2 is safe here because we didn't add any bound param for 'active'
-    countSql += `
-      AND (
-        name ILIKE $2
-        OR CAST(active AS TEXT) ILIKE $2
-        OR CAST("default" AS TEXT) ILIKE $2
-        OR COALESCE(description,'') ILIKE $2
-        OR COALESCE(instructions,'') ILIKE $2
-      )
-    `;
-    countVals.push(`%${search}%`);
+    where.push(
+      `(
+        name ILIKE $${j}
+        OR CAST(active AS TEXT) ILIKE $${j}
+        OR CAST("default" AS TEXT) ILIKE $${j}
+        OR CAST("posVisible" AS TEXT) ILIKE $${j}
+        OR COALESCE(description,'') ILIKE $${j}
+        OR COALESCE(instructions,'') ILIKE $${j}
+      )`
+    );
+    dataVals.push(`%${search}%`);
+    j++;
   }
 
-  // data
-  let dataSql = `
+  const dataSql = `
     SELECT
-      id, name, active, "apiKey", "secretKey",
+      id, name, active, "posVisible", "apiKey", "secretKey",
       description, instructions, "default",
       "createdAt", "updatedAt"
     FROM "paymentMethods"
-    WHERE "tenantId" = $1
+    WHERE ${where.join(" AND ")}
+    ORDER BY "createdAt" DESC
+    LIMIT $${j} OFFSET $${j + 1}
   `;
-  const dataVals: any[] = [tenantId];
-
-  if (filterActive) {
-    dataSql += ` AND active = TRUE`;
-  }
-
-  if (search) {
-    // NOTE: $2 is safe here for the same reason as above
-    dataSql += `
-      AND (
-        name ILIKE $2
-        OR CAST(active AS TEXT) ILIKE $2
-        OR CAST("default" AS TEXT) ILIKE $2
-        OR COALESCE(description,'') ILIKE $2
-        OR COALESCE(instructions,'') ILIKE $2
-      )
-    `;
-    dataVals.push(`%${search}%`);
-  }
-
-  dataSql += ` ORDER BY "createdAt" DESC LIMIT $${dataVals.length + 1} OFFSET $${dataVals.length + 2}`;
   dataVals.push(pageSize, (page - 1) * pageSize);
 
   try {
-    const [{ count }] = (await pool.query(countSql, countVals)).rows as { count: string }[];
-    const totalRows = Number(count);
-    const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-
+    const totalPages = Math.max(1, Math.ceil((totalRows ?? 0) / pageSize));
     const { rows: methods } = await pool.query(dataSql, dataVals);
 
     return NextResponse.json({
@@ -117,7 +146,7 @@ export async function GET(req: NextRequest) {
 
 /* =========================================================
    POST /api/payment-methods
-   body: { name, active?, apiKey?, secretKey?, description?, instructions?, default? }
+   body: { name, active?, posVisible?, apiKey?, secretKey?, description?, instructions?, default? }
    ========================================================= */
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
@@ -138,12 +167,12 @@ export async function POST(req: NextRequest) {
     const id = uuidv4();
     const insertSql = `
       INSERT INTO "paymentMethods"
-        (id, name, active, "apiKey", "secretKey",
+        (id, name, active, "posVisible", "apiKey", "secretKey",
          description, instructions, "default",
          "tenantId", "createdAt", "updatedAt")
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW(), NOW())
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW(), NOW())
       RETURNING
-        id, name, active, "apiKey", "secretKey",
+        id, name, active, "posVisible", "apiKey", "secretKey",
         description, instructions, "default",
         "createdAt", "updatedAt"
     `;
@@ -151,6 +180,7 @@ export async function POST(req: NextRequest) {
       id,
       parsed.name,
       parsed.active ?? true,
+      parsed.posVisible ?? true,
       parsed.apiKey ?? null,
       parsed.secretKey ?? null,
       parsed.description ?? null,

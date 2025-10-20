@@ -522,7 +522,9 @@ async function activePaymentMethods(tenantId: string) {
   const { rows } = await pool.query(
     `SELECT id, name, active, "default", description, instructions
        FROM "paymentMethods"
-      WHERE "tenantId" = $1 AND active = TRUE
+      WHERE "tenantId" = $1
+        AND active = TRUE
+        AND COALESCE("posVisible", TRUE) = TRUE
       ORDER BY "createdAt" DESC`,
     [tenantId]
   );

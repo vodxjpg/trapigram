@@ -51,6 +51,7 @@ export interface PaymentMethod {
   id: string;
   name: string;
   active: boolean;
+  posVisible?: boolean; // ← NEW
   apiKey?: string | null;
   secretKey?: string | null;
   description?: string | null;
@@ -141,6 +142,28 @@ export function PaymentMethodsTable() {
     }
   };
 
+  // NEW: toggle POS visibility
+  const togglePosVisible = async (pm: PaymentMethod) => {
+    if (!canUpdate) return;
+    try {
+      const next = !(pm.posVisible ?? true);
+      const res = await fetch(`/api/payment-methods/${pm.id}/pos-visible`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ posVisible: next }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || "Failed to update POS visibility");
+      }
+      setMethods((prev) =>
+        prev.map((m) => (m.id === pm.id ? { ...m, posVisible: next } : m))
+      );
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to update POS visibility");
+    }
+  };
+
   const deleteRow = async (pm: PaymentMethod) => {
     if (!canDelete) return;
     if (pm.default) {
@@ -215,6 +238,18 @@ export function PaymentMethodsTable() {
           <Switch
             checked={row.original.active}
             onCheckedChange={() => toggleActive(row.original)}
+            disabled={!canUpdate}
+          />
+        ),
+      },
+      // NEW: Show in POS column
+      {
+        id: "posVisible",
+        header: "Show in POS",
+        cell: ({ row }) => (
+          <Switch
+            checked={row.original.posVisible ?? true}
+            onCheckedChange={() => togglePosVisible(row.original)}
             disabled={!canUpdate}
           />
         ),
