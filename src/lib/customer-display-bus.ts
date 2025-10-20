@@ -4,11 +4,18 @@ import { pusher } from "@/lib/pusher-server";
 import { lpushRecent } from "@/lib/pubsub";
 import { EventEmitter } from "events";
 
+// top of file
+const disablePusher =
+  String(process.env.CD_DISABLE_PUSHER || "").toLowerCase() === "1" ||
+  String(process.env.CD_DISABLE_PUSHER || "").toLowerCase() === "true";
+
 const hasPusher =
+  !disablePusher &&
   !!process.env.PUSHER_APP_ID &&
   !!process.env.PUSHER_KEY &&
   !!process.env.PUSHER_SECRET &&
   !!process.env.PUSHER_CLUSTER;
+
 
 const hasUpstash =
   !!process.env.UPSTASH_REDIS_REST_URL &&

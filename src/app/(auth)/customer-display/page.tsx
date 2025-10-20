@@ -25,16 +25,17 @@ type EventPayload =
 function Money({ n }: { n: number }) { return <span>${n.toFixed(2)}</span>; }
 
 function Inner() {
-  const _sp = useSearchParams(); // reserved if you later use ?accessKey=
+  const _sp = useSearchParams(); // can also use ?transport=sse|poll
   const [stage, setStage] = React.useState<"pair"|"live">("pair");
   const [pairCode, setPairCode] = React.useState("");
   const [registerId, setRegisterId] = React.useState("");
   const [sessionId, setSessionId] = React.useState("");
   const [last, setLast] = React.useState<EventPayload | null>(null);
-  const [connectedVia, setConnectedVia] = React.useState<"pusher"|"sse" | null>(null);
+  const [connectedVia, setConnectedVia] = React.useState<"pusher"|"sse"|"poll" | null>(null);
 
   const PUSHER_KEY = process.env.NEXT_PUBLIC_PUSHER_KEY;
   const PUSHER_CLUSTER = process.env.NEXT_PUBLIC_PUSHER_CLUSTER;
+  const FORCE_SSE = process.env.NEXT_PUBLIC_CD_FORCE_SSE === "1";
 
   async function pair() {
     const r = await fetch("/api/pos/display/pair", {
@@ -52,7 +53,7 @@ function Inner() {
   React.useEffect(() => {
     if (stage !== "live" || !registerId || !sessionId) return;
 
-    // warm start from Upstash
+    // warm start from Upstash (last event)
     (async () => {
       try {
         const r = await fetch(`/api/pos/registers/${registerId}/customer-display/recent?limit=1`, { cache: "no-store" });
@@ -61,21 +62,32 @@ function Inner() {
       } catch {}
     })();
 
-    if (PUSHER_KEY && PUSHER_CLUSTER) {
-      const p = new Pusher(PUSHER_KEY, {
-        cluster: PUSHER_CLUSTER,
-        authEndpoint: "/api/pos/display/pusher-auth",
-        auth: { params: { registerId, sessionId } },
-      });
-      const chName = `private-cd.${registerId}.${sessionId}`;
-      const ch = p.subscribe(chName);
-      const handler = (data: any) => {
-        if (data?.type !== "ping" && data?.type !== "hello") setLast(data);
-      };
-      ch.bind("event", handler);
-      setConnectedVia("pusher");
-      return () => { ch.unbind("event", handler); p.unsubscribe(chName); p.disconnect(); };
-    } else {
+    const spTransport = _sp.get("transport"); // "sse" | "poll" | null
+    const wantPoll = spTransport === "poll";
+    const wantSse = spTransport === "sse" || FORCE_SSE || !PUSHER_KEY || !PUSHER_CLUSTER;
+
+    let cleanup: (() => void) | undefined;
+    let pollTimer: any;
+
+    function startPolling() {
+      setConnectedVia("poll");
+      pollTimer = setInterval(async () => {
+        try {
+          const r = await fetch(`/api/pos/registers/${registerId}/customer-display/recent?limit=1`, { cache: "no-store" });
+          const j = await r.json();
+          const ev = Array.isArray(j.events) ? j.events[0] : null;
+          if (ev && JSON.stringify(ev) !== JSON.stringify(last)) setLast(ev);
+        } catch {}
+      }, 1500);
+      cleanup = () => clearInterval(pollTimer);
+    }
+
+    if (wantPoll) {
+      startPolling();
+      return () => cleanup?.();
+    }
+
+    if (wantSse) {
       const url = `/api/pos/registers/${registerId}/customer-display/stream?sessionId=${encodeURIComponent(sessionId)}`;
       const es = new EventSource(url);
       es.onmessage = (e) => {
@@ -84,11 +96,33 @@ function Inner() {
           if (data?.type !== "ping" && data?.type !== "hello") setLast(data);
         } catch {}
       };
-      es.onerror = () => { /* optional logging */ };
+      es.onerror = () => {
+        // network/serverless hiccup? fallback to polling
+        es.close();
+        startPolling();
+      };
       setConnectedVia("sse");
-      return () => es.close();
+      cleanup = () => es.close();
+      return () => cleanup?.();
     }
-  }, [stage, registerId, sessionId, PUSHER_KEY, PUSHER_CLUSTER]);
+
+    // fallback to Pusher only if keys exist and not forcing SSE
+    const p = new Pusher(PUSHER_KEY!, {
+      cluster: PUSHER_CLUSTER!,
+      authEndpoint: "/api/pos/display/pusher-auth",
+      auth: { params: { registerId, sessionId } },
+    });
+    const chName = `private-cd.${registerId}.${sessionId}`;
+    const ch = p.subscribe(chName);
+    const handler = (data: any) => {
+      if (data?.type !== "ping" && data?.type !== "hello") setLast(data);
+    };
+    ch.bind("event", handler);
+    setConnectedVia("pusher");
+    cleanup = () => { ch.unbind("event", handler); p.unsubscribe(chName); p.disconnect(); };
+    return () => cleanup?.();
+
+  }, [stage, registerId, sessionId, PUSHER_KEY, PUSHER_CLUSTER, _sp, FORCE_SSE, last]);
 
   return (
     <div className="min-h-screen bg-muted/30 grid place-items-center p-6">

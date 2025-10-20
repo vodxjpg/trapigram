@@ -1,7 +1,8 @@
+// src/app/api/pos/registers/[id]/customer-display/code/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getContext } from "@/lib/context";
 import { pgPool as pool } from "@/lib/db";
-import { randomInt } from "crypto";
+import { randomInt, randomUUID } from "crypto";
 
 export const runtime = "nodejs";
 
@@ -19,8 +20,8 @@ export async function POST(
   const { id } = await params;
 
   const code = makeCode();
-  const expires = new Date(Date.now() + 10 * 60 * 1000); // 10 min
-  const accessKey = crypto.randomUUID();
+  const expires = new Date(Date.now() + 10 * 60 * 1000); // 10 min (pair route doesn't enforce expiry)
+  const accessKey = randomUUID();
 
   const { rows } = await pool.query(
     `UPDATE registers
@@ -38,7 +39,7 @@ export async function POST(
   if (!rows.length) return NextResponse.json({ error: "Register not found" }, { status: 404 });
 
   const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
-  const portalUrl = `${origin}/pos/display?accessKey=${rows[0].displayaccesskey ?? accessKey}`;
+  const portalUrl = `${origin}/customer-display?accessKey=${rows[0].displayAccessKey ?? accessKey}`;
 
   return NextResponse.json(
     { code, expiresAt: expires.toISOString(), portalUrl },
