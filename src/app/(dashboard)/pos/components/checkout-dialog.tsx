@@ -212,29 +212,45 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
   // When Niftipay is among methods, fetch its networks
   useEffect(() => {
-    if (!open) return;
-    if (!hasNiftipayMethod) {
+  if (!open) return;
+
+  // If Niftipay isn't available at all, clear state and bail.
+  if (!hasNiftipayMethod) {
+    setNiftipayNetworks([]);
+    setSelectedNiftipay("");
+    return;
+  }
+
+  let ignore = false;
+  (async () => {
+    setNiftipayLoading(true);
+    try {
+      const nets = await fetchNiftipayNetworks();
+      if (ignore) return;
+      setNiftipayNetworks(nets);
+
+      // Keep user selection if it still exists; otherwise choose the first.
+      const exists = nets.some(
+        (n) => `${n.chain}:${n.asset}` === selectedNiftipay
+      );
+      if (!exists) {
+        setSelectedNiftipay(
+          nets[0] ? `${nets[0].chain}:${nets[0].asset}` : ""
+        );
+      }
+    } catch {
+      if (ignore) return;
       setNiftipayNetworks([]);
       setSelectedNiftipay("");
-      return;
+    } finally {
+      if (!ignore) setNiftipayLoading(false);
     }
+  })();
 
-    (async () => {
-      setNiftipayLoading(true);
-      try {
-        const nets = await fetchNiftipayNetworks();
-        setNiftipayNetworks(nets);
-        if (!selectedNiftipay && nets[0]) {
-          setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
-        }
-      } catch {
-        setNiftipayNetworks([]);
-        setSelectedNiftipay("");
-      } finally {
-        setNiftipayLoading(false);
-      }
-    })();
-  }, [open, hasNiftipayMethod, selectedNiftipay]);
+  return () => {
+    ignore = true;
+  };
+}, [open, hasNiftipayMethod]); 
 
   // ───────────────────────── Helpers ─────────────────────────
   const openPaymentMethodsTab = () =>
