@@ -191,16 +191,6 @@ export async function POST(req: NextRequest) {
 
     const { rows: [newMethod] } = await pool.query(insertSql, vals);
 
-    // (Optional) If you want only one default per tenant, uncomment:
-    // if (parsed.default) {
-    //   await pool.query(
-    //     `UPDATE "paymentMethods"
-    //         SET "default" = FALSE, "updatedAt" = NOW()
-    //       WHERE "tenantId" = $1 AND id <> $2 AND "default" = TRUE`,
-    //     [tenantId, id]
-    //   );
-    // }
-
     return NextResponse.json(newMethod, { status: 201 });
   } catch (err) {
     console.error("[POST /api/payment-methods]", err);
