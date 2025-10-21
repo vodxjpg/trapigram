@@ -13,7 +13,7 @@ import { emitCartToDisplay } from "@/lib/customer-display-emit";
 /* ─────────────────────────────────────────────────────────────
    Small in-memory caches (per runtime)
   ───────────────────────────────────────────────────────────── */
-const TIER_TTL_MS = 20_000;       // 20s – fresh enough for POS
+const TIER_TTL_MS = 120_000;      // 2 min – good for POS, lowers repeated tier calls
 const STORE_TTL_MS = 5 * 60_000;  // 5 min
 
 const tierCache = new Map<string, { at: number; data: Tier[] }>();
@@ -150,7 +150,7 @@ function pickTierForClient(
 }
 
 /** Inventory check (schema-aware).
- *  productVariations has no stock flags → we only read products row.
+ *  productVariations has no stock flags → only read products row.
  */
 async function readInventoryFast(
   client: any,
@@ -171,38 +171,59 @@ async function readInventoryFast(
   };
 }
 
-/** Extract readable labels from a variation attributes JSON and ignore UUID-like ids. */
-function extractAttributeLabels(attributes: any): string[] {
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const out: string[] = [];
-  const push = (s: string) => {
-    const t = String(s ?? "").trim();
-    if (t && !UUID_RE.test(t)) out.push(t);
-  };
-  const walk = (x: any) => {
-    if (x == null) return;
-    if (typeof x === "string" || typeof x === "number" || typeof x === "boolean") {
-      push(String(x));
-      return;
-    }
-    if (Array.isArray(x)) { x.forEach(walk); return; }
-    if (typeof x === "object") {
-      for (const k of ["label", "name", "value", "title", "text"]) {
-        if (k in x && (x as any)[k] != null) walk((x as any)[k]);
+/* Variant-title helpers (tolerant of many shapes & filters UUID-looking strings) */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function readLabelish(x: any): string | null {
+  if (x == null) return null;
+  if (typeof x === "string") return UUID_RE.test(x) ? null : (x.trim() || null);
+  if (typeof x === "number" || typeof x === "boolean") return String(x);
+  if (typeof x === "object") {
+    const keys = ["optionName","valueName","label","name","title","value","text"];
+    for (const k of keys) {
+      if (x[k] != null) {
+        const v = readLabelish(x[k]);
+        if (v) return v;
       }
-      Object.values(x).forEach(walk);
     }
-  };
-  try { walk(attributes); } catch { /* ignore */ }
-  // dedupe while preserving order
-  return [...new Set(out)];
+  }
+  return null;
 }
 
-/** Format "Parent - RED / L" */
+function labelsFromAttributes(attrs: any): string[] {
+  const out: string[] = [];
+  const push = (v: string | null) => { if (v && !UUID_RE.test(v)) out.push(v); };
+
+  try {
+    if (Array.isArray(attrs)) {
+      for (const it of attrs) {
+        const v = readLabelish(it?.value) ?? readLabelish(it?.optionName) ?? readLabelish(it);
+        push(v);
+      }
+      return [...new Set(out)];
+    }
+
+    if (attrs && typeof attrs === "object") {
+      for (const [k, v] of Object.entries(attrs)) {
+        const val = readLabelish((v as any)?.value) ?? readLabelish((v as any)?.optionName) ?? readLabelish(v);
+        if (val) {
+          const keyNice = UUID_RE.test(k) ? null : (k || "").trim();
+          push(keyNice ? `${keyNice}: ${val}` : val);
+        }
+      }
+      return [...new Set(out)];
+    }
+
+    push(readLabelish(attrs));
+    return [...new Set(out)];
+  } catch {
+    return [];
+  }
+}
+
 function formatVariationTitle(parentTitle: string, attributes: any): string {
-  const labels = extractAttributeLabels(attributes);
-  if (!labels.length) return parentTitle;
-  return `${parentTitle} - ${labels.join(" / ")}`;
+  const labels = labelsFromAttributes(attributes);
+  return labels.length ? `${parentTitle} - ${labels.join(" / ")}` : parentTitle;
 }
 
 /** Swallow emitter timeouts & errors, never block request */
@@ -305,7 +326,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       mark("line_lookup");
 
-      // inventory guard (normal only; enforce only if numeric stock present → you don't have it)
+      // inventory guard (normal only)
       if (!isAffiliate) {
         const inv = await readInventoryFast(client, body.productId);
         mark("read_inventory");
@@ -436,15 +457,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await adjustStock(client, body.productId, variationId, country, -body.quantity);
       mark("adjust_stock");
 
-      // cart hash (stable order)
-      const { rows: hRows } = await client.query(
-        `SELECT COALESCE("productId","affiliateProductId") AS pid, "variationId", quantity,"unitPrice"
+      // FAST cart hash (aggregate instead of JSON hashing all lines)
+      const { rows: hv } = await client.query(
+        `SELECT COUNT(*)::int AS n,
+                COALESCE(SUM(quantity),0)::int AS q,
+                COALESCE(SUM((quantity * "unitPrice")::numeric),0)::text AS v
            FROM "cartProducts"
-          WHERE "cartId"=$1
-          ORDER BY pid, "variationId" NULLS FIRST`,
+          WHERE "cartId"=$1`,
         [cartId]
       );
-      const hash = crypto.createHash("sha256").update(JSON.stringify(hRows)).digest("hex");
+      const hash = crypto.createHash("sha256")
+        .update(`${hv[0].n}|${hv[0].q}|${hv[0].v}`)
+        .digest("hex");
       await client.query(
         `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
         [hash, cartId]
@@ -462,84 +486,73 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       } catch {}
       mark("emit_display_sched");
 
-      // Build a snapshot (prefer variation image/sku; compute variant title from attributes)
-      const [pRowsRes, aRowsRes] = await Promise.all([
-        pool.query(
-          `SELECT 
-              p.id,
-              p.title               AS parent_title,
-              p.image               AS parent_image,
-              p.sku                 AS parent_sku,
-              v.attributes          AS var_attributes,
-              v.image               AS var_image,
-              v.sku                 AS var_sku,
-              cp.quantity,
-              cp."unitPrice",
-              cp."variationId",
-              false                 AS "isAffiliate"
-           FROM "cartProducts" cp
-           JOIN products p           ON cp."productId" = p.id
-           LEFT JOIN "productVariations" v ON v.id = cp."variationId"
-           WHERE cp."cartId"=$1
-           ORDER BY cp."createdAt"`,
-          [cartId]
-        ),
-        pool.query(
-          `SELECT 
-              ap.id,
-              ap.title,
-              ap.description,
-              ap.image,
-              ap.sku,
-              cp.quantity,
-              cp."unitPrice",
-              cp."variationId",
-              true AS "isAffiliate"
-           FROM "affiliateProducts" ap
-           JOIN "cartProducts"     cp ON cp."affiliateProductId"=ap.id
-           WHERE cp."cartId"=$1
-           ORDER BY cp."createdAt"`,
-          [cartId]
-        ),
-      ]);
+      // Single-roundtrip snapshot with proper variant titles
+      const { rows: snap } = await pool.query(
+        `SELECT 
+           p.id                            AS pid,
+           p.title                         AS parent_title,
+           p.image                         AS parent_image,
+           p.sku                           AS parent_sku,
+           v.attributes                    AS var_attributes,
+           v.image                         AS var_image,
+           v.sku                           AS var_sku,
+           cp.quantity,
+           cp."unitPrice",
+           cp."variationId",
+           false                           AS "isAffiliate",
+           cp."createdAt"                  AS created_at
+         FROM "cartProducts" cp
+         JOIN products p            ON cp."productId" = p.id
+         LEFT JOIN "productVariations" v ON v.id = cp."variationId"
+         WHERE cp."cartId"=$1
+
+         UNION ALL
+
+         SELECT 
+           ap.id                           AS pid,
+           ap.title                        AS parent_title,
+           ap.image                        AS parent_image,
+           ap.sku                          AS parent_sku,
+           NULL::jsonb                     AS var_attributes,
+           NULL::text                      AS var_image,
+           NULL::text                      AS var_sku,
+           cp.quantity,
+           cp."unitPrice",
+           cp."variationId",
+           true                            AS "isAffiliate",
+           cp."createdAt"                  AS created_at
+         FROM "cartProducts" cp
+         JOIN "affiliateProducts" ap ON cp."affiliateProductId"=ap.id
+         WHERE cp."cartId"=$1
+
+         ORDER BY created_at`,
+        [cartId]
+      );
       mark("snapshot_query");
 
-      const normalLines = pRowsRes.rows.map((r: any) => {
-        const title = formatVariationTitle(r.parent_title, r.var_attributes);
-        const image = r.var_image ?? r.parent_image ?? null;
-        const sku   = r.var_sku ?? r.parent_sku ?? null;
+      const lines = snap.map((r: any) => {
         const unitPrice = Number(r.unitPrice);
+        const title = r.isAffiliate
+          ? r.parent_title
+          : formatVariationTitle(r.parent_title, r.var_attributes);
+        const image = r.isAffiliate ? r.parent_image : (r.var_image ?? r.parent_image ?? null);
+        const sku   = r.isAffiliate ? (r.parent_sku ?? null) : (r.var_sku ?? r.parent_sku ?? null);
         return {
-          id: r.id,
+          id: r.pid,
           title,
           image,
           sku,
           quantity: Number(r.quantity),
           unitPrice,
           variationId: r.variationId,
-          isAffiliate: false,
+          isAffiliate: r.isAffiliate,
           subtotal: unitPrice * Number(r.quantity),
         };
       });
 
-      const affiliateLines = aRowsRes.rows.map((l: any) => ({
-        id: l.id,
-        title: l.title,
-        image: l.image ?? null,
-        sku: l.sku ?? null,
-        quantity: Number(l.quantity),
-        unitPrice: Number(l.unitPrice),
-        variationId: l.variationId,
-        isAffiliate: true,
-        subtotal: Number(l.unitPrice) * Number(l.quantity),
-      }));
-
-      const lines = [...normalLines, ...affiliateLines];
-
       const totalMs = Date.now() - T0;
       const serverTiming = marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
 
-      // log to server console as well
       console.log(
         `[POS][add-product] cart=${cartId} product=${body.productId} var=${variationId ?? "base"} qty=${body.quantity} ${totalMs}ms`,
         Object.fromEntries(marks)

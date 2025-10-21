@@ -1,7 +1,7 @@
 // src/app/(dashboard)/pos/components/pos-interface.tsx
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { ProductGrid, type GridProduct } from "./product-grid"
 import { Cart } from "./cart"
 import { CategoryNav } from "./category-nav"
@@ -362,6 +362,12 @@ export function POSInterface() {
 
   const resolveCartCountry = () => storeCountry || orgCountries[0] || "US"
 
+  // variant title override using productsFlat (instant fix if server sends IDs)
+  const titleFor = useCallback((pid: string, vid: string | null, fallback: string) => {
+    const m = products.find(p => p.productId === pid && p.variationId === (vid ?? null));
+    return m?.title || fallback;
+  }, [products]);
+
   const ensureCart = async (clientId: string) => {
     if (cartId || creatingCartRef.current) return cartId
     if (!storeId || !outletId) {
@@ -405,18 +411,16 @@ export function POSInterface() {
       if (!res.ok) return
       const j = await res.json()
       const list: any[] = j.lines || j.resultCartProducts || []
-      setLines(
-        list.map((l) => ({
-          productId: l.id,
-          variationId: l.variationId ?? null,
-          title: l.title,
-          image: l.image ?? null,
-          sku: l.sku ?? null,
-          quantity: Number(l.quantity),
-          unitPrice: Number(l.unitPrice),
-          subtotal: Number(l.subtotal),
-        }))
-      )
+      setLines(list.map((l) => ({
+        productId: l.id,
+        variationId: l.variationId ?? null,
+        title: titleFor(l.id, l.variationId ?? null, l.title),
+        image: l.image ?? null,
+        sku: l.sku ?? null,
+        quantity: Number(l.quantity),
+        unitPrice: Number(l.unitPrice),
+        subtotal: Number(l.subtotal),
+      })))
     } catch (e: any) {
       setError(e?.message || "Failed to refresh cart.")
     }
@@ -446,12 +450,11 @@ export function POSInterface() {
         return
       }
 
-      // Prefer server snapshot
       if (Array.isArray(j.lines)) {
         setLines(j.lines.map((l: any) => ({
           productId: l.id,
           variationId: l.variationId ?? null,
-          title: l.title,
+          title: titleFor(l.id, l.variationId ?? null, l.title),
           image: l.image ?? null,
           sku: l.sku ?? null,
           quantity: Number(l.quantity),
@@ -461,7 +464,6 @@ export function POSInterface() {
         return
       }
 
-      // If no snapshot provided, just refresh the cart (hard guard to avoid 'o is undefined')
       await refreshCart(cid)
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
@@ -484,7 +486,7 @@ export function POSInterface() {
     setLines((j.lines || []).map((l: any) => ({
       productId: l.id,
       variationId: l.variationId ?? null,
-      title: l.title,
+      title: titleFor(l.id, l.variationId ?? null, l.title),
       image: l.image ?? null,
       sku: l.sku ?? null,
       quantity: Number(l.quantity),
@@ -509,7 +511,7 @@ export function POSInterface() {
     setLines((j.lines || []).map((l: any) => ({
       productId: l.id,
       variationId: l.variationId ?? null,
-      title: l.title,
+      title: titleFor(l.id, l.variationId ?? null, l.title),
       image: l.image ?? null,
       sku: l.sku ?? null,
       quantity: Number(l.quantity),
@@ -533,7 +535,7 @@ export function POSInterface() {
     setLines((j.lines || []).map((l: any) => ({
       productId: l.id,
       variationId: l.variationId ?? null,
-      title: l.title,
+      title: titleFor(l.id, l.variationId ?? null, l.title),
       image: l.image ?? null,
       sku: l.sku ?? null,
       quantity: Number(l.quantity),
