@@ -643,8 +643,11 @@ export async function POST(req: NextRequest) {
 
   const { tenantId, organizationId } = ctx as { tenantId: string | null; organizationId: string };
   try {
+    // Read body ONCE and keep both raw and parsed versions.
+    const rawBody = await req.json();
     const { cartId, payments, storeId, registerId, discount, parked } =
-      CheckoutCreateSchema.parse(await req.json());
+      CheckoutCreateSchema.parse(rawBody);
+    // If the client sent extra fields (like niftipay) they remain available on rawBody.
     const isParked = Boolean(parked);
     if (!tenantId) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
@@ -1028,10 +1031,12 @@ export async function POST(req: NextRequest) {
       // Niftipay: if cashier chose Niftipay + provided network, create invoice
       // ─────────────────────────────────────────────────────────────
       try {
-        const body = await req.clone().json().catch(() => ({} as any));
-        const niftiReq = body?.niftipay as { chain?: string; asset?: string; amount?: number } | undefined;
+        // Use the already-read body instead of cloning the request
+        const niftiReq = (rawBody?.niftipay ??
+          undefined) as { chain?: string; asset?: string; amount?: number } | undefined;
         // Sum Niftipay split amount using method names (in case amount wasn't supplied)
-        const methodIds = Array.from(new Set((body?.payments ?? []).map((p: any) => String(p.methodId))));
+        const methodIds = Array.from(new Set((rawBody?.payments ?? payments ?? [])
+  .map((p: any) => String(p.methodId))));
         let niftiAmount = 0;
         if (methodIds.length) {
           const { rows: pmRows } = await pool.query(
@@ -1039,7 +1044,7 @@ export async function POST(req: NextRequest) {
             [methodIds]
           );
           const niftiIds = new Set(pmRows.filter((r) => (r.name || "").toLowerCase() === "niftipay").map((r) => String(r.id)));
-          niftiAmount = (body?.payments ?? [])
+          niftiAmount = ((rawBody?.payments ?? payments ?? []) as any[])
             .filter((p: any) => niftiIds.has(String(p.methodId)))
             .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
         }
@@ -1082,8 +1087,12 @@ export async function POST(req: NextRequest) {
           }
         }
       } catch (e) {
-        // Non-fatal: we still return the order; cashier can retry from the order page
-        console.warn("[POS checkout] Niftipay invoice creation failed:", e);
+                // Non-fatal: we still return the order; cashier can retry from the order page
+        console.warn("[POS checkout][niftipay] invoice creation failed", {
+          err: String(e),
+          hasNifti: !!rawBody?.niftipay,
+          splitCount: Array.isArray(rawBody?.payments) ? rawBody.payments.length : 0,
+        });
       }
 
       // ⬇️ POS status notifications (match normal orders)
