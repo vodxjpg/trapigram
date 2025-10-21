@@ -789,7 +789,7 @@ export async function POST(req: NextRequest) {
       summary.cartId,
       summary.country,
       orderStatus,                 //  "paid" or "pending payment"
-      primaryMethodId,             // may be null → ensure column allows it; otherwise keep methods[0].id
+      primaryMethodName,             // may be null → ensure column allows it; otherwise keep methods[0].id
       orderKey,
       summary.cartUpdatedHash,
       shippingTotal,
