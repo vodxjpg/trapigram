@@ -33,6 +33,7 @@ type PaymentMethodRow = {
 
 type Payment = { methodId: string; amount: number };
 type DiscountPayload = { type: "fixed" | "percentage"; value: number };
+type NiftipayNet = { chain: string; asset: string; label: string };
 
 type CheckoutDialogProps = {
   open: boolean;
@@ -74,6 +75,11 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Niftipay network state ─────────────────────────────────────────
+  const [niftipayNetworks, setNiftipayNetworks] = useState<NiftipayNet[]>([]);
+  const [niftipayLoading, setNiftipayLoading] = useState(false);
+  const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
+
   const totalPaid = useMemo(() => payments.reduce((s, p) => s + p.amount, 0), [payments]);
   const remaining = Math.max(0, toMoney(totalEstimate - totalPaid));
 
@@ -96,8 +102,21 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
       setCashReceived("");
       setBusy(false);
       setError(null);
+      setSelectedNiftipay("");
     }
   }, [open]);
+
+  // Fetch niftipay networks available for the user
+  async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
+    const r = await fetch("/api/niftipay/payment-methods");
+    if (!r.ok) throw new Error(await r.text().catch(() => "Niftipay methods failed"));
+    const { methods } = await r.json();
+    return (methods || []).map((m: any) => ({
+      chain: m.chain,
+      asset: m.asset,
+      label: m.label ?? `${m.asset} on ${m.chain}`,
+    }));
+  }
 
   // Load active payment methods when dialog opens (with resilient field names + a safe fallback)
   useEffect(() => {
@@ -155,12 +174,53 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, cartId]);
 
+    // When Niftipay is among methods, fetch its networks
+  useEffect(() => {
+    if (!open) return;
+    const hasNifti = paymentMethods.some((m) => /niftipay/i.test(m.name || ""));
+    if (!hasNifti) {
+      setNiftipayNetworks([]);
+      setSelectedNiftipay("");
+      return;
+    }
+    (async () => {
+      setNiftipayLoading(true);
+      try {
+        const nets = await fetchNiftipayNetworks();
+        setNiftipayNetworks(nets);
+        if (!selectedNiftipay && nets[0]) {
+          setSelectedNiftipay(`${nets[0].chain}:${nets[0].asset}`);
+        }
+      } catch {
+        setNiftipayNetworks([]);
+        setSelectedNiftipay("");
+      } finally {
+        setNiftipayLoading(false);
+      }
+    })();
+  }, [open, paymentMethods, selectedNiftipay]);
+
+  const currentMethodIsNiftipay = useMemo(() => {
+    const m = paymentMethods.find((pm) => pm.id === currentMethodId);
+    return !!m && /niftipay/i.test(m.name || "");
+  }, [paymentMethods, currentMethodId]);
+
+  // If there is any Niftipay split in the list, require a selected network
+  const niftiInPayments = useMemo(() => {
+    return payments.some((p) => {
+      const name = paymentMethods.find((pm) => pm.id === p.methodId)?.name || "";
+      return /niftipay/i.test(name);
+    });
+  }, [payments, paymentMethods]);
+  const niftiSelectionRequired = niftiInPayments && niftipayNetworks.length > 0 && !selectedNiftipay;
+
   /* ───────────────────────── Split helpers ───────────────────────── */
   const handleAddPayment = () => {
     const amount = Number.parseFloat(currentAmount);
     if (!currentMethodId) return;
     if (!Number.isFinite(amount) || amount <= 0) return;
     if (amount > remaining) return;
+    if (currentMethodIsNiftipay && niftipayNetworks.length > 0 && !selectedNiftipay) return;
 
     setPayments((prev) => {
       const idx = prev.findIndex((p) => p.methodId === currentMethodId);
@@ -206,6 +266,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         registerId: string | null;
         discount?: DiscountPayload;
         parked: boolean;
+        niftipay?: { chain: string; asset: string; amount: number } | undefined;
       } = {
         cartId,
         payments, // can be empty or partial; backend records partials and leaves a balance due
@@ -216,6 +277,15 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
       if (discount && Number.isFinite(discount.value) && discount.value > 0) {
         payload.discount = discount;
+      }
+
+      // If any Niftipay split, include the chosen chain/asset + split amount
+      const niftiAmount = payments
+        .filter((p) => /niftipay/i.test(paymentMethods.find((pm) => pm.id === p.methodId)?.name || ""))
+        .reduce((s, p) => s + p.amount, 0);
+      if (niftiAmount > 0 && selectedNiftipay) {
+        const [chain, asset] = selectedNiftipay.split(":");
+        payload.niftipay = { chain, asset, amount: toMoney(niftiAmount) };
       }
 
       const res = await fetch("/api/pos/checkout", {
@@ -255,6 +325,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         storeId: string | null;
         registerId: string | null;
         discount?: DiscountPayload;
+        niftipay?: { chain: string; asset: string; amount: number } | undefined;
       } = {
         cartId,
         payments,
@@ -285,8 +356,9 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     }
   };
 
-  const canPark = !!cartId && !!clientId && !!registerId && !busy; // ✅ no “must be fully covered”
-  const canComplete = remaining === 0 && !busy;
+
+  const canPark = !!cartId && !!clientId && !!registerId && !busy; // no “must be fully covered”
+  const canComplete = remaining === 0 && !busy && !niftiSelectionRequired;
 
   return (
     <>
@@ -340,6 +412,28 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                 ))}
               </div>
             </div>
+
+            {/* Niftipay network picker (shown only when current method is Niftipay) */}
+            {currentMethodIsNiftipay && (
+              <div className="space-y-2">
+                <Label>Crypto Network</Label>
+                <div>
+                  <select
+                    className="w-full border rounded-md px-3 h-10 bg-background"
+                    value={selectedNiftipay}
+                    onChange={(e) => setSelectedNiftipay(e.target.value)}
+                    disabled={niftipayLoading || niftipayNetworks.length === 0}
+                  >
+                    {!selectedNiftipay && <option value="">{niftipayLoading ? "Loading…" : "Select network"}</option>}
+                    {niftipayNetworks.map((n) => (
+                      <option key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
+                        {n.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
 
             {/* Amount + helpers */}
             {remaining > 0 && (
@@ -398,7 +492,8 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                     !currentAmount ||
                     !currentMethodId ||
                     Number.parseFloat(currentAmount) <= 0 ||
-                    Number.parseFloat(currentAmount) > remaining
+                    Number.parseFloat(currentAmount) > remaining ||
+                    (currentMethodIsNiftipay && niftipayNetworks.length > 0 && !selectedNiftipay)
                   }
                 >
                   Add Payment
@@ -467,8 +562,8 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                         "dark:border-amber-400 dark:text-amber-300 dark:hover:bg-amber-950",
                       )}
                       onClick={submitParkedCheckout}
-                      disabled={!canPark}
-                    >
+                      disabled={!canPark || niftiSelectionRequired}
+                     >
                       <PauseCircle className="h-4 w-4" />
                       Park Order
                     </Button>

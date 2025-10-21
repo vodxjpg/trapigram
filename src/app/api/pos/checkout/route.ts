@@ -1018,6 +1018,68 @@ export async function POST(req: NextRequest) {
         console.warn("[POS checkout][affiliate bonuses] failed", e);
       }
 
+      // ─────────────────────────────────────────────────────────────
+      // Niftipay: if cashier chose Niftipay + provided network, create invoice
+      // ─────────────────────────────────────────────────────────────
+      try {
+        const body = await req.clone().json().catch(() => ({} as any));
+        const niftiReq = body?.niftipay as { chain?: string; asset?: string; amount?: number } | undefined;
+        // Sum Niftipay split amount using method names (in case amount wasn't supplied)
+        const methodIds = Array.from(new Set((body?.payments ?? []).map((p: any) => String(p.methodId))));
+        let niftiAmount = 0;
+        if (methodIds.length) {
+          const { rows: pmRows } = await pool.query(
+            `SELECT id, name FROM "paymentMethods" WHERE id::text = ANY($1::text[])`,
+            [methodIds]
+          );
+          const niftiIds = new Set(pmRows.filter((r) => (r.name || "").toLowerCase() === "niftipay").map((r) => String(r.id)));
+          niftiAmount = (body?.payments ?? [])
+            .filter((p: any) => niftiIds.has(String(p.methodId)))
+            .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+        }
+        if (niftiAmount > 0 && niftiReq?.chain && niftiReq?.asset) {
+          // fetch client for email / name
+          const { rows: clientRows } = await pool.query(
+            `SELECT "firstName","lastName",email FROM clients WHERE id=$1 LIMIT 1`,
+            [order.clientId]
+          );
+          const c = clientRows[0] || {};
+          const currency = currencyFromCountry(String(order.country));
+          const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+          const { res: nifRes, data: nifData } = await fetchJSON(
+            `${origin}/api/niftipay/orders`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              timeoutMs: 8000,
+              body: JSON.stringify({
+                network: niftiReq.chain,
+                asset: niftiReq.asset,
+                amount: Number.isFinite(niftiReq.amount) && niftiReq.amount! > 0 ? niftiReq.amount : niftiAmount,
+                currency,
+                firstName: c.firstName ?? null,
+                lastName: c.lastName ?? null,
+                email: c.email ?? "user@trapyfy.com",
+                merchantId: organizationId,
+                reference: orderKey,        // use the newly created order's key
+              }),
+            }
+          );
+          if (nifRes.ok && nifData) {
+            await pool.query(
+              `UPDATE orders
+                 SET "orderMeta" = COALESCE("orderMeta",'[]'::jsonb) || $1::jsonb,
+                     "updatedAt" = NOW()
+               WHERE id = $2`,
+              [JSON.stringify([nifData]), orderId]
+            );
+          }
+        }
+      } catch (e) {
+        // Non-fatal: we still return the order; cashier can retry from the order page
+        console.warn("[POS checkout] Niftipay invoice creation failed:", e);
+      }
+
       // ⬇️ POS status notifications (match normal orders)
       try {
         const status = isParked ? "pending_payment" : "paid";
