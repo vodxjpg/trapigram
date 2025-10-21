@@ -6,7 +6,7 @@ import { ProductGrid, type GridProduct } from "./product-grid"
 import { Cart } from "./cart"
 import { CategoryNav } from "./category-nav"
 import { CustomerSelector, type Customer } from "./customer-selector"
-import {CheckoutDialog} from "./checkout-dialog"
+import { CheckoutDialog } from "./checkout-dialog"
 import ReceiptOptionsDialog from "./receipt-options-dialog"
 import { Search, ShoppingCart } from "lucide-react"
 import { Input } from "@/components/ui/input"
@@ -21,7 +21,6 @@ import {
   AlertDialogTitle
 } from "@/components/ui/alert-dialog"
 
-// ⬇️ NEW: shadcn sheet for the mobile cart drawer
 import {
   Sheet,
   SheetContent,
@@ -83,7 +82,7 @@ export function POSInterface() {
   const [error, setError] = useState<string | null>(null)
   const creatingCartRef = useRef(false)
 
-  // NEW: mobile cart drawer state
+  // mobile cart drawer
   const [cartSheetOpen, setCartSheetOpen] = useState(false)
 
   // POS discount (coupon "POS")
@@ -105,19 +104,19 @@ export function POSInterface() {
   // fetch org allowed countries (for fallback)
   useEffect(() => {
     let ignore = false
-      ; (async () => {
-        try {
-          const res = await fetch("/api/organizations/countries", {
-            headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
-          })
-          if (!res.ok) return
-          const j = await res.json()
-          const list: string[] = Array.isArray(j.countries)
-            ? j.countries
-            : JSON.parse(j.countries || "[]")
-          if (!ignore) setOrgCountries(list)
-        } catch {/* ignore */ }
-      })()
+    ;(async () => {
+      try {
+        const res = await fetch("/api/organizations/countries", {
+          headers: { "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_API_SECRET || "" },
+        })
+        if (!res.ok) return
+        const j = await res.json()
+        const list: string[] = Array.isArray(j.countries)
+          ? j.countries
+          : JSON.parse(j.countries || "[]")
+        if (!ignore) setOrgCountries(list)
+      } catch {/* ignore */ }
+    })()
     return () => { ignore = true }
   }, [])
 
@@ -128,15 +127,15 @@ export function POSInterface() {
       return
     }
     let ignore = false
-      ; (async () => {
-        try {
-          const res = await fetch(`/api/pos/stores/${storeId}`)
-          if (!res.ok) return
-          const j = await res.json()
-          const c = j.store?.address?.country ?? null
-          if (!ignore) setStoreCountry(c || null)
-        } catch {/* ignore */ }
-      })()
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/pos/stores/${storeId}`)
+        if (!res.ok) return
+        const j = await res.json()
+        const c = j.store?.address?.country ?? null
+        if (!ignore) setStoreCountry(c || null)
+      } catch {/* ignore */ }
+    })()
     return () => { ignore = true }
   }, [storeId])
 
@@ -146,41 +145,39 @@ export function POSInterface() {
     const id = localStorage.getItem(LS_KEYS.CLIENT)
     if (!id) return
     let ignore = false
-      ; (async () => {
-        try {
-          const res = await fetch(`/api/clients/${id}`)
-          if (ignore) return
-          if (res.ok) {
-            const j = await res.json()
-            const c = j.client ?? j
-            if (c?.id) {
-              setSelectedCustomer({
-                id: c.id,
-                name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.username || "Customer",
-                email: c.email ?? null,
-                phone: c.phoneNumber ?? null,
-              })
-              return
-            }
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/clients/${id}`)
+        if (ignore) return
+        if (res.ok) {
+          const j = await res.json()
+          const c = j.client ?? j
+          if (c?.id) {
+            setSelectedCustomer({
+              id: c.id,
+              name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.username || "Customer",
+              email: c.email ?? null,
+              phone: c.phoneNumber ?? null,
+            })
+            return
           }
-        } catch {/* ignore */ }
-      })()
+        }
+      } catch {/* ignore */ }
+    })()
     return () => { ignore = true }
   }, [])
 
-  // ⬇️ Reset cart whenever the selected customer changes (e.g., switching to Walk-in)
+  // Reset cart whenever the selected customer changes
   useEffect(() => {
     if (!outletId) return
-    // clear the saved cart for this outlet so a fresh cart is created
     if (typeof window !== "undefined") {
       localStorage.removeItem(LS_KEYS.CART(outletId))
     }
-    // reset current cart state
     setCartId(null)
     setLines([])
-  }, [selectedCustomer?.id]) // NEW
+  }, [selectedCustomer?.id])
 
-  // First-run: require store→outlet selection
+  // require store→outlet selection
   const forceSelectDialog = !storeId || !outletId
 
   // When outlet changes, restore its cart if any
@@ -206,18 +203,18 @@ export function POSInterface() {
   // fetch categories
   useEffect(() => {
     let ignore = false
-      ; (async () => {
-        try {
-          const res = await fetch("/api/product-categories?all=1").then(r => r.json())
-          if (ignore) return
-          const cats: Category[] = (res.categories || []).map((c: any) => ({
-            id: String(c.id),
-            name: c.name,
-            parentId: c.parentId ? String(c.parentId) : null,
-          }))
-          setCategories(cats)
-        } catch { }
-      })()
+    ;(async () => {
+      try {
+        const res = await fetch("/api/product-categories?all=1").then(r => r.json())
+        if (ignore) return
+        const cats: Category[] = (res.categories || []).map((c: any) => ({
+          id: String(c.id),
+          name: c.name,
+          parentId: c.parentId ? String(c.parentId) : null,
+        }))
+        setCategories(cats)
+      } catch { }
+    })()
     return () => { ignore = true }
   }, [])
 
@@ -240,25 +237,25 @@ export function POSInterface() {
     let ignore = false
     const params = new URLSearchParams({ pageSize: "200", page: "1" })
     if (debouncedSearch) params.set("search", debouncedSearch)
-      ; (async () => {
-        try {
-          const res = await fetch(`/api/products?${params}`).then(r => r.json())
-          if (ignore) return
-          const flat = (res.productsFlat || []).map((p: any) => {
-            const price = p.maxSalePrice ?? p.maxRegularPrice ?? 0
-            return {
-              id: String(p.id),
-              productId: String(p.productId),
-              variationId: p.variationId ? String(p.variationId) : null,
-              title: p.title,
-              image: p.image ?? null,
-              categoryIds: normalizeCatIds(p),
-              priceForDisplay: Number(price) || 0,
-            } as GridProduct
-          })
-          setProducts(flat)
-        } catch {/* ignore */ }
-      })()
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/products?${params}`).then(r => r.json())
+        if (ignore) return
+        const flat = (res.productsFlat || []).map((p: any) => {
+          const price = p.maxSalePrice ?? p.maxRegularPrice ?? 0
+          return {
+            id: String(p.id),
+            productId: String(p.productId),
+            variationId: p.variationId ? String(p.variationId) : null,
+            title: p.title,
+            image: p.image ?? null,
+            categoryIds: normalizeCatIds(p),
+            priceForDisplay: Number(price) || 0,
+          } as GridProduct
+        })
+        setProducts(flat)
+      } catch {/* ignore */ }
+    })()
     return () => { ignore = true }
   }, [debouncedSearch])
 
@@ -373,7 +370,7 @@ export function POSInterface() {
     }
     creatingCartRef.current = true
     try {
-      const idem = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+      const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
       const body = {
         clientId,
         country: resolveCartCountry(),
@@ -382,7 +379,7 @@ export function POSInterface() {
       }
       const res = await fetch("/api/pos/cart", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idem as string },
         body: JSON.stringify(body),
       })
       if (!res.ok) {
@@ -433,22 +430,68 @@ export function POSInterface() {
       }
       const cid = await ensureCart(selectedCustomer.id)
       if (!cid) return
-      const idem = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+      const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
       const res = await fetch(`/api/pos/cart/${cid}/add-product`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idem as string },
         body: JSON.stringify({
           productId: p.productId,
           variationId: p.variationId,
           quantity: 1,
         }),
       })
+      const j = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const e = await res.json().catch(() => ({}))
-        setError(e?.error || "Failed to add to cart")
+        setError(j?.error || "Failed to add to cart")
         return
       }
-      await refreshCart(cid)
+
+      // Prefer server snapshot (includes tier-wide price updates)
+      if (Array.isArray(j.lines)) {
+        setLines(j.lines.map((l: any) => ({
+          productId: l.id,
+          variationId: l.variationId ?? null,
+          title: l.title,
+          image: l.image ?? null,
+          sku: l.sku ?? null,
+          quantity: Number(l.quantity),
+          unitPrice: Number(l.unitPrice),
+          subtotal: Number(l.subtotal),
+        })))
+        return
+      }
+
+      // Fallback (shouldn’t hit, but safe): merge single line
+      const added = j.product
+      setLines(prev => {
+        const idx = prev.findIndex(l => l.productId === added.id && l.variationId === added.variationId)
+        if (idx >= 0) {
+          const next = [...prev];
+          const line = next[idx];
+          const quantity = line.quantity + 1;
+          const unitPrice = Number(added.price);
+          next[idx] = {
+            ...line,
+            quantity,
+            unitPrice,
+            subtotal: +(quantity * unitPrice).toFixed(2),
+          };
+          return next;
+        }
+        return [
+          ...prev,
+          {
+            productId: added.id,
+            variationId: added.variationId,
+            title: added.title,
+            image: added.image ?? null,
+            sku: added.sku ?? null,
+            quantity: j.quantity ?? 1,
+            unitPrice: Number(added.price),
+            subtotal: +(Number(added.price) * (j.quantity ?? 1)).toFixed(2),
+          },
+        ];
+      });
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
     }
@@ -465,12 +508,18 @@ export function POSInterface() {
         action: "add",
       }),
     })
-    if (!res.ok) {
-      const e = await res.json().catch(() => ({}))
-      setError(e?.error || "Failed to update quantity")
-      return
-    }
-    await refreshCart(cartId)
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) { setError(j?.error || "Failed to update quantity"); return }
+    setLines((j.lines || []).map((l: any) => ({
+      productId: l.id,
+      variationId: l.variationId ?? null,
+      title: l.title,
+      image: l.image ?? null,
+      sku: l.sku ?? null,
+      quantity: Number(l.quantity),
+      unitPrice: Number(l.unitPrice),
+      subtotal: Number(l.subtotal),
+    })))
   }
 
   const dec = async (line: CartLine) => {
@@ -484,12 +533,18 @@ export function POSInterface() {
         action: "subtract",
       }),
     })
-    if (!res.ok) {
-      const e = await res.json().catch(() => ({}))
-      setError(e?.error || "Failed to update quantity")
-      return
-    }
-    await refreshCart(cartId)
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) { setError(j?.error || "Failed to update quantity"); return }
+    setLines((j.lines || []).map((l: any) => ({
+      productId: l.id,
+      variationId: l.variationId ?? null,
+      title: l.title,
+      image: l.image ?? null,
+      sku: l.sku ?? null,
+      quantity: Number(l.quantity),
+      unitPrice: Number(l.unitPrice),
+      subtotal: Number(l.subtotal),
+    })))
   }
 
   const removeLine = async (line: CartLine) => {
@@ -502,23 +557,27 @@ export function POSInterface() {
         variationId: line.variationId,
       }),
     })
-    if (!res.ok) {
-      const e = await res.json().catch(() => ({}))
-      setError(e?.error || "Failed to remove item")
-      return
-    }
-    await refreshCart(cartId)
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) { setError(j?.error || "Failed to remove item"); return }
+    setLines((j.lines || []).map((l: any) => ({
+      productId: l.id,
+      variationId: l.variationId ?? null,
+      title: l.title,
+      image: l.image ?? null,
+      sku: l.sku ?? null,
+      quantity: Number(l.quantity),
+      unitPrice: Number(l.unitPrice),
+      subtotal: Number(l.subtotal),
+    })))
   }
 
   const onCompleteCheckout = (orderId: string, parked?: boolean) => {
-    // Clear cart in both cases
     if (outletId && typeof window !== "undefined") {
       localStorage.removeItem(LS_KEYS.CART(outletId))
     }
     setCartId(null)
     setLines([])
 
-    // Only show receipt flow for fully paid orders
     if (!parked) {
       setReceiptDlg({ orderId, email: selectedCustomer?.email ?? null })
     }
@@ -619,13 +678,11 @@ export function POSInterface() {
               </button>
             </SheetTrigger>
             <SheetContent side="bottom" className="h-[85vh] p-0 rounded-t-2xl">
-              {/* little grab handle */}
               <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-muted" />
               <SheetHeader className="sr-only">
                 <SheetTitle>Cart</SheetTitle>
               </SheetHeader>
 
-              {/* Make the cart fill the sheet */}
               <div className="flex h-[calc(85vh-0.75rem)] flex-col">
                 <Cart
                   variant="sheet"

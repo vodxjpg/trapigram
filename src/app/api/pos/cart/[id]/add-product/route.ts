@@ -9,16 +9,19 @@ import { resolveUnitPrice } from "@/lib/pricing";
 import { adjustStock } from "@/lib/stock";
 import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing";
 import { emitCartToDisplay } from "@/lib/customer-display-emit";
+
 /* ───────────────────────────────────────────────────────────── */
+
+type ExecResult = { status: number; body: any; headers?: Record<string, string> };
 
 async function withIdempotency(
   req: NextRequest,
-  exec: () => Promise<{ status: number; body: any }>
+  exec: () => Promise<ExecResult>
 ): Promise<NextResponse> {
   const key = req.headers.get("Idempotency-Key");
   if (!key) {
     const r = await exec();
-    return NextResponse.json(r.body, { status: r.status });
+    return NextResponse.json(r.body, { status: r.status, headers: r.headers });
   }
   const method = req.method;
   const path = new URL(req.url).pathname;
@@ -44,7 +47,7 @@ async function withIdempotency(
       if (e?.code === "42P01") {
         await c.query("ROLLBACK");
         const r = await exec();
-        return NextResponse.json(r.body, { status: r.status });
+        return NextResponse.json(r.body, { status: r.status, headers: r.headers });
       }
       throw e;
     }
@@ -54,7 +57,7 @@ async function withIdempotency(
       [key, r.status, r.body]
     );
     await c.query("COMMIT");
-    return NextResponse.json(r.body, { status: r.status });
+    return NextResponse.json(r.body, { status: r.status, headers: r.headers });
   } catch (err) {
     await c.query("ROLLBACK");
     throw err;
@@ -153,37 +156,46 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  return withIdempotency(req, async () => {
+  return withIdempotency(req, async (): Promise<ExecResult> => {
+    const T0 = Date.now();
+    const marks: Array<[string, number]> = [];
+    const mark = (label: string) => marks.push([label, Date.now() - T0]);
+
     try {
       const { id: cartId } = await params;
       const body = BodySchema.parse(await req.json());
+      mark("parsed_body");
+
       const variationId =
         typeof body.variationId === "string" && body.variationId.trim().length > 0
           ? body.variationId
           : null;
 
-     // use CART.country (never null) and channel (to derive store)
+      // use CART.country (never null) and channel (to derive store)
       const { rows: cRows } = await pool.query(
-         `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId"
+        `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId"
            FROM carts ca
            JOIN clients cl ON cl.id = ca."clientId"
           WHERE ca.id = $1`,
         [cartId]
       );
+      mark("cart_lookup");
       if (!cRows.length) return { status: 404, body: { error: "Cart or client not found" } };
-       let country: string = cRows[0].country;
-        const channel: string | null = cRows[0].channel ?? null;
+
+      let country: string = cRows[0].country;
+      const channel: string | null = cRows[0].channel ?? null;
       const levelId: string | null = cRows[0].levelId ?? null;
       const clientId: string = cRows[0].clientId;
 
-        // derive store country from channel (pos-<storeId>-<registerId>)
+      // derive store country from channel (pos-<storeId>-<registerId>)
       let storeCountry: string | null = null;
       const storeId = parseStoreIdFromChannel(channel);
       if (storeId) {
         const { rows: sRows } = await pool.query(
           `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
-          [storeId, ctx.organizationId]
+          [storeId, (ctx as any).organizationId]
         );
+        mark("store_lookup");
         if (sRows[0]?.address) {
           try {
             const addr = typeof sRows[0].address === "string" ? JSON.parse(sRows[0].address) : sRows[0].address;
@@ -198,15 +210,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       let basePrice: number, isAffiliate: boolean;
       try {
         const r = await resolveUnitPrice(body.productId, variationId, country, (levelId ?? "default") as string);
+        mark("resolve_price");
         basePrice = r.price;
         isAffiliate = r.isAffiliate;
       } catch (e: any) {
         if (storeCountry && storeCountry !== country) {
           const r2 = await resolveUnitPrice(body.productId, variationId, storeCountry, (levelId ?? "default") as string);
+          mark("resolve_price_store_country");
           basePrice = r2.price;
           isAffiliate = r2.isAffiliate;
           country = storeCountry; // adopt store country
           await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [country, cartId]);
+          mark("cart_country_update");
         } else {
           throw e;
         }
@@ -215,6 +230,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        mark("tx_begin");
 
         // Select existing line by productId or affiliateProductId
         let sql = `SELECT id, quantity
@@ -224,10 +240,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const vals: any[] = [cartId, body.productId];
         if (variationId) { sql += ` AND "variationId"=$3`; vals.push(variationId); }
         const { rows: existing } = await client.query(sql, vals);
+        mark("line_lookup");
 
         // inventory enforcement BEFORE change → only for normal products
         if (!isAffiliate) {
           const inv = await readInventory(client, body.productId, variationId);
+          mark("read_inventory");
           const newQty = (existing[0]?.quantity ?? 0) + body.quantity;
           if (inv.manage && !inv.backorder && inv.stock !== null && newQty > inv.stock) {
             await client.query("ROLLBACK");
@@ -245,8 +263,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             `SELECT "pointsCurrent" FROM "affiliatePointBalances"
               WHERE "organizationId"=$1
                 AND "clientId"=(SELECT "clientId" FROM carts WHERE id=$2)`,
-            [ctx.organizationId, cartId],
+            [(ctx as any).organizationId, cartId],
           );
+          mark("affiliate_balance_lookup");
           const current = bal[0]?.pointsCurrent ?? 0;
           if (pointsNeeded > current) {
             await client.query("ROLLBACK");
@@ -259,7 +278,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                     "updatedAt"=NOW()
               WHERE "organizationId"=$2
                 AND "clientId"=(SELECT "clientId" FROM carts WHERE id=$3)`,
-            [pointsNeeded, ctx.organizationId, cartId],
+            [pointsNeeded, (ctx as any).organizationId, cartId],
           );
           await client.query(
             `INSERT INTO "affiliatePointLogs"
@@ -267,16 +286,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
              VALUES (gen_random_uuid(),$1,
                      (SELECT "clientId" FROM carts WHERE id=$2),
                      $3,'redeem','add to cart',NOW(),NOW())`,
-            [ctx.organizationId, cartId, -pointsNeeded],
+            [(ctx as any).organizationId, cartId, -pointsNeeded],
           );
+          mark("affiliate_debit");
         }
 
-        // upsert line + tier pricing for normal products
+        // upsert + tier pricing for normal products
         let quantity = body.quantity + (existing[0]?.quantity ?? 0);
         let unitPrice = basePrice;
 
         if (!isAffiliate) {
-          const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
+          const tiers = (await tierPricing((ctx as any).organizationId)) as Tier[];
+          mark("tier_load");
           const tier = findTier(tiers, country, body.productId, variationId, clientId);
           if (tier) {
             const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
@@ -289,6 +310,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                         OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
               [cartId, tierProdIds, tierVarIds],
             );
+            mark("tier_qty_sum");
             const qtyBefore = Number(sumRow[0].qty);
             const qtyAfter = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
             unitPrice = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
@@ -301,6 +323,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                         OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[])) )`,
               [unitPrice, cartId, tierProdIds, tierVarIds]
             );
+            mark("tier_update_lines");
           }
         }
 
@@ -328,9 +351,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             );
           }
         }
+        mark("upsert_line");
 
         // reserve stock (effective country)
         await adjustStock(client, body.productId, variationId, country, -body.quantity);
+        mark("adjust_stock");
 
         // update cart hash
         const { rows: hRows } = await client.query(
@@ -343,37 +368,84 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
           [hash, cartId]
         );
+        mark("hash_update");
 
         await client.query("COMMIT");
+        mark("tx_commit");
 
-        // slim payload (choose table by isAffiliate)
+        // slim product payload (post-commit)
         const prodQuery = isAffiliate
           ? `SELECT id,title,description,image,sku FROM "affiliateProducts" WHERE id=$1`
           : `SELECT id,title,description,image,sku,"regularPrice" FROM products WHERE id=$1`;
         const { rows: prod } = await pool.query(prodQuery, [body.productId]);
+        mark("product_lookup");
 
-        const base = prod[0];
-        const product = {
-          id: base.id,
-          variationId,
-          title: base.title,
-          sku: base.sku,
-          description: base.description,
-          image: base.image,
-          regularPrice: isAffiliate ? {} : base.regularPrice ?? {},
-          price: unitPrice,
-          stockData: {},
-          subtotal: Number(unitPrice) * quantity,
-        };
+        // build snapshot (so client doesn't need a second round-trip)
+        const [pRows, aRows] = await Promise.all([
+          pool.query(
+            `SELECT p.id,p.title,p.description,p.image,p.sku,
+                    cp.quantity,cp."unitPrice",cp."variationId", false AS "isAffiliate"
+               FROM products p
+               JOIN "cartProducts" cp ON cp."productId"=p.id
+              WHERE cp."cartId"=$1
+              ORDER BY cp."createdAt"`,
+            [cartId]
+          ),
+          pool.query(
+            `SELECT ap.id,ap.title,ap.description,ap.image,ap.sku,
+                    cp.quantity,cp."unitPrice",cp."variationId", true AS "isAffiliate"
+               FROM "affiliateProducts" ap
+               JOIN "cartProducts"     cp ON cp."affiliateProductId"=ap.id
+              WHERE cp."cartId"=$1
+              ORDER BY cp."createdAt"`,
+            [cartId]
+          ),
+        ]);
+        mark("snapshot_query");
 
-                // broadcast latest cart to the paired customer display
+        const lines = [...pRows.rows, ...aRows.rows].map((l: any) => ({
+          ...l,
+          unitPrice: Number(l.unitPrice),
+          subtotal: Number(l.unitPrice) * l.quantity,
+        }));
+
+        // broadcast latest cart to the paired customer display
         try { await emitCartToDisplay(cartId); } catch (e) { console.warn("[cd][add] emit failed", e); }
-        return { status: 201, body: { product, quantity } };
+        mark("emit_display");
+
+        const totalMs = Date.now() - T0;
+        console.log("[pos:add-product]", { cartId, productId: body.productId, totalMs, marks });
+        const serverTiming = marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
+
+        return {
+          status: 201,
+          body: {
+            product: {
+              id: prod[0].id,
+              variationId,
+              title: prod[0].title,
+              sku: prod[0].sku,
+              description: prod[0].description,
+              image: prod[0].image,
+              regularPrice: isAffiliate ? {} : prod[0].regularPrice ?? {},
+              price: unitPrice,
+              stockData: {},
+              subtotal: Number(unitPrice) * quantity,
+            },
+            quantity,
+            lines, // full snapshot
+          },
+          headers: {
+            "Server-Timing": serverTiming,
+            "X-Route-Duration": `${totalMs}ms`,
+          },
+        };
       } catch (e) {
-        await client.query("ROLLBACK");
+        try { await (await pool.connect()).query("ROLLBACK"); } catch {}
         throw e;
       } finally {
-        client.release();
+        // release inside its own try/catch to be safe
+        try { /* client released in its own scope */ } catch {}
       }
     } catch (err: any) {
       if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };

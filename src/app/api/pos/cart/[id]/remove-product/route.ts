@@ -173,7 +173,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const unitPts = Number(deleted.unitPrice ?? 0); // affiliate lines store points-per-unit in unitPrice
         const pointsRefund = qty > 0 && unitPts > 0 ? qty * unitPts : 0;
         if (pointsRefund > 0) {
-          // Add points back and decrease pointsSpent (not below zero)
           await pool.query(
             `UPDATE "affiliatePointBalances"
                 SET "pointsCurrent" = "pointsCurrent" + $1,
@@ -181,14 +180,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                     "updatedAt"     = NOW()
               WHERE "organizationId" = $2
                 AND "clientId"      = $3`,
-            [pointsRefund, ctx.organizationId, clientId],
+            [pointsRefund, (ctx as any).organizationId, clientId],
           );
-          // Audit log
           await pool.query(
             `INSERT INTO "affiliatePointLogs"
                (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
              VALUES (gen_random_uuid(),$1,$2,$3,'refund','remove from pos cart',NOW(),NOW())`,
-            [ctx.organizationId, clientId, pointsRefund],
+            [(ctx as any).organizationId, clientId, pointsRefund],
           );
         }
       }
@@ -199,7 +197,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (storeId) {
         const { rows: sRows } = await pool.query(
           `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
-          [storeId, ctx.organizationId]
+          [storeId, (ctx as any).organizationId]
         );
         if (sRows[0]?.address) {
           try {
@@ -219,7 +217,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // Tier re-evaluation ONLY for normal products
       if (!deleted.affiliateProductId && country && levelId) {
-        const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
+        const tiers = (await tierPricing((ctx as any).organizationId)) as Tier[];
         const tier = pickTierForClient(tiers, country, deleted.productId, normVariationId, clientId);
 
         if (tier) {
@@ -239,7 +237,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const newUnit = getPriceForQuantity(tier.steps, qtyAfter);
 
           if (newUnit === null) {
-            // fall back to base money price per line
+            // fall back to base per-line
             const { rows: lines } = await pool.query(
               `SELECT id,"productId","variationId"
                  FROM "cartProducts"
@@ -303,10 +301,38 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         [newHash, cartId],
       );
 
-            // broadcast latest cart to the paired customer display
+      // broadcast latest cart to the paired customer display
       try { await emitCartToDisplay(cartId); } catch (e) { console.warn("[cd][remove] emit failed", e); }
-      return { status: 200, body: deleted };
 
+      // Return a full snapshot (like update-product) so the UI doesn't need another fetch
+      const [pRows, aRows] = await Promise.all([
+        pool.query(
+          `SELECT p.id,p.title,p.description,p.image,p.sku,
+                  cp.quantity,cp."unitPrice",cp."variationId", false AS "isAffiliate"
+             FROM products p
+             JOIN "cartProducts" cp ON cp."productId"=p.id
+            WHERE cp."cartId"=$1
+            ORDER BY cp."createdAt"`,
+          [cartId]
+        ),
+        pool.query(
+          `SELECT ap.id,ap.title,ap.description,ap.image,ap.sku,
+                  cp.quantity,cp."unitPrice",cp."variationId", true AS "isAffiliate"
+             FROM "affiliateProducts" ap
+             JOIN "cartProducts"     cp ON cp."affiliateProductId"=ap.id
+            WHERE cp."cartId"=$1
+            ORDER BY cp."createdAt"`,
+          [cartId]
+        ),
+      ]);
+
+      const lines = [...pRows.rows, ...aRows.rows].map((l: any) => ({
+        ...l,
+        unitPrice: Number(l.unitPrice),
+        subtotal: Number(l.unitPrice) * l.quantity,
+      }));
+
+      return { status: 200, body: { lines } };
     } catch (err: any) {
       console.error("[POS POST /pos/cart/:id/remove-product]", err);
       if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };
