@@ -17,10 +17,6 @@ import { toast } from "sonner";
 
 /* ───────────────────────────────────────────────────────────── */
 
-const NIFTIPAY_BASE = (
-  process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com"
-).replace(/\/+$/, "");
-
 type Props = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -36,7 +32,6 @@ type NiftiView = {
   qr?: string | null; // url or data-uri
 };
 
-type PaymentMethod = { id: string; name: string; apiKey?: string | null; active?: boolean };
 type NiftipayNet = { chain: string; asset: string; label: string };
 
 function looksNiftipayName(s?: string | null) {
@@ -49,7 +44,7 @@ const currencyFromCountry = (c?: string) =>
 
 /* small helper for noisy console + safe json */
 async function fetchJsonVerbose(url: string, opts: RequestInit = {}, tag = url) {
-  const res = await fetch(url, { credentials: "include", ...opts });
+  const res = await fetch(url, { ...opts });
   let body: any = null;
   try { body = await res.clone().json(); } catch {}
   // eslint-disable-next-line no-console
@@ -70,8 +65,7 @@ export default function ReceiptOptionsDialog({
   const [raw, setRaw] = useState<any | null>(null);
   const [order, setOrder] = useState<any | null>(null);
 
-  // PMs (to get Niftipay apiKey)
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  // Niftipay networks (via backend proxy)
   const [niftipayNetworks, setNiftipayNetworks] = useState<NiftipayNet[]>([]);
   const [niftipayLoading, setNiftipayLoading] = useState(false);
 
@@ -104,7 +98,7 @@ export default function ReceiptOptionsDialog({
 
         setRaw(data);
         setOrder(ord);
-      } catch (e: any) {
+      } catch {
         if (!ignore) {
           setRaw(null);
           setOrder(null);
@@ -114,18 +108,7 @@ export default function ReceiptOptionsDialog({
     return () => { ignore = true; };
   }, [open, orderId]);
 
-  // 2) Load payment methods (+ Niftipay networks via backend proxy)
-  useEffect(() => {
-    if (!open) return;
-    (async () => {
-      try {
-        const pmRes = await fetch("/api/payment-methods");
-        const { methods } = await pmRes.json();
-        setPaymentMethods(Array.isArray(methods) ? methods : []);
-      } catch {}
-    })();
-  }, [open]);
-
+  // 2) Load Niftipay networks via backend proxy
   useEffect(() => {
     if (!open) return;
     (async () => {
@@ -149,7 +132,7 @@ export default function ReceiptOptionsDialog({
   }, [open]);
 
   // ─────────────────────────────────────────────────────────────
-  // 3) Ensure a Niftipay invoice exists (like the Edit form does)
+  // 3) Ensure a Niftipay invoice exists (browser → our proxy → Niftipay)
   useEffect(() => {
     if (!open || !order) return;
 
@@ -206,20 +189,12 @@ export default function ReceiptOptionsDialog({
         });
         if (metaHasInvoice) return;
 
-        // Need to call Niftipay directly like the Edit form:
-        const niftiPM = paymentMethods.find((p) => (p.name || "").toLowerCase() === "niftipay");
-        const apiKey = niftiPM?.apiKey || null;
-        if (!apiKey) {
-          toast.error("Niftipay API key missing (configure payment methods)");
-          return;
-        }
-
-        // 3a) Try find by reference
+        // 3a) Try find existing invoice by reference via our proxy
         const ref = order.orderKey ?? order.id;
         const findRes = await fetchJsonVerbose(
-          `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(ref)}`,
-          { credentials: "omit", headers: { "x-api-key": apiKey } },
-          "Niftipay FIND by reference (POS receipt)"
+          `/api/niftipay/orders?reference=${encodeURIComponent(ref)}`,
+          { cache: "no-store" },
+          "Niftipay FIND via proxy (POS receipt)"
         );
 
         if (findRes.ok) {
@@ -235,7 +210,7 @@ export default function ReceiptOptionsDialog({
           }
         }
 
-        // 3b) Create a new invoice (pick a network/asset if we can)
+        // 3b) Create a new invoice via our proxy (pick a network/asset if we can)
         let chain: string | null = null;
         let asset: string | null = null;
         const fromMeta = metaArray
@@ -255,13 +230,9 @@ export default function ReceiptOptionsDialog({
         }
 
         const currency = currencyFromCountry(order.country);
-        const niftipayRes = await fetch(`${NIFTIPAY_BASE}/api/orders?replaceCancelled=1`, {
+        const niftipayRes = await fetch(`/api/niftipay/orders?replaceCancelled=1`, {
           method: "POST",
-          credentials: "omit",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             network: chain,
             asset,
@@ -292,7 +263,7 @@ export default function ReceiptOptionsDialog({
         toast.error(e?.message || "Niftipay invoice create/fetch failed");
       }
     })();
-  }, [open, order, raw, paymentMethods, niftipayNetworks, niftipayLoading]);
+  }, [open, order, raw, niftipayNetworks, niftipayLoading]);
 
   /* ─────────────────────────────────────────────────────────────
    * Build blocks from whatever meta we now have
