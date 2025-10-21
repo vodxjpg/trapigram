@@ -150,14 +150,62 @@ async function readInventoryFast(
   return { manage, backorder, stock };
 }
 
+/* Variant title helpers (same as add-product) */
+function extractAttributeLabels(attributes: any): string[] {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const out: string[] = [];
+  const push = (s: string) => {
+    const t = String(s ?? "").trim();
+    if (t && !UUID_RE.test(t)) out.push(t);
+  };
+  const walk = (x: any) => {
+    if (x == null) return;
+    if (typeof x === "string" || typeof x === "number" || typeof x === "boolean") {
+      push(String(x));
+      return;
+    }
+    if (Array.isArray(x)) { x.forEach(walk); return; }
+    if (typeof x === "object") {
+      for (const k of ["label", "name", "value", "title", "text"]) {
+        if (k in x && (x as any)[k] != null) walk((x as any)[k]);
+      }
+      Object.values(x).forEach(walk);
+    }
+  };
+  try { walk(attributes); } catch { /* ignore */ }
+  return [...new Set(out)];
+}
+function formatVariationTitle(parentTitle: string, attributes: any): string {
+  const labels = extractAttributeLabels(attributes);
+  if (!labels.length) return parentTitle;
+  return `${parentTitle} - ${labels.join(" / ")}`;
+}
+
+/** Swallow emitter timeouts & errors, never block request */
+function withTimeout<T>(p: Promise<T>, ms: number) {
+  return Promise.race([
+    p,
+    new Promise<never>((_, rej) => setTimeout(() => rej(new Error("emit-timeout")), ms)),
+  ]);
+}
+function fireAndForget(p: Promise<any>) {
+  p.catch(() => {});
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
+
+  const T0 = Date.now();
+  const marks: Array<[string, number]> = [];
+  const mark = (label: string) => marks.push([label, Date.now() - T0]);
 
   return withIdempotency(req, async () => {
     try {
       const { id: cartId } = await params;
       const data = BodySchema.parse(await req.json());
+      mark("parsed_body");
+
       const variationId =
         typeof data.variationId === "string" && data.variationId.trim().length > 0
           ? data.variationId
@@ -167,8 +215,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        mark("tx_begin");
 
-        // FIRST try normal product line; if not, try affiliate line.
+        // cart line + client context (try normal, then affiliate)
         let row: any | null = null;
         {
           const { rows } = await client.query(
@@ -200,6 +249,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           }
           isAffiliate = true;
         }
+        mark("line_lookup");
 
         let { country, levelId, clientId, quantity: oldQty, channel } = row as any;
 
@@ -220,6 +270,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             } catch { }
           }
         }
+        mark("store_lookup");
 
         // base price
         let basePrice: number;
@@ -266,6 +317,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             }
           }
         }
+        mark("resolve_price");
 
         // new quantity
         const newQty = data.action === "add" ? oldQty + 1 : oldQty - 1;
@@ -326,6 +378,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             }
           }
         }
+        mark("affiliate_points");
 
         // inventory enforcement on increment (normal only)
         if (!isAffiliate && data.action === "add") {
@@ -338,6 +391,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             );
           }
         }
+        mark("inventory_check");
 
         // tier pricing (normal only)
         let pricePerUnit = basePrice;
@@ -347,6 +401,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           if (tier) {
             const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
             const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
+
             const [{ rows: pSum }, { rows: vSum }] = await Promise.all([
               client.query(
                 `SELECT COALESCE(SUM(quantity),0)::int AS qty
@@ -379,6 +434,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             );
           }
         }
+        mark("tier_adjust");
 
         // persist
         if (newQty === 0) {
@@ -412,9 +468,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             );
           }
         }
+        mark("persist");
 
         // stock adjust
         await adjustStock(client, data.productId, variationId, country, data.action === "add" ? -1 : 1);
+        mark("adjust_stock");
 
         // update cart hash
         const { rows: linesForHash } = await client.query(
@@ -427,20 +485,39 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
           [newHash, cartId]
         );
+        mark("hash_update");
 
         await client.query("COMMIT");
+        mark("tx_commit");
 
-        try { await emitCartToDisplay(cartId); } catch (e) { console.warn("[cd][update] emit failed", e); }
+        // broadcast latest cart to the paired customer display (non-blocking)
+        try {
+          setTimeout(() => {
+            fireAndForget(withTimeout(emitCartToDisplay(cartId), 300));
+          }, 0);
+        } catch { }
+        mark("emit_display_sched");
 
-        // snapshot
+        // snapshot with variant title (same as add-product)
         const [pRows, aRows] = await Promise.all([
           pool.query(
-            `SELECT p.id,p.title,p.description,p.image,p.sku,
-                    cp.quantity,cp."unitPrice",cp."variationId", false AS "isAffiliate"
-               FROM products p
-               JOIN "cartProducts" cp ON cp."productId"=p.id
-              WHERE cp."cartId"=$1
-              ORDER BY cp."createdAt"`,
+            `SELECT 
+                p.id,
+                p.title               AS parent_title,
+                p.image               AS parent_image,
+                p.sku                 AS parent_sku,
+                v.attributes          AS var_attributes,
+                v.image               AS var_image,
+                v.sku                 AS var_sku,
+                cp.quantity,
+                cp."unitPrice",
+                cp."variationId",
+                false                 AS "isAffiliate"
+             FROM "cartProducts" cp
+             JOIN products p           ON cp."productId" = p.id
+             LEFT JOIN "productVariations" v ON v.id = cp."variationId"
+            WHERE cp."cartId"=$1
+            ORDER BY cp."createdAt"`,
             [cartId]
           ),
           pool.query(
@@ -453,14 +530,51 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             [cartId]
           ),
         ]);
+        mark("snapshot_query");
 
-        const lines = [...pRows.rows, ...aRows.rows].map((l: any) => ({
-          ...l,
+        const normalLines = pRows.rows.map((r: any) => {
+          const title = formatVariationTitle(r.parent_title, r.var_attributes);
+          const image = r.var_image ?? r.parent_image ?? null;
+          const sku   = r.var_sku ?? r.parent_sku ?? null;
+          const unitPrice = Number(r.unitPrice);
+          return {
+            id: r.id,
+            title,
+            image,
+            sku,
+            quantity: Number(r.quantity),
+            unitPrice,
+            variationId: r.variationId,
+            isAffiliate: false,
+            subtotal: unitPrice * Number(r.quantity),
+          };
+        });
+
+        const affiliateLines = aRows.rows.map((l: any) => ({
+          id: l.id,
+          title: l.title,
+          image: l.image ?? null,
+          sku: l.sku ?? null,
+          quantity: Number(l.quantity),
           unitPrice: Number(l.unitPrice),
-          subtotal: Number(l.unitPrice) * l.quantity,
+          variationId: l.variationId,
+          isAffiliate: true,
+          subtotal: Number(l.unitPrice) * Number(l.quantity),
         }));
 
-        return NextResponse.json({ lines }, { status: 200 });
+        const lines = [...normalLines, ...affiliateLines];
+
+        // Add timing headers + log
+        const totalMs = Date.now() - T0;
+        const serverTiming = marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
+        console.log(
+          `[POS][update-product] cart=${cartId} product=${data.productId} var=${variationId ?? "base"} action=${data.action} ${totalMs}ms`,
+          Object.fromEntries(marks)
+        );
+        const res = NextResponse.json({ lines }, { status: 200 });
+        res.headers.set("Server-Timing", serverTiming);
+        res.headers.set("X-Route-Duration", `${totalMs}ms`);
+        return res;
       } catch (e) {
         await client.query("ROLLBACK");
         throw e;

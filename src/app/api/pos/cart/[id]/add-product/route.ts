@@ -167,22 +167,42 @@ async function readInventoryFast(
   return {
     manage: !!rows?.[0]?.manage,
     backorder: !!rows?.[0]?.backorder,
-    stock: null, // no numeric stock cap in products schema you shared
+    stock: null,
   };
 }
 
-/** Format "Parent - <attr values...>" e.g., "T-SHIRT - RED / L" */
+/** Extract readable labels from a variation attributes JSON and ignore UUID-like ids. */
+function extractAttributeLabels(attributes: any): string[] {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const out: string[] = [];
+  const push = (s: string) => {
+    const t = String(s ?? "").trim();
+    if (t && !UUID_RE.test(t)) out.push(t);
+  };
+  const walk = (x: any) => {
+    if (x == null) return;
+    if (typeof x === "string" || typeof x === "number" || typeof x === "boolean") {
+      push(String(x));
+      return;
+    }
+    if (Array.isArray(x)) { x.forEach(walk); return; }
+    if (typeof x === "object") {
+      for (const k of ["label", "name", "value", "title", "text"]) {
+        if (k in x && (x as any)[k] != null) walk((x as any)[k]);
+      }
+      Object.values(x).forEach(walk);
+    }
+  };
+  try { walk(attributes); } catch { /* ignore */ }
+  // dedupe while preserving order
+  return [...new Set(out)];
+}
+
+/** Format "Parent - RED / L" */
 function formatVariationTitle(parentTitle: string, attributes: any): string {
-  if (!attributes || typeof attributes !== "object") return parentTitle;
-  try {
-    const vals = Object.values(attributes)
-      .filter((v) => v != null && String(v).trim().length > 0)
-      .map((v) => String(v).trim());
-    if (vals.length === 0) return parentTitle;
-    return `${parentTitle} - ${vals.join(" / ")}`;
-  } catch {
-    return parentTitle;
-  }
+  const labels = extractAttributeLabels(attributes);
+  if (!labels.length) return parentTitle;
+  return `${parentTitle} - ${labels.join(" / ")}`;
 }
 
 /** Swallow emitter timeouts & errors, never block request */
@@ -518,6 +538,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       const totalMs = Date.now() - T0;
       const serverTiming = marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
+
+      // log to server console as well
+      console.log(
+        `[POS][add-product] cart=${cartId} product=${body.productId} var=${variationId ?? "base"} qty=${body.quantity} ${totalMs}ms`,
+        Object.fromEntries(marks)
+      );
 
       return {
         status: 201,
