@@ -165,7 +165,7 @@ export function StoreRegisterSelector({
               </div>
               <div className="mt-3">
                 <Button onClick={openStoresPage}>
-                  Open Stores (new tab)
+                  Create a store
                 </Button>
               </div>
             </div>
