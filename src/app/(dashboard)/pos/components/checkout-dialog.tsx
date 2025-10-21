@@ -281,12 +281,14 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
       // If any Niftipay split, include the chosen chain/asset + split amount
       const niftiAmount = payments
-        .filter((p) => /niftipay/i.test(paymentMethods.find((pm) => pm.id === p.methodId)?.name || ""))
+        .filter(p => /niftipay/i.test(paymentMethods.find(pm => pm.id === p.methodId)?.name || ""))
         .reduce((s, p) => s + p.amount, 0);
+
       if (niftiAmount > 0 && selectedNiftipay) {
         const [chain, asset] = selectedNiftipay.split(":");
-        payload.niftipay = { chain, asset, amount: toMoney(niftiAmount) };
+        (payload as any).niftipay = { chain, asset, amount: toMoney(niftiAmount) };
       }
+
 
       const res = await fetch("/api/pos/checkout", {
         method: "POST",
