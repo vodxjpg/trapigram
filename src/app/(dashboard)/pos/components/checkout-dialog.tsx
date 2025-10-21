@@ -13,7 +13,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { PauseCircle, Check, X } from "lucide-react";
+import { PauseCircle, Check, X, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   AlertDialog,
@@ -48,8 +48,10 @@ type CheckoutDialogProps = {
   discount?: DiscountPayload;
 };
 
+// 🔗 Adjust if your app uses a different route
+const PAYMENT_METHODS_URL = "/payment-methods";
+
 function toMoney(n: number) {
-  // avoid float noise
   return +n.toFixed(2);
 }
 
@@ -67,6 +69,8 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
   } = props;
 
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
+  const [methodsLoaded, setMethodsLoaded] = useState(false);       // NEW
+  const [methodsReload, setMethodsReload] = useState(0);           // NEW
   const [currentMethodId, setCurrentMethodId] = useState<string | null>(null);
 
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -83,7 +87,6 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
   const totalPaid = useMemo(() => payments.reduce((s, p) => s + p.amount, 0), [payments]);
   const remaining = Math.max(0, toMoney(totalEstimate - totalPaid));
 
-  // Show cash "received / change" helper if selected method name mentions cash
   const currentIsCash = useMemo(() => {
     const m = paymentMethods.find((pm) => pm.id === currentMethodId);
     return (m?.name || "").toLowerCase().includes("cash");
@@ -106,7 +109,6 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     }
   }, [open]);
 
-  // Fetch niftipay networks available for the user
   async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
     const r = await fetch("/api/niftipay/payment-methods");
     if (!r.ok) throw new Error(await r.text().catch(() => "Niftipay methods failed"));
@@ -118,23 +120,18 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     }));
   }
 
-  // Load active payment methods when dialog opens (with resilient field names + a safe fallback)
+  // Load active payment methods when dialog opens (NO fallback; we want an empty-state)
   useEffect(() => {
     if (!open || !cartId) return;
     let ignore = false;
     (async () => {
+      setMethodsLoaded(false);
       try {
         const res = await fetch(`/api/pos/checkout?cartId=${encodeURIComponent(cartId)}`);
         const j = await res.json().catch(() => ({} as any));
         if (!res.ok) throw new Error(j?.error || "Failed to load payment methods");
 
-        // Accept several possible shapes
-        const raw: any[] =
-          j?.paymentMethods ??
-          j?.methods ??
-          j?.data ??
-          [];
-
+        const raw: any[] = j?.paymentMethods ?? j?.methods ?? j?.data ?? [];
         const methods: PaymentMethodRow[] = raw
           .map((m) => ({
             id: String(m.id ?? m.methodId ?? m.key ?? ""),
@@ -144,35 +141,21 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
           }))
           .filter((m) => m.id);
 
-        // Fallback if API returned nothing
-        const safe = methods.length
-          ? methods
-          : ([
-              { id: "cash", name: "Cash" },
-              { id: "card", name: "Card" },
-            ] satisfies PaymentMethodRow[]);
-
         if (!ignore) {
-          setPaymentMethods(safe);
-          if (!currentMethodId && safe[0]) setCurrentMethodId(safe[0].id);
+          setPaymentMethods(methods);
+          setCurrentMethodId(methods[0]?.id ?? null);
         }
       } catch (e: any) {
         if (!ignore) {
-          // still allow user to record at least cash
-          setPaymentMethods([
-            { id: "cash", name: "Cash" },
-            { id: "card", name: "Card" },
-          ]);
-          if (!currentMethodId) setCurrentMethodId("cash");
+          setPaymentMethods([]); // show empty-state, not fallback
           setError(e?.message || "Failed to load payment methods");
         }
+      } finally {
+        if (!ignore) setMethodsLoaded(true);
       }
     })();
-    return () => {
-      ignore = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, cartId]);
+    return () => { ignore = true; };
+  }, [open, cartId, methodsReload]);
 
   // When Niftipay is among methods, fetch its networks
   useEffect(() => {
@@ -205,7 +188,6 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     return !!m && /niftipay/i.test(m.name || "");
   }, [paymentMethods, currentMethodId]);
 
-  // If there is any Niftipay split in the list, require a selected network
   const niftiInPayments = useMemo(() => {
     return payments.some((p) => {
       const name = paymentMethods.find((pm) => pm.id === p.methodId)?.name || "";
@@ -213,6 +195,13 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     });
   }, [payments, paymentMethods]);
   const niftiSelectionRequired = niftiInPayments && niftipayNetworks.length > 0 && !selectedNiftipay;
+
+  // NEW: convenience helpers
+  const openPaymentMethodsTab = () =>
+    window.open(PAYMENT_METHODS_URL, "_blank", "noopener,noreferrer");
+  const refreshMethods = () => setMethodsReload((n) => n + 1);
+
+  const noPosMethods = methodsLoaded && paymentMethods.length === 0; // NEW
 
   /* ───────────────────────── Split helpers ───────────────────────── */
   const handleAddPayment = () => {
@@ -248,7 +237,6 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
   /* ───────────────────────── Submit actions ───────────────────────── */
 
-  // ✅ Parking with a remaining balance is allowed (like before)
   const submitParkedCheckout = async () => {
     if (!cartId || !clientId || !registerId) {
       setError("Missing cart, customer or outlet.");
@@ -269,7 +257,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         niftipay?: { chain: string; asset: string; amount: number } | undefined;
       } = {
         cartId,
-        payments, // can be empty or partial; backend records partials and leaves a balance due
+        payments,
         storeId,
         registerId,
         parked: true,
@@ -279,7 +267,6 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         payload.discount = discount;
       }
 
-      // If any Niftipay split, include the chosen chain/asset + split amount
       const niftiAmount = payments
         .filter(p => /niftipay/i.test(paymentMethods.find(pm => pm.id === p.methodId)?.name || ""))
         .reduce((s, p) => s + p.amount, 0);
@@ -288,7 +275,6 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         const [chain, asset] = selectedNiftipay.split(":");
         (payload as any).niftipay = { chain, asset, amount: toMoney(niftiAmount) };
       }
-
 
       const res = await fetch("/api/pos/checkout", {
         method: "POST",
@@ -300,7 +286,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
       const orderId = data?.order?.id || data?.orderId;
       if (!orderId) throw new Error("No order id returned");
-      onComplete(orderId, true); // parked
+      onComplete(orderId, true);
       onOpenChange(false);
     } catch (e: any) {
       setError(e?.message || "Parking the order failed");
@@ -314,7 +300,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
       setError("Missing cart, customer or outlet.");
       return;
     }
-    if (remaining > 0) return; // must be fully paid to complete
+    if (remaining > 0) return;
 
     try {
       setBusy(true);
@@ -338,7 +324,6 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         payload.discount = discount;
       }
 
-      // If any Niftipay split exists, include chain/asset for invoice
       const niftiAmount = payments
         .filter(p => /niftipay/i.test(paymentMethods.find(pm => pm.id === p.methodId)?.name || ""))
         .reduce((s, p) => s + p.amount, 0);
@@ -366,8 +351,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     }
   };
 
-
-  const canPark = !!cartId && !!clientId && !!registerId && !busy; // no “must be fully covered”
+  const canPark = !!cartId && !!clientId && !!registerId && !busy; // parking allowed even with no methods
   const canComplete = remaining === 0 && !busy && !niftiSelectionRequired;
 
   return (
@@ -399,32 +383,50 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
               )}
             </div>
 
-            {/* Payment methods */}
+            {/* Payment methods (or empty state) */}
             <div className="space-y-2">
               <Label>Payment Method</Label>
-              <div className="grid grid-cols-2 gap-3">
-                {paymentMethods.map((m) => (
-                  <Card
-                    key={m.id}
-                    className={cn(
-                      "p-4 cursor-pointer transition-all hover:border-primary",
-                      currentMethodId === m.id && "border-primary bg-primary/5",
-                    )}
-                    onClick={() => setCurrentMethodId(m.id)}
-                  >
-                    <div className="flex flex-col items-center gap-1">
-                      <span className="font-medium">{m.name}</span>
-                      {m.description && (
-                        <span className="text-xs text-muted-foreground">{m.description}</span>
+
+              {noPosMethods ? (
+                <div className="rounded-md border p-4 bg-muted/30">
+                  <p className="text-sm">
+                    You don’t have any <strong>POS payment methods</strong> enabled. Create one to accept payments here.
+                  </p>
+                  <div className="mt-3 flex items-center gap-2">
+                    <Button onClick={openPaymentMethodsTab}>
+                      Open Payment Methods (new tab)
+                    </Button>
+                    <Button variant="outline" onClick={refreshMethods}>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Refresh
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {paymentMethods.map((m) => (
+                    <Card
+                      key={m.id}
+                      className={cn(
+                        "p-4 cursor-pointer transition-all hover:border-primary",
+                        currentMethodId === m.id && "border-primary bg-primary/5",
                       )}
-                    </div>
-                  </Card>
-                ))}
-              </div>
+                      onClick={() => setCurrentMethodId(m.id)}
+                    >
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="font-medium">{m.name}</span>
+                        {m.description && (
+                          <span className="text-xs text-muted-foreground">{m.description}</span>
+                        )}
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Niftipay network picker (shown only when current method is Niftipay) */}
-            {currentMethodIsNiftipay && (
+            {/* Niftipay network picker */}
+            {!noPosMethods && currentMethodIsNiftipay && (
               <div className="space-y-2">
                 <Label>Crypto Network</Label>
                 <div>
@@ -446,7 +448,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
             )}
 
             {/* Amount + helpers */}
-            {remaining > 0 && (
+            {!noPosMethods && remaining > 0 && (
               <>
                 <div className="space-y-2">
                   <Label>Amount</Label>
@@ -460,18 +462,10 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                     placeholder="0.00"
                   />
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.25)}>
-                      25%
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.5)}>
-                      50%
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.75)}>
-                      75%
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(1)}>
-                      Full
-                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.25)}>25%</Button>
+                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.5)}>50%</Button>
+                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(0.75)}>75%</Button>
+                    <Button variant="outline" size="sm" onClick={() => handleQuickAmount(1)}>Full</Button>
                   </div>
                 </div>
 
@@ -517,28 +511,29 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                 {payments.map((p) => {
                   const methodName =
                     paymentMethods.find((pm) => pm.id === p.methodId)?.name ?? p.methodId;
-                return (
-                  <Card key={p.methodId} className="p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-medium">{methodName}</div>
+                  return (
+                    <Card key={p.methodId} className="p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium">{methodName}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium tabular-nums">${p.amount.toFixed(2)}</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => removePayment(p.methodId)}
+                            aria-label={`Remove ${methodName}`}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium tabular-nums">${p.amount.toFixed(2)}</span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => removePayment(p.methodId)}
-                          aria-label={`Remove ${methodName}`}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                )})}
+                    </Card>
+                  );
+                })}
               </div>
             )}
 
@@ -559,7 +554,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                 </Button>
               )}
 
-              {/* Park order (partial allowed) */}
+              {/* Park order (allowed even with no methods) */}
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
@@ -573,7 +568,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                       )}
                       onClick={submitParkedCheckout}
                       disabled={!canPark || niftiSelectionRequired}
-                     >
+                    >
                       <PauseCircle className="h-4 w-4" />
                       Park Order
                     </Button>
