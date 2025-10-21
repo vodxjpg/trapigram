@@ -52,6 +52,59 @@ async function fetchJsonVerbose(url: string, opts: RequestInit = {}, tag = url) 
   return res;
 }
 
+/** Try to pull customer name/email from any shape the order/raw may have. */
+function extractCustomer(order: any, raw: any): { firstName: string; lastName: string; email?: string | null } {
+  const candidates = [
+    order,
+    raw?.order,
+    raw,
+    order?.client,
+    raw?.client,
+    raw?.order?.client,
+    order?.customer,
+    raw?.customer,
+    raw?.order?.customer,
+  ].filter(Boolean);
+
+  const get = (obj: any, keys: string[]) => {
+    for (const k of keys) {
+      const v = obj?.[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    return null;
+  };
+
+  let first = null as string | null;
+  let last  = null as string | null;
+  let email = null as string | null;
+
+  for (const n of candidates) {
+    if (!first) first = get(n, ["firstName","givenName","given_name","fname","first"]);
+    if (!last)  last  = get(n, ["lastName","familyName","family_name","lname","last","surname"]);
+    if (!email) email = get(n, ["email","emailAddress","mail"]);
+    if (first && last && email) break;
+  }
+
+  // Try splitting a full name if present
+  if ((!first || !last) && candidates.length) {
+    const full = get(candidates[0], ["name","fullName","customerName","clientName"]);
+    if (full) {
+      const parts = full.split(/\s+/).filter(Boolean);
+      if (parts.length === 1) first ??= parts[0];
+      if (parts.length >= 2) {
+        first ??= parts.slice(0, parts.length - 1).join(" ");
+        last  ??= parts[parts.length - 1];
+      }
+    }
+  }
+
+  return {
+    firstName: first || "POS",
+    lastName:  last  || "Customer",
+    email
+  };
+}
+
 export default function ReceiptOptionsDialog({
   open,
   onOpenChange,
@@ -230,6 +283,8 @@ export default function ReceiptOptionsDialog({
         }
 
         const currency = currencyFromCountry(order.country);
+        const { firstName, lastName, email: orderEmail } = extractCustomer(order, raw);
+
         const niftipayRes = await fetch(`/api/niftipay/orders?replaceCancelled=1`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -238,10 +293,9 @@ export default function ReceiptOptionsDialog({
             asset,
             amount: niftiAmount,
             currency,
-            // Minimal customer info for POS; edit page sends more
-            firstName: null,
-            lastName: null,
-            email: "user@trapyfy.com",
+            firstName,                 // ← now sending names
+            lastName,                  // ← now sending names
+            email: orderEmail || "user@trapyfy.com",
             merchantId: order.organizationId ?? undefined,
             reference: ref,
           }),
