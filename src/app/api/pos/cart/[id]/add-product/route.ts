@@ -13,6 +13,15 @@ import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing"
 import { emitCartToDisplay } from "@/lib/customer-display-emit";
 
 /* ─────────────────────────────────────────────────────────────
+   PgBouncer-safe query helper (unnamed statements)
+  ───────────────────────────────────────────────────────────── */
+type DBRunner = import("pg").Pool | import("pg").PoolClient;
+type QCfg = { text: string; values?: any[] };
+async function q(runner: DBRunner, cfg: QCfg) {
+  return (runner as any).query(cfg.text, cfg.values);
+}
+
+/* ─────────────────────────────────────────────────────────────
    Small in-memory caches (per runtime)
   ───────────────────────────────────────────────────────────── */
 const TIER_TTL_MS = 120_000;      // 2 min – good for POS, lowers repeated tier calls
@@ -57,14 +66,12 @@ async function getStoreCountryCached(
   const hit = storeCountryCache.get(key);
   if (hit && now - hit.at < STORE_TTL_MS) return hit.country;
 
-  const runner = client ?? pool;
-  const { rows } = await runner.query(
-    {
-      name: "pos_store_address_by_org",
-      text: `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
-      values: [storeId, organizationId],
-    }
-  );
+  const runner: DBRunner = client ?? pool;
+  const { rows } = await q(runner, {
+    text: `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
+    values: [storeId, organizationId],
+  });
+
   let country: string | null = null;
   try {
     const addr = typeof rows[0]?.address === "string" ? JSON.parse(rows[0].address) : rows[0]?.address;
@@ -104,18 +111,16 @@ async function withIdempotency(
   try {
     await c.query("BEGIN");
     try {
-      await c.query(
-        {
-          name: "idem_insert",
-          text: `INSERT INTO idempotency(key, method, path, "createdAt") VALUES ($1,$2,$3,NOW())`,
-          values: [key, method, path],
-        }
-      );
+      await q(c, {
+        text: `INSERT INTO idempotency(key, method, path, "createdAt") VALUES ($1,$2,$3,NOW())`,
+        values: [key, method, path],
+      });
     } catch (e: any) {
       if (e?.code === "23505") {
-        const { rows } = await c.query(
-          { name: "idem_select", text: `SELECT status, response FROM idempotency WHERE key=$1`, values: [key] }
-        );
+        const { rows } = await q(c, {
+          text: `SELECT status, response FROM idempotency WHERE key=$1`,
+          values: [key],
+        });
         await c.query("COMMIT");
         if (rows[0]) {
           return NextResponse.json(rows[0].response, {
@@ -139,13 +144,10 @@ async function withIdempotency(
       throw e;
     }
     const r = await exec();
-    await c.query(
-      {
-        name: "idem_update",
-        text: `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
-        values: [key, r.status, r.body],
-      }
-    );
+    await q(c, {
+      text: `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
+      values: [key, r.status, r.body],
+    });
     await c.query("COMMIT");
     return NextResponse.json(r.body, {
       status: r.status,
@@ -211,17 +213,14 @@ async function readInventoryFast(
   client: import("pg").PoolClient,
   productId: string,
 ): Promise<{ manage: boolean; backorder: boolean; stock: number | null }> {
-  const { rows } = await client.query(
-    {
-      name: "pos_product_flags",
-      text: `SELECT COALESCE("manageStock", false) AS manage,
-                    COALESCE("allowBackorders", false) AS backorder
-               FROM products
-              WHERE id=$1
-              LIMIT 1`,
-      values: [productId],
-    }
-  );
+  const { rows } = await q(client, {
+    text: `SELECT COALESCE("manageStock", false) AS manage,
+                  COALESCE("allowBackorders", false) AS backorder
+             FROM products
+            WHERE id=$1
+            LIMIT 1`,
+    values: [productId],
+  });
   return {
     manage: !!rows?.[0]?.manage,
     backorder: !!rows?.[0]?.backorder,
@@ -313,7 +312,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     let client: import("pg").PoolClient | null = null;
 
     try {
-      client = await pool.connect(); // 👈 use a single connection for all queries
+      client = await pool.connect(); // single connection for the whole request
       const { id: cartId } = await params;
       const body = BodySchema.parse(await req.json());
       mark("parsed_body");
@@ -323,17 +322,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ? body.variationId
           : null;
 
-      // cart + client context (prepared)
-      const { rows: cRows } = await client.query(
-        {
-          name: "pos_cart_ctx",
-          text: `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId"
-                   FROM carts ca
-                   JOIN clients cl ON cl.id = ca."clientId"
-                  WHERE ca.id = $1`,
-          values: [cartId],
-        }
-      );
+      // cart + client context
+      const { rows: cRows } = await q(client, {
+        text: `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId"
+                 FROM carts ca
+                 JOIN clients cl ON cl.id = ca."clientId"
+                WHERE ca.id = $1`,
+        values: [cartId],
+      });
       mark("cart_lookup");
       if (!cRows.length) {
         return {
@@ -355,7 +351,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // resolve base price (+ affiliate flag) with cache
       let basePrice: number, isAffiliate: boolean;
-
       try {
         const r = await resolveUnitPriceCached(body.productId, variationId, country, levelId);
         basePrice = r.price; isAffiliate = r.isAffiliate;
@@ -367,9 +362,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const r2 = await resolveUnitPriceCached(body.productId, variationId, storeCountry, levelId);
           basePrice = r2.price; isAffiliate = r2.isAffiliate;
           country = storeCountry;
-          await client.query(
-            { name: "pos_cart_country_update", text: `UPDATE carts SET country=$1 WHERE id=$2`, values: [country, cartId] }
-          );
+          await q(client, {
+            text: `UPDATE carts SET country=$1 WHERE id=$2`,
+            values: [country, cartId],
+          });
           mark("resolve_price_store_country");
         } else {
           throw e;
@@ -382,24 +378,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // existing line (branch by affiliate for index usage)
       let existing: Array<{ id: string; quantity: number }> = [];
       if (isAffiliate) {
-        const { rows } = await client.query(
-          {
-            name: "pos_line_aff_select",
-            text: `SELECT id, quantity FROM "cartProducts"
-                    WHERE "cartId"=$1 AND "affiliateProductId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
-            values: [cartId, body.productId, ...(variationId ? [variationId] as any[] : [])],
-          }
-        );
+        const { rows } = await q(client, {
+          text: `SELECT id, quantity FROM "cartProducts"
+                  WHERE "cartId"=$1 AND "affiliateProductId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
+          values: [cartId, body.productId, ...(variationId ? [variationId] : [])],
+        });
         existing = rows as any;
       } else {
-        const { rows } = await client.query(
-          {
-            name: "pos_line_std_select",
-            text: `SELECT id, quantity FROM "cartProducts"
-                    WHERE "cartId"=$1 AND "productId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
-            values: [cartId, body.productId, ...(variationId ? [variationId] as any[] : [])],
-          }
-        );
+        const { rows } = await q(client, {
+          text: `SELECT id, quantity FROM "cartProducts"
+                  WHERE "cartId"=$1 AND "productId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
+          values: [cartId, body.productId, ...(variationId ? [variationId] : [])],
+        });
         existing = rows as any;
       }
       mark("line_lookup");
@@ -422,14 +412,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // affiliate points flow
       if (isAffiliate) {
         const pointsNeeded = basePrice * body.quantity;
-        const { rows: bal } = await client.query(
-          {
-            name: "pos_aff_points_balance",
-            text: `SELECT "pointsCurrent" FROM "affiliatePointBalances"
-                    WHERE "organizationId"=$1 AND "clientId"=$2`,
-            values: [organizationId, clientId],
-          }
-        );
+        const { rows: bal } = await q(client, {
+          text: `SELECT "pointsCurrent" FROM "affiliatePointBalances"
+                  WHERE "organizationId"=$1 AND "clientId"=$2`,
+          values: [organizationId, clientId],
+        });
         mark("affiliate_balance_lookup");
 
         const current = Number(bal[0]?.pointsCurrent ?? 0);
@@ -443,27 +430,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
 
         // UPDATE balance
-        await client.query(
-          {
-            name: "pos_aff_points_debit",
-            text: `UPDATE "affiliatePointBalances"
-                      SET "pointsCurrent"="pointsCurrent"-$1,
-                          "pointsSpent"  ="pointsSpent"  +$1,
-                          "updatedAt"=NOW()
-                    WHERE "organizationId"=$2 AND "clientId"=$3`,
-            values: [pointsNeeded, organizationId, clientId],
-          }
-        );
+        await q(client, {
+          text: `UPDATE "affiliatePointBalances"
+                    SET "pointsCurrent"="pointsCurrent"-$1,
+                        "pointsSpent"  ="pointsSpent"  +$1,
+                        "updatedAt"=NOW()
+                  WHERE "organizationId"=$2 AND "clientId"=$3`,
+          values: [pointsNeeded, organizationId, clientId],
+        });
         // INSERT log
-        await client.query(
-          {
-            name: "pos_aff_points_log",
-            text: `INSERT INTO "affiliatePointLogs"
-                    (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
-                   VALUES (gen_random_uuid(),$1,$2,$3,'redeem','add to cart',NOW(),NOW())`,
-            values: [organizationId, clientId, -pointsNeeded],
-          }
-        );
+        await q(client, {
+          text: `INSERT INTO "affiliatePointLogs"
+                  (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+                 VALUES (gen_random_uuid(),$1,$2,$3,'redeem','add to cart',NOW(),NOW())`,
+          values: [organizationId, clientId, -pointsNeeded],
+        });
         mark("affiliate_debit");
       }
 
@@ -482,90 +463,69 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
           // Split the SUM so indexes can be used
           const [pSum, vSum] = await Promise.all([
-            client.query(
-              {
-                name: "pos_tier_qty_sum_products",
-                text: `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                         FROM "cartProducts"
-                        WHERE "cartId"=$1 AND "productId" = ANY($2::text[])`,
-                values: [cartId, tierProdIds],
-              }
-            ),
-            client.query(
-              {
-                name: "pos_tier_qty_sum_variations",
-                text: `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                         FROM "cartProducts"
-                        WHERE "cartId"=$1 AND "variationId" = ANY($2::text[])`,
-                values: [cartId, tierVarIds],
-              }
-            ),
+            q(client, {
+              text: `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                       FROM "cartProducts"
+                      WHERE "cartId"=$1 AND "productId" = ANY($2::text[])`,
+              values: [cartId, tierProdIds],
+            }),
+            q(client, {
+              text: `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                       FROM "cartProducts"
+                      WHERE "cartId"=$1 AND "variationId" = ANY($2::text[])`,
+              values: [cartId, tierVarIds],
+            }),
           ]);
           mark("tier_qty_sum");
 
-          const qtyBefore = Number(pSum.rows[0]?.qty ?? 0) + Number(vSum.rows[0]?.qty ?? 0);
+          const qtyBefore = Number((pSum as any).rows[0]?.qty ?? 0) + Number((vSum as any).rows[0]?.qty ?? 0);
           const qtyAfter = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
           const tierPrice = getPriceForQuantity(tier.steps, qtyAfter);
           if (tierPrice != null && tierPrice !== basePrice) {
             unitPrice = tierPrice;
 
             // Avoid no-op updates by comparing value
-            await client.query(
-              {
-                name: "pos_tier_update_lines_products",
-                text: `UPDATE "cartProducts"
-                          SET "unitPrice"=$1,"updatedAt"=NOW()
-                        WHERE "cartId"=$2 AND "productId" = ANY($3::text[])
-                          AND "unitPrice" <> $1`,
-                values: [unitPrice, cartId, tierProdIds],
-              }
-            );
-            await client.query(
-              {
-                name: "pos_tier_update_lines_variations",
-                text: `UPDATE "cartProducts"
-                          SET "unitPrice"=$1,"updatedAt"=NOW()
-                        WHERE "cartId"=$2 AND "variationId" = ANY($3::text[])
-                          AND "unitPrice" <> $1`,
-                values: [unitPrice, cartId, tierVarIds],
-              }
-            );
+            await q(client, {
+              text: `UPDATE "cartProducts"
+                        SET "unitPrice"=$1,"updatedAt"=NOW()
+                      WHERE "cartId"=$2 AND "productId" = ANY($3::text[])
+                        AND "unitPrice" <> $1`,
+              values: [unitPrice, cartId, tierProdIds],
+            });
+            await q(client, {
+              text: `UPDATE "cartProducts"
+                        SET "unitPrice"=$1,"updatedAt"=NOW()
+                      WHERE "cartId"=$2 AND "variationId" = ANY($3::text[])
+                        AND "unitPrice" <> $1`,
+              values: [unitPrice, cartId, tierVarIds],
+            });
             mark("tier_update_lines");
           }
         }
       }
 
       if (existing.length) {
-        await client.query(
-          {
-            name: "pos_line_update",
-            text: `UPDATE "cartProducts"
-                      SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
-                    WHERE id=$3`,
-            values: [quantity, unitPrice, existing[0].id],
-          }
-        );
+        await q(client, {
+          text: `UPDATE "cartProducts"
+                    SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
+                  WHERE id=$3`,
+          values: [quantity, unitPrice, existing[0].id],
+        });
       } else {
         if (variationId) {
-          await client.query(
-            {
-              name: "pos_line_insert_var",
-              text: `INSERT INTO "cartProducts"
-                     (id,"cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
-              values: [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), variationId, quantity, unitPrice],
-            }
-          );
+          await q(client, {
+            text: `INSERT INTO "cartProducts"
+                   (id,"cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
+            values: [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), variationId, quantity, unitPrice],
+          });
         } else {
-          await client.query(
-            {
-              name: "pos_line_insert",
-              text: `INSERT INTO "cartProducts"
-                     (id,"cartId","productId","affiliateProductId",quantity,"unitPrice","createdAt","updatedAt")
-                     VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
-              values: [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), quantity, unitPrice],
-            }
-          );
+          await q(client, {
+            text: `INSERT INTO "cartProducts"
+                   (id,"cartId","productId","affiliateProductId",quantity,"unitPrice","createdAt","updatedAt")
+                   VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
+            values: [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), quantity, unitPrice],
+          });
         }
       }
       mark("upsert_line");
@@ -575,27 +535,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       mark("adjust_stock");
 
       // FAST cart hash (aggregate instead of hashing row JSON)
-      const hv = await client.query(
-        {
-          name: "pos_hash_agg",
-          text: `SELECT COUNT(*)::int AS n,
-                        COALESCE(SUM(quantity),0)::int AS q,
-                        COALESCE(SUM((quantity * "unitPrice")::numeric),0)::text AS v
-                   FROM "cartProducts"
-                  WHERE "cartId"=$1`,
-          values: [cartId],
-        }
-      );
+      const hv = await q(client, {
+        text: `SELECT COUNT(*)::int AS n,
+                      COALESCE(SUM(quantity),0)::int AS q,
+                      COALESCE(SUM((quantity * "unitPrice")::numeric),0)::text AS v
+                 FROM "cartProducts"
+                WHERE "cartId"=$1`,
+        values: [cartId],
+      });
       const hash = crypto.createHash("sha256")
-        .update(`${hv.rows[0].n}|${hv.rows[0].q}|${hv.rows[0].v}`)
+        .update(`${(hv as any).rows[0].n}|${(hv as any).rows[0].q}|${(hv as any).rows[0].v}`)
         .digest("hex");
-      await client.query(
-        {
-          name: "pos_hash_update",
-          text: `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
-          values: [hash, cartId],
-        }
-      );
+      await q(client, {
+        text: `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
+        values: [hash, cartId],
+      });
       mark("hash_update");
 
       await client.query("COMMIT");
@@ -610,54 +564,51 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       mark("emit_display_sched");
 
       // Single-roundtrip snapshot with proper variant titles
-      const snap = await client.query(
-        {
-          name: "pos_snapshot_lines",
-          text: `
-          SELECT 
-             p.id                            AS pid,
-             p.title                         AS parent_title,
-             p.image                         AS parent_image,
-             p.sku                           AS parent_sku,
-             v.attributes                    AS var_attributes,
-             v.image                         AS var_image,
-             v.sku                           AS var_sku,
-             cp.quantity,
-             cp."unitPrice",
-             cp."variationId",
-             false                           AS "isAffiliate",
-             cp."createdAt"                  AS created_at
-           FROM "cartProducts" cp
-           JOIN products p            ON cp."productId" = p.id
-           LEFT JOIN "productVariations" v ON v.id = cp."variationId"
-           WHERE cp."cartId"=$1
+      const snap = await q(client, {
+        text: `
+        SELECT 
+           p.id                            AS pid,
+           p.title                         AS parent_title,
+           p.image                         AS parent_image,
+           p.sku                           AS parent_sku,
+           v.attributes                    AS var_attributes,
+           v.image                         AS var_image,
+           v.sku                           AS var_sku,
+           cp.quantity,
+           cp."unitPrice",
+           cp."variationId",
+           false                           AS "isAffiliate",
+           cp."createdAt"                  AS created_at
+         FROM "cartProducts" cp
+         JOIN products p            ON cp."productId" = p.id
+         LEFT JOIN "productVariations" v ON v.id = cp."variationId"
+         WHERE cp."cartId"=$1
 
-           UNION ALL
+         UNION ALL
 
-           SELECT 
-             ap.id                           AS pid,
-             ap.title                        AS parent_title,
-             ap.image                        AS parent_image,
-             ap.sku                          AS parent_sku,
-             NULL::jsonb                     AS var_attributes,
-             NULL::text                      AS var_image,
-             NULL::text                      AS var_sku,
-             cp.quantity,
-             cp."unitPrice",
-             cp."variationId",
-             true                            AS "isAffiliate",
-             cp."createdAt"                  AS created_at
-           FROM "cartProducts" cp
-           JOIN "affiliateProducts" ap ON cp."affiliateProductId"=ap.id
-           WHERE cp."cartId"=$1
+         SELECT 
+           ap.id                           AS pid,
+           ap.title                        AS parent_title,
+           ap.image                        AS parent_image,
+           ap.sku                          AS parent_sku,
+           NULL::jsonb                     AS var_attributes,
+           NULL::text                      AS var_image,
+           NULL::text                      AS var_sku,
+           cp.quantity,
+           cp."unitPrice",
+           cp."variationId",
+           true                            AS "isAffiliate",
+           cp."createdAt"                  AS created_at
+         FROM "cartProducts" cp
+         JOIN "affiliateProducts" ap ON cp."affiliateProductId"=ap.id
+         WHERE cp."cartId"=$1
 
-           ORDER BY created_at`,
-          values: [cartId],
-        }
-      );
+         ORDER BY created_at`,
+        values: [cartId],
+      });
       mark("snapshot_query");
 
-      const lines = snap.rows.map((r: any) => {
+      const lines = (snap as any).rows.map((r: any) => {
         const unitPrice = Number(r.unitPrice);
         const title = r.isAffiliate
           ? r.parent_title
