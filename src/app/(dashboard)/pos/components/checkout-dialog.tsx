@@ -174,7 +174,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, cartId]);
 
-    // When Niftipay is among methods, fetch its networks
+  // When Niftipay is among methods, fetch its networks
   useEffect(() => {
     if (!open) return;
     const hasNifti = paymentMethods.some((m) => /niftipay/i.test(m.name || ""));

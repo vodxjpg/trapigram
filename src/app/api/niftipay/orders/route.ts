@@ -6,6 +6,66 @@ import { getContext } from "@/lib/context";
 const BASE = (process.env.NIFTIPAY_API_URL || "https://www.niftipay.com").replace(/\/+$/, "");
 type OrgMeta = { tenantId?: string };
 
+/**
+ * Proxy: GET /api/niftipay/orders?reference=POS-####   →  https://www.niftipay.com/api/orders?reference=...
+ * Fixes browser CORS by keeping the request same-origin (Next.js server → Niftipay).
+ */
+export async function GET(req: NextRequest) {
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+
+  // Resolve tenantId from organization.metadata
+  const org = await db.selectFrom("organization")
+    .select("metadata")
+    .where("id", "=", ctx.organizationId)
+    .executeTakeFirst();
+
+  let tenantId: string | null = null;
+  if (org?.metadata) {
+    try { tenantId = (JSON.parse(org.metadata) as OrgMeta).tenantId ?? null; } catch { /* ignore */ }
+  }
+  if (!tenantId) {
+    return NextResponse.json({ error: "Organization tenantId not configured" }, { status: 404 });
+  }
+
+  // Get Niftipay apiKey
+  const pm = await db.selectFrom("paymentMethods")
+    .select(["apiKey", "name"])
+    .where("tenantId", "=", tenantId)
+    .where("name", "=", "Niftipay")
+    .executeTakeFirst();
+
+  if (!pm?.apiKey) {
+    return NextResponse.json({ error: "Niftipay not configured for tenant" }, { status: 404 });
+  }
+
+  const url = new URL(req.url);
+  const reference = url.searchParams.get("reference");
+  if (!reference) {
+    return NextResponse.json({ error: "reference is required" }, { status: 400 });
+  }
+
+  const ures = await fetch(`${BASE}/api/orders?reference=${encodeURIComponent(reference)}`, {
+    method: "GET",
+    headers: { "x-api-key": pm.apiKey },
+  });
+
+  const text = await ures.text();
+  try {
+    const json = JSON.parse(text);
+    return NextResponse.json(json, { status: ures.status });
+  } catch {
+    return NextResponse.json(
+      { error: "Bad upstream response", details: text.slice(0, 200) },
+      { status: 502 }
+    );
+  }
+}
+
+/**
+ * Proxy: POST /api/niftipay/orders   →  https://www.niftipay.com/api/orders
+ * Creates an order/invoice upstream with the tenant's API key.
+ */
 export async function POST(req: NextRequest) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
