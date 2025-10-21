@@ -128,14 +128,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // Allow body or query params
       let parsed: z.infer<typeof BodySchema>;
       try {
-        const body = await req.json().catch(() => ({}));
+        const body = await req.json().catch(() => ({} as any));
         parsed = BodySchema.parse(body);
       } catch {
         const url = new URL(req.url);
         parsed = BodySchema.parse({
           productId: url.searchParams.get("productId"),
           variationId: url.searchParams.get("variationId"),
-        });
+        } as any);
       }
 
       const normVariationId =
@@ -144,14 +144,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           : null;
       const withVariation = normVariationId !== null;
 
-      const result = await pool.query(
-        `DELETE FROM "cartProducts"
-          WHERE "cartId"=$1 AND ("productId"=$2 OR "affiliateProductId"=$2)
-          ${withVariation ? `AND "variationId"=$3` : ""}
-          RETURNING *`,
-        [cartId, parsed.productId, ...(withVariation ? [normVariationId] : [])]
-      );
-      const deleted = result.rows[0];
+      // Two-step delete to use indexes and avoid OR
+      const baseArgs = [cartId, parsed.productId, ...(withVariation ? [normVariationId] as any[] : [])];
+      const whereVar = withVariation ? ` AND "variationId"=$3` : "";
+      let deleted: any | null = null;
+
+      {
+        const r = await pool.query(
+          `DELETE FROM "cartProducts"
+            WHERE "cartId"=$1 AND "productId"=$2${whereVar}
+            RETURNING *`,
+          baseArgs
+        );
+        deleted = r.rows[0] ?? null;
+      }
+      if (!deleted) {
+        const r2 = await pool.query(
+          `DELETE FROM "cartProducts"
+            WHERE "cartId"=$1 AND "affiliateProductId"=$2${whereVar}
+            RETURNING *`,
+          baseArgs
+        );
+        deleted = r2.rows[0] ?? null;
+      }
       if (!deleted) return { status: 404, body: { error: "Cart line not found" } };
 
       // Context for stock + tier recompute
@@ -167,10 +182,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const clientId = cRows[0]?.clientId as string | undefined;
       const channel = cRows[0]?.channel as string | undefined;
 
-      // 🔁 Refund affiliate points if we removed an affiliate product (same as web cart)
+      // Refund affiliate points if removed an affiliate product
       if (deleted.affiliateProductId && clientId) {
         const qty = Number(deleted.quantity ?? 0);
-        const unitPts = Number(deleted.unitPrice ?? 0); // affiliate lines store points-per-unit in unitPrice
+        const unitPts = Number(deleted.unitPrice ?? 0); // points/unit in unitPrice for affiliate
         const pointsRefund = qty > 0 && unitPts > 0 ? qty * unitPts : 0;
         if (pointsRefund > 0) {
           await pool.query(
@@ -224,26 +239,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
           const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
 
-          const { rows: qRows } = await pool.query(
-            `SELECT COALESCE(SUM(quantity),0)::int AS qty
-               FROM "cartProducts"
-              WHERE "cartId" = $1
-                AND ( ("productId" = ANY($2::text[]))
-                      OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
-            [cartId, tierProdIds, tierVarIds],
-          );
-          const qtyAfter = Number(qRows[0]?.qty ?? 0);
+          const [{ rows: pSum }, { rows: vSum }] = await Promise.all([
+            pool.query(
+              `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                 FROM "cartProducts"
+                WHERE "cartId" = $1 AND "productId" = ANY($2::text[])`,
+              [cartId, tierProdIds],
+            ),
+            pool.query(
+              `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                 FROM "cartProducts"
+                WHERE "cartId" = $1 AND "variationId" = ANY($2::text[])`,
+              [cartId, tierVarIds],
+            ),
+          ]);
+          const qtyAfter = Number(pSum[0]?.qty ?? 0) + Number(vSum[0]?.qty ?? 0);
 
           const newUnit = getPriceForQuantity(tier.steps, qtyAfter);
 
           if (newUnit === null) {
-            // fall back to base per-line
             const { rows: lines } = await pool.query(
               `SELECT id,"productId","variationId"
                  FROM "cartProducts"
                 WHERE "cartId" = $1
-                  AND ( ("productId" = ANY($2::text[]))
-                        OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
+                  AND ( "productId"  = ANY($2::text[]) OR "variationId" = ANY($3::text[]) )`,
               [cartId, tierProdIds, tierVarIds],
             );
 
@@ -283,10 +302,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             await pool.query(
               `UPDATE "cartProducts"
                     SET "unitPrice"=$1, "updatedAt"=NOW()
-                  WHERE "cartId" = $2
-                    AND ( ("productId" = ANY($3::text[]))
-                          OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[])) )`,
-              [newUnit, cartId, tierProdIds, tierVarIds],
+                  WHERE "cartId" = $2 AND "productId"  = ANY($3::text[])`,
+              [newUnit, cartId, tierProdIds],
+            );
+            await pool.query(
+              `UPDATE "cartProducts"
+                    SET "unitPrice"=$1, "updatedAt"=NOW()
+                  WHERE "cartId" = $2 AND "variationId" = ANY($3::text[])`,
+              [newUnit, cartId, tierVarIds],
             );
           }
         }
@@ -304,7 +327,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // broadcast latest cart to the paired customer display
       try { await emitCartToDisplay(cartId); } catch (e) { console.warn("[cd][remove] emit failed", e); }
 
-      // Return a full snapshot (like update-product) so the UI doesn't need another fetch
+      // Return a snapshot like update-product
       const [pRows, aRows] = await Promise.all([
         pool.query(
           `SELECT p.id,p.title,p.description,p.image,p.sku,

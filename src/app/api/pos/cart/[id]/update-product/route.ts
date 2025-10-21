@@ -77,7 +77,7 @@ function parseStoreIdFromChannel(channel: string | null): string | null {
   return m ? m[1] : null;
 }
 
-function findTier(
+function pickTierForClient(
   tiers: Tier[],
   country: string,
   productId: string,
@@ -109,36 +109,42 @@ function findTier(
   return global ?? null;
 }
 
-/** Same helper as in add-product: read stock/backorder; skip if schema lacks columns. */
-async function readInventory(
+/** Inventory reader aligned with your schema. */
+async function readInventoryFast(
   client: any,
   productId: string,
   variationId: string | null
 ): Promise<{ manage: boolean; backorder: boolean; stock: number | null }> {
-  let manage = false, backorder = false, stock: number | null = null;
-  async function safeQuery(sql: string, params: any[], sp: string) {
+  const safeQuery = async (sql: string, params: any[], sp: string) => {
     await client.query(`SAVEPOINT ${sp}`);
     try { const r = await client.query(sql, params); await client.query(`RELEASE SAVEPOINT ${sp}`); return r; }
     catch (e: any) { await client.query(`ROLLBACK TO SAVEPOINT ${sp}`); if (e?.code === "42703" || e?.code === "42P01") return { rows: [] }; throw e; }
-  }
-  {
-    const { rows } = await safeQuery(
-      `SELECT COALESCE("manageStock",false) AS manage,
-              COALESCE("allowBackorder",COALESCE("backorderAllowed",false)) AS backorder,
-              COALESCE("stockQuantity",COALESCE(stock,NULL)) AS stock
-         FROM products WHERE id=$1 LIMIT 1`, [productId], "inv_p");
-    if (rows[0]) { manage = !!rows[0].manage; backorder = !!rows[0].backorder; if (rows[0].stock != null) stock = Number(rows[0].stock); }
-  }
+  };
+
+  const p = await safeQuery(
+    `SELECT COALESCE("manageStock",false) AS manage,
+            COALESCE("allowBackorders",false) AS backorder
+       FROM products WHERE id=$1 LIMIT 1`,
+    [productId],
+    "inv_p",
+  );
+
+  let manage = !!p.rows?.[0]?.manage;
+  let backorder = !!p.rows?.[0]?.backorder;
+  let stock: number | null = null;
+
   if (variationId) {
-    const { rows } = await safeQuery(
+    const v = await safeQuery(
       `SELECT COALESCE("manageStock",false) AS manage,
-              COALESCE("allowBackorder",COALESCE("backorderAllowed",false)) AS backorder,
-              COALESCE("stockQuantity",COALESCE(stock,NULL)) AS stock
-         FROM "productVariations" WHERE id=$1 LIMIT 1`, [variationId], "inv_v");
-    if (rows[0]) {
-      manage = !!rows[0].manage || manage;
-      if (rows[0].backorder != null) backorder = !!rows[0].backorder;
-      if (rows[0].stock != null) stock = Number(rows[0].stock);
+              COALESCE("allowBackorders",false) AS backorder,
+              NULL::int AS stock
+         FROM "productVariations" WHERE id=$1 LIMIT 1`,
+      [variationId],
+      "inv_v",
+    );
+    if (v.rows?.[0]) {
+      manage = !!v.rows[0].manage || manage;
+      if (v.rows[0].backorder != null) backorder = !!v.rows[0].backorder;
     }
   }
   return { manage, backorder, stock };
@@ -162,26 +168,42 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       try {
         await client.query("BEGIN");
 
-        // cart line + client context (support affiliate lines)
-        const { rows: cRows } = await client.query(
-          `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId",
-                  cp.quantity, cp."affiliateProductId"
-             FROM carts ca
-             JOIN clients cl ON cl.id = ca."clientId"
-             JOIN "cartProducts" cp ON cp."cartId" = ca.id
-            WHERE ca.id = $1
-              AND (cp."productId" = $2 OR cp."affiliateProductId" = $2)
-              ${withVariation ? `AND cp."variationId" = $3` : ""}`,
-          [cartId, data.productId, ...(withVariation ? [variationId] : [])]
-        );
-        if (!cRows.length) {
-          await client.query("ROLLBACK");
-          return NextResponse.json({ error: "Cart item not found" }, { status: 404 });
+        // FIRST try normal product line; if not, try affiliate line.
+        let row: any | null = null;
+        {
+          const { rows } = await client.query(
+            `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId",
+                    cp.quantity, cp."affiliateProductId"
+               FROM carts ca
+               JOIN clients cl ON cl.id = ca."clientId"
+               JOIN "cartProducts" cp ON cp."cartId" = ca.id
+              WHERE ca.id = $1 AND cp."productId" = $2 ${withVariation ? `AND cp."variationId" = $3` : ""}`,
+            [cartId, data.productId, ...(withVariation ? [variationId] : [])]
+          );
+          row = rows[0] ?? null;
         }
-        let { country, levelId, clientId, quantity: oldQty, affiliateProductId, channel } = cRows[0] as any;
-        const isAffiliate = Boolean(affiliateProductId);
+        let isAffiliate = false;
+        if (!row) {
+          const { rows } = await client.query(
+            `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId",
+                    cp.quantity, cp."affiliateProductId"
+               FROM carts ca
+               JOIN clients cl ON cl.id = ca."clientId"
+               JOIN "cartProducts" cp ON cp."cartId" = ca.id
+              WHERE ca.id = $1 AND cp."affiliateProductId" = $2 ${withVariation ? `AND cp."variationId" = $3` : ""}`,
+            [cartId, data.productId, ...(withVariation ? [variationId] : [])]
+          );
+          row = rows[0] ?? null;
+          if (!row) {
+            await client.query("ROLLBACK");
+            return NextResponse.json({ error: "Cart item not found" }, { status: 404 });
+          }
+          isAffiliate = true;
+        }
 
-        // derive store country from channel
+        let { country, levelId, clientId, quantity: oldQty, channel } = row as any;
+
+        // derive store country from channel for price fallback
         let storeCountry: string | null = null;
         const storeId = parseStoreIdFromChannel(channel ?? null);
         if (storeId) {
@@ -213,7 +235,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             ap[0]?.regularPoints?.[lvl]?.[country] ??
             ap[0]?.regularPoints?.default?.[country] ?? 0;
           if (basePrice === 0) {
-            // fallback to store country for points
             if (storeCountry && storeCountry !== country) {
               basePrice =
                 ap[0]?.salePoints?.[lvl]?.[storeCountry] ??
@@ -263,7 +284,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
                  WHERE "organizationId"=$1 AND "clientId"=$2`,
               [ctx.organizationId, clientId],
             );
-            const pointsCurrent = balRows[0]?.pointsCurrent ?? 0;
+            const pointsCurrent = Number(balRows[0]?.pointsCurrent ?? 0);
 
             if (deltaQty > 0) {
               if (absPoints > pointsCurrent) {
@@ -308,15 +329,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
         // inventory enforcement on increment (normal only)
         if (!isAffiliate && data.action === "add") {
-          const inv = await readInventory(client, data.productId, variationId);
-          if (inv.manage && !inv.backorder && inv.stock !== null) {
-            if (newQty > inv.stock) {
-              await client.query("ROLLBACK");
-              return NextResponse.json(
-                { error: `Only ${inv.stock} unit${inv.stock === 1 ? "" : "s"} available for this item.`, available: inv.stock },
-                { status: 400 }
-              );
-            }
+          const inv = await readInventoryFast(client, data.productId, variationId);
+          if (inv.manage && !inv.backorder && inv.stock !== null && newQty > inv.stock) {
+            await client.query("ROLLBACK");
+            return NextResponse.json(
+              { error: `Only ${inv.stock} unit${inv.stock === 1 ? "" : "s"} available for this item.`, available: inv.stock },
+              { status: 400 }
+            );
           }
         }
 
@@ -324,53 +343,78 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         let pricePerUnit = basePrice;
         if (!isAffiliate) {
           const tiers = (await tierPricing(ctx.organizationId)) as Tier[];
-          const tier = findTier(tiers, country, data.productId, variationId, clientId);
+          const tier = pickTierForClient(tiers, country, data.productId, variationId, clientId);
           if (tier) {
             const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
             const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
-            const { rows: sumRow } = await client.query(
-              `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                 FROM "cartProducts"
-                WHERE "cartId"=$1
-                  AND ( ("productId" = ANY($2::text[]))
-                        OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
-              [cartId, tierProdIds, tierVarIds]
-            );
-            const qtyBefore = Number(sumRow[0].qty);
+            const [{ rows: pSum }, { rows: vSum }] = await Promise.all([
+              client.query(
+                `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                   FROM "cartProducts"
+                  WHERE "cartId"=$1 AND "productId" = ANY($2::text[])`,
+                [cartId, tierProdIds],
+              ),
+              client.query(
+                `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                   FROM "cartProducts"
+                  WHERE "cartId"=$1 AND "variationId" = ANY($2::text[])`,
+                [cartId, tierVarIds],
+              ),
+            ]);
+            const qtyBefore = Number(pSum[0]?.qty ?? 0) + Number(vSum[0]?.qty ?? 0);
             const qtyAfter = qtyBefore - oldQty + newQty;
             pricePerUnit = getPriceForQuantity(tier.steps, qtyAfter) ?? basePrice;
 
             await client.query(
               `UPDATE "cartProducts"
                   SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2
-                  AND ( ("productId" = ANY($3::text[]))
-                        OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[])) )`,
-              [pricePerUnit, cartId, tierProdIds, tierVarIds]
+                WHERE "cartId"=$2 AND "productId" = ANY($3::text[])`,
+              [pricePerUnit, cartId, tierProdIds],
+            );
+            await client.query(
+              `UPDATE "cartProducts"
+                  SET "unitPrice"=$1,"updatedAt"=NOW()
+                WHERE "cartId"=$2 AND "variationId" = ANY($3::text[])`,
+              [pricePerUnit, cartId, tierVarIds],
             );
           }
         }
 
         // persist
         if (newQty === 0) {
-          await client.query(
-            `DELETE FROM "cartProducts"
-              WHERE "cartId"=$1 AND ("productId"=$2 OR "affiliateProductId"=$2)
-              ${withVariation ? `AND "variationId"=$3` : ""}`,
-            [cartId, data.productId, ...(withVariation ? [variationId] : [])]
-          );
+          if (isAffiliate) {
+            await client.query(
+              `DELETE FROM "cartProducts"
+                WHERE "cartId"=$1 AND "affiliateProductId"=$2 ${withVariation ? `AND "variationId"=$3` : ""}`,
+              [cartId, data.productId, ...(withVariation ? [variationId] : [])]
+            );
+          } else {
+            await client.query(
+              `DELETE FROM "cartProducts"
+                WHERE "cartId"=$1 AND "productId"=$2 ${withVariation ? `AND "variationId"=$3` : ""}`,
+              [cartId, data.productId, ...(withVariation ? [variationId] : [])]
+            );
+          }
         } else {
-          await client.query(
-            `UPDATE "cartProducts"
-                SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
-              WHERE "cartId"=$3 AND ("productId"=$4 OR "affiliateProductId"=$4)
-              ${withVariation ? `AND "variationId"=$5` : ""}`,
-            [newQty, pricePerUnit, cartId, data.productId, ...(withVariation ? [variationId] : [])]
-          );
+          if (isAffiliate) {
+            await client.query(
+              `UPDATE "cartProducts"
+                  SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
+                WHERE "cartId"=$3 AND "affiliateProductId"=$4 ${withVariation ? `AND "variationId"=$5` : ""}`,
+              [newQty, pricePerUnit, cartId, data.productId, ...(withVariation ? [variationId] : [])]
+            );
+          } else {
+            await client.query(
+              `UPDATE "cartProducts"
+                  SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
+                WHERE "cartId"=$3 AND "productId"=$4 ${withVariation ? `AND "variationId"=$5` : ""}`,
+              [newQty, pricePerUnit, cartId, data.productId, ...(withVariation ? [variationId] : [])]
+            );
+          }
         }
 
         // stock adjust
-        await adjustStock(client, data.productId, variationId, country, data.action === "add" ? -1 : 1); // effective country
+        await adjustStock(client, data.productId, variationId, country, data.action === "add" ? -1 : 1);
 
         // update cart hash
         const { rows: linesForHash } = await client.query(
@@ -386,10 +430,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
         await client.query("COMMIT");
 
-        // broadcast latest cart to the paired customer display
-try { await emitCartToDisplay(cartId); } catch (e) { console.warn("[cd][update] emit failed", e); }
+        try { await emitCartToDisplay(cartId); } catch (e) { console.warn("[cd][update] emit failed", e); }
 
-        // snapshot (merge normal + affiliate like web cart)
+        // snapshot
         const [pRows, aRows] = await Promise.all([
           pool.query(
             `SELECT p.id,p.title,p.description,p.image,p.sku,

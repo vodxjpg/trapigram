@@ -110,7 +110,6 @@ const BodySchema = z.object({
   quantity: z.number().int().positive(),
 });
 
-// helper to parse storeId from channel: "pos-<storeId>-<registerId>"
 function parseStoreIdFromChannel(channel: string | null): string | null {
   if (!channel) return null;
   const m = /^pos-([^-\s]+)-/i.exec(channel);
@@ -149,12 +148,7 @@ function pickTierForClient(
   return global ?? null;
 }
 
-/** Inventory reader aligned with your schema.
- *  - products: uses "manageStock" + "allowBackorders" (plural)
- *  - no stock quantity column on products → stock=null (no hard cap)
- *  - variations: try to read same-named columns if table/cols exist
- *    (safeQuery swallows 42P01/42703 so we don’t crash)
- */
+/** Inventory reader aligned with your schema. */
 async function readInventoryFast(
   client: any,
   productId: string,
@@ -168,49 +162,42 @@ async function readInventoryFast(
       return r;
     } catch (e: any) {
       await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
-      // 42703 = undefined_column, 42P01 = undefined_table
       if (e?.code === "42703" || e?.code === "42P01") return { rows: [] };
       throw e;
     }
   };
 
-  // Products row (matches your schema)
   const p = await safeQuery(
-    `SELECT
-       COALESCE("manageStock", false)     AS manage,
-       COALESCE("allowBackorders", false) AS backorder
-     FROM products
-     WHERE id=$1
-     LIMIT 1`,
+    `SELECT COALESCE("manageStock", false) AS manage,
+            COALESCE("allowBackorders", false) AS backorder
+       FROM products
+      WHERE id=$1
+      LIMIT 1`,
     [productId],
     "inv_p"
   );
 
   let manage = !!p.rows?.[0]?.manage;
   let backorder = !!p.rows?.[0]?.backorder;
-  let stock: number | null = null; // no quantity column on products
+  let stock: number | null = null; // no stock qty on products table
 
-  // Variation overrides (use same column names if present)
   if (variationId) {
     const v = await safeQuery(
-      `SELECT
-         COALESCE("manageStock", false)     AS manage,
-         COALESCE("allowBackorders", false) AS backorder,
-         NULL::int                           AS stock
-       FROM "productVariations"
-       WHERE id=$1
-       LIMIT 1`,
+      `SELECT COALESCE("manageStock", false) AS manage,
+              COALESCE("allowBackorders", false) AS backorder,
+              NULL::int AS stock
+         FROM "productVariations"
+        WHERE id=$1
+        LIMIT 1`,
       [variationId],
       "inv_v"
     );
     if (v.rows?.[0]) {
       manage = !!v.rows[0].manage || manage;
       if (v.rows[0].backorder != null) backorder = !!v.rows[0].backorder;
-      // if your variations have a qty column, you can map it here instead of NULL::int
-      // stock remains null by default → no hard cap enforcement
+      // stock stays null unless you wire a real qty column here
     }
   }
-
   return { manage, backorder, stock };
 }
 
@@ -235,7 +222,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ? body.variationId
           : null;
 
-      // cart context
+      // cart + client context
       const { rows: cRows } = await pool.query(
         `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId"
            FROM carts ca
@@ -260,7 +247,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         mark("store_lookup");
       }
 
-      // price (fallback to store country once)
+      // resolve base price (+ affiliate flag)
       let basePrice: number, isAffiliate: boolean;
       try {
         const r = await resolveUnitPrice(body.productId, variationId, country, (levelId ?? "default") as string);
@@ -282,15 +269,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await client.query("BEGIN");
       mark("tx_begin");
 
-      // existing line
-      let sql = `SELECT id, quantity FROM "cartProducts"
-                 WHERE "cartId"=$1 AND ${isAffiliate ? `"affiliateProductId"` : `"productId"`}=$2`;
-      const paramsLine: any[] = [cartId, body.productId];
-      if (variationId) { sql += ` AND "variationId"=$3`; paramsLine.push(variationId); }
-      const { rows: existing } = await client.query(sql, paramsLine);
+      // existing line (branch by affiliate for index usage)
+      let existing: any[] = [];
+      if (isAffiliate) {
+        const { rows } = await client.query(
+          `SELECT id, quantity FROM "cartProducts"
+            WHERE "cartId"=$1 AND "affiliateProductId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
+          [cartId, body.productId, ...(variationId ? [variationId] : [])],
+        );
+        existing = rows;
+      } else {
+        const { rows } = await client.query(
+          `SELECT id, quantity FROM "cartProducts"
+            WHERE "cartId"=$1 AND "productId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
+          [cartId, body.productId, ...(variationId ? [variationId] : [])],
+        );
+        existing = rows;
+      }
       mark("line_lookup");
 
-      // inventory guard (normal only; only enforces if a numeric stock exists)
+      // inventory guard (normal only; enforce only if numeric stock present)
       if (!isAffiliate) {
         const inv = await readInventoryFast(client, body.productId, variationId);
         mark("read_inventory");
@@ -349,28 +347,42 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (tier) {
           const tierProdIds = tier.products.map((p) => p.productId).filter(Boolean) as string[];
           const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
-          const { rows: sumRow } = await client.query(
-            `SELECT COALESCE(SUM(quantity),0)::int AS qty
-               FROM "cartProducts"
-              WHERE "cartId"=$1
-                AND ( ("productId" = ANY($2::text[]))
-                      OR ("variationId" IS NOT NULL AND "variationId" = ANY($3::text[])) )`,
-            [cartId, tierProdIds, tierVarIds],
-          );
+
+          // Split the SUM so indexes can be used
+          const [{ rows: pSum }, { rows: vSum }] = await Promise.all([
+            client.query(
+              `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                 FROM "cartProducts"
+                WHERE "cartId"=$1 AND "productId" = ANY($2::text[])`,
+              [cartId, tierProdIds],
+            ),
+            client.query(
+              `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                 FROM "cartProducts"
+                WHERE "cartId"=$1 AND "variationId" = ANY($2::text[])`,
+              [cartId, tierVarIds],
+            ),
+          ]);
           mark("tier_qty_sum");
 
-          const qtyBefore = Number(sumRow[0].qty);
+          const qtyBefore = Number(pSum[0]?.qty ?? 0) + Number(vSum[0]?.qty ?? 0);
           const qtyAfter = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
           const tierPrice = getPriceForQuantity(tier.steps, qtyAfter);
           if (tierPrice != null && tierPrice !== basePrice) {
             unitPrice = tierPrice;
+
+            // Split the UPDATE as well (avoid OR)
             await client.query(
               `UPDATE "cartProducts"
                   SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2
-                  AND ( ("productId" = ANY($3::text[]))
-                        OR ("variationId" IS NOT NULL AND "variationId" = ANY($4::text[])) )`,
-              [unitPrice, cartId, tierProdIds, tierVarIds]
+                WHERE "cartId"=$2 AND "productId" = ANY($3::text[])`,
+              [unitPrice, cartId, tierProdIds],
+            );
+            await client.query(
+              `UPDATE "cartProducts"
+                  SET "unitPrice"=$1,"updatedAt"=NOW()
+                WHERE "cartId"=$2 AND "variationId" = ANY($3::text[])`,
+              [unitPrice, cartId, tierVarIds],
             );
             mark("tier_update_lines");
           }
@@ -407,7 +419,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await adjustStock(client, body.productId, variationId, country, -body.quantity);
       mark("adjust_stock");
 
-      // cart hash
+      // cart hash (stable order)
       const { rows: hRows } = await client.query(
         `SELECT COALESCE("productId","affiliateProductId") AS pid, "variationId", quantity,"unitPrice"
            FROM "cartProducts"
@@ -425,17 +437,49 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await client.query("COMMIT");
       mark("tx_commit");
 
-      // fire-and-forget
+      // Fire-and-forget display emit
       try { queueMicrotask(() => { emitCartToDisplay(cartId).catch(e => console.warn("[cd][add] emit failed", e)); }); } catch {}
       mark("emit_display_sched");
+
+      // Build a lines snapshot (so UI doesn't need another round-trip)
+      const [pRows, aRows] = await Promise.all([
+        pool.query(
+          `SELECT p.id,p.title,p.description,p.image,p.sku,
+                  cp.quantity,cp."unitPrice",cp."variationId", false AS "isAffiliate"
+             FROM products p
+             JOIN "cartProducts" cp ON cp."productId"=p.id
+            WHERE cp."cartId"=$1
+            ORDER BY cp."createdAt"`,
+          [cartId]
+        ),
+        pool.query(
+          `SELECT ap.id,ap.title,ap.description,ap.image,ap.sku,
+                  cp.quantity,cp."unitPrice",cp."variationId", true AS "isAffiliate"
+             FROM "affiliateProducts" ap
+             JOIN "cartProducts"     cp ON cp."affiliateProductId"=ap.id
+            WHERE cp."cartId"=$1
+            ORDER BY cp."createdAt"`,
+          [cartId]
+        ),
+      ]);
+      mark("snapshot_query");
+
+      const lines = [...pRows.rows, ...aRows.rows].map((l: any) => ({
+        ...l,
+        unitPrice: Number(l.unitPrice),
+        subtotal: Number(l.unitPrice) * l.quantity,
+      }));
 
       const totalMs = Date.now() - T0;
       const serverTiming = marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
 
       return {
         status: 201,
-        body: { ok: true, quantity, price: unitPrice },
-        headers: { "Server-Timing": serverTiming, "X-Route-Duration": `${totalMs}ms` },
+        body: { lines },
+        headers: {
+          "Server-Timing": serverTiming,
+          "X-Route-Duration": `${totalMs}ms`,
+        },
       };
     } catch (err: any) {
       try { if (client) await client.query("ROLLBACK"); } catch {}

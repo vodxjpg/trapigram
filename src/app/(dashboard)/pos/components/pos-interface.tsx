@@ -446,7 +446,7 @@ export function POSInterface() {
         return
       }
 
-      // Prefer server snapshot (includes tier-wide price updates)
+      // Prefer server snapshot
       if (Array.isArray(j.lines)) {
         setLines(j.lines.map((l: any) => ({
           productId: l.id,
@@ -461,37 +461,8 @@ export function POSInterface() {
         return
       }
 
-      // Fallback (shouldn’t hit, but safe): merge single line
-      const added = j.product
-      setLines(prev => {
-        const idx = prev.findIndex(l => l.productId === added.id && l.variationId === added.variationId)
-        if (idx >= 0) {
-          const next = [...prev];
-          const line = next[idx];
-          const quantity = line.quantity + 1;
-          const unitPrice = Number(added.price);
-          next[idx] = {
-            ...line,
-            quantity,
-            unitPrice,
-            subtotal: +(quantity * unitPrice).toFixed(2),
-          };
-          return next;
-        }
-        return [
-          ...prev,
-          {
-            productId: added.id,
-            variationId: added.variationId,
-            title: added.title,
-            image: added.image ?? null,
-            sku: added.sku ?? null,
-            quantity: j.quantity ?? 1,
-            unitPrice: Number(added.price),
-            subtotal: +(Number(added.price) * (j.quantity ?? 1)).toFixed(2),
-          },
-        ];
-      });
+      // If no snapshot provided, just refresh the cart (hard guard to avoid 'o is undefined')
+      await refreshCart(cid)
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
     }
