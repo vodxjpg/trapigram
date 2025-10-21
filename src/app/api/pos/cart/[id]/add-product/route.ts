@@ -11,11 +11,8 @@ import { tierPricing, getPriceForQuantity, type Tier } from "@/lib/tier-pricing"
 import { emitCartToDisplay } from "@/lib/customer-display-emit";
 
 /* ─────────────────────────────────────────────────────────────
-   Small, safe in-memory caches (per runtime)
-   - Tiers: the heaviest call in your trace (~1.3s). Cache briefly.
-   - Store country: stable, cache a bit longer.
+   Small in-memory caches (per runtime)
   ───────────────────────────────────────────────────────────── */
-
 const TIER_TTL_MS = 20_000;       // 20s – fresh enough for POS
 const STORE_TTL_MS = 5 * 60_000;  // 5 min
 
@@ -152,45 +149,68 @@ function pickTierForClient(
   return global ?? null;
 }
 
-/** Stock reader: keep it simple and fast (both tables are keyed by id). */
+/** Inventory reader aligned with your schema.
+ *  - products: uses "manageStock" + "allowBackorders" (plural)
+ *  - no stock quantity column on products → stock=null (no hard cap)
+ *  - variations: try to read same-named columns if table/cols exist
+ *    (safeQuery swallows 42P01/42703 so we don’t crash)
+ */
 async function readInventoryFast(
   client: any,
   productId: string,
   variationId: string | null
 ): Promise<{ manage: boolean; backorder: boolean; stock: number | null }> {
-  // Product
-  const { rows: p } = await client.query(
+  const safeQuery = async (sql: string, params: any[], sp: string) => {
+    await client.query(`SAVEPOINT ${sp}`);
+    try {
+      const r = await client.query(sql, params);
+      await client.query(`RELEASE SAVEPOINT ${sp}`);
+      return r;
+    } catch (e: any) {
+      await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+      // 42703 = undefined_column, 42P01 = undefined_table
+      if (e?.code === "42703" || e?.code === "42P01") return { rows: [] };
+      throw e;
+    }
+  };
+
+  // Products row (matches your schema)
+  const p = await safeQuery(
     `SELECT
-       COALESCE("manageStock",false) AS manage,
-       COALESCE("allowBackorder", COALESCE("backorderAllowed",false)) AS backorder,
-       COALESCE("stockQuantity", COALESCE(stock, NULL)) AS stock
+       COALESCE("manageStock", false)     AS manage,
+       COALESCE("allowBackorders", false) AS backorder
      FROM products
      WHERE id=$1
      LIMIT 1`,
     [productId],
+    "inv_p"
   );
-  let manage = !!p[0]?.manage;
-  let backorder = !!p[0]?.backorder;
-  let stock: number | null = p[0]?.stock != null ? Number(p[0].stock) : null;
 
-  // Variation overrides
+  let manage = !!p.rows?.[0]?.manage;
+  let backorder = !!p.rows?.[0]?.backorder;
+  let stock: number | null = null; // no quantity column on products
+
+  // Variation overrides (use same column names if present)
   if (variationId) {
-    const { rows: v } = await client.query(
+    const v = await safeQuery(
       `SELECT
-         COALESCE("manageStock",false) AS manage,
-         COALESCE("allowBackorder", COALESCE("backorderAllowed",false)) AS backorder,
-         COALESCE("stockQuantity", COALESCE(stock, NULL)) AS stock
+         COALESCE("manageStock", false)     AS manage,
+         COALESCE("allowBackorders", false) AS backorder,
+         NULL::int                           AS stock
        FROM "productVariations"
        WHERE id=$1
        LIMIT 1`,
       [variationId],
+      "inv_v"
     );
-    if (v[0]) {
-      manage = !!v[0].manage || manage;
-      if (v[0].backorder != null) backorder = !!v[0].backorder;
-      if (v[0].stock != null) stock = Number(v[0].stock);
+    if (v.rows?.[0]) {
+      manage = !!v.rows[0].manage || manage;
+      if (v.rows[0].backorder != null) backorder = !!v.rows[0].backorder;
+      // if your variations have a qty column, you can map it here instead of NULL::int
+      // stock remains null by default → no hard cap enforcement
     }
   }
+
   return { manage, backorder, stock };
 }
 
@@ -215,7 +235,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ? body.variationId
           : null;
 
-      // — cart context
+      // cart context
       const { rows: cRows } = await pool.query(
         `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId"
            FROM carts ca
@@ -232,7 +252,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const levelId: string | null = cRows[0].levelId ?? null;
       const clientId: string = cRows[0].clientId;
 
-      // — store country (cached)
+      // store country (cached)
       let storeCountry: string | null = null;
       const storeId = parseStoreIdFromChannel(channel);
       if (storeId) {
@@ -240,7 +260,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         mark("store_lookup");
       }
 
-      // — resolve price (fallback to store country once, and persist)
+      // price (fallback to store country once)
       let basePrice: number, isAffiliate: boolean;
       try {
         const r = await resolveUnitPrice(body.productId, variationId, country, (levelId ?? "default") as string);
@@ -262,7 +282,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await client.query("BEGIN");
       mark("tx_begin");
 
-      // — existing line
+      // existing line
       let sql = `SELECT id, quantity FROM "cartProducts"
                  WHERE "cartId"=$1 AND ${isAffiliate ? `"affiliateProductId"` : `"productId"`}=$2`;
       const paramsLine: any[] = [cartId, body.productId];
@@ -270,7 +290,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const { rows: existing } = await client.query(sql, paramsLine);
       mark("line_lookup");
 
-      // — inventory guard (normal only)
+      // inventory guard (normal only; only enforces if a numeric stock exists)
       if (!isAffiliate) {
         const inv = await readInventoryFast(client, body.productId, variationId);
         mark("read_inventory");
@@ -284,7 +304,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
       }
 
-      // — affiliate points flow
+      // affiliate points flow
       if (isAffiliate) {
         const pointsNeeded = basePrice * body.quantity;
         const { rows: bal } = await client.query(
@@ -317,13 +337,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         mark("affiliate_debit");
       }
 
-      // — upsert line + tier price (normal only)
+      // upsert line + tier price (normal only)
       let quantity = body.quantity + (existing[0]?.quantity ?? 0);
       let unitPrice = basePrice;
 
       if (!isAffiliate) {
         const tiers = await getTiersCached(organizationId);
-        mark("tier_load"); // this should drop from ~1359ms to ~0-20ms after warmup
+        mark("tier_load");
 
         const tier = pickTierForClient(tiers, country, body.productId, variationId, clientId);
         if (tier) {
@@ -342,10 +362,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const qtyBefore = Number(sumRow[0].qty);
           const qtyAfter = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
           const tierPrice = getPriceForQuantity(tier.steps, qtyAfter);
-          if (tierPrice != null) unitPrice = tierPrice;
-
-          // Only touch prices if they actually change
           if (tierPrice != null && tierPrice !== basePrice) {
+            unitPrice = tierPrice;
             await client.query(
               `UPDATE "cartProducts"
                   SET "unitPrice"=$1,"updatedAt"=NOW()
@@ -385,11 +403,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       mark("upsert_line");
 
-      // — stock reserve (effective country)
+      // stock adjust
       await adjustStock(client, body.productId, variationId, country, -body.quantity);
       mark("adjust_stock");
 
-      // — stable, cheap cart hash (order by pid/variationId; matches suggested index)
+      // cart hash
       const { rows: hRows } = await client.query(
         `SELECT COALESCE("productId","affiliateProductId") AS pid, "variationId", quantity,"unitPrice"
            FROM "cartProducts"
@@ -407,36 +425,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await client.query("COMMIT");
       mark("tx_commit");
 
-      // — kick the customer display without blocking the response
-      //   (do not await; log errors only)
-      try {
-        // microtask > timeout to avoid keeping the event loop open
-        queueMicrotask(() => {
-          emitCartToDisplay(cartId).catch((e) =>
-            console.warn("[cd][add] emit failed", e)
-          );
-        });
-      } catch { /* noop */ }
+      // fire-and-forget
+      try { queueMicrotask(() => { emitCartToDisplay(cartId).catch(e => console.warn("[cd][add] emit failed", e)); }); } catch {}
       mark("emit_display_sched");
 
       const totalMs = Date.now() - T0;
       const serverTiming = marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
 
-      // Minimal payload — UI already calls refreshCart(cid)
       return {
         status: 201,
-        body: {
-          ok: true,
-          quantity,
-          price: unitPrice,
-        },
-        headers: {
-          "Server-Timing": serverTiming,
-          "X-Route-Duration": `${totalMs}ms`,
-        },
+        body: { ok: true, quantity, price: unitPrice },
+        headers: { "Server-Timing": serverTiming, "X-Route-Duration": `${totalMs}ms` },
       };
     } catch (err: any) {
-      // safe rollback if we opened a tx
       try { if (client) await client.query("ROLLBACK"); } catch {}
       if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };
       if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
@@ -445,7 +446,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       console.error("[POS POST /pos/cart/:id/add-product]", err);
       return { status: 500, body: { error: err.message ?? "Internal server error" } };
     } finally {
-      try { if (client) client.release(); } catch { /* ignore */ }
+      try { if (client) client.release(); } catch {}
     }
   });
 }
