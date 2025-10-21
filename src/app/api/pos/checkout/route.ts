@@ -66,7 +66,7 @@ const coins: Record<string, string> = {
 };
 
 type CategoryRevenue = {
-  categoryId: string;
+  categoryId: string | null;
   price: number;
   cost: number;
   quantity: number;
@@ -276,13 +276,20 @@ async function getRevenue(id: string, organizationId: string) {
     const qty = Number(ct.quantity ?? 0);
     const unitPrice = Number(ct.unitPrice ?? 0);
     const effCost = await resolveEffectiveCost(String(ct.productId), ct.variationId ?? null);
-    categories.push({ categoryId: ct.categoryId, price: unitPrice, cost: effCost, quantity: qty });
+
+    // allow NULL here; we’ll filter below
+    const catId: string | null = ct.categoryId ? String(ct.categoryId) : null;
+    categories.push({ categoryId: catId, price: unitPrice, cost: effCost, quantity: qty });
   }
-  const newCategories: TransformedCategoryRevenue[] = categories.map(
-    ({ categoryId, price, cost, quantity }) => ({
-      categoryId, total: price * quantity, cost: cost * quantity,
-    }),
-  );
+
+  // only keep lines that actually have a category
+  const newCategories: TransformedCategoryRevenue[] = categories
+    .filter((c) => !!c.categoryId)
+    .map(({ categoryId, price, cost, quantity }) => ({
+      categoryId: categoryId as string,
+      total: price * quantity,
+      cost: cost * quantity,
+    }));
 
   // 5) total COST
   const productsCost = categories.reduce((s, c) => s + c.cost * c.quantity, 0);
@@ -842,16 +849,21 @@ export async function POST(req: NextRequest) {
 
       // ⬇️ Affiliate bonuses (referral + spending) for POS (mirrors change-status paid-like)
       try {
-        // 🚫 Skip all affiliate awards for walk-in customers
+        // Skip all affiliate awards for walk-in customers
         const { rows: [who] } = await pool.query(
-          `SELECT COALESCE("isWalkIn",FALSE) AS "isWalkIn",
-              LOWER(COALESCE("firstName",'')) AS "firstName"
-         FROM clients
-        WHERE id = $1
-        LIMIT 1`,
+          `SELECT
+              LOWER(COALESCE("firstName", '')) AS "firstName",
+              LOWER(COALESCE(username, ''))    AS "username"
+            FROM clients
+            WHERE id = $1
+            LIMIT 1`,
           [order.clientId],
         );
-        const isWalkInCustomer = Boolean(who?.isWalkIn) || (who?.firstName === "walk-in");
+
+        const isWalkInCustomer =
+          (who?.firstName === "walk-in") ||
+          (typeof who?.username === "string" && who.username.startsWith("walkin-"));
+
 
         if (!isWalkInCustomer) {
           // 1) settings

@@ -110,11 +110,15 @@
             `SELECT id
               FROM clients
               WHERE "organizationId"=$1
-                AND (COALESCE("isWalkIn",false)=true OR LOWER("firstName")='walk-in')
+                AND (
+                      LOWER(COALESCE("firstName", '')) = 'walk-in'
+                  OR LOWER(COALESCE(username, '')) LIKE 'walkin-%'
+                    )
           ORDER BY "createdAt" ASC
               LIMIT 1`,
             [organizationId]
           );
+
           if (!rows.length) return { status: 400, body: { error: "clientId is required for POS cart" } };
           clientId = rows[0].id;
         }
