@@ -85,6 +85,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
   // Niftipay network state
   const [niftipayNetworks, setNiftipayNetworks] = useState<NiftipayNet[]>([]);
   const [niftipayLoading, setNiftipayLoading] = useState(false);
+  const [niftipayError, setNiftipayError] = useState<string | null>(null);
   const [selectedNiftipay, setSelectedNiftipay] = useState(""); // "chain:asset"
 
   // ───────────────────────── Derived ─────────────────────────
@@ -114,7 +115,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
     return !!m && /niftipay/i.test(m.name || "");
   }, [paymentMethods, currentMethodId]);
 
-  // If any existing split is Niftipay, require a selected network to proceed
+  // If any existing split is Niftipay, require a selected network to proceed (only if networks are available)
   const niftiInPayments = useMemo(() => {
     return payments.some((p) => {
       const name = paymentMethods.find((pm) => pm.id === p.methodId)?.name || "";
@@ -154,13 +155,26 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
       setBusyAction(null);
       setError(null);
       setSelectedNiftipay("");
+      setNiftipayError(null);
     }
   }, [open]);
 
-  // Fetch Niftipay networks
+  // Fetch Niftipay networks (sends credentials to avoid 401)
   async function fetchNiftipayNetworks(): Promise<NiftipayNet[]> {
-    const r = await fetch("/api/niftipay/payment-methods");
-    if (!r.ok) throw new Error(await r.text().catch(() => "Niftipay methods failed"));
+    const r = await fetch("/api/niftipay/payment-methods", {
+      method: "GET",
+      credentials: "include", // ensure session cookies are sent
+      headers: { Accept: "application/json" },
+    });
+
+    if (r.status === 401) {
+      throw new Error("Unauthorized. Your session may have expired — please sign in again.");
+    }
+    if (!r.ok) {
+      const text = await r.text().catch(() => "");
+      throw new Error(`Failed to load crypto networks (${r.status}). ${text}`.trim());
+    }
+
     const { methods } = await r.json();
     return (methods || []).map((m: any) => ({
       chain: m.chain,
@@ -212,45 +226,45 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
   // When Niftipay is among methods, fetch its networks
   useEffect(() => {
-  if (!open) return;
+    if (!open) return;
 
-  // If Niftipay isn't available at all, clear state and bail.
-  if (!hasNiftipayMethod) {
-    setNiftipayNetworks([]);
-    setSelectedNiftipay("");
-    return;
-  }
-
-  let ignore = false;
-  (async () => {
-    setNiftipayLoading(true);
-    try {
-      const nets = await fetchNiftipayNetworks();
-      if (ignore) return;
-      setNiftipayNetworks(nets);
-
-      // Keep user selection if it still exists; otherwise choose the first.
-      const exists = nets.some(
-        (n) => `${n.chain}:${n.asset}` === selectedNiftipay
-      );
-      if (!exists) {
-        setSelectedNiftipay(
-          nets[0] ? `${nets[0].chain}:${nets[0].asset}` : ""
-        );
-      }
-    } catch {
-      if (ignore) return;
+    // If Niftipay isn't available at all, clear state and bail.
+    if (!hasNiftipayMethod) {
       setNiftipayNetworks([]);
       setSelectedNiftipay("");
-    } finally {
-      if (!ignore) setNiftipayLoading(false);
+      setNiftipayError(null);
+      return;
     }
-  })();
 
-  return () => {
-    ignore = true;
-  };
-}, [open, hasNiftipayMethod]); 
+    let ignore = false;
+    (async () => {
+      setNiftipayLoading(true);
+      setNiftipayError(null);
+      try {
+        const nets = await fetchNiftipayNetworks();
+        if (ignore) return;
+        setNiftipayNetworks(nets);
+
+        // Keep user selection if it still exists; otherwise choose the first.
+        const exists = nets.some((n) => `${n.chain}:${n.asset}` === selectedNiftipay);
+        if (!exists) {
+          setSelectedNiftipay(nets[0] ? `${nets[0].chain}:${nets[0].asset}` : "");
+        }
+      } catch (e: any) {
+        if (ignore) return;
+        setNiftipayNetworks([]);
+        setSelectedNiftipay("");
+        setNiftipayError(e?.message || "Couldn’t load crypto networks.");
+      } finally {
+        if (!ignore) setNiftipayLoading(false);
+      }
+    })();
+
+    return () => {
+      ignore = true;
+    };
+    // IMPORTANT: Do NOT depend on `selectedNiftipay` here; it causes the select to be reset.
+  }, [open, hasNiftipayMethod]);
 
   // ───────────────────────── Helpers ─────────────────────────
   const openPaymentMethodsTab = () =>
@@ -298,8 +312,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
       setBusy(true);
       setBusyAction("park");
       const idem =
-        ((globalThis.crypto as any)?.randomUUID?.() ??
-          `${Date.now()}-${Math.random()}`) as string;
+        ((globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string;
 
       const payload: {
         cartId: string;
@@ -366,8 +379,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
       setBusy(true);
       setBusyAction("complete");
       const idem =
-        ((globalThis.crypto as any)?.randomUUID?.() ??
-          `${Date.now()}-${Math.random()}`) as string;
+        ((globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) as string;
 
       const payload: {
         cartId: string;
@@ -505,9 +517,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                     disabled={niftipayLoading || niftipayNetworks.length === 0}
                   >
                     {!selectedNiftipay && (
-                      <option value="">
-                        {niftipayLoading ? "Loading…" : "Select network"}
-                      </option>
+                      <option value="">{niftipayLoading ? "Loading…" : "Select network"}</option>
                     )}
                     {niftipayNetworks.map((n) => (
                       <option key={`${n.chain}:${n.asset}`} value={`${n.chain}:${n.asset}`}>
@@ -515,6 +525,9 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
                       </option>
                     ))}
                   </select>
+                  {niftipayError && (
+                    <p className="text-xs text-destructive mt-1">{niftipayError}</p>
+                  )}
                 </div>
               </div>
             )}
