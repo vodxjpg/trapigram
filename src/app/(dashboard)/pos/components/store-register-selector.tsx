@@ -38,9 +38,9 @@ export function StoreRegisterSelector({
 }: Props) {
   const [open, setOpen] = useState(false)
   const [stores, setStores] = useState<Store[]>([])
-  const [storesLoaded, setStoresLoaded] = useState(false)      // NEW
+  const [storesLoaded, setStoresLoaded] = useState(false)
   const [outlets, setOutlets] = useState<Outlet[]>([])
-  const [outletsLoaded, setOutletsLoaded] = useState(false)    // NEW
+  const [outletsLoaded, setOutletsLoaded] = useState(false)
   const [selStore, setSelStore] = useState<string | null>(storeId)
   const [selOutlet, setSelOutlet] = useState<string | null>(outletId)
 
@@ -61,11 +61,20 @@ export function StoreRegisterSelector({
       } catch (e) {
         console.error("load stores", e)
       } finally {
-        if (!ignore) setStoresLoaded(true) // NEW
+        if (!ignore) setStoresLoaded(true)
       }
     })()
     return () => { ignore = true }
   }, [])
+
+  // ⛳️ Preselect first store when none chosen
+  useEffect(() => {
+    if (!storesLoaded) return
+    if (!selStore && stores.length > 0) {
+      setSelStore(stores[0].id)
+      setSelOutlet(null) // reset outlet so we can load fresh for this store
+    }
+  }, [storesLoaded, stores, selStore])
 
   // Load registers for the selected store
   useEffect(() => {
@@ -87,7 +96,7 @@ export function StoreRegisterSelector({
       } catch (e) {
         console.error("load outlets", e)
       } finally {
-        if (!ignore) setOutletsLoaded(true) // NEW
+        if (!ignore) setOutletsLoaded(true)
       }
     })()
     return () => { ignore = true }
@@ -98,13 +107,13 @@ export function StoreRegisterSelector({
     [outlets, selStore]
   )
 
-  // If there is exactly one outlet for this store, pick it automatically
+  // ⛳️ Preselect first outlet for the store (if any) when none chosen
   useEffect(() => {
-    if (!selStore) return
-    if (outletsForStore.length === 1) {
+    if (!selStore || !outletsLoaded) return
+    if (!selOutlet && outletsForStore.length > 0) {
       setSelOutlet(outletsForStore[0].id)
     }
-  }, [selStore, outletsForStore])
+  }, [selStore, selOutlet, outletsLoaded, outletsForStore])
 
   // Force the dialog open on first-run until both are chosen
   useEffect(() => {
@@ -120,9 +129,9 @@ export function StoreRegisterSelector({
 
   const canSave = Boolean(selStore && selOutlet)
 
-  // Helpers to open pages in a new tab (reliable everywhere)
-  const openStoresPage = () => window.open("/stores", "_blank", "noopener,noreferrer")      // NEW
-  const openStoreDetail = (id: string) => window.open(`/stores/${id}`, "_blank", "noopener,noreferrer") // NEW
+  // Helpers to open pages in a new tab
+  const openStoresPage = () => window.open("/stores", "_blank", "noopener,noreferrer")
+  const openStoreDetail = (id: string) => window.open(`/stores/${id}`, "_blank", "noopener,noreferrer")
 
   return (
     <Dialog
@@ -148,7 +157,7 @@ export function StoreRegisterSelector({
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* ─────────────── Empty state: NO STORES ─────────────── */}
+          {/* Empty state: NO STORES */}
           {storesLoaded && stores.length === 0 ? (
             <div className="rounded-md border p-4 bg-muted/30">
               <div className="text-sm">
@@ -172,7 +181,7 @@ export function StoreRegisterSelector({
                     setSelOutlet(null) // reset outlet when store changes
                   }}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Choose a store" />
                   </SelectTrigger>
                   <SelectContent>
@@ -195,7 +204,7 @@ export function StoreRegisterSelector({
                   value={selOutlet ?? ""}
                   onValueChange={(v) => setSelOutlet(v)}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Choose an outlet" />
                   </SelectTrigger>
                   <SelectContent>
@@ -207,7 +216,7 @@ export function StoreRegisterSelector({
                   </SelectContent>
                 </Select>
 
-                {/* ─────────────── Empty state: NO REGISTERS FOR STORE ─────────────── */}
+                {/* Empty state: NO REGISTERS FOR STORE */}
                 {selStore && outletsLoaded && outletsForStore.length === 0 && (
                   <div className="mt-3 rounded-md border p-3 bg-muted/30 text-sm">
                     No <strong>registers</strong> found for this store.
