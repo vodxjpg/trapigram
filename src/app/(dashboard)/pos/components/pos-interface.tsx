@@ -82,6 +82,9 @@ export function POSInterface() {
   const [error, setError] = useState<string | null>(null)
   const creatingCartRef = useRef(false)
 
+  // track which product tiles are currently “adding…”
+  const [addingKeys, setAddingKeys] = useState<Set<string>>(new Set())
+
   // mobile cart drawer
   const [cartSheetOpen, setCartSheetOpen] = useState(false)
 
@@ -368,6 +371,8 @@ export function POSInterface() {
     return m?.title || fallback;
   }, [products]);
 
+  const productKeyOf = (p: GridProduct) => `${p.productId}:${p.variationId ?? "base"}`
+
   const ensureCart = async (clientId: string) => {
     if (cartId || creatingCartRef.current) return cartId
     if (!storeId || !outletId) {
@@ -432,8 +437,19 @@ export function POSInterface() {
         setError("Pick or create a customer first (Walk-in is fine).")
         return
       }
+
+      const key = productKeyOf(p)
+      // prevent double-spam on the same tile
+      if (addingKeys.has(key)) return
+      setAddingKeys(prev => {
+        const next = new Set(prev)
+        next.add(key)
+        return next
+      })
+
       const cid = await ensureCart(selectedCustomer.id)
       if (!cid) return
+
       const idem = (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
       const res = await fetch(`/api/pos/cart/${cid}/add-product`, {
         method: "POST",
@@ -467,6 +483,14 @@ export function POSInterface() {
       await refreshCart(cid)
     } catch (e: any) {
       setError(e?.message || "Failed to add to cart.")
+    } finally {
+      // always clear loader for this product
+      const key = productKeyOf(p)
+      setAddingKeys(prev => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
     }
   }
 
@@ -612,7 +636,11 @@ export function POSInterface() {
               selectedCategoryId={selectedCategoryId}
               onSelect={setSelectedCategoryId}
             />
-            <ProductGrid products={filteredProducts} onAddToCart={addToCart} />
+            <ProductGrid
+              products={filteredProducts}
+              onAddToCart={addToCart}
+              addingKeys={addingKeys}
+            />
           </div>
 
           {/* Cart sidebar (desktop / landscape) */}
