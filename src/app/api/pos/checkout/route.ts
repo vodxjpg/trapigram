@@ -719,7 +719,13 @@ export async function POST(req: NextRequest) {
     );
     const seqNum = String(Number(seqRows[0].seq)).padStart(4, "0");
     const orderKey = `POS-${seqNum}`;
-    const primaryMethodId = payments[0]?.methodId ?? (methods[0]?.id ?? null)
+    const primaryMethodName =
+          payments.length === 0
+            ? null
+            : (payments.length > 1
+              ? 'split'
+              : (methods.find((m:any) => String(m.id) === String(payments[0].methodId))?.name ?? null))
+
 
     let orderChannel = summary.channel;
     if (orderChannel === "pos-" && (storeId || registerId)) {

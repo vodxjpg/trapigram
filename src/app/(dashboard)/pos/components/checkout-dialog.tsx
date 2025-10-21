@@ -327,7 +327,6 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
         storeId: string | null;
         registerId: string | null;
         discount?: DiscountPayload;
-        niftipay?: { chain: string; asset: string; amount: number } | undefined;
       } = {
         cartId,
         payments,
@@ -337,6 +336,15 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
       if (discount && Number.isFinite(discount.value) && discount.value > 0) {
         payload.discount = discount;
+      }
+
+      // If any Niftipay split exists, include chain/asset for invoice
+      const niftiAmount = payments
+        .filter(p => /niftipay/i.test(paymentMethods.find(pm => pm.id === p.methodId)?.name || ""))
+        .reduce((s, p) => s + p.amount, 0);
+      if (niftiAmount > 0 && selectedNiftipay) {
+        const [chain, asset] = selectedNiftipay.split(":");
+        (payload as any).niftipay = { chain, asset, amount: toMoney(niftiAmount) };
       }
 
       const res = await fetch("/api/pos/checkout", {

@@ -15,6 +15,12 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 
+/* ───────────────────────────────────────────────────────────── */
+
+const NIFTIPAY_BASE = (
+  process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com"
+).replace(/\/+$/, "");
+
 type Props = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -30,8 +36,25 @@ type NiftiView = {
   qr?: string | null; // url or data-uri
 };
 
+type PaymentMethod = { id: string; name: string; apiKey?: string | null; active?: boolean };
+type NiftipayNet = { chain: string; asset: string; label: string };
+
 function looksNiftipayName(s?: string | null) {
   return !!s && /niftipay/i.test(s);
+}
+
+const EURO = ["AT","BE","HR","CY","EE","FI","FR","DE","GR","IE","IT","LV","LT","LU","MT","NL","PT","SK","SI","ES"];
+const currencyFromCountry = (c?: string) =>
+  c === "GB" ? "GBP" : (c && EURO.includes(c)) ? "EUR" : "USD";
+
+/* small helper for noisy console + safe json */
+async function fetchJsonVerbose(url: string, opts: RequestInit = {}, tag = url) {
+  const res = await fetch(url, { credentials: "include", ...opts });
+  let body: any = null;
+  try { body = await res.clone().json(); } catch {}
+  // eslint-disable-next-line no-console
+  console.log(`[${tag}]`, res.status, body ?? "(non-json)");
+  return res;
 }
 
 export default function ReceiptOptionsDialog({
@@ -43,11 +66,17 @@ export default function ReceiptOptionsDialog({
   const [email, setEmail] = useState(defaultEmail || "");
   const [sending, setSending] = useState(false);
 
-  // we keep both the raw payload and a normalized "order-ish" object
+  // raw payload + normalized order
   const [raw, setRaw] = useState<any | null>(null);
   const [order, setOrder] = useState<any | null>(null);
 
-  // fetch order (for payments + niftipay meta)
+  // PMs (to get Niftipay apiKey)
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [niftipayNetworks, setNiftipayNetworks] = useState<NiftipayNet[]>([]);
+  const [niftipayLoading, setNiftipayLoading] = useState(false);
+
+  // ─────────────────────────────────────────────────────────────
+  // 1) Fetch order (plural → singular fallback)
   useEffect(() => {
     let ignore = false;
     if (!open || !orderId) {
@@ -57,22 +86,17 @@ export default function ReceiptOptionsDialog({
     }
     (async () => {
       try {
-        // Most backends expose /api/orders/:id (plural). Fall back to /api/order/:id if needed.
         const endpoints = [`/api/orders/${orderId}`, `/api/order/${orderId}`];
         let data: any = null;
         for (const url of endpoints) {
           try {
             const r = await fetch(url, { cache: "no-store" });
-            if (r.ok) {
-              data = await r.json().catch(() => ({}));
-              break;
-            }
-          } catch { /* try next */ }
+            if (r.ok) { data = await r.json().catch(() => ({})); break; }
+          } catch {}
         }
         if (!data) throw new Error("Could not load order");
         if (ignore) return;
 
-        // Accept a few common shapes: { order, payment }, { order }, or the order itself.
         const ord =
           data?.order ??
           data?.data ??
@@ -80,27 +104,202 @@ export default function ReceiptOptionsDialog({
 
         setRaw(data);
         setOrder(ord);
-      } catch {
+      } catch (e: any) {
         if (!ignore) {
           setRaw(null);
           setOrder(null);
         }
       }
     })();
-    return () => {
-      ignore = true;
-    };
+    return () => { ignore = true; };
   }, [open, orderId]);
 
+  // 2) Load payment methods (+ Niftipay networks via backend proxy)
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      try {
+        const pmRes = await fetch("/api/payment-methods");
+        const { methods } = await pmRes.json();
+        setPaymentMethods(Array.isArray(methods) ? methods : []);
+      } catch {}
+    })();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      setNiftipayLoading(true);
+      try {
+        const r = await fetch("/api/niftipay/payment-methods");
+        if (!r.ok) throw new Error();
+        const { methods } = await r.json();
+        const nets: NiftipayNet[] = (methods || []).map((m: any) => ({
+          chain: m.chain,
+          asset: m.asset,
+          label: m.label ?? `${m.asset} on ${m.chain}`,
+        }));
+        setNiftipayNetworks(nets);
+      } catch {
+        setNiftipayNetworks([]);
+      } finally {
+        setNiftipayLoading(false);
+      }
+    })();
+  }, [open]);
+
+  // ─────────────────────────────────────────────────────────────
+  // 3) Ensure a Niftipay invoice exists (like the Edit form does)
+  useEffect(() => {
+    if (!open || !order) return;
+
+    (async () => {
+      try {
+        // Pull splits from a few places
+        const splitsFromRaw =
+          raw?.payment?.splits ??
+          raw?.order?.payment?.splits ??
+          raw?.orderPayments ??
+          raw?.payments ??
+          [];
+
+        const splitsFromOrder =
+          order?.payment?.splits ??
+          order?.orderPayments ??
+          order?.payments ??
+          [];
+
+        const toSplit = (x: any) => {
+          if (!x) return null;
+          const name = x.name ?? x.methodName ?? x.method ?? x.methodId ?? x.id ?? null;
+          const amount = Number(x.amount ?? x.value ?? x.total ?? NaN);
+          if (!Number.isFinite(amount)) return null;
+          return { name: name ? String(name) : null, amount };
+        };
+
+        const splits = [...splitsFromRaw, ...splitsFromOrder]
+          .map(toSplit)
+          .filter(Boolean) as { name: string | null; amount: number }[];
+
+        const niftiSplits = splits.filter((s) => looksNiftipayName(s.name));
+        if (!niftiSplits.length) return; // nothing to do in this receipt
+
+        const niftiAmount = +niftiSplits.reduce((s, p) => s + p.amount, 0).toFixed(2);
+        if (!(niftiAmount > 0)) return;
+
+        // If orderMeta already has a valid QR/address for this amount, reuse it and stop.
+        const metaArray: any[] = Array.isArray(order?.orderMeta)
+          ? order!.orderMeta
+          : Array.isArray(raw?.orderMeta)
+          ? raw!.orderMeta
+          : Array.isArray(raw?.order?.orderMeta)
+          ? raw!.order.orderMeta
+          : [];
+
+        const metaHasInvoice = metaArray.some((m) => {
+          const node = m?.order ?? m ?? {};
+          const amount = Number(node.amount ?? node.total ?? node.value ?? NaN);
+          const address =
+            node.walletAddress ?? node.address ?? node.publicAddress ?? node.payToAddress ?? null;
+          const qr = node.qr ?? node.qrUrl ?? node.qrImageUrl ?? node.qrCodeUrl ?? null;
+          return Number.isFinite(amount) && Math.abs(amount - niftiAmount) < 0.0001 && (address || qr);
+        });
+        if (metaHasInvoice) return;
+
+        // Need to call Niftipay directly like the Edit form:
+        const niftiPM = paymentMethods.find((p) => (p.name || "").toLowerCase() === "niftipay");
+        const apiKey = niftiPM?.apiKey || null;
+        if (!apiKey) {
+          toast.error("Niftipay API key missing (configure payment methods)");
+          return;
+        }
+
+        // 3a) Try find by reference
+        const ref = order.orderKey ?? order.id;
+        const findRes = await fetchJsonVerbose(
+          `${NIFTIPAY_BASE}/api/orders?reference=${encodeURIComponent(ref)}`,
+          { credentials: "omit", headers: { "x-api-key": apiKey } },
+          "Niftipay FIND by reference (POS receipt)"
+        );
+
+        if (findRes.ok) {
+          const { orders: found = [] } = await findRes.clone().json().catch(() => ({ orders: [] }));
+          const existing = found.find((o: any) => o.reference === ref && o.status !== "cancelled");
+          if (existing) {
+            // Attach to local state so the QR renders (no need to persist for this flow)
+            setOrder((prev: any) => ({
+              ...prev,
+              orderMeta: [...(Array.isArray(prev?.orderMeta) ? prev.orderMeta : []), existing],
+            }));
+            return;
+          }
+        }
+
+        // 3b) Create a new invoice (pick a network/asset if we can)
+        let chain: string | null = null;
+        let asset: string | null = null;
+        const fromMeta = metaArray
+          .map((m) => m?.order ?? m ?? {})
+          .find((n) => n.network && n.asset);
+        if (fromMeta) {
+          chain = fromMeta.network;
+          asset = fromMeta.asset;
+        } else if (niftipayNetworks.length) {
+          chain = niftipayNetworks[0].chain;
+          asset = niftipayNetworks[0].asset;
+        }
+
+        if (!chain || !asset) {
+          if (!niftipayLoading) toast.error("No Niftipay networks available");
+          return;
+        }
+
+        const currency = currencyFromCountry(order.country);
+        const niftipayRes = await fetch(`${NIFTIPAY_BASE}/api/orders?replaceCancelled=1`, {
+          method: "POST",
+          credentials: "omit",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+          },
+          body: JSON.stringify({
+            network: chain,
+            asset,
+            amount: niftiAmount,
+            currency,
+            // Minimal customer info for POS; edit page sends more
+            firstName: null,
+            lastName: null,
+            email: "user@trapyfy.com",
+            merchantId: order.organizationId ?? undefined,
+            reference: ref,
+          }),
+        });
+
+        if (!niftipayRes.ok) {
+          const errorBody = await niftipayRes.json().catch(() => ({ error: "Unknown error" }));
+          toast.error(errorBody?.error || "Failed to create Niftipay invoice");
+          return;
+        }
+
+        const niftipayMeta = await niftipayRes.json();
+        // Attach to local order so QR renders
+        setOrder((prev: any) => ({
+          ...prev,
+          orderMeta: [...(Array.isArray(prev?.orderMeta) ? prev.orderMeta : []), niftipayMeta],
+        }));
+      } catch (e: any) {
+        toast.error(e?.message || "Niftipay invoice create/fetch failed");
+      }
+    })();
+  }, [open, order, raw, paymentMethods, niftipayNetworks, niftipayLoading]);
+
   /* ─────────────────────────────────────────────────────────────
-   * Extract Niftipay meta + match to Niftipay splits by amount
-   *  - We’re generous with shapes so it “just works”.
-   *  - If no splits are found, we’ll still show all meta blocks.
+   * Build blocks from whatever meta we now have
    * ──────────────────────────────────────────────────────────── */
   const niftiBlocks = useMemo(() => {
     if (!raw && !order) return [] as Array<NiftiView & { idx: number }>;
 
-    // 1) find splits from a few likely places
     const splitsFromRaw =
       raw?.payment?.splits ??
       raw?.order?.payment?.splits ??
@@ -114,7 +313,6 @@ export default function ReceiptOptionsDialog({
       order?.payments ??
       [];
 
-    // normalize splits to { name?: string; amount: number }
     const toSplit = (x: any) => {
       if (!x) return null;
       const name =
@@ -128,11 +326,8 @@ export default function ReceiptOptionsDialog({
       .map(toSplit)
       .filter(Boolean) as { name: string | null; amount: number }[];
 
-    const niftiSplits =
-      splits.filter((s) => looksNiftipayName(s.name)) ||
-      [];
+    const niftiSplits = splits.filter((s) => looksNiftipayName(s.name));
 
-    // 2) extract niftipay-ish meta from orderMeta in a forgiving way
     const metaArray: any[] = Array.isArray(order?.orderMeta)
       ? order!.orderMeta
       : Array.isArray(raw?.orderMeta)
@@ -143,9 +338,7 @@ export default function ReceiptOptionsDialog({
 
     const metas: NiftiView[] = [];
     for (const m of metaArray) {
-      // accept root or { order: ... }
       const node = m?.order ?? m ?? {};
-      // accept a few common keys
       const amount = Number(node.amount ?? node.total ?? node.value ?? NaN);
       const asset = node.asset ?? node.assetSymbol ?? node.coin ?? null;
       const chain = node.network ?? node.chain ?? null;
@@ -162,15 +355,12 @@ export default function ReceiptOptionsDialog({
         node.qrCodeUrl ??
         null;
 
-      // If this meta has something we can display, keep it.
       if (Number.isFinite(amount) && (address || qr)) {
         metas.push({ amount, asset, chain, address, qr });
       }
     }
-
     if (!metas.length) return [];
 
-    // 3) If we have niftipay splits, greedily match by amount (so exactly one block per split).
     if (niftiSplits.length) {
       const used = new Array(metas.length).fill(false);
       const out: Array<NiftiView & { idx: number }> = [];
@@ -178,19 +368,14 @@ export default function ReceiptOptionsDialog({
         let pick = -1;
         for (let i = 0; i < metas.length; i++) {
           if (!used[i] && Math.abs(metas[i].amount - s.amount) < 0.0001) {
-            pick = i;
-            break;
+            pick = i; break;
           }
         }
-        if (pick >= 0) {
-          used[pick] = true;
-          out.push({ ...metas[pick], idx });
-        }
+        if (pick >= 0) { used[pick] = true; out.push({ ...metas[pick], idx }); }
       });
       if (out.length) return out;
     }
 
-    // 4) Fallback: show all niftipay-looking meta blocks (even if we can’t see splits)
     return metas.map((m, i) => ({ ...m, idx: i }));
   }, [raw, order]);
 
@@ -200,7 +385,6 @@ export default function ReceiptOptionsDialog({
   const doPrint = async () => {
     try {
       if (!orderId) return;
-      // Open the actual PDF API route (the previous page URL was 404)
       window.open(`/api/pos/receipts/${orderId}/pdf`, "_blank", "noopener");
     } catch {
       toast.error("Unable to open printer view");
@@ -251,7 +435,7 @@ export default function ReceiptOptionsDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Niftipay QR/address blocks – robust extraction */}
+          {/* Niftipay QR/address blocks (from ensured invoice) */}
           {niftiBlocks.length > 0 && (
             <div className="space-y-3">
               {niftiBlocks.map((b) => (
@@ -278,11 +462,7 @@ export default function ReceiptOptionsDialog({
 
                   {b.address && (
                     <div className="flex justify-end">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => copy(b.address!)}
-                      >
+                      <Button variant="outline" size="sm" onClick={() => copy(b.address!)}>
                         Copy address
                       </Button>
                     </div>
