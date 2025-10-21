@@ -1,4 +1,6 @@
 // src/app/api/pos/cart/[id]/add-product/route.ts
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
@@ -53,6 +55,11 @@ async function getStoreCountryCached(storeId: string, organizationId: string): P
 
 type ExecResult = { status: number; body: any; headers?: Record<string, string> };
 
+const BASE_HEADERS: Record<string, string> = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+  "X-Content-Type-Options": "nosniff",
+};
+
 async function withIdempotency(
   req: NextRequest,
   exec: () => Promise<ExecResult>
@@ -60,7 +67,10 @@ async function withIdempotency(
   const key = req.headers.get("Idempotency-Key");
   if (!key) {
     const r = await exec();
-    return NextResponse.json(r.body, { status: r.status, headers: r.headers });
+    return NextResponse.json(r.body, {
+      status: r.status,
+      headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
+    });
   }
   const method = req.method;
   const path = new URL(req.url).pathname;
@@ -79,13 +89,24 @@ async function withIdempotency(
           [key]
         );
         await c.query("COMMIT");
-        if (rows[0]) return NextResponse.json(rows[0].response, { status: rows[0].status });
-        return NextResponse.json({ error: "Idempotency replay but no record" }, { status: 409 });
+        if (rows[0]) {
+          return NextResponse.json(rows[0].response, {
+            status: rows[0].status,
+            headers: BASE_HEADERS,
+          });
+        }
+        return NextResponse.json({ error: "Idempotency replay but no record" }, {
+          status: 409,
+          headers: BASE_HEADERS,
+        });
       }
       if (e?.code === "42P01") {
         await c.query("ROLLBACK");
         const r = await exec();
-        return NextResponse.json(r.body, { status: r.status, headers: r.headers });
+        return NextResponse.json(r.body, {
+          status: r.status,
+          headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
+        });
       }
       throw e;
     }
@@ -95,7 +116,10 @@ async function withIdempotency(
       [key, r.status, r.body]
     );
     await c.query("COMMIT");
-    return NextResponse.json(r.body, { status: r.status, headers: r.headers });
+    return NextResponse.json(r.body, {
+      status: r.status,
+      headers: { ...BASE_HEADERS, ...(r.headers ?? {}) },
+    });
   } catch (err) {
     await c.query("ROLLBACK");
     throw err;
@@ -269,7 +293,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         [cartId]
       );
       mark("cart_lookup");
-      if (!cRows.length) return { status: 404, body: { error: "Cart or client not found" } };
+      if (!cRows.length) {
+        return { status: 404, body: { error: "Cart or client not found" }, headers: { "Server-Timing": encodeServerTiming(marks) } };
+      }
 
       const organizationId: string = (ctx as any).organizationId;
       let country: string = cRows[0].country;
@@ -336,6 +362,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           return {
             status: 400,
             body: { error: `Only ${inv.stock} unit${inv.stock === 1 ? "" : "s"} available for this item.`, available: inv.stock },
+            headers: { "Server-Timing": encodeServerTiming(marks) },
           };
         }
       }
@@ -353,7 +380,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const current = Number(bal[0]?.pointsCurrent ?? 0);
         if (pointsNeeded > current) {
           await client.query("ROLLBACK");
-          return { status: 400, body: { error: "Insufficient affiliate points", required: pointsNeeded, available: current } };
+          return {
+            status: 400,
+            body: { error: "Insufficient affiliate points", required: pointsNeeded, available: current },
+            headers: { "Server-Timing": encodeServerTiming(marks) },
+          };
         }
 
         await client.query(
@@ -440,14 +471,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             `INSERT INTO "cartProducts"
                (id,"cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
              VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
-            [uuidv4(), cartId, isAffiliate ? null : body.productId, isAffiliate ? body.productId : null, variationId, quantity, unitPrice]
+            [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), variationId, quantity, unitPrice]
           );
         } else {
           await client.query(
             `INSERT INTO "cartProducts"
                (id,"cartId","productId","affiliateProductId",quantity,"unitPrice","createdAt","updatedAt")
              VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
-            [uuidv4(), cartId, isAffiliate ? null : body.productId, isAffiliate ? body.productId : null, quantity, unitPrice]
+            [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), quantity, unitPrice]
           );
         }
       }
@@ -457,7 +488,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await adjustStock(client, body.productId, variationId, country, -body.quantity);
       mark("adjust_stock");
 
-      // FAST cart hash (aggregate instead of JSON hashing all lines)
+      // FAST cart hash (aggregate instead of hashing row JSON)
       const { rows: hv } = await client.query(
         `SELECT COUNT(*)::int AS n,
                 COALESCE(SUM(quantity),0)::int AS q,
@@ -551,31 +582,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
 
       const totalMs = Date.now() - T0;
-      const serverTiming = marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
-
-      console.log(
-        `[POS][add-product] cart=${cartId} product=${body.productId} var=${variationId ?? "base"} qty=${body.quantity} ${totalMs}ms`,
-        Object.fromEntries(marks)
-      );
-
+      const serverTiming = encodeServerTiming(marks);
       return {
         status: 201,
         body: { lines },
         headers: {
+          ...BASE_HEADERS,
           "Server-Timing": serverTiming,
           "X-Route-Duration": `${totalMs}ms`,
         },
       };
     } catch (err: any) {
       try { if (client) await client.query("ROLLBACK"); } catch {}
-      if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors } };
+      if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors }, headers: BASE_HEADERS };
       if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
-        return { status: 400, body: { error: err.message } };
+        return { status: 400, body: { error: err.message }, headers: BASE_HEADERS };
       }
       console.error("[POS POST /pos/cart/:id/add-product]", err);
-      return { status: 500, body: { error: err.message ?? "Internal server error" } };
+      return { status: 500, body: { error: err.message ?? "Internal server error" }, headers: BASE_HEADERS };
     } finally {
       try { if (client) client.release(); } catch {}
     }
   });
+}
+
+function encodeServerTiming(marks: Array<[string, number]>): string {
+  return marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
 }
