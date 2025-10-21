@@ -47,7 +47,9 @@ async function getStoreCountryCached(storeId: string, organizationId: string): P
   return country;
 }
 
-/* ───────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────
+   Helpers
+  ───────────────────────────────────────────────────────────── */
 
 type ExecResult = { status: number; body: any; headers?: Record<string, string> };
 
@@ -102,14 +104,13 @@ async function withIdempotency(
   }
 }
 
-/* ───────────────────────────────────────────────────────────── */
-
 const BodySchema = z.object({
   productId: z.string(),
   variationId: z.string().nullable().optional(),
   quantity: z.number().int().positive(),
 });
 
+// channel: "pos-<storeId>-<registerId>"
 function parseStoreIdFromChannel(channel: string | null): string | null {
   if (!channel) return null;
   const m = /^pos-([^-\s]+)-/i.exec(channel);
@@ -148,58 +149,54 @@ function pickTierForClient(
   return global ?? null;
 }
 
-/** Inventory reader aligned with your schema. */
+/** Inventory check (schema-aware).
+ *  productVariations has no stock flags → we only read products row.
+ */
 async function readInventoryFast(
   client: any,
   productId: string,
-  variationId: string | null
 ): Promise<{ manage: boolean; backorder: boolean; stock: number | null }> {
-  const safeQuery = async (sql: string, params: any[], sp: string) => {
-    await client.query(`SAVEPOINT ${sp}`);
-    try {
-      const r = await client.query(sql, params);
-      await client.query(`RELEASE SAVEPOINT ${sp}`);
-      return r;
-    } catch (e: any) {
-      await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
-      if (e?.code === "42703" || e?.code === "42P01") return { rows: [] };
-      throw e;
-    }
-  };
-
-  const p = await safeQuery(
+  const { rows } = await client.query(
     `SELECT COALESCE("manageStock", false) AS manage,
             COALESCE("allowBackorders", false) AS backorder
        FROM products
       WHERE id=$1
       LIMIT 1`,
     [productId],
-    "inv_p"
   );
-
-  let manage = !!p.rows?.[0]?.manage;
-  let backorder = !!p.rows?.[0]?.backorder;
-  let stock: number | null = null; // no stock qty on products table
-
-  if (variationId) {
-    const v = await safeQuery(
-      `SELECT COALESCE("manageStock", false) AS manage,
-              COALESCE("allowBackorders", false) AS backorder,
-              NULL::int AS stock
-         FROM "productVariations"
-        WHERE id=$1
-        LIMIT 1`,
-      [variationId],
-      "inv_v"
-    );
-    if (v.rows?.[0]) {
-      manage = !!v.rows[0].manage || manage;
-      if (v.rows[0].backorder != null) backorder = !!v.rows[0].backorder;
-      // stock stays null unless you wire a real qty column here
-    }
-  }
-  return { manage, backorder, stock };
+  return {
+    manage: !!rows?.[0]?.manage,
+    backorder: !!rows?.[0]?.backorder,
+    stock: null, // no numeric stock cap in products schema you shared
+  };
 }
+
+/** Format "Parent - <attr values...>" e.g., "T-SHIRT - RED / L" */
+function formatVariationTitle(parentTitle: string, attributes: any): string {
+  if (!attributes || typeof attributes !== "object") return parentTitle;
+  try {
+    const vals = Object.values(attributes)
+      .filter((v) => v != null && String(v).trim().length > 0)
+      .map((v) => String(v).trim());
+    if (vals.length === 0) return parentTitle;
+    return `${parentTitle} - ${vals.join(" / ")}`;
+  } catch {
+    return parentTitle;
+  }
+}
+
+/** Swallow emitter timeouts & errors, never block request */
+function withTimeout<T>(p: Promise<T>, ms: number) {
+  return Promise.race([
+    p,
+    new Promise<never>((_, rej) => setTimeout(() => rej(new Error("emit-timeout")), ms)),
+  ]);
+}
+function fireAndForget(p: Promise<any>) {
+  p.catch(() => {}); // silence
+}
+
+/* ───────────────────────────────────────────────────────────── */
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await getContext(req);
@@ -288,9 +285,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       mark("line_lookup");
 
-      // inventory guard (normal only; enforce only if numeric stock present)
+      // inventory guard (normal only; enforce only if numeric stock present → you don't have it)
       if (!isAffiliate) {
-        const inv = await readInventoryFast(client, body.productId, variationId);
+        const inv = await readInventoryFast(client, body.productId);
         mark("read_inventory");
         const newQty = (existing[0]?.quantity ?? 0) + body.quantity;
         if (inv.manage && !inv.backorder && inv.stock !== null && newQty > inv.stock) {
@@ -415,7 +412,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       mark("upsert_line");
 
-      // stock adjust
+      // stock adjust (effective country used above)
       await adjustStock(client, body.productId, variationId, country, -body.quantity);
       mark("adjust_stock");
 
@@ -437,38 +434,87 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await client.query("COMMIT");
       mark("tx_commit");
 
-      // Fire-and-forget display emit
-      try { queueMicrotask(() => { emitCartToDisplay(cartId).catch(e => console.warn("[cd][add] emit failed", e)); }); } catch {}
+      // Fire-and-forget display emit (quiet + timeout budget)
+      try {
+        setTimeout(() => {
+          fireAndForget(withTimeout(emitCartToDisplay(cartId), 300));
+        }, 0);
+      } catch {}
       mark("emit_display_sched");
 
-      // Build a lines snapshot (so UI doesn't need another round-trip)
-      const [pRows, aRows] = await Promise.all([
+      // Build a snapshot (prefer variation image/sku; compute variant title from attributes)
+      const [pRowsRes, aRowsRes] = await Promise.all([
         pool.query(
-          `SELECT p.id,p.title,p.description,p.image,p.sku,
-                  cp.quantity,cp."unitPrice",cp."variationId", false AS "isAffiliate"
-             FROM products p
-             JOIN "cartProducts" cp ON cp."productId"=p.id
-            WHERE cp."cartId"=$1
-            ORDER BY cp."createdAt"`,
+          `SELECT 
+              p.id,
+              p.title               AS parent_title,
+              p.image               AS parent_image,
+              p.sku                 AS parent_sku,
+              v.attributes          AS var_attributes,
+              v.image               AS var_image,
+              v.sku                 AS var_sku,
+              cp.quantity,
+              cp."unitPrice",
+              cp."variationId",
+              false                 AS "isAffiliate"
+           FROM "cartProducts" cp
+           JOIN products p           ON cp."productId" = p.id
+           LEFT JOIN "productVariations" v ON v.id = cp."variationId"
+           WHERE cp."cartId"=$1
+           ORDER BY cp."createdAt"`,
           [cartId]
         ),
         pool.query(
-          `SELECT ap.id,ap.title,ap.description,ap.image,ap.sku,
-                  cp.quantity,cp."unitPrice",cp."variationId", true AS "isAffiliate"
-             FROM "affiliateProducts" ap
-             JOIN "cartProducts"     cp ON cp."affiliateProductId"=ap.id
-            WHERE cp."cartId"=$1
-            ORDER BY cp."createdAt"`,
+          `SELECT 
+              ap.id,
+              ap.title,
+              ap.description,
+              ap.image,
+              ap.sku,
+              cp.quantity,
+              cp."unitPrice",
+              cp."variationId",
+              true AS "isAffiliate"
+           FROM "affiliateProducts" ap
+           JOIN "cartProducts"     cp ON cp."affiliateProductId"=ap.id
+           WHERE cp."cartId"=$1
+           ORDER BY cp."createdAt"`,
           [cartId]
         ),
       ]);
       mark("snapshot_query");
 
-      const lines = [...pRows.rows, ...aRows.rows].map((l: any) => ({
-        ...l,
+      const normalLines = pRowsRes.rows.map((r: any) => {
+        const title = formatVariationTitle(r.parent_title, r.var_attributes);
+        const image = r.var_image ?? r.parent_image ?? null;
+        const sku   = r.var_sku ?? r.parent_sku ?? null;
+        const unitPrice = Number(r.unitPrice);
+        return {
+          id: r.id,
+          title,
+          image,
+          sku,
+          quantity: Number(r.quantity),
+          unitPrice,
+          variationId: r.variationId,
+          isAffiliate: false,
+          subtotal: unitPrice * Number(r.quantity),
+        };
+      });
+
+      const affiliateLines = aRowsRes.rows.map((l: any) => ({
+        id: l.id,
+        title: l.title,
+        image: l.image ?? null,
+        sku: l.sku ?? null,
+        quantity: Number(l.quantity),
         unitPrice: Number(l.unitPrice),
-        subtotal: Number(l.unitPrice) * l.quantity,
+        variationId: l.variationId,
+        isAffiliate: true,
+        subtotal: Number(l.unitPrice) * Number(l.quantity),
       }));
+
+      const lines = [...normalLines, ...affiliateLines];
 
       const totalMs = Date.now() - T0;
       const serverTiming = marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
