@@ -17,6 +17,7 @@ import { emitCartToDisplay } from "@/lib/customer-display-emit";
   ───────────────────────────────────────────────────────────── */
 const TIER_TTL_MS = 120_000;      // 2 min – good for POS, lowers repeated tier calls
 const STORE_TTL_MS = 5 * 60_000;  // 5 min
+const PRICE_TTL_MS = 120_000;     // 2 min – cache money/points resolution
 
 const tierCache = new Map<string, { at: number; data: Tier[] }>();
 async function getTiersCached(orgId: string): Promise<Tier[]> {
@@ -28,16 +29,41 @@ async function getTiersCached(orgId: string): Promise<Tier[]> {
   return data;
 }
 
+type PriceRes = { price: number; isAffiliate: boolean };
+const priceCache = new Map<string, { at: number; data: PriceRes }>();
+async function resolveUnitPriceCached(
+  productId: string,
+  variationId: string | null,
+  country: string,
+  levelId: string
+): Promise<PriceRes> {
+  const key = `${productId}|${variationId ?? ""}|${country}|${levelId}`;
+  const now = Date.now();
+  const hit = priceCache.get(key);
+  if (hit && now - hit.at < PRICE_TTL_MS) return hit.data;
+  const data = await resolveUnitPrice(productId, variationId, country, levelId);
+  priceCache.set(key, { at: now, data });
+  return data;
+}
+
 const storeCountryCache = new Map<string, { at: number; country: string | null }>();
-async function getStoreCountryCached(storeId: string, organizationId: string): Promise<string | null> {
+async function getStoreCountryCached(
+  storeId: string,
+  organizationId: string,
+  client?: import("pg").PoolClient | null
+): Promise<string | null> {
   const now = Date.now();
   const key = `${organizationId}:${storeId}`;
   const hit = storeCountryCache.get(key);
   if (hit && now - hit.at < STORE_TTL_MS) return hit.country;
 
-  const { rows } = await pool.query(
-    `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
-    [storeId, organizationId],
+  const runner = client ?? pool;
+  const { rows } = await runner.query(
+    {
+      name: "pos_store_address_by_org",
+      text: `SELECT address FROM stores WHERE id=$1 AND "organizationId"=$2`,
+      values: [storeId, organizationId],
+    }
   );
   let country: string | null = null;
   try {
@@ -79,14 +105,16 @@ async function withIdempotency(
     await c.query("BEGIN");
     try {
       await c.query(
-        `INSERT INTO idempotency(key, method, path, "createdAt") VALUES ($1,$2,$3,NOW())`,
-        [key, method, path]
+        {
+          name: "idem_insert",
+          text: `INSERT INTO idempotency(key, method, path, "createdAt") VALUES ($1,$2,$3,NOW())`,
+          values: [key, method, path],
+        }
       );
     } catch (e: any) {
       if (e?.code === "23505") {
         const { rows } = await c.query(
-          `SELECT status, response FROM idempotency WHERE key=$1`,
-          [key]
+          { name: "idem_select", text: `SELECT status, response FROM idempotency WHERE key=$1`, values: [key] }
         );
         await c.query("COMMIT");
         if (rows[0]) {
@@ -112,8 +140,11 @@ async function withIdempotency(
     }
     const r = await exec();
     await c.query(
-      `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
-      [key, r.status, r.body]
+      {
+        name: "idem_update",
+        text: `UPDATE idempotency SET status=$2, response=$3, "updatedAt"=NOW() WHERE key=$1`,
+        values: [key, r.status, r.body],
+      }
     );
     await c.query("COMMIT");
     return NextResponse.json(r.body, {
@@ -177,16 +208,19 @@ function pickTierForClient(
  *  productVariations has no stock flags → only read products row.
  */
 async function readInventoryFast(
-  client: any,
+  client: import("pg").PoolClient,
   productId: string,
 ): Promise<{ manage: boolean; backorder: boolean; stock: number | null }> {
   const { rows } = await client.query(
-    `SELECT COALESCE("manageStock", false) AS manage,
-            COALESCE("allowBackorders", false) AS backorder
-       FROM products
-      WHERE id=$1
-      LIMIT 1`,
-    [productId],
+    {
+      name: "pos_product_flags",
+      text: `SELECT COALESCE("manageStock", false) AS manage,
+                    COALESCE("allowBackorders", false) AS backorder
+               FROM products
+              WHERE id=$1
+              LIMIT 1`,
+      values: [productId],
+    }
   );
   return {
     manage: !!rows?.[0]?.manage,
@@ -261,6 +295,10 @@ function fireAndForget(p: Promise<any>) {
   p.catch(() => {}); // silence
 }
 
+function encodeServerTiming(marks: Array<[string, number]>): string {
+  return marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
+}
+
 /* ───────────────────────────────────────────────────────────── */
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -272,9 +310,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const marks: Array<[string, number]> = [];
     const mark = (label: string) => marks.push([label, Date.now() - T0]);
 
-    let client: any | null = null;
+    let client: import("pg").PoolClient | null = null;
 
     try {
+      client = await pool.connect(); // 👈 use a single connection for all queries
       const { id: cartId } = await params;
       const body = BodySchema.parse(await req.json());
       mark("parsed_body");
@@ -284,71 +323,84 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ? body.variationId
           : null;
 
-      // cart + client context
-      const { rows: cRows } = await pool.query(
-        `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId"
-           FROM carts ca
-           JOIN clients cl ON cl.id = ca."clientId"
-          WHERE ca.id = $1`,
-        [cartId]
+      // cart + client context (prepared)
+      const { rows: cRows } = await client.query(
+        {
+          name: "pos_cart_ctx",
+          text: `SELECT ca.country, ca.channel, cl."levelId", cl.id AS "clientId"
+                   FROM carts ca
+                   JOIN clients cl ON cl.id = ca."clientId"
+                  WHERE ca.id = $1`,
+          values: [cartId],
+        }
       );
       mark("cart_lookup");
       if (!cRows.length) {
-        return { status: 404, body: { error: "Cart or client not found" }, headers: { "Server-Timing": encodeServerTiming(marks) } };
+        return {
+          status: 404,
+          body: { error: "Cart or client not found" },
+          headers: { ...BASE_HEADERS, "Server-Timing": encodeServerTiming(marks) },
+        };
       }
 
       const organizationId: string = (ctx as any).organizationId;
       let country: string = cRows[0].country;
       const channel: string | null = cRows[0].channel ?? null;
-      const levelId: string | null = cRows[0].levelId ?? null;
+      const levelId: string = (cRows[0].levelId ?? "default") as string;
       const clientId: string = cRows[0].clientId;
 
-      // store country (cached)
-      let storeCountry: string | null = null;
+      // Start store country lookup *in parallel* with price resolution
       const storeId = parseStoreIdFromChannel(channel);
-      if (storeId) {
-        storeCountry = await getStoreCountryCached(storeId, organizationId);
-        mark("store_lookup");
-      }
+      const storeCountryPromise = storeId ? getStoreCountryCached(storeId, organizationId, client) : Promise.resolve<string | null>(null);
 
-      // resolve base price (+ affiliate flag)
+      // resolve base price (+ affiliate flag) with cache
       let basePrice: number, isAffiliate: boolean;
+
       try {
-        const r = await resolveUnitPrice(body.productId, variationId, country, (levelId ?? "default") as string);
+        const r = await resolveUnitPriceCached(body.productId, variationId, country, levelId);
         basePrice = r.price; isAffiliate = r.isAffiliate;
         mark("resolve_price");
       } catch (e: any) {
+        // If price not available for cart country, try store country (already fetching)
+        const storeCountry = await storeCountryPromise;
         if (storeCountry && storeCountry !== country) {
-          const r2 = await resolveUnitPrice(body.productId, variationId, storeCountry, (levelId ?? "default") as string);
+          const r2 = await resolveUnitPriceCached(body.productId, variationId, storeCountry, levelId);
           basePrice = r2.price; isAffiliate = r2.isAffiliate;
           country = storeCountry;
-          await pool.query(`UPDATE carts SET country=$1 WHERE id=$2`, [country, cartId]);
+          await client.query(
+            { name: "pos_cart_country_update", text: `UPDATE carts SET country=$1 WHERE id=$2`, values: [country, cartId] }
+          );
           mark("resolve_price_store_country");
         } else {
           throw e;
         }
       }
 
-      client = await pool.connect();
       await client.query("BEGIN");
       mark("tx_begin");
 
       // existing line (branch by affiliate for index usage)
-      let existing: any[] = [];
+      let existing: Array<{ id: string; quantity: number }> = [];
       if (isAffiliate) {
         const { rows } = await client.query(
-          `SELECT id, quantity FROM "cartProducts"
-            WHERE "cartId"=$1 AND "affiliateProductId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
-          [cartId, body.productId, ...(variationId ? [variationId] : [])],
+          {
+            name: "pos_line_aff_select",
+            text: `SELECT id, quantity FROM "cartProducts"
+                    WHERE "cartId"=$1 AND "affiliateProductId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
+            values: [cartId, body.productId, ...(variationId ? [variationId] as any[] : [])],
+          }
         );
-        existing = rows;
+        existing = rows as any;
       } else {
         const { rows } = await client.query(
-          `SELECT id, quantity FROM "cartProducts"
-            WHERE "cartId"=$1 AND "productId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
-          [cartId, body.productId, ...(variationId ? [variationId] : [])],
+          {
+            name: "pos_line_std_select",
+            text: `SELECT id, quantity FROM "cartProducts"
+                    WHERE "cartId"=$1 AND "productId"=$2 ${variationId ? `AND "variationId"=$3` : ""}`,
+            values: [cartId, body.productId, ...(variationId ? [variationId] as any[] : [])],
+          }
         );
-        existing = rows;
+        existing = rows as any;
       }
       mark("line_lookup");
 
@@ -362,7 +414,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           return {
             status: 400,
             body: { error: `Only ${inv.stock} unit${inv.stock === 1 ? "" : "s"} available for this item.`, available: inv.stock },
-            headers: { "Server-Timing": encodeServerTiming(marks) },
+            headers: { ...BASE_HEADERS, "Server-Timing": encodeServerTiming(marks) },
           };
         }
       }
@@ -371,9 +423,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (isAffiliate) {
         const pointsNeeded = basePrice * body.quantity;
         const { rows: bal } = await client.query(
-          `SELECT "pointsCurrent" FROM "affiliatePointBalances"
-            WHERE "organizationId"=$1 AND "clientId"=$2`,
-          [organizationId, clientId],
+          {
+            name: "pos_aff_points_balance",
+            text: `SELECT "pointsCurrent" FROM "affiliatePointBalances"
+                    WHERE "organizationId"=$1 AND "clientId"=$2`,
+            values: [organizationId, clientId],
+          }
         );
         mark("affiliate_balance_lookup");
 
@@ -383,23 +438,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           return {
             status: 400,
             body: { error: "Insufficient affiliate points", required: pointsNeeded, available: current },
-            headers: { "Server-Timing": encodeServerTiming(marks) },
+            headers: { ...BASE_HEADERS, "Server-Timing": encodeServerTiming(marks) },
           };
         }
 
+        // UPDATE balance
         await client.query(
-          `UPDATE "affiliatePointBalances"
-              SET "pointsCurrent"="pointsCurrent"-$1,
-                  "pointsSpent"  ="pointsSpent"  +$1,
-                  "updatedAt"=NOW()
-            WHERE "organizationId"=$2 AND "clientId"=$3`,
-          [pointsNeeded, organizationId, clientId],
+          {
+            name: "pos_aff_points_debit",
+            text: `UPDATE "affiliatePointBalances"
+                      SET "pointsCurrent"="pointsCurrent"-$1,
+                          "pointsSpent"  ="pointsSpent"  +$1,
+                          "updatedAt"=NOW()
+                    WHERE "organizationId"=$2 AND "clientId"=$3`,
+            values: [pointsNeeded, organizationId, clientId],
+          }
         );
+        // INSERT log
         await client.query(
-          `INSERT INTO "affiliatePointLogs"
-             (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
-           VALUES (gen_random_uuid(),$1,$2,$3,'redeem','add to cart',NOW(),NOW())`,
-          [organizationId, clientId, -pointsNeeded],
+          {
+            name: "pos_aff_points_log",
+            text: `INSERT INTO "affiliatePointLogs"
+                    (id,"organizationId","clientId",points,action,description,"createdAt","updatedAt")
+                   VALUES (gen_random_uuid(),$1,$2,$3,'redeem','add to cart',NOW(),NOW())`,
+            values: [organizationId, clientId, -pointsNeeded],
+          }
         );
         mark("affiliate_debit");
       }
@@ -418,40 +481,54 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const tierVarIds = tier.products.map((p) => p.variationId).filter(Boolean) as string[];
 
           // Split the SUM so indexes can be used
-          const [{ rows: pSum }, { rows: vSum }] = await Promise.all([
+          const [pSum, vSum] = await Promise.all([
             client.query(
-              `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                 FROM "cartProducts"
-                WHERE "cartId"=$1 AND "productId" = ANY($2::text[])`,
-              [cartId, tierProdIds],
+              {
+                name: "pos_tier_qty_sum_products",
+                text: `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                         FROM "cartProducts"
+                        WHERE "cartId"=$1 AND "productId" = ANY($2::text[])`,
+                values: [cartId, tierProdIds],
+              }
             ),
             client.query(
-              `SELECT COALESCE(SUM(quantity),0)::int AS qty
-                 FROM "cartProducts"
-                WHERE "cartId"=$1 AND "variationId" = ANY($2::text[])`,
-              [cartId, tierVarIds],
+              {
+                name: "pos_tier_qty_sum_variations",
+                text: `SELECT COALESCE(SUM(quantity),0)::int AS qty
+                         FROM "cartProducts"
+                        WHERE "cartId"=$1 AND "variationId" = ANY($2::text[])`,
+                values: [cartId, tierVarIds],
+              }
             ),
           ]);
           mark("tier_qty_sum");
 
-          const qtyBefore = Number(pSum[0]?.qty ?? 0) + Number(vSum[0]?.qty ?? 0);
+          const qtyBefore = Number(pSum.rows[0]?.qty ?? 0) + Number(vSum.rows[0]?.qty ?? 0);
           const qtyAfter = qtyBefore - (existing[0]?.quantity ?? 0) + quantity;
           const tierPrice = getPriceForQuantity(tier.steps, qtyAfter);
           if (tierPrice != null && tierPrice !== basePrice) {
             unitPrice = tierPrice;
 
-            // Split the UPDATE as well (avoid OR)
+            // Avoid no-op updates by comparing value
             await client.query(
-              `UPDATE "cartProducts"
-                  SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2 AND "productId" = ANY($3::text[])`,
-              [unitPrice, cartId, tierProdIds],
+              {
+                name: "pos_tier_update_lines_products",
+                text: `UPDATE "cartProducts"
+                          SET "unitPrice"=$1,"updatedAt"=NOW()
+                        WHERE "cartId"=$2 AND "productId" = ANY($3::text[])
+                          AND "unitPrice" <> $1`,
+                values: [unitPrice, cartId, tierProdIds],
+              }
             );
             await client.query(
-              `UPDATE "cartProducts"
-                  SET "unitPrice"=$1,"updatedAt"=NOW()
-                WHERE "cartId"=$2 AND "variationId" = ANY($3::text[])`,
-              [unitPrice, cartId, tierVarIds],
+              {
+                name: "pos_tier_update_lines_variations",
+                text: `UPDATE "cartProducts"
+                          SET "unitPrice"=$1,"updatedAt"=NOW()
+                        WHERE "cartId"=$2 AND "variationId" = ANY($3::text[])
+                          AND "unitPrice" <> $1`,
+                values: [unitPrice, cartId, tierVarIds],
+              }
             );
             mark("tier_update_lines");
           }
@@ -460,25 +537,34 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       if (existing.length) {
         await client.query(
-          `UPDATE "cartProducts"
-              SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
-            WHERE id=$3`,
-          [quantity, unitPrice, existing[0].id]
+          {
+            name: "pos_line_update",
+            text: `UPDATE "cartProducts"
+                      SET quantity=$1,"unitPrice"=$2,"updatedAt"=NOW()
+                    WHERE id=$3`,
+            values: [quantity, unitPrice, existing[0].id],
+          }
         );
       } else {
         if (variationId) {
           await client.query(
-            `INSERT INTO "cartProducts"
-               (id,"cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
-             VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
-            [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), variationId, quantity, unitPrice]
+            {
+              name: "pos_line_insert_var",
+              text: `INSERT INTO "cartProducts"
+                     (id,"cartId","productId","affiliateProductId","variationId",quantity,"unitPrice","createdAt","updatedAt")
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
+              values: [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), variationId, quantity, unitPrice],
+            }
           );
         } else {
           await client.query(
-            `INSERT INTO "cartProducts"
-               (id,"cartId","productId","affiliateProductId",quantity,"unitPrice","createdAt","updatedAt")
-             VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
-            [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), quantity, unitPrice]
+            {
+              name: "pos_line_insert",
+              text: `INSERT INTO "cartProducts"
+                     (id,"cartId","productId","affiliateProductId",quantity,"unitPrice","createdAt","updatedAt")
+                     VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
+              values: [uuidv4(), cartId, (isAffiliate ? null : body.productId), (isAffiliate ? body.productId : null), quantity, unitPrice],
+            }
           );
         }
       }
@@ -489,20 +575,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       mark("adjust_stock");
 
       // FAST cart hash (aggregate instead of hashing row JSON)
-      const { rows: hv } = await client.query(
-        `SELECT COUNT(*)::int AS n,
-                COALESCE(SUM(quantity),0)::int AS q,
-                COALESCE(SUM((quantity * "unitPrice")::numeric),0)::text AS v
-           FROM "cartProducts"
-          WHERE "cartId"=$1`,
-        [cartId]
+      const hv = await client.query(
+        {
+          name: "pos_hash_agg",
+          text: `SELECT COUNT(*)::int AS n,
+                        COALESCE(SUM(quantity),0)::int AS q,
+                        COALESCE(SUM((quantity * "unitPrice")::numeric),0)::text AS v
+                   FROM "cartProducts"
+                  WHERE "cartId"=$1`,
+          values: [cartId],
+        }
       );
       const hash = crypto.createHash("sha256")
-        .update(`${hv[0].n}|${hv[0].q}|${hv[0].v}`)
+        .update(`${hv.rows[0].n}|${hv.rows[0].q}|${hv.rows[0].v}`)
         .digest("hex");
       await client.query(
-        `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
-        [hash, cartId]
+        {
+          name: "pos_hash_update",
+          text: `UPDATE carts SET "cartUpdatedHash"=$1,"updatedAt"=NOW() WHERE id=$2`,
+          values: [hash, cartId],
+        }
       );
       mark("hash_update");
 
@@ -518,50 +610,54 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       mark("emit_display_sched");
 
       // Single-roundtrip snapshot with proper variant titles
-      const { rows: snap } = await pool.query(
-        `SELECT 
-           p.id                            AS pid,
-           p.title                         AS parent_title,
-           p.image                         AS parent_image,
-           p.sku                           AS parent_sku,
-           v.attributes                    AS var_attributes,
-           v.image                         AS var_image,
-           v.sku                           AS var_sku,
-           cp.quantity,
-           cp."unitPrice",
-           cp."variationId",
-           false                           AS "isAffiliate",
-           cp."createdAt"                  AS created_at
-         FROM "cartProducts" cp
-         JOIN products p            ON cp."productId" = p.id
-         LEFT JOIN "productVariations" v ON v.id = cp."variationId"
-         WHERE cp."cartId"=$1
+      const snap = await client.query(
+        {
+          name: "pos_snapshot_lines",
+          text: `
+          SELECT 
+             p.id                            AS pid,
+             p.title                         AS parent_title,
+             p.image                         AS parent_image,
+             p.sku                           AS parent_sku,
+             v.attributes                    AS var_attributes,
+             v.image                         AS var_image,
+             v.sku                           AS var_sku,
+             cp.quantity,
+             cp."unitPrice",
+             cp."variationId",
+             false                           AS "isAffiliate",
+             cp."createdAt"                  AS created_at
+           FROM "cartProducts" cp
+           JOIN products p            ON cp."productId" = p.id
+           LEFT JOIN "productVariations" v ON v.id = cp."variationId"
+           WHERE cp."cartId"=$1
 
-         UNION ALL
+           UNION ALL
 
-         SELECT 
-           ap.id                           AS pid,
-           ap.title                        AS parent_title,
-           ap.image                        AS parent_image,
-           ap.sku                          AS parent_sku,
-           NULL::jsonb                     AS var_attributes,
-           NULL::text                      AS var_image,
-           NULL::text                      AS var_sku,
-           cp.quantity,
-           cp."unitPrice",
-           cp."variationId",
-           true                            AS "isAffiliate",
-           cp."createdAt"                  AS created_at
-         FROM "cartProducts" cp
-         JOIN "affiliateProducts" ap ON cp."affiliateProductId"=ap.id
-         WHERE cp."cartId"=$1
+           SELECT 
+             ap.id                           AS pid,
+             ap.title                        AS parent_title,
+             ap.image                        AS parent_image,
+             ap.sku                          AS parent_sku,
+             NULL::jsonb                     AS var_attributes,
+             NULL::text                      AS var_image,
+             NULL::text                      AS var_sku,
+             cp.quantity,
+             cp."unitPrice",
+             cp."variationId",
+             true                            AS "isAffiliate",
+             cp."createdAt"                  AS created_at
+           FROM "cartProducts" cp
+           JOIN "affiliateProducts" ap ON cp."affiliateProductId"=ap.id
+           WHERE cp."cartId"=$1
 
-         ORDER BY created_at`,
-        [cartId]
+           ORDER BY created_at`,
+          values: [cartId],
+        }
       );
       mark("snapshot_query");
 
-      const lines = snap.map((r: any) => {
+      const lines = snap.rows.map((r: any) => {
         const unitPrice = Number(r.unitPrice);
         const title = r.isAffiliate
           ? r.parent_title
@@ -594,7 +690,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       };
     } catch (err: any) {
       try { if (client) await client.query("ROLLBACK"); } catch {}
-      if (err instanceof z.ZodError) return { status: 400, body: { error: err.errors }, headers: BASE_HEADERS };
+      if (err instanceof z.ZodError) {
+        return { status: 400, body: { error: err.errors }, headers: BASE_HEADERS };
+      }
       if (typeof err?.message === "string" && err.message.startsWith("No money price for")) {
         return { status: 400, body: { error: err.message }, headers: BASE_HEADERS };
       }
@@ -604,8 +702,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       try { if (client) client.release(); } catch {}
     }
   });
-}
-
-function encodeServerTiming(marks: Array<[string, number]>): string {
-  return marks.map(([l, d], i) => `m${i};desc="${l}";dur=${d}`).join(", ");
 }
