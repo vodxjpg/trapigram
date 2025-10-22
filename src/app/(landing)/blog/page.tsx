@@ -1,27 +1,27 @@
-// app/blog/page.tsx
+// app/(landing)/blog/page.tsx
 import Link from "next/link";
 import { getPosts } from "@/lib/wp";
 
-type Props = {
-  searchParams?: { page?: string };
-};
+type SearchParams = Promise<{ page?: string }>;
 
 export const dynamic = "force-static"; // rely on fetch revalidate (ISR)
 
 const PER_PAGE = 10;
 
-export default async function BlogIndex({ searchParams }: Props) {
-  const currentPage = Math.max(1, Number(searchParams?.page ?? "1") || 1);
+export default async function BlogIndex({
+  searchParams,
+}: { searchParams?: SearchParams }) {
+  const sp = (await searchParams) ?? {};
+  const currentPage = Math.max(1, Number(sp.page ?? "1") || 1);
+
   const { posts, totalPages } = await getPosts(currentPage, PER_PAGE);
 
-  // Split first two as "hero" items
   const [hero1, hero2, ...rest] = posts;
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-10">
       <h1 className="mb-6 text-3xl font-bold tracking-tight">Blog</h1>
 
-      {/* HERO ROW (latest 2) */}
       {(hero1 || hero2) && (
         <section className="grid gap-4 md:grid-cols-2">
           {hero1 && <HeroTile key={hero1.id} post={hero1} priority />}
@@ -29,7 +29,6 @@ export default async function BlogIndex({ searchParams }: Props) {
         </section>
       )}
 
-      {/* REST OF POSTS */}
       {rest.length > 0 && (
         <section className="mt-8">
           <ul className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -42,12 +41,10 @@ export default async function BlogIndex({ searchParams }: Props) {
         </section>
       )}
 
-      {/* Empty state */}
       {!hero1 && (
         <p className="mt-6 text-sm text-gray-500">No posts published yet.</p>
       )}
 
-      {/* PAGINATION */}
       {totalPages > 1 && (
         <nav
           aria-label="Pagination"
@@ -96,7 +93,6 @@ function HeroTile({
       href={`/blog/${post.slug}`}
       className="group relative block overflow-hidden rounded-2xl"
     >
-      {/* Image / fallback */}
       {post.featuredImageUrl ? (
         <img
           src={post.featuredImageUrl}
@@ -110,10 +106,8 @@ function HeroTile({
         </div>
       )}
 
-      {/* Gradient overlay */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
 
-      {/* Text overlay */}
       <div className="absolute inset-x-0 bottom-0 p-5 text-white">
         <h2 className="line-clamp-2 text-2xl font-semibold md:text-3xl">
           {title}
@@ -211,7 +205,6 @@ function truncate(text: string, max = 160): string {
 }
 
 function formatDate(iso: string): string {
-  // Use a compact, locale-aware format
   try {
     return new Date(iso).toLocaleDateString(undefined, {
       year: "numeric",
