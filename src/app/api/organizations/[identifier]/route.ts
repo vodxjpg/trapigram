@@ -1,9 +1,10 @@
 // src/app/api/organizations/[identifier]/route.ts
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
-import { pgPool as pool } from "@/lib/db";;
+import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import crypto from "crypto";
-
 
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY!;
 const ENC_IV_B64 = process.env.ENCRYPTION_IV!;
@@ -16,17 +17,15 @@ function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
   return { key, iv };
 }
 
-// ─── GET single ─────────────────────────────────────────────────
+/* ─── GET single ──────────────────────────────────────────────── */
 export async function GET(
   req: NextRequest,
-  context: { params: { identifier: string } }
+  context: { params: Promise<{ identifier: string }> } // Next 16
 ) {
-  const { identifier } = await context.params;   // await!
+  const { identifier } = await context.params;
+
   if (!identifier) {
-    return NextResponse.json(
-      { error: "identifier is required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "identifier is required" }, { status: 400 });
   }
 
   const ctx = await getContext(req);
@@ -49,19 +48,19 @@ export async function GET(
              o.countries, o.metadata, o."encryptedSecret"
   `;
 
-  const sql = isService
+  const sqlText = isService
     ? baseSql.replace("/**MEMBERSHIP**/", "")
     : baseSql.replace(
-      "/**MEMBERSHIP**/",
-      `AND EXISTS (
+        "/**MEMBERSHIP**/",
+        `AND EXISTS (
            SELECT 1 FROM member
-           WHERE "organizationId" = o.id
-             AND "userId"       = $2
+            WHERE "organizationId" = o.id
+              AND "userId"       = $2
          )`
-    );
+      );
 
   try {
-    const { rows } = await pool.query(sql, [identifier, userId]);
+    const { rows } = await pool.query(sqlText, [identifier, userId]);
     if (rows.length === 0) {
       return NextResponse.json(
         { error: "Organization not found or access denied" },
@@ -84,51 +83,53 @@ export async function GET(
     });
   } catch (err) {
     console.error("[GET /api/organizations/:identifier] error:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
-// ─── DELETE ─────────────────────────────────────────────────────
+/* ─── DELETE ──────────────────────────────────────────────────── */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { identifier: string } }
+  context: { params: Promise<{ identifier: string }> } // Next 16
 ) {
-  const id = params.identifier;
+  const { identifier } = await context.params;
+
+  // Ensure caller belongs to this org
+  const ctx = await getContext(req);
+  if (ctx instanceof NextResponse) return ctx;
+  if (ctx.organizationId !== identifier) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   try {
     await pool.query("BEGIN");
+    await pool.query(`DELETE FROM member WHERE "organizationId" = $1`, [identifier]);
     await pool.query(
-      `DELETE FROM member WHERE "organizationId" = $1`, [id]
+      `DELETE FROM organizationPlatformKey WHERE "organizationId" = $1`,
+      [identifier]
     );
-    await pool.query(
-      `DELETE FROM organizationPlatformKey WHERE "organizationId" = $1`, [id]
-    );
-    await pool.query(
-      `DELETE FROM organization WHERE id = $1`, [id]
-    );
+    await pool.query(`DELETE FROM organization WHERE id = $1`, [identifier]);
     await pool.query("COMMIT");
-    return NextResponse.json({ id });
+    return NextResponse.json({ id: identifier });
   } catch (err) {
     await pool.query("ROLLBACK");
     console.error("[DELETE /api/organizations/:identifier] error:", err);
-    return NextResponse.json(
-      { error: "Failed to delete org" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to delete org" }, { status: 500 });
   }
 }
 
-// ─── PATCH ──────────────────────────────────────────────────────
+/* ─── PATCH ───────────────────────────────────────────────────── */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { identifier: string } }
+  context: { params: Promise<{ identifier: string }> } // Next 16
 ) {
+  const { identifier } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
+
   const orgId = ctx.organizationId;
-  if (orgId !== params.identifier) {
+  if (orgId !== identifier) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -136,18 +137,12 @@ export async function PATCH(
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
   const { name, slug, countries, secretPhrase } = body;
   if (!name && !slug && !countries && !secretPhrase) {
-    return NextResponse.json(
-      { error: "Nothing to update" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
   const sets: string[] = [];
@@ -169,33 +164,27 @@ export async function PATCH(
   if (secretPhrase) {
     const { key, iv } = getEncryptionKeyAndIv();
     const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-    const encrypted = cipher.update(secretPhrase, "utf8", "base64")
-      + cipher.final("base64");
+    const encrypted =
+      cipher.update(secretPhrase, "utf8", "base64") + cipher.final("base64");
     sets.push(`"encryptedSecret" = $${idx++}`);
     vals.push(encrypted);
   }
 
   vals.push(orgId);
-  const sql = `
+  const sqlText = `
     UPDATE organization
        SET ${sets.join(", ")}
      WHERE id = $${idx}
   `;
 
   try {
-    const res = await pool.query(sql, vals);
+    const res = await pool.query(sqlText, vals);
     if (res.rowCount === 0) {
-      return NextResponse.json(
-        { error: "Organization not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Organization not found" }, { status: 404 });
     }
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("[PATCH /api/organizations/:identifier] error:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -1,8 +1,11 @@
+// src/app/api/rules/[id]/route.ts
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
-export const runtime = "nodejs";
+
 const channelsEnum = z.enum(["email", "telegram"]);
 const eventEnum = z.enum([
   "order_placed", "order_pending_payment", "order_paid", "order_completed",
@@ -62,7 +65,7 @@ const multiPayload = z.object({
       }),
     ])
   ).min(1),
-  scope: scopeEnum.optional(), // NEW
+  scope: scopeEnum.optional(),
 }).partial();
 
 const updateSchema = z.object({
@@ -90,11 +93,16 @@ function couponCoversCountries(couponCountries: string[], ruleCountries: string[
   return ruleCountries.every((c) => couponCountries.includes(c));
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+/* ─────────────────── GET ─────────────────── */
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> } // Next 16
+) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
-  const { id } = params;
 
   try {
     const { rows } = await pool.query(
@@ -121,11 +129,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+/* ─────────────────── PATCH ─────────────────── */
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> } // Next 16
+) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
-  const { id } = params;
 
   try {
     const body = await req.json();
@@ -148,7 +161,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       parsed.payload ??
       (typeof existing.payload === "string" ? JSON.parse(existing.payload || "{}") : existing.payload || {});
 
-    // Validate condition kinds against the final event
+    // Validate condition kinds vs event
     const cItems = finalPayload?.conditions?.items ?? [];
     if (/^order_/.test(finalEvent) && cItems.some((i: any) => i.kind === "no_order_days_gte")) {
       return NextResponse.json(
@@ -163,7 +176,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       );
     }
 
-    // Enforce action/event compatibility
+    // Action/event compatibility
     if (finalAction === "multi" && Array.isArray(finalPayload?.actions)) {
       if (
         finalEvent === "customer_inactive" &&
@@ -184,7 +197,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       );
     }
 
-    // Validate coupon compatibility for any coupon present (single or multi)
+    // Coupon coverage check
     const couponIds: string[] = [];
     if (finalAction === "send_coupon" && finalPayload?.couponId) {
       couponIds.push(finalPayload.couponId);
@@ -199,11 +212,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (couponIds.length) {
       const unique = [...new Set(couponIds)];
       const { rows } = await pool.query(
-             `SELECT id, countries FROM coupons
-        WHERE "organizationId" = $1 AND id = ANY($2::text[])`,
+        `SELECT id, countries FROM coupons
+         WHERE "organizationId" = $1 AND id = ANY($2::text[])`,
         [organizationId, unique],
       );
-      const map = new Map(rows.map(r => [String(r.id), Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]")]));
+      const map = new Map(
+        rows.map(r => [
+          String(r.id),
+          Array.isArray(r.countries) ? r.countries : JSON.parse(r.countries || "[]"),
+        ])
+      );
       for (const cid of unique) {
         const cc = map.get(String(cid));
         if (!cc) return NextResponse.json({ error: "Coupon not found for this organization." }, { status: 400 });
@@ -214,6 +232,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       }
     }
 
+    // Build UPDATE
     const updates: string[] = [];
     const values: any[] = [];
     let i = 1;
@@ -257,11 +276,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+/* ─────────────────── DELETE ─────────────────── */
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> } // Next 16
+) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
-  const { id } = params;
 
   try {
     const res = await pool.query(

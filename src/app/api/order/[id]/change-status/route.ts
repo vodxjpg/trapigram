@@ -968,10 +968,10 @@ async function applyItemEffects(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  context: { params: Promise<{ id: string }> }, // Next.js 16: params is a Promise
 ) {
   // 1) context  permission guard (supports internal cron calls)
-  const { id } = params;
+  const { id } = await context.params;
   const internalSecret = req.headers.get("x-internal-secret");
   let organizationId: string;
   let tenantId: string | null = null;

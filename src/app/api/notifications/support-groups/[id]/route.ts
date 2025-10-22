@@ -15,8 +15,10 @@ const patchSchema = z.object({
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  context: { params: Promise<{ id: string }> } // Next 16: params is async
 ) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
@@ -34,25 +36,27 @@ export async function PATCH(
   await db
     .updateTable("ticketSupportGroups")
     .set(update)
-    .where("id", "=", params.id)
+    .where("id", "=", id)
     .where("organizationId", "=", ctx.organizationId)
     .execute();
 
-  return NextResponse.json({ id: params.id, updated: true }, { status: 200 });
+  return NextResponse.json({ id, updated: true }, { status: 200 });
 }
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  context: { params: Promise<{ id: string }> } // Next 16: params is async
 ) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
   await db
     .deleteFrom("ticketSupportGroups")
-    .where("id", "=", params.id)
+    .where("id", "=", id)
     .where("organizationId", "=", ctx.organizationId)
     .execute();
 
-  return NextResponse.json({ id: params.id, deleted: true }, { status: 200 });
+  return NextResponse.json({ id, deleted: true }, { status: 200 });
 }

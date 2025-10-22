@@ -7,6 +7,7 @@ import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
+/* ─────────────── Schemas ─────────────── */
 const ConditionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("always") }),
   z.object({
@@ -76,26 +77,44 @@ const UpdateSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().nullable().optional(),
   isEnabled: z.boolean().optional(),
-  startDate: z.string().nullable().optional(), // accept datetime-local strings
+  startDate: z.string().nullable().optional(),
   endDate: z.string().nullable().optional(),
   conditions: z.array(ConditionSchema).optional(),
   actions: z.array(ActionSchema).optional(),
 });
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const ctx = await getContext(_req);
+/* ─────────────── GET ─────────────── */
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> } // Next 16: params is a Promise
+) {
+  const { id } = await context.params;
+
+  const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  const { rows } = await pool.query(
-    `SELECT * FROM "magicRules" WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,
-    [params.id, organizationId],
-  );
-  if (!rows.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json({ rule: rows[0] }, { status: 200 });
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM "magicRules" WHERE id = $1 AND "organizationId" = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (!rows.length)
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ rule: rows[0] }, { status: 200 });
+  } catch (e) {
+    console.error("[GET /api/magic-rules/[id]]", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+/* ─────────────── PATCH ─────────────── */
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
@@ -112,43 +131,73 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const sets: string[] = [];
   const vals: any[] = [];
-  const push = (frag: string, v: any) => { sets.push(frag); vals.push(v); };
+  const push = (frag: string, v: any) => {
+    sets.push(frag.replace("$$", String(vals.length + 1)));
+    vals.push(v);
+  };
 
-  if (body.name !== undefined) push(`name = $${vals.length + 1}`, body.name);
-  if (body.description !== undefined) push(`description = $${vals.length + 1}`, body.description);
-  if (body.isEnabled !== undefined) push(`"isEnabled" = $${vals.length + 1}`, body.isEnabled);
-  if (body.startDate !== undefined) push(`"startDate" = $${vals.length + 1}`, body.startDate ? new Date(body.startDate) : null);
-  if (body.endDate !== undefined) push(`"endDate" = $${vals.length + 1}`, body.endDate ? new Date(body.endDate) : null);
-  if (body.conditions !== undefined) push(`conditions = $${vals.length + 1}`, JSON.stringify(body.conditions));
-  if (body.actions !== undefined) push(`actions = $${vals.length + 1}`, JSON.stringify(body.actions));
+  if (body.name !== undefined) push(`name = $$`, body.name);
+  if (body.description !== undefined) push(`description = $$`, body.description);
+  if (body.isEnabled !== undefined) push(`"isEnabled" = $$`, body.isEnabled);
+  if (body.startDate !== undefined)
+    push(`"startDate" = $$`, body.startDate ? new Date(body.startDate) : null);
+  if (body.endDate !== undefined)
+    push(`"endDate" = $$`, body.endDate ? new Date(body.endDate) : null);
+  if (body.conditions !== undefined)
+    push(`conditions = $$`, JSON.stringify(body.conditions));
+  if (body.actions !== undefined)
+    push(`actions = $$`, JSON.stringify(body.actions));
+
+  // always update timestamp
   sets.push(`"updatedAt" = NOW()`);
 
-  if (!sets.length) {
+  if (sets.length === 1) {
+    // only updatedAt
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
-  vals.push(params.id, organizationId);
+  try {
+    const idIndex = vals.length + 1;
+    const orgIndex = vals.length + 2;
+    vals.push(id, organizationId);
 
-  const sql = `
-    UPDATE "magicRules"
-       SET ${sets.join(", ")}
-     WHERE id = $${vals.length - 1} AND "organizationId" = $${vals.length}
-     RETURNING *`;
+    const sql = `
+      UPDATE "magicRules"
+         SET ${sets.join(", ")}
+       WHERE id = $${idIndex} AND "organizationId" = $${orgIndex}
+       RETURNING *`;
 
-  const { rows } = await pool.query(sql, vals);
-  if (!rows.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json({ rule: rows[0] }, { status: 200 });
+    const { rows } = await pool.query(sql, vals);
+    if (!rows.length)
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ rule: rows[0] }, { status: 200 });
+  } catch (e) {
+    console.error("[PATCH /api/magic-rules/[id]]", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+/* ─────────────── DELETE ─────────────── */
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  const { rowCount } = await pool.query(
-    `DELETE FROM "magicRules" WHERE id = $1 AND "organizationId" = $2`,
-    [params.id, organizationId],
-  );
-  if (!rowCount) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json({ ok: true }, { status: 200 });
+  try {
+    const { rowCount } = await pool.query(
+      `DELETE FROM "magicRules" WHERE id = $1 AND "organizationId" = $2`,
+      [id, organizationId]
+    );
+    if (!rowCount)
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (e) {
+    console.error("[DELETE /api/magic-rules/[id]]", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }

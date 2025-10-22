@@ -9,7 +9,6 @@ import { v4 as uuidv4 } from "uuid";
 import { sendNotification } from "@/lib/notifications";
 import crypto from "crypto";
 
-
 /* ────────────────────────── encryption helpers (AES-256-CBC) ────────────────────────── */
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
@@ -35,7 +34,7 @@ function decryptSecretNode(enc: string): string {
 
 /* ────────────────────────── zod ────────────────────────── */
 const listQuerySchema = z.object({
-  scope: z.enum(["customer", "staff"]).default("staff"), // controls filtering
+  scope: z.enum(["customer", "staff"]).default("staff"),
   page: z.coerce.number().min(1).default(1),
   pageSize: z.coerce.number().min(1).max(100).default(20),
 });
@@ -56,11 +55,15 @@ const createSchema = z.object({
 });
 
 /* ────────────────────────── GET – list notes for an order ────────────────────────── */
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> } // Next 16
+) {
+  const { id: orderId } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
-  const orderId = params.id;
 
   // Ensure the order belongs to this org
   const { rowCount: okOrder } = await pool.query(
@@ -118,11 +121,15 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 }
 
 /* ────────────────────────── POST – create a note ────────────────────────── */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> } // Next 16
+) {
+  const { id: orderId } = await context.params;
+
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
-  const orderId = params.id;
 
   // Ensure the order belongs to this org
   const { rows: ordRows } = await pool.query(
@@ -167,10 +174,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   ]);
   const r = rows[0];
 
-  // ────────────────────────── fire admin notification on client note ──────────────────────────
+  // admin notification on client note
   try {
     if (payload.authorRole === "client") {
-      // Get orderKey and country for routing
       const { rows: orderRows } = await pool.query(
         `SELECT "orderKey", country
            FROM orders
@@ -179,44 +185,37 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         [orderId, organizationId]
       );
       const order = orderRows[0] || {};
-      const key =
-        order.orderKey ??
-        // fallback: last 6 chars of id (purely cosmetic, in case orderKey is missing)
-        String(orderId).slice(-6);
+      const key = order.orderKey ?? String(orderId).slice(-6);
 
-              // Build an admin-facing message: show order number + note content
-        const esc = (s: string) =>
-          s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const message =
-          `The user has left a note for order <b>#${esc(String(key))}</b>:\n\n${esc(payload.note)}`;
-       // Force admin_only so it goes to notification groups (not buyer DM)
+      const esc = (s: string) =>
+        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const message =
+        `The user has left a note for order <b>#${esc(String(key))}</b>:\n\n${esc(payload.note)}`;
+
       await sendNotification({
-        type: "order_message",         // re-use existing type (no template needed)
+        type: "order_message",
         message,
         orderId,
         country: order.country ?? null,
-        channels: ["telegram", "in_app", "webhook"], // same spirit as paid-order alerts
-        organizationId,               // injected in notifications route; include here for clarity
+        channels: ["telegram", "in_app", "webhook"],
+        organizationId,
         clientId: payload.authorClientId ?? null,
         userId: null,
         trigger: "admin_only",
-                  // Include structured vars in case templates are used elsewhere
-          variables: {
-            order_number: String(key),
-            note_content: payload.note,
-          },
+        variables: {
+          order_number: String(key),
+          note_content: payload.note,
+        },
       });
-       console.log("[order-note] fired admin_only notification", { orderKey: key, org: organizationId });
+      console.log("[order-note] fired admin_only notification", { orderKey: key, org: organizationId });
     }
   } catch (e) {
-    // Don’t block note creation if notification fails
     console.error("[order note notification] failed:", e);
   }
 
-  // ────────────────────────── fire *customer* notification on staff note made visible ──────────────────────────
+  // customer notification on staff visible note
   try {
     if (payload.authorRole === "staff" && payload.visibleToCustomer === true) {
-      // Resolve order meta needed to route to the right customer
       const { rows: orderRows2 } = await pool.query(
         `SELECT "orderKey", country, "clientId"
            FROM orders
@@ -225,17 +224,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         [orderId, organizationId],
       );
       const order2 = orderRows2[0] || {};
-      const key =
-        order2.orderKey ??
-        // fallback: last 6 chars of id (cosmetic only)
-        String(orderId).slice(-6);
+      const key = order2.orderKey ?? String(orderId).slice(-6);
 
       const esc = (s: string) =>
-        s.replace(/&/g, "&amp;")
-         .replace(/</g, "&lt;")
-         .replace(/>/g, "&gt;");
-
-      // User-facing text
+        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const message =
         `You have a new note on your order <b>#${esc(String(key))}</b>:\n\n${esc(payload.note)}`;
 
@@ -250,7 +242,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         },
         orderId,
         country: order2.country ?? null,
-        trigger: "user_only_email",               // suppress admin fan-out
+        trigger: "user_only_email",
         channels: ["telegram", "in_app", "email"],
         userId: null,
         clientId: order2.clientId ?? null,
