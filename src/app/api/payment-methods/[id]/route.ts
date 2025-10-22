@@ -1,4 +1,6 @@
 // src/app/api/payment-methods/[id]/route.ts
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
@@ -14,22 +16,26 @@ const paymentUpdateSchema = z.object({
   default: z.boolean().optional(),
 });
 
-type Params = { params: { id: string } };
+/** Next 15+ may pass params as a Promise */
+type Ctx = { params: Promise<{ id: string }> };
 
 /* =========================================================
    GET /api/payment-methods/[id]
    ========================================================= */
-export async function GET(_req: NextRequest, { params }: Params) {
-  const ctx = await getContext(_req);
-  if (ctx instanceof NextResponse) return ctx;
+export async function GET(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
 
-  const { tenantId } = ctx as { tenantId: string | null };
+  const { tenantId } = session as { tenantId: string | null };
   if (!tenantId) {
-    return NextResponse.json({ error: "No tenant found for the current credentials" }, { status: 404 });
+    return NextResponse.json(
+      { error: "No tenant found for the current credentials" },
+      { status: 404 },
+    );
   }
 
   try {
-    const { id } = params;
+    const { id } = await ctx.params;
     const sql = `
       SELECT id, "tenantId", name, active, "apiKey", "secretKey",
              description, instructions, "default",
@@ -53,22 +59,25 @@ export async function GET(_req: NextRequest, { params }: Params) {
    PATCH /api/payment-methods/[id]
    body: any subset of fields from paymentUpdateSchema
    ========================================================= */
-export async function PATCH(req: NextRequest, { params }: Params) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
 
-  const { tenantId } = ctx as { tenantId: string | null };
+  const { tenantId } = session as { tenantId: string | null };
   if (!tenantId) {
-    return NextResponse.json({ error: "No tenant found for the current credentials" }, { status: 404 });
+    return NextResponse.json(
+      { error: "No tenant found for the current credentials" },
+      { status: 404 },
+    );
   }
 
   try {
-    const { id } = params;
+    const { id } = await ctx.params;
 
     // Guard: tenant owns this id
     const owns = await pool.query(
       `SELECT id FROM "paymentMethods" WHERE id = $1 AND "tenantId" = $2`,
-      [id, tenantId]
+      [id, tenantId],
     );
     if (!owns.rowCount) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
@@ -87,20 +96,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     let i = 1;
 
     for (const [key, val] of entries) {
-      // quote all columns, especially "default"
-      updates.push(`"${key}" = $${i++}`);
+      updates.push(`"${key}" = $${i++}`); // quote reserved names like "default"
       values.push(val);
     }
-
-    // (Optional) If you want to keep one default per tenant, and request sets default=true:
-    // if (parsed.default === true) {
-    //   await pool.query(
-    //     `UPDATE "paymentMethods"
-    //         SET "default" = FALSE, "updatedAt" = NOW()
-    //       WHERE "tenantId" = $1 AND id <> $2 AND "default" = TRUE`,
-    //     [tenantId, id]
-    //   );
-    // }
 
     const sql = `
       UPDATE "paymentMethods"
@@ -129,24 +127,29 @@ export async function PATCH(req: NextRequest, { params }: Params) {
    DELETE /api/payment-methods/[id]
    - blocks delete if "default" = true
    ========================================================= */
-export async function DELETE(req: NextRequest, { params }: Params) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
+export async function DELETE(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
 
-  const { tenantId } = ctx as { tenantId: string | null };
+  const { tenantId } = session as { tenantId: string | null };
   if (!tenantId) {
-    return NextResponse.json({ error: "No tenant found for the current credentials" }, { status: 404 });
+    return NextResponse.json(
+      { error: "No tenant found for the current credentials" },
+      { status: 404 },
+    );
   }
 
   try {
-    const { id } = params;
+    const { id } = await ctx.params;
 
-    const { rows: [pm] } = await pool.query(
+    const {
+      rows: [pm],
+    } = await pool.query(
       `SELECT name, "default"
          FROM "paymentMethods"
         WHERE id = $1 AND "tenantId" = $2
         LIMIT 1`,
-      [id, tenantId]
+      [id, tenantId],
     );
     if (!pm) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
@@ -154,13 +157,13 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     if (pm.default === true) {
       return NextResponse.json(
         { error: "Default payment methods cannot be deleted. Deactivate it instead." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const del = await pool.query(
       `DELETE FROM "paymentMethods" WHERE id = $1 AND "tenantId" = $2 RETURNING name`,
-      [id, tenantId]
+      [id, tenantId],
     );
     if (!del.rows.length) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });

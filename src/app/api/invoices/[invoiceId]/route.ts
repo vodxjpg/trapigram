@@ -1,17 +1,20 @@
 // src/app/api/invoices/[invoiceId]/route.ts
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getContext } from "@/lib/context";
 
-type Params = { params: { invoiceId: string } };
+/** Next 15+ may pass params as a Promise */
+type Ctx = { params: Promise<{ invoiceId: string }> };
 
-export async function GET(req: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, ctx: Ctx) {
   // 1) Auth & context
-  const ctxOrRes = await getContext(req);
-  if (ctxOrRes instanceof NextResponse) return ctxOrRes;
-  const { userId } = ctxOrRes;
+  const auth = await getContext(req);
+  if (auth instanceof NextResponse) return auth;
+  const { userId } = auth;
 
-  const { invoiceId } = params;
+  const { invoiceId } = await ctx.params;
 
   // 2) invoice header (only if it belongs to this user)
   const invoice = await db

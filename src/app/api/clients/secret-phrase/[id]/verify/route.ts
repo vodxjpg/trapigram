@@ -1,11 +1,15 @@
-//src/app/api/clients/secret-phrase/[id]/verify/route.ts
+// src/app/api/clients/secret-phrase/[id]/verify/route.ts
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import { z } from "zod";
 import crypto from "crypto";
 
-/* ---------- shared helpers (copy from sibling route) ---------- */
+/** Next 15+ passes params as a Promise */
+type Ctx = { params: Promise<{ id: string }> };
+
 const ENC_KEY_B64 = process.env.ENCRYPTION_KEY || "";
 const ENC_IV_B64 = process.env.ENCRYPTION_IV || "";
 
@@ -21,9 +25,7 @@ function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
 function encryptSecretNode(plain: string): string {
   const { key, iv } = getEncryptionKeyAndIv();
   const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-  let encrypted = cipher.update(plain, "utf8", "base64");
-  encrypted += cipher.final("base64");
-  return encrypted;
+  return cipher.update(plain, "utf8", "base64") + cipher.final("base64");
 }
 
 async function getClientByTelegramId(userId: string, organizationId: string) {
@@ -39,17 +41,16 @@ async function getClientByTelegramId(userId: string, organizationId: string) {
 
 const bodySchema = z.object({ phrase: z.string().min(1) });
 
-type Params = { params: Promise<{ id: string }> };
-
-/* ───────── POST: verify (do NOT overwrite), bump updatedAt on success ───────── */
-export async function POST(req: NextRequest, { params }: Params) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
-  const { organizationId } = ctx;
-  const { id: userId } = await params;
+/* POST: verify (do NOT overwrite), bump updatedAt on success */
+export async function POST(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
+  const { organizationId } = session;
+  const { id: userId } = await ctx.params;
 
   try {
     const { phrase } = bodySchema.parse(await req.json());
+
     const client = await getClientByTelegramId(userId, organizationId);
     if (!client) return NextResponse.json({ ok: false }, { status: 401 });
     if (client.secretPhraseEnabled === false) {

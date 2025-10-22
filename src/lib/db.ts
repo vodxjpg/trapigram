@@ -881,64 +881,90 @@ interface DB {
 }
 
 /* ──────────────────────────────────────────────────────────────── *
- *  Runtime safety checks                                          *
+ *  Runtime safety & env helpers                                    *
  * ──────────────────────────────────────────────────────────────── */
-// Block accidental client-side bundling.
-if (typeof window !== "undefined") {
-  throw new Error("❌ db.ts must never be imported in browser bundles");
+if (typeof window !== 'undefined') {
+  throw new Error('❌ db.ts must never be imported in browser bundles');
 }
 
-// Fail fast if DATABASE_URL is missing or obviously plaintext.
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL env var is required");
-}
-if (process.env.DATABASE_URL.startsWith("postgres://") === false) {
-  throw new Error("DATABASE_URL must use the postgres:// scheme");
+const isProd = process.env.NODE_ENV === 'production';
+
+function mustEnv(name: string): string {
+  const v = process.env[name];
+  if (!v || !v.trim()) throw new Error(`Missing env: ${name}`);
+  return v.trim();
 }
 
+function stripSslmode(url: string): string {
+  const [base, qs] = url.split('?');
+  if (!qs) return url;
+  const p = new URLSearchParams(qs);
+  if (p.has('sslmode')) p.delete('sslmode');
+  return p.toString() ? `${base}?${p.toString()}` : base;
+}
 
-/**
- * 
- * Absolute path to the Supabase root-CA certificate.
- * Adjust if your cert lives elsewhere.
- * Example:  certs/prod-ca-2021.crt  (placed at project root)
+/** Parse one or more CERTIFICATE blocks from DB_CA_PEM (full chain allowed) */
+function readCABundleFromEnv(): string[] | null {
+  const pem = process.env.DB_CA_PEM?.trim();
+  if (!pem) return null;
+  const blocks = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g);
+  if (!blocks || blocks.length === 0) {
+    throw new Error('DB_CA_PEM must contain at least one CERTIFICATE block');
+  }
+  return blocks;
+}
+
+/* ──────────────────────────────────────────────────────────────── *
+ *  Connection                                                      *
+ * ──────────────────────────────────────────────────────────────── */
+const DATABASE_URL = mustEnv('DATABASE_URL');
+if (!DATABASE_URL.startsWith('postgres://')) {
+  throw new Error('DATABASE_URL must use the postgres:// scheme');
+}
+
+/** Build SSL config:
+ *  - If DB_CA_PEM provided → strict TLS (verify)
+ *  - If not provided:
+ *      - prod → fail fast (you want verification in prod)
+ *      - dev  → connect without SSL (or set DB_CA_PEM to test TLS locally)
  */
-const caPath = path.resolve(process.cwd(), "certs/prod-ca-2021.crt");
-let supabaseCA = "";
-try {
-  supabaseCA = fs.readFileSync(caPath, "utf8");
-  console.info(`✔︎ Loaded Supabase CA from ${caPath}`);
-} catch (err) {
-  console.error("✘ Failed to load Supabase CA:", (err as Error).message);
-  throw err;                              // hard-fail: no CA → no DB
+const caBundle = readCABundleFromEnv();
+let ssl: false | { ca?: string[]; rejectUnauthorized?: boolean; minVersion?: string };
+
+if (caBundle) {
+  ssl = {
+    ca: caBundle,
+    rejectUnauthorized: true,
+    minVersion: 'TLSv1.3',
+  };
+} else if (isProd) {
+  throw new Error(
+    'DB_CA_PEM is required in production for verified TLS. Paste your PEM (full chain) into the DB_CA_PEM env.'
+  );
+} else {
+  // local/dev fallback: no SSL (or change to { rejectUnauthorized:false } if your server demands TLS)
+  ssl = false;
+  console.warn('⚠ DB_CA_PEM missing in dev — connecting without SSL. Set DB_CA_PEM to test strict TLS locally.');
 }
 
-/* ──────────────── 4. Secure pg Pool (TLS 1.3+, keep-alive) ─────── */
+/* ──────────────── Pool (keep-alive, timeouts) ──────────────── */
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    ca: supabaseCA,
-    rejectUnauthorized: true,
-    /** Enforce modern cipher suites; Node ≥20 negotiates TLS 1.3 by default,
-     * but we pin it defensivey. */
-    minVersion: "TLSv1.3",
-  },
-  max: Number.parseInt(process.env.PG_POOL_MAX ?? "10", 10),
+  connectionString: stripSslmode(DATABASE_URL),
+  ssl,
+  max: Number.parseInt(process.env.PG_POOL_MAX ?? '10', 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 2_000,
   keepAlive: true,
-  statement_timeout: 5_000,   // abort rlong-running queries server-side
+  statement_timeout: 5_000,
 });
 
-/* Optional structured diagnostics; disable in production logs */
-if (process.env.NODE_ENV !== "production") {
-  pool.on("connect", () => console.info("↯ DB connection established"));
-  pool.on("error", (err) => console.error("DB client error:", err));
+if (process.env.NODE_ENV !== 'production') {
+  pool.on('connect', () => console.info('↯ DB connection established'));
+  pool.on('error', (err) => console.error('DB client error:', err));
 }
 
-/* ──────────────── 5. Kysely instance ───────────────── */
-
-export { pool as pgPool };   // for raw SQL users 
+/* ──────────────── Kysely instance ──────────────── */
+export { pool as pgPool };
 export const db = new Kysely<DB>({
   dialect: new PostgresDialect({ pool }),
 });

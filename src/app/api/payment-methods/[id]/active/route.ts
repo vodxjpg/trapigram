@@ -1,4 +1,6 @@
 // src/app/api/payment-methods/[id]/active/route.ts
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { pgPool as pool } from "@/lib/db";
@@ -8,30 +10,30 @@ const bodySchema = z.object({
   active: z.boolean(),
 });
 
-type Params = { params: { id: string } };
+/** Next 15+ may pass params as a Promise */
+type Ctx = { params: Promise<{ id: string }> };
 
-export async function PATCH(req: NextRequest, { params }: Params) {
-  const ctx = await getContext(req);
-  if (ctx instanceof NextResponse) return ctx;
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const session = await getContext(req);
+  if (session instanceof NextResponse) return session;
 
-  const { tenantId } = ctx as { tenantId: string | null };
+  const { tenantId } = session as { tenantId: string | null };
   if (!tenantId) {
     return NextResponse.json(
       { error: "No tenant found for the current credentials" },
-      { status: 404 }
+      { status: 404 },
     );
   }
 
   try {
-    const { id } = params;
+    const { id } = await ctx.params;
 
-    const body = await req.json();
-    const { active } = bodySchema.parse(body);
+    const { active } = bodySchema.parse(await req.json());
 
     // Ownership guard
     const owns = await pool.query(
       `SELECT id FROM "paymentMethods" WHERE id = $1 AND "tenantId" = $2`,
-      [id, tenantId]
+      [id, tenantId],
     );
     if (!owns.rowCount) {
       return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
