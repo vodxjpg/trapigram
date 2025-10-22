@@ -4,10 +4,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { type DateRange } from "react-day-picker";
 import { useRouter } from "next/navigation";
-
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
-
+import { formatMoneyByCountry } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -99,30 +98,7 @@ interface Order {
 type DateFilterOption = "all" | "today" | "last-week" | "last-month" | "custom";
 type ShippingCompany = { id: string; name: string };
 
-/* currency helpers (same behavior as before) */
-const EUROZONE = new Set(["AT", "BE", "CY", "DE", "EE", "ES", "FI", "FR", "GR", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PT", "SI", "SK", "AD", "MC", "SM", "VA", "ME", "XK"]);
-const STERLING = new Set(["GB", "UK", "GG", "JE", "IM"]);
-const USD_ZONES = new Set(["US", "PR", "GU", "AS", "MP", "VI"]);
-const COUNTRY_ALIAS: Record<string, string> = {
-  UK: "GB", UNITEDKINGDOM: "GB", ENGLAND: "GB", SCOTLAND: "GB", WALES: "GB", NORTHERNIRELAND: "GB",
-  USA: "US", UNITEDSTATES: "US", UNITEDSTATESOFAMERICA: "US",
-};
-type SupportedCcy = "EUR" | "GBP" | "USD";
-const norm = (s?: string) => (s ?? "").trim().toUpperCase().replace(/[^A-Z]/g, "");
-const currencyForCountry = (country?: string): SupportedCcy => {
-  if (!country) return "USD";
-  const raw = norm(country);
-  const c = COUNTRY_ALIAS[raw] ?? raw;
-  if (EUROZONE.has(c)) return "EUR";
-  if (STERLING.has(c)) return "GBP";
-  if (USD_ZONES.has(c)) return "USD";
-  return "USD";
-};
-export const formatMoneyByCountry = (amount: number, country?: string) =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currencyForCountry(country),
-  }).format(amount);
+
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                         */
