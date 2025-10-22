@@ -1,15 +1,15 @@
 // src/app/(dashboard)/clients/new/page.tsx   ← keep original path
 "use client";
 
-import { useEffect, useMemo }             from "react";
-import { useRouter }                      from "next/navigation";
-import Link                               from "next/link";
-import { ArrowLeft }                      from "lucide-react";
+import { useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 
-import { authClient }                     from "@/lib/auth-client";
-import { useHasPermission }               from "@/hooks/use-has-permission";  // ← NEW
-import { ClientForm }                     from "../client-form";
-import { Button }                         from "@/components/ui/button";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";  // ← NEW
+import { ClientForm } from "../components/client-form";
+import { Button } from "@/components/ui/button";
 
 /* -------------------------------------------------------------------------- */
 
@@ -18,7 +18,7 @@ export default function NewClientPage() {
 
   /* active organisation ⟶ permission hook */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
   const {
     hasPermission,

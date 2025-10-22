@@ -1,32 +1,32 @@
 // src/app/(dashboard)/clients/[id]/page.tsx
 "use client";
 
-import { useState, useEffect, useMemo }  from "react";
-import { useParams, useRouter }          from "next/navigation";
-import Link                              from "next/link";
-import { ArrowLeft }                     from "lucide-react";
-import { toast }                         from "sonner";
+import { useState, useEffect, useMemo } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+import { toast } from "sonner";
 
-import { authClient }                    from "@/lib/auth-client";         // ← NEW
-import { useHasPermission }              from "@/hooks/use-has-permission";// ← NEW
-import { ClientForm }                    from "../client-form";
-import { Button }                        from "@/components/ui/button";
-import { Skeleton }                      from "@/components/ui/skeleton";
+import { authClient } from "@/lib/auth-client";         // ← NEW
+import { useHasPermission } from "@/hooks/use-has-permission";// ← NEW
+import { ClientForm } from "../components/client-form";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /* -------------------------------------------------------------------------- */
 
 export default function EditClientPage() {
-  const params  = useParams<{ id: string }>();
-  const router  = useRouter();
+  const params = useParams<{ id: string }>();
+  const router = useRouter();
 
   /* active organisation ⟶ id for permission hook */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
   /* secure permission check */
   const {
     hasPermission: updatePerm,
-    isLoading:     updateLoading,
+    isLoading: updateLoading,
   } = useHasPermission(organizationId, { customer: ["update"] });
 
   /* adapter so existing code (`can.loading`, `can({…})`) keeps working */
@@ -37,7 +37,7 @@ export default function EditClientPage() {
   }, [updatePerm, updateLoading]);
 
   /* client data state */
-  const [client, setClient]   = useState<any>(null);
+  const [client, setClient] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   /* redirect if lacking permission */

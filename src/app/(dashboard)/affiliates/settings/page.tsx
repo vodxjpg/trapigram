@@ -5,7 +5,7 @@ export const metadata = {
   title: "Affiliate Settings",
 };
 
-import ClientAffiliateSettingsPage from "./client-page";
+import ClientAffiliateSettingsPage from "./components/client-page";
 
 export default function AffiliateSettingsPage() {
   return <ClientAffiliateSettingsPage />;

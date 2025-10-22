@@ -1,37 +1,37 @@
 // src/app/(dashboard)/announcements/[id]/page.tsx
 "use client";
 
-import { useState, useEffect }         from "react";
-import { useParams, useRouter }        from "next/navigation";
-import Link                            from "next/link";
-import { ArrowLeft }                   from "lucide-react";
-import { toast }                       from "sonner";
+import { useState, useEffect } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+import { toast } from "sonner";
 
-import { AnnouncementForm }            from "../announcements-form";
-import { Button }                      from "@/components/ui/button";
-import { Skeleton }                    from "@/components/ui/skeleton";
+import { AnnouncementForm } from "../components/announcements-form";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
-import { authClient }                  from "@/lib/auth-client";
-import { useHasPermission }            from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 /* -------------------------------------------------------------------------- */
 
 export default function EditAnnouncementPage() {
-  const params  = useParams<{ id: string }>();
-  const router  = useRouter();
+  const params = useParams<{ id: string }>();
+  const router = useRouter();
 
   /* active-org → id for permission hook */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
   const {
     hasPermission: canUpdate,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { announcements: ["update"] });
 
   /* local state */
   const [announcement, setAnnouncement] = useState<any>(null);
-  const [loading, setLoading]           = useState(true);
+  const [loading, setLoading] = useState(true);
 
   /* redirect if forbidden */
   useEffect(() => {

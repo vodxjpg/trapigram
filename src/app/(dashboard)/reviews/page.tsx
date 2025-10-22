@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ReviewsTable } from "./review-table";
+import { ReviewsTable } from "./components/review-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";

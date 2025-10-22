@@ -7,15 +7,10 @@ import { ArrowLeft, Pencil, Trash } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useOrgRoles } from "@/hooks/use-org-roles";
 import { registerRole } from "@/lib/auth/role-registry";   // ← NEW
-import RoleDialog from "./role-dialog";
+import RoleDialog from "./components/role-dialog";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-  DialogClose,
 } from "@/components/ui/dialog";
 export default function RolesPage() {
   const { identifier: orgId } = useParams<{ identifier: string }>();
@@ -23,12 +18,12 @@ export default function RolesPage() {
   const { roles, isLoading, mutate } = useOrgRoles(orgId);
 
   /* ------------------------------------------------------------------ */
-/*  Prime the client-side role registry every time `roles` changes    */
-/* ------------------------------------------------------------------ */
-useEffect(() => {
-  if (!roles?.length) return;
-  roles.forEach(r => registerRole(orgId, r.name, r.permissions));
-}, [orgId, roles]);
+  /*  Prime the client-side role registry every time `roles` changes    */
+  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (!roles?.length) return;
+    roles.forEach(r => registerRole(orgId, r.name, r.permissions));
+  }, [orgId, roles]);
 
 
   const [dialogRole, setDialogRole] = useState<any | null>(null);
@@ -62,7 +57,7 @@ useEffect(() => {
             <li key={r.id} className="p-4 flex justify-between items-start">
               <div>
                 <span className="capitalize font-medium">{r.name}</span>
-                
+
               </div>
               <div className="flex gap-3">
                 <Button

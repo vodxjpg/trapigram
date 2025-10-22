@@ -5,7 +5,7 @@ import { use } from "react";
 import { useRouter } from "next/navigation"; // Import useRouter
 import { ArrowLeft } from "lucide-react"; // Import ArrowLeft icon
 import { Button } from "@/components/ui/button"; // Import Button
-import { TermTable } from "./term-table";
+import { TermTable } from "./components/term-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
 type Attribute = {
@@ -43,7 +43,7 @@ export default function AttributeTermsPage({ params }: { params: Promise<{ attri
   }, [attributeId, setHeaderTitle]);
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center gap-2">
         <Button
           variant="ghost"

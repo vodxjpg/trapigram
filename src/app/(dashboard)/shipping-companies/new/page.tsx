@@ -8,7 +8,7 @@ import { ArrowLeft } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { Button } from "@/components/ui/button";
-import { ShippingMethodForm } from "../shipping-companies-form";
+import { ShippingMethodForm } from "../components/shipping-companies-form";
 
 export default function NewShippingMethodPage() {
   const router = useRouter();

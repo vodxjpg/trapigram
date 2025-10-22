@@ -3,7 +3,7 @@ export const metadata = {
   title: "Affiliates",
 };
 
-import ClientDashboard from "./client-dashboard";
+import ClientDashboard from "./components/client-dashboard";
 export default function AffiliatesDashboardPage() {
   return (
     <div>

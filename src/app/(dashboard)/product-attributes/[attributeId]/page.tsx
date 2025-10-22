@@ -7,7 +7,7 @@ import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { Suspense } from "react";
-import { TermTable } from "./terms/term-table";
+import { TermTable } from "./terms/components/term-table";
 
 export default function AttributeTermsPage() {
   const { setHeaderTitle } = useHeaderTitle();

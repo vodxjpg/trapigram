@@ -3,7 +3,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { LevelForm } from "../level-form";
+import { LevelForm } from "../components/level-form";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 
@@ -17,7 +17,7 @@ export function ClientNewLevelPage() {
   // check "settings" permission for affiliates
   const {
     hasPermission: canCreateLevel,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { affiliates: ["settings"] });
 
   // redirect if no permission

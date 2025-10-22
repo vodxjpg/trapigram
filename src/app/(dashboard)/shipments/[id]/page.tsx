@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
-import { ShipmentForm } from "../shipment-form";
+import { ShipmentForm } from "../components/shipment-form";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -23,10 +23,10 @@ export default function EditShipmentPage() {
   /* ── permission for updating shipping methods ──────────────────── */
   const {
     hasPermission: canUpdate,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { shipping: ["update"] });
 
-  const [shipment,    setShipment   ] = useState<any>(null);
+  const [shipment, setShipment] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(true);
 
   // redirect if they can't update

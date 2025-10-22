@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
-import { ShippingMethodForm } from "../shipping-companies-form";
+import { ShippingMethodForm } from "../components/shipping-companies-form";
 
 export default function EditShippingMethodPage() {
   const router = useRouter();
@@ -18,12 +18,12 @@ export default function EditShippingMethodPage() {
 
   // ── active organization → id for permission hook ─────────────────────────
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const orgId               = activeOrg?.id ?? null;
+  const orgId = activeOrg?.id ?? null;
 
   // ── secure permission check for updating shippingMethods ─────────────────
   const {
     hasPermission: canUpdate,
-    isLoading:     updateLoading,
+    isLoading: updateLoading,
   } = useHasPermission(orgId, { shippingMethods: ["update"] });
 
   // ── redirect if no update permission ─────────────────────────────────────

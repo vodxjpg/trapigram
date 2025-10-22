@@ -8,7 +8,7 @@ import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
-import { AttributeTable } from "./attribute-table";
+import { AttributeTable } from "./components/attribute-table";
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                         */

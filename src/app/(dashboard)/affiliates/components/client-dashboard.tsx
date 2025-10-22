@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Suspense, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { ClientsTable } from "../clients/clients-table";
+import { ClientsTable } from "../../clients/components/clients-table";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 
@@ -19,11 +19,11 @@ export default function ClientDashboard() {
   // check permissions
   const {
     hasPermission: canView,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { affiliates: ["view"] });
-  const { hasPermission: canPoints }   = useHasPermission(organizationId, { affiliates: ["points"] });
-  const { hasPermission: canLevels }   = useHasPermission(organizationId, { affiliates: ["settings"] });
-  const { hasPermission: canLogs }     = useHasPermission(organizationId, { affiliates: ["logs"] });
+  const { hasPermission: canPoints } = useHasPermission(organizationId, { affiliates: ["points"] });
+  const { hasPermission: canLevels } = useHasPermission(organizationId, { affiliates: ["settings"] });
+  const { hasPermission: canLogs } = useHasPermission(organizationId, { affiliates: ["logs"] });
   const { hasPermission: canProducts } = useHasPermission(organizationId, { affiliates: ["products"] });
 
   // redirect away if no view

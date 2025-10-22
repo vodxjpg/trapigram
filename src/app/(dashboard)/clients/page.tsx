@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { Button } from "@/components/ui/button";
-import { ClientsTable } from "./clients-table";
+import { ClientsTable } from "./components/clients-table";
 import { Switch } from "@/components/ui/switch";
 import {
   Drawer,
@@ -326,8 +326,8 @@ export default function ClientsPage() {
               {forceNow
                 ? " immediately."
                 : forceAt
-                ? ` at ${new Date(forceAt).toLocaleString()}.`
-                : "."}
+                  ? ` at ${new Date(forceAt).toLocaleString()}.`
+                  : "."}
               <br />
               It will also keep the current global toggle{" "}
               {enableAll ? <b>enabled</b> : <b>disabled</b>}.

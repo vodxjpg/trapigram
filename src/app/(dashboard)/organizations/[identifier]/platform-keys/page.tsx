@@ -1,50 +1,57 @@
 // src/app/(dashboard)/organizations/[identifier]/platform-keys/page.tsx
 "use client";
 
-import { useState, useEffect }   from "react";
-import { useParams }             from "next/navigation";
-import { authClient }            from "@/lib/auth-client";
-import { useHasPermission }      from "@/hooks/use-has-permission";   // ← NEW
-import {
-  Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
-}                                from "@/components/ui/table";
-import { Button }                from "@/components/ui/button";
+import { useState, useEffect, useMemo } from "react";
+import { useParams } from "next/navigation";
+import { toast } from "sonner";
+
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
+
+// UI
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogTrigger, DialogContent } from "@/components/ui/dialog";
-import { Input }                 from "@/components/ui/input";
-import { toast }                 from "sonner";
+import { Input } from "@/components/ui/input";
+
+// TanStack table + standardized renderer
+import { useReactTable, getCoreRowModel, type ColumnDef } from "@tanstack/react-table";
+import { StandardDataTable } from "@/components/data-table/data-table";
 
 const TELEGRAM_TOKEN_REGEX = /^[0-9]{7,10}:[A-Za-z0-9_-]{35}$/;
+
+type PlatformKey = {
+  id: string;
+  platform: string;
+  apiKey: string;
+};
 
 export default function PlatformKeysPage() {
   const { identifier } = useParams<{ identifier: string }>();
 
-  /* ── active organisation → id for permission hook ─────────── */
+  /* active organisation → id for permission hook */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
-  /* ── permission checks ────────────────────────────────────── */
+  /* permissions */
   const { hasPermission: canCreate, isLoading: createLoading } =
     useHasPermission(organizationId, { platformKey: ["create"] });
-
   const { hasPermission: canUpdate, isLoading: updateLoading } =
     useHasPermission(organizationId, { platformKey: ["update"] });
-
   const { hasPermission: canDelete, isLoading: deleteLoading } =
     useHasPermission(organizationId, { platformKey: ["delete"] });
 
-  /* ── data state ───────────────────────────────────────────── */
-  const [keys, setKeys]     = useState<any[]>([]);
+  /* data state */
+  const [keys, setKeys] = useState<PlatformKey[]>([]);
   const [loading, setLoading] = useState(true);
 
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch(
-        `/api/organizations/${identifier}/platform-keys`,
-        { credentials: "include" },
-      );
+      const res = await fetch(`/api/organizations/${identifier}/platform-keys`, {
+        credentials: "include",
+      });
       const { platformKeys } = await res.json();
-      setKeys(platformKeys);
+      setKeys(platformKeys ?? []);
     } catch (err) {
       console.error(err);
       toast.error("Failed to load platform keys");
@@ -52,16 +59,21 @@ export default function PlatformKeysPage() {
       setLoading(false);
     }
   }
+  useEffect(() => {
+    void load();
+  }, [identifier]);
 
-  useEffect(() => { load(); }, [identifier]);
-
-  /* ── dialog state ─────────────────────────────────────────── */
+  /* dialog state */
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ id: "", platform: "telegram", apiKey: "" });
+  const [form, setForm] = useState<PlatformKey & { platform: "telegram" | string }>({
+    id: "",
+    platform: "telegram",
+    apiKey: "",
+  });
 
-  function edit(key?: any) {
+  function edit(key?: PlatformKey) {
     if (key) setForm({ id: key.id, platform: key.platform, apiKey: key.apiKey });
-    else     setForm({ id: "", platform: "telegram", apiKey: "" });
+    else setForm({ id: "", platform: "telegram", apiKey: "" });
     setOpen(true);
   }
 
@@ -70,17 +82,14 @@ export default function PlatformKeysPage() {
       return toast.error("Invalid Telegram bot key format");
     }
     const method = form.id ? "PATCH" : "POST";
-    const res = await fetch(
-      `/api/organizations/${identifier}/platform-keys`,
-      {
-        method,
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(form),
-      },
-    );
+    const res = await fetch(`/api/organizations/${identifier}/platform-keys`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(form),
+    });
     if (!res.ok) {
-      const { error } = await res.json();
+      const { error } = await res.json().catch(() => ({}));
       return toast.error(error || "Failed to save");
     }
     toast.success("Saved");
@@ -90,74 +99,84 @@ export default function PlatformKeysPage() {
 
   async function remove(id: string) {
     if (!confirm("Delete this key?")) return;
-    const res = await fetch(
-      `/api/organizations/${identifier}/platform-keys`,
-      {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ id }),
-      },
-    );
+    const res = await fetch(`/api/organizations/${identifier}/platform-keys`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ id }),
+    });
     if (!res.ok) {
-      const { error } = await res.json();
+      const { error } = await res.json().catch(() => ({}));
       return toast.error(error || "Failed to delete");
     }
     toast.success("Deleted");
     load();
   }
 
-  /* ── render ───────────────────────────────────────────────── */
+  /* columns for StandardDataTable */
+  const columns = useMemo<ColumnDef<PlatformKey>[]>(() => {
+    return [
+      { accessorKey: "platform", header: "Platform" },
+      {
+        accessorKey: "apiKey",
+        header: "API Key",
+        cell: ({ row }) => <span className="font-mono">{row.original.apiKey}</span>,
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        cell: ({ row }) => {
+          const k = row.original;
+          return (
+            <div className="flex gap-2 justify-start">
+              {!updateLoading && canUpdate && (
+                <Button size="sm" variant="outline" onClick={() => edit(k)}>
+                  Edit
+                </Button>
+              )}
+              {!deleteLoading && canDelete && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => remove(k.id)}
+                >
+                  Delete
+                </Button>
+              )}
+            </div>
+          );
+        },
+      },
+    ];
+  }, [canUpdate, canDelete, updateLoading, deleteLoading]);
+
+  const table = useReactTable({
+    data: keys,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  /* JSX */
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-4">
+    <div className="container mx-auto py-6 px-6 space-y-6">
+      <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold">Platform Keys</h2>
         {!createLoading && canCreate && (
           <Button onClick={() => edit()}>Add Key</Button>
         )}
       </div>
-
-      {loading ? (
-        <p>Loading…</p>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Platform</TableHead>
-              <TableHead>API Key</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {keys.map((k) => (
-              <TableRow key={k.id}>
-                <TableCell>{k.platform}</TableCell>
-                <TableCell>{k.apiKey}</TableCell>
-                <TableCell className="flex gap-2">
-                  {!updateLoading && canUpdate && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => edit(k)}
-                    >
-                      Edit
-                    </Button>
-                  )}
-                  {!deleteLoading && canDelete && (
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => remove(k.id)}
-                    >
-                      Delete
-                    </Button>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <div className="
+          [&_table]:table-fixed [&_table]:w-full
+          [&_th]:w-1/3 [&_td]:w-1/3
+          [&_th]:truncate [&_td]:truncate
+        ">
+        <StandardDataTable<PlatformKey>
+          table={table}
+          columns={columns}
+          isLoading={loading}
+          skeletonRows={6}
+          emptyMessage="No platform keys"
+        /></div>
 
       {/* Add / Edit dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
@@ -169,15 +188,13 @@ export default function PlatformKeysPage() {
             <button
               type="button"
               onClick={() => setForm((f) => ({ ...f, platform: "telegram" }))}
-              className={`flex-1 p-4 border rounded ${
-                form.platform === "telegram"
-                  ? "border-blue-500 bg-blue-50"
-                  : "border-gray-300"
-              }`}
+              className={`flex-1 p-4 border rounded ${form.platform === "telegram"
+                ? "border-blue-500 bg-blue-50"
+                : "border-gray-300"
+                }`}
             >
               Telegram
             </button>
-
             <div className="flex-1 p-4 border rounded opacity-50 cursor-not-allowed text-center">
               More coming soon
             </div>

@@ -9,7 +9,7 @@ import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
-import { CategoryTable } from "./category-table";
+import { CategoryTable } from "./components/category-table";
 
 /* -------------------------------------------------------------------------- */
 

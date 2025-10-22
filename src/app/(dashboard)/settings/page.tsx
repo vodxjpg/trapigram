@@ -1,7 +1,7 @@
 "use client";
 import { useEffect } from "react";
 import { useHeaderTitle } from "@/context/HeaderTitleContext"; // Component to set the page title in the dashbaoard header
-import SettingsClientPage from "./SettingsClientPage"
+import SettingsClientPage from "./components/SettingsClientPage"
 
 
 export default function SettingsPage() {

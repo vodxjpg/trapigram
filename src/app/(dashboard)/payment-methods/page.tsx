@@ -3,7 +3,7 @@
 
 import { useEffect, Suspense } from "react";
 import { useRouter } from "next/navigation";
-import { PaymentMethodsTable } from "./payment-table";
+import { PaymentMethodsTable } from "./components/payment-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";

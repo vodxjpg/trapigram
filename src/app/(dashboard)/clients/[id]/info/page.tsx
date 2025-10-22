@@ -1,29 +1,29 @@
 // src/app/(dashboard)/clients/[id]/page.tsx
 "use client";
 
-import { useEffect, useMemo }              from "react";
-import { useParams, useRouter }            from "next/navigation";
-import Link                                from "next/link";
-import { ArrowLeft }                       from "lucide-react";
+import { useEffect, useMemo } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 
-import { authClient }                      from "@/lib/auth-client";
-import { useHasPermission }                from "@/hooks/use-has-permission";
-import { Button }                          from "@/components/ui/button";
-import ClientDetailView                    from "./client-form-read-only";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { Button } from "@/components/ui/button";
+import ClientDetailView from "./components/client-form-read-only";
 
 /* -------------------------------------------------------------------------- */
 
 export default function ReadOnlyClientPage() {
-  const { id }  = useParams<{ id: string }>();
-  const router  = useRouter();
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   /* active org → permission hook */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
   const {
     hasPermission: viewPerm,
-    isLoading:     viewLoading,
+    isLoading: viewLoading,
   } = useHasPermission(organizationId, { customer: ["view"] });
 
   const canView = useMemo(() => !viewLoading && viewPerm, [viewLoading, viewPerm]);
@@ -39,7 +39,7 @@ export default function ReadOnlyClientPage() {
 
   /* ---------------------------------------------------------------------- */
   return (
-    <div className="container mx-auto py-6 px-6 space-y-6">
+    <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center gap-2">
         <Link href="/clients">
           <Button variant="ghost" size="icon">
@@ -49,14 +49,14 @@ export default function ReadOnlyClientPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Client</h1>
           <p className="text-muted-foreground">Client information</p>
-          
+
         </div>
       </div>
 
       {/* read-only client view – self-fetching */}
       <ClientDetailView clientId={id} />
 
-   
+
     </div>
   );
 }

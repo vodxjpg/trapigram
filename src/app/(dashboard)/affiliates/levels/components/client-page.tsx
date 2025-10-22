@@ -20,7 +20,7 @@ export default function ClientAffiliateLevelsPage() {
   // check "settings" permission for affiliates
   const {
     hasPermission: canViewLevels,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { affiliates: ["settings"] });
 
   // Redirect away if no settings permission
@@ -35,7 +35,7 @@ export default function ClientAffiliateLevelsPage() {
   if (!canViewLevels) return null;
 
   return (
-    <div className="container mx-auto py-6 px-6 space-y-6">
+    <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center gap-3">
         <Link href="/affiliates">
           <Button variant="ghost" size="icon">

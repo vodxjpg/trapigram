@@ -196,141 +196,140 @@ export function AnnouncementForm({ announcementData, isEditing = false }: Props)
 
   /* ---------------------------- render ----------------------------------- */
   return (
-    <Card className="w-full mx-auto border rounded-lg shadow-sm">
-      <CardContent className="p-6 pt-6">
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            {/* Title */}
-            <FormField
-              control={form.control}
-              name="title"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Title *</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Announcement Title" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+    <div className="container mx-auto p-6 space-y-6">
 
-            {/* Content */}
-            <FormField
-              control={form.control}
-              name="content"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Content *</FormLabel>
-                  <FormControl>
-                    <ReactQuill
-                      theme="snow"
-                      value={field.value}
-                      onChange={field.onChange}
-                      modules={modules}
-                      formats={formats}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* Countries */}
-            <FormField
-              control={form.control}
-              name="countries"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Countries *</FormLabel>
-                  <FormControl>
-                    <Select
-                      isMulti
-                      options={countryOptions}
-                      placeholder="Select country(s)"
-                      value={countryOptions.filter((o) => field.value.includes(o.value))}
-                      onChange={(opts: any) => field.onChange(opts.map((o: any) => o.value))}
-                      formatOptionLabel={(o: { value: string; label: string }) => (
-                        <div className="flex items-center gap-2">
-                          <ReactCountryFlag countryCode={o.value} svg style={{ width: 20 }} />
-                          <span>{o.label}</span>
-                        </div>
-                      )}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* Schedule delivery */}
-            <FormField
-              control={form.control}
-              name="deliveryScheduled"
-              render={({ field }) => (
-                <FormItem className="flex items-center space-x-2">
-                  <FormLabel>Schedule Delivery?</FormLabel>
-                  <FormControl>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                        className="mr-2"
-                      />
-                      <span>{field.value ? "Yes" : "No"}</span>
-                    </div>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* Date‑time input (only visible if scheduled) */}
-            {form.watch("deliveryScheduled") && (
-              <FormField
-                control={form.control}
-                name="deliveryDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Delivery Date &amp; Time</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="datetime-local"
-                        step={1}
-                        min={minAttr}
-                        value={field.value ? isoToLocalInput(field.value) : ""}
-                        onChange={(e) =>
-                          field.onChange(e.target.value ? new Date(e.target.value).toISOString() : null)
-                        }
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          {/* Title */}
+          <FormField
+            control={form.control}
+            name="title"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Title *</FormLabel>
+                <FormControl>
+                  <Input placeholder="Announcement Title" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
             )}
+          />
 
-            {/* Hidden status (default draft) */}
-            <input type="hidden" {...form.register("status")} />
+          {/* Content */}
+          <FormField
+            control={form.control}
+            name="content"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Content *</FormLabel>
+                <FormControl>
+                  <ReactQuill
+                    theme="snow"
+                    value={field.value}
+                    onChange={field.onChange}
+                    modules={modules}
+                    formats={formats}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
-            {/* Buttons */}
-            <div className="flex justify-center gap-4 mt-6">
-              <Button type="button" variant="outline" onClick={() => router.push("/announcements")}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting
-                  ? isEditing
-                    ? "Updating…"
-                    : "Creating…"
-                  : isEditing
+          {/* Countries */}
+          <FormField
+            control={form.control}
+            name="countries"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Countries *</FormLabel>
+                <FormControl>
+                  <Select
+                    isMulti
+                    options={countryOptions}
+                    placeholder="Select country(s)"
+                    value={countryOptions.filter((o) => field.value.includes(o.value))}
+                    onChange={(opts: any) => field.onChange(opts.map((o: any) => o.value))}
+                    formatOptionLabel={(o: { value: string; label: string }) => (
+                      <div className="flex items-center gap-2">
+                        <ReactCountryFlag countryCode={o.value} svg style={{ width: 20 }} />
+                        <span>{o.label}</span>
+                      </div>
+                    )}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {/* Schedule delivery */}
+          <FormField
+            control={form.control}
+            name="deliveryScheduled"
+            render={({ field }) => (
+              <FormItem className="flex items-center space-x-2">
+                <FormLabel>Schedule Delivery?</FormLabel>
+                <FormControl>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      className="mr-2"
+                    />
+                    <span>{field.value ? "Yes" : "No"}</span>
+                  </div>
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {/* Date‑time input (only visible if scheduled) */}
+          {form.watch("deliveryScheduled") && (
+            <FormField
+              control={form.control}
+              name="deliveryDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Delivery Date &amp; Time</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="datetime-local"
+                      step={1}
+                      min={minAttr}
+                      value={field.value ? isoToLocalInput(field.value) : ""}
+                      onChange={(e) =>
+                        field.onChange(e.target.value ? new Date(e.target.value).toISOString() : null)
+                      }
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
+
+          {/* Hidden status (default draft) */}
+          <input type="hidden" {...form.register("status")} />
+
+          {/* Buttons */}
+          <div className="flex justify-center gap-4 mt-6">
+            <Button type="button" variant="outline" onClick={() => router.push("/announcements")}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting
+                ? isEditing
+                  ? "Updating…"
+                  : "Creating…"
+                : isEditing
                   ? "Update Announcement"
                   : "Create Announcement"}
-              </Button>
-            </div>
-          </form>
-        </Form>
-      </CardContent>
-    </Card>
+            </Button>
+          </div>
+        </form>
+      </Form>
+    </div>
   );
 }

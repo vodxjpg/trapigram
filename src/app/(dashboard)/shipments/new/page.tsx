@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
-import { ShipmentForm } from "../shipment-form";
+import { ShipmentForm } from "../components/shipment-form";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -20,7 +20,7 @@ export default function NewShipmentPage() {
   /* ── permission for creating shipping methods ───────────────────── */
   const {
     hasPermission: canCreate,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { shipping: ["create"] });
 
   // redirect if they can't create

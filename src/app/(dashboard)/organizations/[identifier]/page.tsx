@@ -1,20 +1,20 @@
 // src/app/(dashboard)/organizations/[identifier]/page.tsx
 "use client";
 
-import { useState, useEffect }        from "react";
-import { useParams }                  from "next/navigation";
-import Link                           from "next/link";
-import { authClient }                 from "@/lib/auth-client";
+import { useState, useEffect } from "react";
+import { useParams } from "next/navigation";
+import Link from "next/link";
+import { authClient } from "@/lib/auth-client";
 import {
   Tabs, TabsList, TabsTrigger, TabsContent,
-}                                     from "@/components/ui/tabs";
-import { Button }                     from "@/components/ui/button";
-import { useHeaderTitle }             from "@/context/HeaderTitleContext";
-import { useHasPermission }           from "@/hooks/use-has-permission";
-import { MembersTable }               from "./members-table";
-import { InvitationsTable }           from "./invitations-table";
-import { InviteMemberForm }           from "./invite-member-form";
-import { toast }                      from "sonner";
+} from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { useHasPermission } from "@/hooks/use-has-permission";
+import { MembersTable } from "./components/members-table";
+import { InvitationsTable } from "./components/invitations-table";
+import { InviteMemberForm } from "./components/invite-member-form";
+import { toast } from "sonner";
 
 /* ──────────────────────────────────────────────────────────────── */
 type Organization = {
@@ -26,11 +26,11 @@ type Organization = {
 };
 
 export default function OrganizationDetailsPage() {
-  const { identifier }   = useParams<{ identifier: string }>();
+  const { identifier } = useParams<{ identifier: string }>();
   const { setHeaderTitle } = useHeaderTitle();
 
   const [organization, setOrganization] = useState<Organization | null>(null);
-  const [loading,      setLoading     ] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   /* ── load organisation & set active ─────────────────────────── */
   useEffect(() => {
@@ -60,12 +60,12 @@ export default function OrganizationDetailsPage() {
 
   const {
     hasPermission: canViewKeysPerm,
-    isLoading:     keysPermLoading,
+    isLoading: keysPermLoading,
   } = useHasPermission(organizationId, { platformKey: ["view"] });
 
   const {
     hasPermission: canCreateInvitation,
-    isLoading:     invitePermLoading,
+    isLoading: invitePermLoading,
   } = useHasPermission(organizationId, { invitation: ["create"] });
 
   /* ── loading / error guards ─────────────────────────────────── */
@@ -79,12 +79,12 @@ export default function OrganizationDetailsPage() {
   /* ── derived flags ──────────────────────────────────────────── */
   const { id, slug, userRole } = organization;
   const normalizedRole = (userRole ?? "").toLowerCase();
-  const isOwner        = normalizedRole === "owner";
-  const canViewKeys    = isOwner || (keysPermLoading ? false : canViewKeysPerm);
+  const isOwner = normalizedRole === "owner";
+  const canViewKeys = isOwner || (keysPermLoading ? false : canViewKeysPerm);
 
   /* ── render ─────────────────────────────────────────────────── */
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="container mx-auto py-6 px-6 space-y-6">
       {/* header */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold tracking-tight">{organization.name}</h1>

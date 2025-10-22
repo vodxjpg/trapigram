@@ -61,7 +61,7 @@ export default function TicketsPage() {
 
   /* ---------- UI --------------------------------------------------------- */
   return (
-    <div className="container mx-auto py-6 px-6 space-y-6">
+    <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-bold tracking-tight">Tickets</h1>

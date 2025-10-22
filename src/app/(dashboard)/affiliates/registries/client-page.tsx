@@ -5,7 +5,7 @@ import { Suspense, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { LogsTable } from "../logs-table";
+import { LogsTable } from "../components/logs-table";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 
@@ -16,7 +16,7 @@ export default function ClientAffiliateLogsPage() {
 
   const {
     hasPermission: canViewLogs,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { affiliates: ["logs"] });
 
   // Redirect away if no "logs" permission

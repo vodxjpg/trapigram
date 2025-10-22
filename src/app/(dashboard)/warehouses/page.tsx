@@ -4,7 +4,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
-import { WarehouseTable } from "./warehouse-table";
+import { WarehouseTable } from "./components/warehouse-table";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { authClient } from "@/lib/auth-client";
 

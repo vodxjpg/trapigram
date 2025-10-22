@@ -1,29 +1,29 @@
 // src/app/(dashboard)/announcements/new/page.tsx
 "use client";
 
-import { useEffect }                 from "react";
-import { useRouter }                 from "next/navigation";
-import { Suspense }                  from "react";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Suspense } from "react";
 
-import { AnnouncementForm }          from "../announcements-form";
-import { useHeaderTitle }            from "@/context/HeaderTitleContext";
-import { authClient }                from "@/lib/auth-client";
-import { useHasPermission }          from "@/hooks/use-has-permission";
+import { AnnouncementForm } from "../components/announcements-form";
+import { useHeaderTitle } from "@/context/HeaderTitleContext";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
 /* -------------------------------------------------------------------------- */
 
 export default function AnnouncementsNewPage() {
-  const router            = useRouter();
+  const router = useRouter();
   const { setHeaderTitle } = useHeaderTitle();
 
   /* active org → id */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
   /* permission */
   const {
     hasPermission: canCreate,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { announcements: ["create"] });
 
   /* set page title */
@@ -43,7 +43,7 @@ export default function AnnouncementsNewPage() {
 
   /* page */
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="container mx-auto p-6 space-y-6">
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-bold tracking-tight">New Announcement</h1>
         <p className="text-muted-foreground">Create a new announcement.</p>

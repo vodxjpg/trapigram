@@ -9,7 +9,7 @@ import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 
-import { CouponsTable } from "./coupons-table";
+import { CouponsTable } from "./components/coupons-table";
 
 /* ------------------------------------------------------------------ */
 

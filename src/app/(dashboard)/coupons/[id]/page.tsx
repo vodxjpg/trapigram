@@ -1,37 +1,37 @@
 // src/app/(dashboard)/clients/[id]/page.tsx
 "use client";
 
-import { useState, useEffect }      from "react";
-import { useParams, useRouter }     from "next/navigation";
-import Link                         from "next/link";
-import { ArrowLeft }                from "lucide-react";
-import { toast }                    from "sonner";
+import { useState, useEffect } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+import { toast } from "sonner";
 
-import { authClient }               from "@/lib/auth-client";
-import { useHasPermission }         from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
-import { CouponForm }               from "../coupons-form";
-import { Button }                   from "@/components/ui/button";
-import { Skeleton }                 from "@/components/ui/skeleton";
+import { CouponForm } from "../components/coupons-form";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /* -------------------------------------------------------------------------- */
 
 export default function EditCouponPage() {
-  const { id }   = useParams<{ id: string }>();
-  const router   = useRouter();
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   /* ── active organisation id ───────────────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
   /* ── permission (new hook) ───────────────────────────────────── */
   const {
     hasPermission: canUpdate,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { coupon: ["update"] });
 
   /* ── coupon data state ───────────────────────────────────────── */
-  const [coupon,  setCoupon ] = useState<any>(null);
+  const [coupon, setCoupon] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   /* ── redirect if not allowed ─────────────────────────────────── */

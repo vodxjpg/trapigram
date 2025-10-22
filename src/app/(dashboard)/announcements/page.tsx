@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Suspense } from "react";
 import { Plus } from "lucide-react";
 
-import { AnnouncementsTable } from "./announcements-table";
+import { AnnouncementsTable } from "./components/announcements-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
@@ -50,7 +50,7 @@ export default function AnnouncementsPage() {
 
   /* page */
   return (
-    <div className="container mx-auto py-6 px-6 space-y-6">
+    <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between sm:flex-wrap">
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-bold tracking-tight">Announcements</h1>

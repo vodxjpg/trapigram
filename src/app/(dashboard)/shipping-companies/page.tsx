@@ -3,7 +3,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ShippingMethodsTable } from "./shipping-companies-table";
+import { ShippingMethodsTable } from "./components/shipping-companies-table";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";

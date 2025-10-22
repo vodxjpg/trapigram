@@ -415,8 +415,8 @@ export function TermTable({ attributeId }: { attributeId: string }) {
             {importMessage && (
               <p
                 className={`mt-4 text-center whitespace-pre-line font-medium ${importMessage.startsWith("✅")
-                    ? "text-green-600"
-                    : "text-red-600"
+                  ? "text-green-600"
+                  : "text-red-600"
                   }`}
               >
                 {importMessage}

@@ -5,16 +5,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 
-import { CreditCard, Tag, DollarSign, Truck } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-
-import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { formatCurrency } from "@/lib/currency";
 
 import ClientSelect from "./components/client-select";
 import ProductSelect from "./components/product-select";

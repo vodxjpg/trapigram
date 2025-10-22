@@ -1,14 +1,14 @@
 "use client";
 
-import Link                  from "next/link";
-import { useRouter }         from "next/navigation";
-import { ArrowLeft }         from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 
-import { authClient }        from "@/lib/auth-client";
-import { useHasPermission }  from "@/hooks/use-has-permission";
+import { authClient } from "@/lib/auth-client";
+import { useHasPermission } from "@/hooks/use-has-permission";
 
-import { CouponForm }        from "../coupons-form";
-import { Button }            from "@/components/ui/button";
+import { CouponForm } from "../components/coupons-form";
+import { Button } from "@/components/ui/button";
 
 /* -------------------------------------------------------------------------- */
 
@@ -17,12 +17,12 @@ export default function NewCouponPage() {
 
   /* ── active organisation id ───────────────────────────────────── */
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const organizationId      = activeOrg?.id ?? null;
+  const organizationId = activeOrg?.id ?? null;
 
   /* ── permission (new hook) ───────────────────────────────────── */
   const {
     hasPermission: canCreate,
-    isLoading:     permLoading,
+    isLoading: permLoading,
   } = useHasPermission(organizationId, { coupon: ["create"] });
 
   /* ── guards ──────────────────────────────────────────────────── */

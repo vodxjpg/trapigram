@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { useHasPermission } from "@/hooks/use-has-permission";
 import { useHeaderTitle } from "@/context/HeaderTitleContext";
-import { ShipmentsTable } from "./shipment-table";
+import { ShipmentsTable } from "./components/shipment-table";
 
 export default function ShipmentsPage() {
   const router = useRouter();
