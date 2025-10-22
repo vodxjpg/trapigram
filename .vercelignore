@@ -1,0 +1,5 @@
+# .vercelignore — files NOT uploaded to Vercel
+node_modules
+.next
+.git
+# DO NOT put vercel.json or certs/ here
