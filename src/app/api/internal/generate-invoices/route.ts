@@ -1,4 +1,6 @@
 // src/app/api/internal/generate-invoices/route.ts
+export const runtime = 'nodejs';
+
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "kysely";
 import { db } from "@/lib/db";
@@ -18,7 +20,9 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "";
 const MINT_ENDPOINT = `${APP_URL}/api/internal/niftipay-invoice`;
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET!;
 const GRACE_DAYS = Number(process.env.FEE_CANCELLATION_GRACE_DAYS ?? "3");
-const CRON_TOKEN = process.env.CRON_TOKEN || "";
+
+/** Use CRON_SECRET provided in Vercel env; Vercel Cron sends Authorization: Bearer <CRON_SECRET> */
+const CRON_SECRET = process.env.CRON_SECRET || "";
 
 /** Strict UTC parser for YYYY-MM-DD. Returns null on invalid input. */
 function parseYMDToUTC(d?: string | null): Date | null {
@@ -30,15 +34,21 @@ function parseYMDToUTC(d?: string | null): Date | null {
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
+/** Validate Vercel Cron (or curl) via Authorization: Bearer <CRON_SECRET> */
+function isCronAuthorized(req: NextRequest): boolean {
+  const auth = req.headers.get("authorization") || "";
+  return !!CRON_SECRET && auth === `Bearer ${CRON_SECRET}`;
+}
+
 /** Shared runner (invoked by both GET and POST) */
 async function runGenerateInvoices(req: NextRequest) {
   // 1) Auth
   const url = new URL(req.url);
   const isCronHeader = req.headers.get("x-vercel-cron") === "1";
-  const token = url.searchParams.get("token") || "";
-  const isCronToken = Boolean(CRON_TOKEN && token && token === CRON_TOKEN);
+  const cronOk = isCronAuthorized(req);
 
-  if (!isCronHeader && !isCronToken) {
+  if (!cronOk) {
+    // Fallback to your existing internal auth (cookie/header/etc.)
     const authErr = requireInternalAuth(req);
     if (authErr) return authErr;
   }
@@ -51,7 +61,7 @@ async function runGenerateInvoices(req: NextRequest) {
 
   console.log(
     `[generate-invoices] invoked for date=${new Date(today).toISOString().slice(0, 10)} (day=${genDay}) ` +
-      `isCronHeader=${isCronHeader} isCronToken=${isCronToken}, graceDays=${GRACE_DAYS}`
+      `isCronHeader=${isCronHeader} cronAuthorized=${cronOk}, graceDays=${GRACE_DAYS}`
   );
 
   // 2a) dueDate = today + 7d (UTC)
@@ -259,7 +269,7 @@ async function runGenerateInvoices(req: NextRequest) {
     try {
       const u = await db
         .selectFrom("user")
-        .select(["email", "name",])
+        .select(["email", "name"])
         .where("id", "=", userId)
         .executeTakeFirst();
 
