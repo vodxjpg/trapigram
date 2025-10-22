@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -47,8 +47,11 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
-export default function ShareLinkPage({ params }: { params: { token: string } }) {
+export default function ShareLinkPage() {
   const router = useRouter();
+  const params = useParams<{ token?: string | string[] }>();
+  const token =
+    Array.isArray(params?.token) ? params?.token?.[0] ?? "" : params?.token ?? "";
   const [shareLink, setShareLink] = useState<ShareLink | null>(null);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +68,7 @@ export default function ShareLinkPage({ params }: { params: { token: string } })
     const fetchData = async () => {
       try {
         // Fetch share link details
-        const shareResponse = await fetch(`/api/share-links/${params.token}`);
+        const shareResponse = await fetch(`/api/share-links/${token}`);
         if (!shareResponse.ok) {
           const errorData = await shareResponse.json();
           throw new Error(errorData.error || "Failed to load share link");
@@ -88,7 +91,7 @@ export default function ShareLinkPage({ params }: { params: { token: string } })
       }
     };
     fetchData();
-  }, [params.token]);
+}, [token]);
 
   const onSubmit = async (values: FormValues) => {
     try {
