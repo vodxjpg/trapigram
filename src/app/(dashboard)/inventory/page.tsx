@@ -1,4 +1,4 @@
-// src/app/(dashboard)/inventory/page-or-component-file.tsx  (keep your original path/filename)
+// src/app/(dashboard)/inventory/page.tsx
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -74,6 +74,13 @@ export default function Component() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
+  // Debounce search to avoid re-filtering on every keystroke for large datasets
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(searchTerm);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearchTerm(searchTerm), 250);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
   // data
   const [inventoryCounts, setInventoryCounts] = useState<InventoryCountRow[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -87,11 +94,14 @@ export default function Component() {
   // Fetch list from /api/inventory and normalize
   useEffect(() => {
     let isMounted = true;
+
+    if (!canView) return;
+
     (async () => {
       try {
         setLoading(true);
         setError(null);
-        if (!canView) return;
+
         const res = await fetch("/api/inventory", { method: "GET" });
         if (!res.ok) throw new Error(`Failed to fetch inventories: ${res.status}`);
         const data = await res.json();
@@ -121,6 +131,7 @@ export default function Component() {
         if (isMounted) setLoading(false);
       }
     })();
+
     return () => {
       isMounted = false;
     };
@@ -128,7 +139,7 @@ export default function Component() {
 
   // Filter + paginate
   const filteredData = useMemo(() => {
-    const q = searchTerm.toLowerCase();
+    const q = debouncedSearchTerm.toLowerCase();
     return inventoryCounts.filter(
       (item) =>
         item.reference.toLowerCase().includes(q) ||
@@ -136,9 +147,9 @@ export default function Component() {
         item.countType.toLowerCase().includes(q) ||
         item.startedOn.toLowerCase().includes(q)
     );
-  }, [searchTerm, inventoryCounts]);
+  }, [debouncedSearchTerm, inventoryCounts]);
 
-  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+  const totalPages = Math.ceil(filteredData.length / itemsPerPage) || 1;
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
   const currentData = filteredData.slice(startIndex, endIndex);
@@ -242,7 +253,7 @@ export default function Component() {
           <div className="text-right">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon">
+                <Button variant="ghost" size="icon" aria-label="Open row actions">
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -297,6 +308,32 @@ export default function Component() {
     getCoreRowModel: getCoreRowModel(),
   });
 
+  // Windowed pagination numbers with ellipses to prevent rendering thousands of buttons
+  const pageNumbers = useMemo<(number | "dots")[]>(() => {
+    const total = totalPages;
+    const current = currentPage;
+
+    // Small counts: show all
+    if (total <= 7) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+
+    const result: (number | "dots")[] = [];
+    const add = (n: number | "dots") => result.push(n);
+
+    add(1);
+
+    const left = Math.max(2, current - 1);
+    const right = Math.min(total - 1, current + 1);
+
+    if (left > 2) add("dots");
+    for (let p = left; p <= right; p++) add(p);
+    if (right < total - 1) add("dots");
+
+    add(total);
+    return result;
+  }, [currentPage, totalPages]);
+
   if (permsLoading) {
     return (
       <div className="container mx-auto p-6">
@@ -309,7 +346,6 @@ export default function Component() {
   return (
     <div className="container mx-auto p-6 space-y-6">
       {/* Page title + actions */}
-
       <PageHeader
         title="Inventory count"
         description="Count your inventory and get a detailed report"
@@ -336,6 +372,7 @@ export default function Component() {
             value={searchTerm}
             onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-8"
+            aria-label="Search inventory counts"
           />
         </div>
       </div>
@@ -369,27 +406,41 @@ export default function Component() {
               size="sm"
               onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
               disabled={currentPage === 1}
+              aria-label="Previous page"
             >
               Previous
             </Button>
             <div className="flex items-center space-x-1">
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                <Button
-                  key={page}
-                  variant={currentPage === page ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setCurrentPage(page)}
-                  className="w-8 h-8 p-0"
-                >
-                  {page}
-                </Button>
-              ))}
+              {pageNumbers.map((p, idx) =>
+                p === "dots" ? (
+                  <span
+                    key={`dots-${idx}`}
+                    className="px-2 text-sm text-muted-foreground select-none"
+                    aria-hidden
+                  >
+                    …
+                  </span>
+                ) : (
+                  <Button
+                    key={p}
+                    variant={currentPage === p ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setCurrentPage(p)}
+                    className="w-8 h-8 p-0"
+                    aria-current={currentPage === p ? "page" : undefined}
+                    aria-label={`Page ${p}`}
+                  >
+                    {p}
+                  </Button>
+                )
+              )}
             </div>
             <Button
               variant="outline"
               size="sm"
               onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
               disabled={currentPage === totalPages}
+              aria-label="Next page"
             >
               Next
             </Button>
