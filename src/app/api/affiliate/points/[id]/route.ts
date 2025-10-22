@@ -5,9 +5,11 @@ import { pgPool as pool } from "@/lib/db";
 import { getContext } from "@/lib/context";
 import type { Pool, PoolClient } from "pg";
 
-
 const logUpdateSchema = z.object({
-  points: z.number().refine((n) => Math.round(n * 10) === n * 10, "Max one decimal place").optional(),
+  points: z
+    .number()
+    .refine((n) => Math.round(n * 10) === n * 10, "Max one decimal place")
+    .optional(),
   action: z.string().optional(),
   description: z.string().optional().nullable(),
 });
@@ -36,14 +38,19 @@ async function applyBalanceDelta(
 }
 
 /*──────── GET ────────*/
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }, // Next 16: Promise
+) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
+  const { id } = await context.params;
+
   const { rows } = await pool.query(
     `SELECT * FROM "affiliatePointLogs" WHERE id = $1 AND "organizationId" = $2`,
-    [params.id, organizationId],
+    [id, organizationId],
   );
   if (rows.length === 0) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -52,10 +59,15 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 }
 
 /*──────── PATCH ────────*/
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }, // Next 16: Promise
+) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
+
+  const { id } = await context.params;
 
   try {
     const parsed = logUpdateSchema.parse(await req.json());
@@ -71,7 +83,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       // pull old row
       const { rows: oldRows } = await client.query(
         `SELECT * FROM "affiliatePointLogs" WHERE id = $1 AND "organizationId" = $2`,
-        [params.id, organizationId],
+        [id, organizationId],
       );
       if (oldRows.length === 0) {
         await client.query("ROLLBACK");
@@ -89,12 +101,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           vals.push(v);
         }
       }
-      vals.push(params.id, organizationId);
+      vals.push(id, organizationId);
 
       const { rows } = await client.query(
         `
         UPDATE "affiliatePointLogs"
-        SET ${sets.join(", ")},"updatedAt" = NOW()
+        SET ${sets.join(", ")}, "updatedAt" = NOW()
         WHERE id = $${i++} AND "organizationId" = $${i}
         RETURNING *
         `,
@@ -131,10 +143,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 /*──────── DELETE ────────*/
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }, // Next 16: Promise
+) {
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
+
+  const { id } = await context.params;
 
   // start tx
   const client = await pool.connect();
@@ -143,7 +160,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
 
     const { rows: oldRows } = await client.query(
       `DELETE FROM "affiliatePointLogs" WHERE id = $1 AND "organizationId" = $2 RETURNING *`,
-      [params.id, organizationId],
+      [id, organizationId],
     );
     if (oldRows.length === 0) {
       await client.query("ROLLBACK");
