@@ -137,3 +137,5 @@ dist
 
 # Vercel config (keep local)
 vercel.json
+#Certs
+certs/
