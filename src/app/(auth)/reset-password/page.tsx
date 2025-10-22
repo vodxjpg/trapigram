@@ -2,16 +2,16 @@
 import { ResetPasswordForm } from "@/components/auth/reset-password-form";
 import Globe from "@/components/Globe";
 
-// accept object or Promise (Next 14 vs 15)
-type MaybePromise<T> = T | Promise<T>;
-type SearchParams = Record<string, string | string[] | undefined>;
-
 export default async function ResetPasswordPage({
   searchParams,
 }: {
-  searchParams: MaybePromise<SearchParams>;
+  // ❗ Next 15 expects a Promise here
+  searchParams?: Promise<any>;
 }) {
-  const sp = await searchParams; // works whether it's a Promise or not
+  const sp = (searchParams ? await searchParams : {}) as Record<
+    string,
+    string | string[] | undefined
+  >;
 
   const raw = sp?.token;
   const token =
