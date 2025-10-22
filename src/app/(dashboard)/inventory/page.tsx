@@ -1,6 +1,7 @@
+// src/app/(dashboard)/inventory/page.tsx
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import {
@@ -50,6 +51,53 @@ type InventoryCountRow = {
   isCompleted: boolean; // ISO or human-readable
 };
 
+// Create an inline Web Worker that holds the dataset and performs filtering + paging off-thread.
+// No external files or deps; works in Next.js client components.
+function createInventoryFilterWorker(): { worker: Worker; url: string } {
+  const code = `
+    let data = [];
+    function match(item, q) {
+      if (!q) return true;
+      const ref = String(item.reference || "").toLowerCase();
+      const wh  = String(item.warehouse || "").toLowerCase();
+      const ct  = String(item.countType || "").toLowerCase();
+      const st  = String(item.startedOn || "").toLowerCase();
+      return ref.includes(q) || wh.includes(q) || ct.includes(q) || st.includes(q);
+    }
+    onmessage = (e) => {
+      const { type, payload } = e.data || {};
+      if (type === "setData") {
+        data = Array.isArray(payload) ? payload : [];
+        // tell UI we are ready and how many total items we have
+        postMessage({ type: "ready", payload: { size: data.length } });
+      } else if (type === "query") {
+        const q = (payload?.q || "").toLowerCase();
+        const page = Math.max(1, Number(payload?.page || 1));
+        const perPage = Math.max(1, Number(payload?.perPage || 10));
+        const start = (page - 1) * perPage;
+        const end = start + perPage;
+
+        let matchCount = 0;
+        const pageRows = [];
+        for (let i = 0; i < data.length; i++) {
+          const item = data[i];
+          if (match(item, q)) {
+            if (matchCount >= start && matchCount < end) {
+              pageRows.push(item);
+            }
+            matchCount++;
+          }
+        }
+        postMessage({ type: "result", payload: { matchCount, pageRows } });
+      }
+    };
+  `;
+  const blob = new Blob([code], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  const worker = new Worker(url);
+  return { worker, url };
+}
+
 export default function Component() {
   const router = useRouter();
   // org  permissions
@@ -64,14 +112,21 @@ export default function Component() {
   // ❌ Do not early-return before hooks
   const permsLoading = viewLoading || updateLoading;
   const canShow = !permsLoading && canView;
+
+  // search + paging (keep the same variable names and semantics where visible)
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
-  // fetched data + states
-  const [inventoryCounts, setInventoryCounts] = useState<InventoryCountRow[]>(
-    []
-  );
+  // Debounce search to avoid spamming the worker on each keystroke
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(searchTerm);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearchTerm(searchTerm), 250);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  // data
+  const [inventoryCounts, setInventoryCounts] = useState<InventoryCountRow[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,14 +137,25 @@ export default function Component() {
   );
   const [deleting, setDeleting] = useState(false);
 
-  // Fetch list from /api/inventory and normalize to table shape
+  // Web Worker refs/state
+  const workerRef = useRef<Worker | null>(null);
+  const workerUrlRef = useRef<string | null>(null);
+  const [workerReady, setWorkerReady] = useState(false);
+
+  // The worker returns just the current page rows + the total filtered count.
+  const [pageRows, setPageRows] = useState<InventoryCountRow[]>([]);
+  const [filteredCount, setFilteredCount] = useState<number>(0);
+
+  // Fetch list from /api/inventory and normalize
   useEffect(() => {
     let isMounted = true;
+
+    if (!canView) return;
+
     (async () => {
       try {
         setLoading(true);
         setError(null);
-        if (!canView) return; // guard when permission denied
         const res = await fetch("/api/inventory", { method: "GET" });
         if (!res.ok) {
           throw new Error(`Failed to fetch inventories: ${res.status}`);
@@ -128,34 +194,89 @@ export default function Component() {
           };
         });
 
-        if (isMounted) setInventoryCounts(rows);
+        if (!isMounted) return;
+
+        setInventoryCounts(rows);
+
+        // Initialize worker once and send dataset
+        if (!workerRef.current) {
+          const { worker, url } = createInventoryFilterWorker();
+          workerRef.current = worker;
+          workerUrlRef.current = url;
+
+          worker.onmessage = (ev: MessageEvent) => {
+            const { type, payload } = ev.data || {};
+            if (type === "ready") {
+              setWorkerReady(true);
+              // Immediately request first page with current (possibly empty) query
+              worker.postMessage({
+                type: "query",
+                payload: { q: debouncedSearchTerm, page: 1, perPage: itemsPerPage },
+              });
+              setCurrentPage(1);
+            } else if (type === "result") {
+              setFilteredCount(Number(payload?.matchCount || 0));
+              setPageRows(Array.isArray(payload?.pageRows) ? payload.pageRows : []);
+            }
+          };
+
+          worker.postMessage({ type: "setData", payload: rows });
+        } else {
+          // If worker already exists (re-fetch), update data and re-query page 1
+          workerRef.current.postMessage({ type: "setData", payload: rows });
+          workerRef.current.postMessage({
+            type: "query",
+            payload: { q: debouncedSearchTerm, page: 1, perPage: itemsPerPage },
+          });
+          setCurrentPage(1);
+        }
       } catch (e: any) {
         if (isMounted) setError(e?.message ?? "Unknown error");
       } finally {
         if (isMounted) setLoading(false);
       }
     })();
+
     return () => {
       isMounted = false;
     };
-  }, [canView]);
+  }, [canView]); // re-run if permission flips
 
-  // Filter data based on search term
-  const filteredData = useMemo(() => {
-    return inventoryCounts.filter(
-      (item) =>
-        item.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.warehouse.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.countType.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.startedOn.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [searchTerm, inventoryCounts]);
+  // Query the worker whenever search/page changes (after debounce + when worker is ready)
+  useEffect(() => {
+    if (!workerReady || !workerRef.current) return;
 
-  // Calculate pagination
-  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const currentData = filteredData.slice(startIndex, endIndex);
+    // Clamp pages when filter shrinks to fewer results
+    const totalPages = Math.max(1, Math.ceil(filteredCount / itemsPerPage));
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+      // We'll query again on next effect run due to state change
+      return;
+    }
+
+    workerRef.current.postMessage({
+      type: "query",
+      payload: {
+        q: debouncedSearchTerm,
+        page: currentPage,
+        perPage: itemsPerPage,
+      },
+    });
+  }, [debouncedSearchTerm, currentPage, workerReady, filteredCount]);
+
+  // Cleanup worker on unmount
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+      if (workerUrlRef.current) {
+        URL.revokeObjectURL(workerUrlRef.current);
+        workerUrlRef.current = null;
+      }
+    };
+  }, []);
 
   // Reset to first page when search changes
   const handleSearchChange = (value: string) => {
@@ -226,6 +347,17 @@ export default function Component() {
       }
       // remove from UI
       setInventoryCounts((prev) => prev.filter((r) => r.id !== row.id));
+
+      // Update worker dataset and refresh current page after deletion
+      if (workerRef.current) {
+        const newData = inventoryCounts.filter((r) => r.id !== row.id);
+        workerRef.current.postMessage({ type: "setData", payload: newData });
+        workerRef.current.postMessage({
+          type: "query",
+          payload: { q: debouncedSearchTerm, page: currentPage, perPage: itemsPerPage },
+        });
+      }
+
       setDeleteOpen(false);
       setRowToDelete(null);
     } catch (e) {
@@ -253,7 +385,104 @@ export default function Component() {
     );
   };
 
-  // Render gate AFTER hooks are declared
+  // ⬇️ Columns for the StandardDataTable
+  const columns = useMemo<ColumnDef<InventoryCountRow>[]>(() => [
+    { accessorKey: "reference", header: "Reference" },
+    { accessorKey: "warehouse", header: "Warehouse" },
+    { accessorKey: "countType", header: "Count Type" },
+    { accessorKey: "startedOn", header: "Started On" },
+    {
+      accessorKey: "isCompleted",
+      header: "Status",
+      cell: ({ row }) => renderStatusBadge(row.original.isCompleted),
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => {
+        const item = row.original;
+        return (
+          <div className="text-right">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="Open row actions">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link href={`/inventory/${item.id}`} className="flex items-center gap-2">
+                    <ExternalLink className="h-4 w-4" />
+                    Open
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => item.isCompleted && handleExportExcel(item)}
+                  className={`flex items-center gap-2 ${!item.isCompleted ? "cursor-not-allowed opacity-60" : ""}`}
+                  disabled={!item.isCompleted}
+                >
+                  <FileDown className="h-4 w-4" />
+                  Export to Excel
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => item.isCompleted && handleExportPDF(item)}
+                  className={`flex items-center gap-2 ${!item.isCompleted ? "cursor-not-allowed opacity-60" : ""}`}
+                  disabled={!item.isCompleted}
+                >
+                  <FileDown className="h-4 w-4" />
+                  Export to PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    if (!canUpdate) return;
+                    setRowToDelete(item);
+                    setDeleteOpen(true);
+                  }}
+                  className="flex items-center gap-2 text-red-600 focus:text-red-700"
+                  disabled={item.isCompleted || !canUpdate}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        );
+      },
+    },
+  ], [canUpdate]);
+
+  // Table instance now renders only the current page rows coming from the worker
+  const table = useReactTable({
+    data: pageRows,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  // Windowed pagination numbers with ellipses (avoid rendering thousands of buttons)
+  const totalPages = Math.max(1, Math.ceil(filteredCount / itemsPerPage));
+  const pageNumbers = useMemo<(number | "dots")[]>(() => {
+    const total = totalPages;
+    const current = currentPage;
+
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+
+    const result: (number | "dots")[] = [];
+    const add = (n: number | "dots") => result.push(n);
+
+    add(1);
+    const left = Math.max(2, current - 1);
+    const right = Math.min(total - 1, current + 1);
+    if (left > 2) add("dots");
+    for (let p = left; p <= right; p++) add(p);
+    if (right < total - 1) add("dots");
+    add(total);
+    return result;
+  }, [currentPage, totalPages]);
+
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, filteredCount);
+
   if (permsLoading) {
     return (
       <div className="container mx-auto p-6">
@@ -267,7 +496,7 @@ export default function Component() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-
+      {/* Page title + actions */}
       <PageHeader
         title="Inventory count"
         description="Count your inventory and get a detailed report"
@@ -294,131 +523,33 @@ export default function Component() {
             value={searchTerm}
             onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-8"
+            aria-label="Search inventory counts"
           />
         </div>
       </div>
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Reference</TableHead>
-              <TableHead>Warehouse</TableHead>
-              <TableHead>Count Type</TableHead>
-              <TableHead>Started On</TableHead>
-              <TableHead>Status</TableHead>
-              {/* NEW column */}
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center py-8">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : error ? (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-center py-8 text-red-600"
-                >
-                  {error}
-                </TableCell>
-              </TableRow>
-            ) : currentData.length > 0 ? (
-              currentData.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium">
-                    {item.reference}
-                  </TableCell>
-                  <TableCell>{item.warehouse}</TableCell>
-                  <TableCell>{item.countType}</TableCell>
-                  <TableCell>{item.startedOn}</TableCell>
-                  <TableCell>
-                    {renderStatusBadge(item.isCompleted)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem asChild>
-                          <Link
-                            href={`/inventory/${item.id}`}
-                            className="flex items-center gap-2"
-                          >
-                            <ExternalLink className="h-4 w-4" />
-                            Open
-                          </Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() =>
-                            item.isCompleted && handleExportExcel(item)
-                          }
-                          className={`flex items-center gap-2 ${!item.isCompleted
-                            ? "cursor-not-allowed opacity-60"
-                            : ""
-                            }`}
-                          disabled={!item.isCompleted}
-                        >
-                          <FileDown className="h-4 w-4" />
-                          Export to Excel
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() =>
-                            item.isCompleted && handleExportPDF(item)
-                          }
-                          className={`flex items-center gap-2 ${!item.isCompleted
-                            ? "cursor-not-allowed opacity-60"
-                            : ""
-                            }`}
-                          disabled={!item.isCompleted}
-                        >
-                          <FileDown className="h-4 w-4" />
-                          Export to PDF
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => {
-                            if (!canUpdate) return;
-                            setRowToDelete(item);
-                            setDeleteOpen(true);
-                          }}
-                          className="flex items-center gap-2 text-red-600 focus:text-red-700"
-                          disabled={item.isCompleted || !canUpdate}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-center py-8 text-muted-foreground"
-                >
-                  No inventory counts found
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+
+      {/* Error banner (optional) */}
+      {error && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {/* Standard Data Table (no Card wrapper) */}
+      <StandardDataTable
+        table={table}
+        columns={columns}
+        isLoading={loading || !workerReady}
+        skeletonRows={8}
+        emptyMessage={workerReady ? "No inventory counts found" : "Loading…"}
+      />
 
       {/* Pagination */}
-      {totalPages > 1 && (
+      {filteredCount > 0 && totalPages > 1 && (
         <div className="flex items-center justify-between space-x-2 py-4">
           <div className="text-sm text-muted-foreground">
-            Showing {startIndex + 1} to{" "}
-            {Math.min(endIndex, filteredData.length)} of{" "}
-            {filteredData.length} results
+            Showing {filteredCount === 0 ? 0 : startIndex + 1} to {endIndex} of{" "}
+            {filteredCount} results
           </div>
           <div className="flex items-center space-x-2">
             <Button
@@ -428,20 +559,31 @@ export default function Component() {
                 setCurrentPage((prev) => Math.max(prev - 1, 1))
               }
               disabled={currentPage === 1}
+              aria-label="Previous page"
             >
               Previous
             </Button>
             <div className="flex items-center space-x-1">
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map(
-                (page) => (
-                  <Button
-                    key={page}
-                    variant={currentPage === page ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setCurrentPage(page)}
-                    className="w-8 h-8 p-0"
+              {pageNumbers.map((p, idx) =>
+                p === "dots" ? (
+                  <span
+                    key={`dots-${idx}`}
+                    className="px-2 text-sm text-muted-foreground select-none"
+                    aria-hidden
                   >
-                    {page}
+                    …
+                  </span>
+                ) : (
+                  <Button
+                    key={p}
+                    variant={currentPage === p ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setCurrentPage(p)}
+                    className="w-8 h-8 p-0"
+                    aria-current={currentPage === p ? "page" : undefined}
+                    aria-label={`Page ${p}`}
+                  >
+                    {p}
                   </Button>
                 )
               )}
@@ -453,6 +595,7 @@ export default function Component() {
                 setCurrentPage((prev) => Math.min(prev + 1, totalPages))
               }
               disabled={currentPage === totalPages}
+              aria-label="Next page"
             >
               Next
             </Button>
