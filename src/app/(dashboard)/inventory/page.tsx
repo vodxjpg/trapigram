@@ -1,7 +1,7 @@
 // src/app/(dashboard)/inventory/page.tsx
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,53 @@ type InventoryCountRow = {
   isCompleted: boolean;
 };
 
+// Create an inline Web Worker that holds the dataset and performs filtering + paging off-thread.
+// No external files or deps; works in Next.js client components.
+function createInventoryFilterWorker(): { worker: Worker; url: string } {
+  const code = `
+    let data = [];
+    function match(item, q) {
+      if (!q) return true;
+      const ref = String(item.reference || "").toLowerCase();
+      const wh  = String(item.warehouse || "").toLowerCase();
+      const ct  = String(item.countType || "").toLowerCase();
+      const st  = String(item.startedOn || "").toLowerCase();
+      return ref.includes(q) || wh.includes(q) || ct.includes(q) || st.includes(q);
+    }
+    onmessage = (e) => {
+      const { type, payload } = e.data || {};
+      if (type === "setData") {
+        data = Array.isArray(payload) ? payload : [];
+        // tell UI we are ready and how many total items we have
+        postMessage({ type: "ready", payload: { size: data.length } });
+      } else if (type === "query") {
+        const q = (payload?.q || "").toLowerCase();
+        const page = Math.max(1, Number(payload?.page || 1));
+        const perPage = Math.max(1, Number(payload?.perPage || 10));
+        const start = (page - 1) * perPage;
+        const end = start + perPage;
+
+        let matchCount = 0;
+        const pageRows = [];
+        for (let i = 0; i < data.length; i++) {
+          const item = data[i];
+          if (match(item, q)) {
+            if (matchCount >= start && matchCount < end) {
+              pageRows.push(item);
+            }
+            matchCount++;
+          }
+        }
+        postMessage({ type: "result", payload: { matchCount, pageRows } });
+      }
+    };
+  `;
+  const blob = new Blob([code], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  const worker = new Worker(url);
+  return { worker, url };
+}
+
 export default function Component() {
   const router = useRouter();
 
@@ -69,12 +116,12 @@ export default function Component() {
   const permsLoading = viewLoading || updateLoading;
   const canShow = !permsLoading && canView;
 
-  // search + paging
+  // search + paging (keep the same variable names and semantics where visible)
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
-  // Debounce search to avoid re-filtering on every keystroke for large datasets
+  // Debounce search to avoid spamming the worker on each keystroke
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(searchTerm);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearchTerm(searchTerm), 250);
@@ -90,6 +137,15 @@ export default function Component() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [rowToDelete, setRowToDelete] = useState<InventoryCountRow | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Web Worker refs/state
+  const workerRef = useRef<Worker | null>(null);
+  const workerUrlRef = useRef<string | null>(null);
+  const [workerReady, setWorkerReady] = useState(false);
+
+  // The worker returns just the current page rows + the total filtered count.
+  const [pageRows, setPageRows] = useState<InventoryCountRow[]>([]);
+  const [filteredCount, setFilteredCount] = useState<number>(0);
 
   // Fetch list from /api/inventory and normalize
   useEffect(() => {
@@ -124,7 +180,42 @@ export default function Component() {
           return { id, reference, warehouse, countType, startedOn, isCompleted };
         });
 
-        if (isMounted) setInventoryCounts(rows);
+        if (!isMounted) return;
+
+        setInventoryCounts(rows);
+
+        // Initialize worker once and send dataset
+        if (!workerRef.current) {
+          const { worker, url } = createInventoryFilterWorker();
+          workerRef.current = worker;
+          workerUrlRef.current = url;
+
+          worker.onmessage = (ev: MessageEvent) => {
+            const { type, payload } = ev.data || {};
+            if (type === "ready") {
+              setWorkerReady(true);
+              // Immediately request first page with current (possibly empty) query
+              worker.postMessage({
+                type: "query",
+                payload: { q: debouncedSearchTerm, page: 1, perPage: itemsPerPage },
+              });
+              setCurrentPage(1);
+            } else if (type === "result") {
+              setFilteredCount(Number(payload?.matchCount || 0));
+              setPageRows(Array.isArray(payload?.pageRows) ? payload.pageRows : []);
+            }
+          };
+
+          worker.postMessage({ type: "setData", payload: rows });
+        } else {
+          // If worker already exists (re-fetch), update data and re-query page 1
+          workerRef.current.postMessage({ type: "setData", payload: rows });
+          workerRef.current.postMessage({
+            type: "query",
+            payload: { q: debouncedSearchTerm, page: 1, perPage: itemsPerPage },
+          });
+          setCurrentPage(1);
+        }
       } catch (e: any) {
         if (isMounted) setError(e?.message ?? "Unknown error");
       } finally {
@@ -135,24 +226,43 @@ export default function Component() {
     return () => {
       isMounted = false;
     };
-  }, [canView]);
+  }, [canView]); // re-run if permission flips
 
-  // Filter + paginate
-  const filteredData = useMemo(() => {
-    const q = debouncedSearchTerm.toLowerCase();
-    return inventoryCounts.filter(
-      (item) =>
-        item.reference.toLowerCase().includes(q) ||
-        item.warehouse.toLowerCase().includes(q) ||
-        item.countType.toLowerCase().includes(q) ||
-        item.startedOn.toLowerCase().includes(q)
-    );
-  }, [debouncedSearchTerm, inventoryCounts]);
+  // Query the worker whenever search/page changes (after debounce + when worker is ready)
+  useEffect(() => {
+    if (!workerReady || !workerRef.current) return;
 
-  const totalPages = Math.ceil(filteredData.length / itemsPerPage) || 1;
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const currentData = filteredData.slice(startIndex, endIndex);
+    // Clamp pages when filter shrinks to fewer results
+    const totalPages = Math.max(1, Math.ceil(filteredCount / itemsPerPage));
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+      // We'll query again on next effect run due to state change
+      return;
+    }
+
+    workerRef.current.postMessage({
+      type: "query",
+      payload: {
+        q: debouncedSearchTerm,
+        page: currentPage,
+        perPage: itemsPerPage,
+      },
+    });
+  }, [debouncedSearchTerm, currentPage, workerReady, filteredCount]);
+
+  // Cleanup worker on unmount
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+      if (workerUrlRef.current) {
+        URL.revokeObjectURL(workerUrlRef.current);
+        workerUrlRef.current = null;
+      }
+    };
+  }, []);
 
   const handleSearchChange = (value: string) => {
     setSearchTerm(value);
@@ -207,6 +317,17 @@ export default function Component() {
         throw new Error(msg || `Failed to delete inventory ${row.id} (status ${res.status})`);
       }
       setInventoryCounts((prev) => prev.filter((r) => r.id !== row.id));
+
+      // Update worker dataset and refresh current page after deletion
+      if (workerRef.current) {
+        const newData = inventoryCounts.filter((r) => r.id !== row.id);
+        workerRef.current.postMessage({ type: "setData", payload: newData });
+        workerRef.current.postMessage({
+          type: "query",
+          payload: { q: debouncedSearchTerm, page: currentPage, perPage: itemsPerPage },
+        });
+      }
+
       setDeleteOpen(false);
       setRowToDelete(null);
     } catch (e) {
@@ -266,8 +387,7 @@ export default function Component() {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => item.isCompleted && handleExportExcel(item)}
-                  className={`flex items-center gap-2 ${!item.isCompleted ? "cursor-not-allowed opacity-60" : ""
-                    }`}
+                  className={`flex items-center gap-2 ${!item.isCompleted ? "cursor-not-allowed opacity-60" : ""}`}
                   disabled={!item.isCompleted}
                 >
                   <FileDown className="h-4 w-4" />
@@ -275,8 +395,7 @@ export default function Component() {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => item.isCompleted && handleExportPDF(item)}
-                  className={`flex items-center gap-2 ${!item.isCompleted ? "cursor-not-allowed opacity-60" : ""
-                    }`}
+                  className={`flex items-center gap-2 ${!item.isCompleted ? "cursor-not-allowed opacity-60" : ""}`}
                   disabled={!item.isCompleted}
                 >
                   <FileDown className="h-4 w-4" />
@@ -302,37 +421,36 @@ export default function Component() {
     },
   ], [canUpdate]);
 
+  // Table instance now renders only the current page rows coming from the worker
   const table = useReactTable({
-    data: currentData,
+    data: pageRows,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
-  // Windowed pagination numbers with ellipses to prevent rendering thousands of buttons
+  // Windowed pagination numbers with ellipses (avoid rendering thousands of buttons)
+  const totalPages = Math.max(1, Math.ceil(filteredCount / itemsPerPage));
   const pageNumbers = useMemo<(number | "dots")[]>(() => {
     const total = totalPages;
     const current = currentPage;
 
-    // Small counts: show all
-    if (total <= 7) {
-      return Array.from({ length: total }, (_, i) => i + 1);
-    }
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
 
     const result: (number | "dots")[] = [];
     const add = (n: number | "dots") => result.push(n);
 
     add(1);
-
     const left = Math.max(2, current - 1);
     const right = Math.min(total - 1, current + 1);
-
     if (left > 2) add("dots");
     for (let p = left; p <= right; p++) add(p);
     if (right < total - 1) add("dots");
-
     add(total);
     return result;
   }, [currentPage, totalPages]);
+
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, filteredCount);
 
   if (permsLoading) {
     return (
@@ -388,17 +506,17 @@ export default function Component() {
       <StandardDataTable
         table={table}
         columns={columns}
-        isLoading={loading}
+        isLoading={loading || !workerReady}
         skeletonRows={8}
-        emptyMessage="No inventory counts found"
+        emptyMessage={workerReady ? "No inventory counts found" : "Loading…"}
       />
 
       {/* Pagination */}
-      {totalPages > 1 && (
+      {filteredCount > 0 && totalPages > 1 && (
         <div className="flex items-center justify-between space-x-2 py-4">
           <div className="text-sm text-muted-foreground">
-            Showing {startIndex + 1} to {Math.min(endIndex, filteredData.length)} of{" "}
-            {filteredData.length} results
+            Showing {filteredCount === 0 ? 0 : startIndex + 1} to {endIndex} of{" "}
+            {filteredCount} results
           </div>
           <div className="flex items-center space-x-2">
             <Button
