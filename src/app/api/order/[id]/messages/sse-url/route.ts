@@ -10,7 +10,7 @@ export const runtime = "nodejs";
  */
 export async function GET(
   _req: Request,
-  context: { params: Promise<{ id: string }> } // Next 16
+  context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
   // TODO: permission checks if needed
