@@ -7,15 +7,14 @@ import { getContext } from "@/lib/context";
 
 export async function DELETE(
   req: NextRequest,
-  context: { params: Promise<{ identifier: string; invitationId: string }> } // Next 16: params is a Promise
+  { params }: { params: Promise<{ identifier: string; invitationId: string }> }
 ) {
-  const { identifier, invitationId } = await context.params;
+  const { identifier, invitationId } = await params;
 
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   const { organizationId } = ctx;
 
-  // Ensure the route org matches the caller's org
   if (identifier !== organizationId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

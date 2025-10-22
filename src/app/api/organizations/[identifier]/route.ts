@@ -20,9 +20,9 @@ function getEncryptionKeyAndIv(): { key: Buffer; iv: Buffer } {
 /* ─── GET single ──────────────────────────────────────────────── */
 export async function GET(
   req: NextRequest,
-  context: { params: Promise<{ identifier: string }> } // Next 16
+  { params }: { params: Promise<{ identifier: string }> }
 ) {
-  const { identifier } = await context.params;
+  const { identifier } = await params;
 
   if (!identifier) {
     return NextResponse.json({ error: "identifier is required" }, { status: 400 });
@@ -90,11 +90,10 @@ export async function GET(
 /* ─── DELETE ──────────────────────────────────────────────────── */
 export async function DELETE(
   req: NextRequest,
-  context: { params: Promise<{ identifier: string }> } // Next 16
+  { params }: { params: Promise<{ identifier: string }> }
 ) {
-  const { identifier } = await context.params;
+  const { identifier } = await params;
 
-  // Ensure caller belongs to this org
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
   if (ctx.organizationId !== identifier) {
@@ -121,15 +120,14 @@ export async function DELETE(
 /* ─── PATCH ───────────────────────────────────────────────────── */
 export async function PATCH(
   req: NextRequest,
-  context: { params: Promise<{ identifier: string }> } // Next 16
+  { params }: { params: Promise<{ identifier: string }> }
 ) {
-  const { identifier } = await context.params;
+  const { identifier } = await params;
 
   const ctx = await getContext(req);
   if (ctx instanceof NextResponse) return ctx;
 
-  const orgId = ctx.organizationId;
-  if (orgId !== identifier) {
+  if (ctx.organizationId !== identifier) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -170,7 +168,7 @@ export async function PATCH(
     vals.push(encrypted);
   }
 
-  vals.push(orgId);
+  vals.push(identifier);
   const sqlText = `
     UPDATE organization
        SET ${sets.join(", ")}
