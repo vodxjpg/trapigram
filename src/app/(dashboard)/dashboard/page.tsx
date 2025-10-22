@@ -53,8 +53,6 @@ import {
   subYears,
 } from "date-fns";
 
-export const description = "An interactive area chart";
-
 type OrderStatus =
   | "open"
   | "paid"
