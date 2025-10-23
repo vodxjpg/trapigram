@@ -37,7 +37,6 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: '*',
-        disallow: '/',                       // deny everything by default
         allow: [
           '/$',
           '/robots.txt',                         // ONLY the exact landing page "/"
@@ -52,7 +51,6 @@ export default function robots(): MetadataRoute.Robots {
         ],
       },
     ],
-    sitemap: `${baseUrl}/sitemap.xml`,
-    host: baseUrl,
+
   };
 }
