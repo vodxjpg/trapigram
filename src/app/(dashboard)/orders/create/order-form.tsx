@@ -7,13 +7,13 @@ import { authClient } from "@/lib/auth-client";
 
 import { toast } from "sonner";
 
-import ClientSelect from "./components/client-select";
-import ProductSelect from "./components/product-select";
-import DiscountCoupon from "./components/discount-coupon";
-import ShippingAddress from "./components/shipping-address";
-import ShippingOptions from "./components/shipping-options";
-import PaymentMethod from "./components/payment-method";
-import OrderSummary from "./components/order-summary"; // ← NEW
+import ClientSelect from "../components/client-select";
+import ProductSelect from "../components/product-select";
+import DiscountCoupon from "../components/discount-coupon";
+import ShippingAddress from "../components/shipping-address";
+import ShippingOptions from "../components/shipping-options";
+import PaymentMethod from "../components/payment-method";
+import OrderSummary from "../components/order-summary"; // ← NEW
 /* ─── constants ──────────────────────────────────────────────── */
 // If the env-var is set use it, otherwise fall back to the public endpoint.
 const NIFTIPAY_BASE = (process.env.NEXT_PUBLIC_NIFTIPAY_API_URL || "https://www.niftipay.com").replace(

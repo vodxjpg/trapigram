@@ -1,18 +1,39 @@
+// src/lib/readKey.ts
 import fs from "fs";
 import path from "path";
 
-/** Load a PEM key from ENV or file-path.  
- *  – If the value starts with “-----BEGIN” it is assumed to be the key itself  
- *    (inline ENV) and any  “\\n”  sequences are replaced with real line-breaks.  
- *  – Otherwise it is treated as a path relative to project root. */
-export function loadKey(srcEnv?: string) {
-  if (!srcEnv) return "";
+const isProd = process.env.NODE_ENV === "production";
 
-  if (srcEnv.startsWith("-----BEGIN")) {
-    // convert literal \n → real LF
-    return srcEnv.replace(/\\n/g, "\n").trim();
+/** Load a PEM key from ENV value or file path.
+ *  - If the input starts with "-----BEGIN", treat it as an inline PEM.
+ *  - Otherwise treat it as a path relative to project root.
+ *  - In dev, do NOT hard-fail if the file isn't present.
+ */
+export function loadKey(src?: string): string {
+  if (!src) return "";
+
+  // Inline PEM support (also handles ENV with literal \n)
+  if (src.startsWith("-----BEGIN")) {
+    return src.replace(/\\n/g, "\n").trim();
   }
 
-  const abs = path.resolve(process.cwd(), srcEnv);
+  // If you passed an ENV var value here, prefer it:
+  const inlineFromEnv =
+    process.env.JWT_PUBLIC_KEY ?? process.env.JWT_PUBLIC_KEY_DEV;
+  if (inlineFromEnv?.trim().startsWith("-----BEGIN")) {
+    return inlineFromEnv.replace(/\\n/g, "\n").trim();
+  }
+
+  // Path on disk
+  const abs = path.resolve(process.cwd(), src);
+
+  // In dev: avoid ENOENT. Use inline dev key if present; otherwise return "" and let caller decide.
+  if (!isProd && !fs.existsSync(abs)) {
+    const dev = process.env.JWT_PUBLIC_KEY_DEV ?? process.env.JWT_PUBLIC_KEY;
+    if (dev?.trim()) return dev.replace(/\\n/g, "\n").trim();
+    return ""; // no crash during local build
+  }
+
+  // Prod (or dev with file present)
   return fs.readFileSync(abs, "utf8").trim();
 }
