@@ -1,5 +1,5 @@
 /* ────────────────────────────────────────────────────────────────
-   src/app/(dashboard)/affiliates/products/components/points-management.tsx
+   Country-based Cost + Points table
 ───────────────────────────────────────────────────────────────── */
 "use client";
 
@@ -7,12 +7,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -22,6 +17,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+/* ------------------------------------------------------------------
+   Types
+------------------------------------------------------------------ */
 export interface CountryPoints {
   regular: number;
   sale: number | null;
@@ -36,12 +34,21 @@ export interface CostMap {
 interface Props {
   title: string;
   countries: string[];
+  /* points */
   pointsData: PointsMap;
   onPointsChange: (p: PointsMap) => void;
+  /* cost */
   costData: CostMap;
   onCostChange: (c: CostMap) => void;
 }
 
+/* Helper: show empty string instead of 0/undefined/NaN */
+const displayNum = (n: number | null | undefined) =>
+  n == null || Number.isNaN(n) || n === 0 ? "" : String(n);
+
+/* ------------------------------------------------------------------
+   Component
+------------------------------------------------------------------ */
 export function PointsManagement({
   title,
   countries,
@@ -53,7 +60,7 @@ export function PointsManagement({
   const [open, setOpen] = useState(true);
 
   const patchPoints = (country: string, patch: Partial<CountryPoints>) => {
-    const prev = pointsData[country] ?? { regular: 0, sale: null };
+    const prev: CountryPoints = pointsData[country] ?? { regular: 0, sale: null };
     onPointsChange({
       ...pointsData,
       [country]: { ...prev, ...patch },
@@ -75,6 +82,7 @@ export function PointsManagement({
 
       {open && (
         <CardContent>
+          {/* Horizontal scroll on small screens */}
           <div className="overflow-x-auto">
             <Table className="min-w-[520px]">
               <TableHeader>
@@ -91,42 +99,52 @@ export function PointsManagement({
                   <TableRow key={c}>
                     <TableCell>{c}</TableCell>
 
+                    {/* Cost */}
                     <TableCell className="text-right">
                       <Input
                         type="number"
                         min="0"
                         step="0.01"
-                        value={costData[c] ?? 0}
-                        onChange={(e) => patchCost(c, Number.parseFloat(e.target.value) || 0)}
-                      />
-                    </TableCell>
-
-                    <TableCell className="text-right">
-                      <Input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={pointsData[c]?.regular ?? 0}
+                        value={displayNum(costData[c])}
                         onChange={(e) =>
-                          patchPoints(c, { regular: Number.parseInt(e.target.value) || 0 })
+                          patchCost(c, e.target.value.trim() === "" ? 0 : Number(e.target.value) || 0)
                         }
+                        placeholder="—"
                       />
                     </TableCell>
 
+                    {/* Regular points */}
                     <TableCell className="text-right">
                       <Input
                         type="number"
                         min="0"
                         step="1"
-                        value={pointsData[c]?.sale ?? ""}
+                        value={displayNum(pointsData[c]?.regular)}
+                        onChange={(e) =>
+                          patchPoints(c, {
+                            regular: e.target.value.trim() === "" ? 0 : parseInt(e.target.value, 10) || 0,
+                          })
+                        }
+                        placeholder="—"
+                      />
+                    </TableCell>
+
+                    {/* Sale points */}
+                    <TableCell className="text-right">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={displayNum(pointsData[c]?.sale)}
                         onChange={(e) =>
                           patchPoints(c, {
                             sale:
                               e.target.value.trim() === ""
                                 ? null
-                                : Number.parseInt(e.target.value) || 0,
+                                : parseInt(e.target.value, 10) || 0,
                           })
                         }
+                        placeholder="—"
                       />
                     </TableCell>
                   </TableRow>
