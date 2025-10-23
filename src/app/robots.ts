@@ -39,7 +39,8 @@ export default function robots(): MetadataRoute.Robots {
         userAgent: '*',
         disallow: '/',                       // deny everything by default
         allow: [
-          '/$',                              // ONLY the exact landing page "/"
+          '/$',
+          '/robots.txt',                         // ONLY the exact landing page "/"
           '/blog$',                          // the "/blog" index (no trailing slash)
           '/blog/',                          // "/blog/" and deeper
           '/blog/*',                         // any descendants under /blog/
